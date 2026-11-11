@@ -887,7 +887,20 @@
  * POSIX wants. It lives in the VFS handle (VfsPosizione), which vfs_dup
  * already shared; its lock too, taken over if the holder is gone. A script
  * run with `> log &` and its background child wrote over each other. */
-#define EXOS_VERSION    "0.326"
+/* 0.326 -> 0.327 (voce 99): mmio_map also maps the legacy hole
+ * 0xA0000-0xFFFFF (VGA memory, option ROMs), which is below the end of RAM
+ * but never RAM. The video BIOS of an IGP lives only at 0xC0000, and
+ * nv40.drv needs its PLL table; sonda.drv -rom failed for the same reason. */
+/* 0.327 -> 0.328 (voce 99): the PMM keeps the page 0xD000 (Stage 2's E820
+ * map, VBE modes and card strings). With 4 GB and more the kernel's pages
+ * wrapped down there before the copy: no modes in svga.drv -lista. */
+/* 0.328 -> 0.329 (voce 99): leaving the desktop on a framebuffer given by a
+ * driver (video_cambia: nv50.drv, nv40.drv) no longer goes to VGA mode 3,
+ * which those displays ignore (the .247 looked frozen): the framebuffer is
+ * wiped and the consoles redrawn in it. Power off through ACPI as ACPICA
+ * does it: GPEs off, wake status cleared, PM1 control read-modify-write,
+ * SLP_TYP then SLP_EN (the MCP73 stayed on). */
+#define EXOS_VERSION    "0.329"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

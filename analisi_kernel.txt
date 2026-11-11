@@ -1,0 +1,632 @@
+ANALISI DEL KERNEL DI EX-OS - 11 novembre 2026
+===============================================================================
+
+I SIMBOLI DAVANTI A OGNI VOCE
+
+  !   URGENTE       un guasto che puo' fermare la macchina, rovinare la memoria
+                    o dare a un programma qualunque i poteri del kernel: va
+                    riparato prima di tutto il resto
+  @   IMPORTANTE    un guasto vero, ma che si vede piu' di rado o solo in certe
+                    condizioni (un errore, tanto carico, lo swap acceso), oppure
+                    una cosa che manca e che i programmi portati si aspettano
+  $   OTTIMIZZABILE / MIGLIORABILE   funziona, ma costa tempo o memoria, o ha
+                    un limite che con piu' carico si tocchera'
+
+COME E' STATA FATTA
+
+  E' un'analisi a tavolino: i sorgenti letti riga per riga, niente e' stato
+  provato in QEMU ne' sul ferro e nessun file del kernel e' stato toccato.
+  Dove una voce dice "DA VERIFICARE" il ragionamento regge sulla carta ma va
+  misurato prima di metterci mano. I numeri di riga sono quelli dell'albero
+  di lavoro di oggi (kernel 0.328 in corso): se l'altra sessione sposta del
+  codice, si ritrovano col nome della funzione.
+
+  LETTI PER INTERO: sched/sched.c, mm/paging.c, mm/kmalloc.c, ipc/ipc.c,
+  ipc/pipe.c, arch/x86/isr.c, arch/x86/isr_stubs.asm, syscall/syscall.c,
+  include/sched.h, include/smp.h.
+  LETTI IN PARTE: syscall/syscall_impl.c (circa due terzi: file, processi,
+  fili, memoria, spawn/exec, porte, IRQ, poll, IPC), mm/pmm.c, sched/segnali.c,
+  loader/elf.c, fs/vfs.c e block/ata.c (solo i lucchetti).
+  NON GUARDATI, e quindi fuori da questo elenco: i file system (fat12, fat,
+  ext2, ext4), la cache dei blocchi (blk.c), ata/ahci/atapi nel merito, pty,
+  shm e swap nel merito, dynlink/lib/modulo, vga, tutto arch/x86_64, smp.c
+  (bkl e TLB shootdown), cpufreq, acpi, power. Meritano un secondo giro.
+
+IL FATTO DA CUI DISCENDONO LE PRIME VOCI
+
+  Una chiamata di sistema gira a interrupt ACCESI (int 0x80 e' un trap gate,
+  arch/x86/idt.c 255-261) e il timer cambia processo anche quando ha
+  interrotto codice del kernel (sched_irq0_handler -> sched_battito_comune,
+  sched.c 1566-1601, non guarda da dove viene). Quindi il kernel e'
+  PRELAZIONABILE: due processi possono trovarsi a meta' della stessa funzione
+  del kernel, uno fermato dal timer e l'altro che ci entra. Il lucchetto unico
+  dell'SMP non cambia la cosa: chi viene fermato dentro il kernel se lo porta
+  dietro e lo passa al successivo. Ogni struttura comune va quindi protetta a
+  mano (interrupt spenti o un lucchetto suo). pipe, ipc, poll e i lucchetti di
+  vfs e disco lo fanno; gli allocatori di memoria no.
+
+
+===============================================================================
+ !  URGENTI
+===============================================================================
+
+! voce 1 { kmalloc e kfree non hanno nessuna protezione
+    DOVE: kernel/mm/kmalloc.c, kmalloc 426-499, kfree 529-677. In tutto il file
+    non c'e' un solo interrupts_disable.
+    COSA SUCCEDE: il processo A trova un blocco libero adatto e il timer lo
+    ferma prima di free_list_remove; il processo B entra in kmalloc, parte
+    dalla testa dell'elenco e trova LO STESSO blocco (e' first-fit): tutti e
+    due escono con la stessa memoria. Oppure A viene fermato a meta' di
+    free_list_remove/free_list_add e B trova l'elenco con un puntatore a
+    meta'. kfree ha la finestra piu' larga: la ricerca all'indietro del blocco
+    precedente (625-673) percorre tutta la regione.
+    SINTOMI: "KMALLOC: heap corrotto! Magic errato", "KHEAP: firma rotta",
+    canarini rotti senza un colpevole, strutture del kernel (tabelle dei
+    descrittori, SpawnBuf, anelli) che cambiano da sole. Capita sotto carico:
+    make -j2, tanti spawn, MariaDB con molti fili.
+    COME RIPARARE: salvare i flag e spegnere gli interrupt per tutta kmalloc,
+    kfree, kmalloc_verifica e kmalloc_stats (pushf/cli ... ripristino), come
+    fa gia' per_cpu_leggi. klog va chiamato fuori dalla sezione. Attenzione a
+    heap_expand, che chiama il PMM: vedi la voce 2. }
+
+! voce 2 { L'allocatore delle pagine fisiche (PMM) non e' protetto
+    DOVE: kernel/mm/pmm.c: pmm_alloc_page 494-543, pmm_alloc_page_kernel 577,
+    pmm_alloc_pages 695, pmm_alloc_page_utente 855-871, pmm_free_page 918-979,
+    pmm_ref_inc 984-1036. Nessun interrupts_disable nel file.
+    COSA SUCCEDE: "if (!BITMAP_TEST(i)) { BITMAP_SET(i);" sono due passi: se
+    il timer cade in mezzo, il processo che parte dopo riceve la stessa pagina
+    (g_last_alloc non e' ancora avanzato, quindi la sua prossima richiesta
+    cade proprio li'). Due processi con la stessa pagina fisica si scrivono
+    addosso. Lo stesso vale per i contatori dei riferimenti g_rif[page]++ / --
+    (copia su scrittura e memoria condivisa): un conto sbagliato libera una
+    pagina ancora in uso, o non la libera mai. Anche g_free_pages,
+    g_used_pages, g_alta_cursore, g_alta_libere.
+    QUANDO: il page fault gira a interrupt spenti e non corre il rischio; lo
+    corrono le chiamate di sistema: mmap MAP_SHARED, munmap, sbrk negativo,
+    proc_create (pila del kernel, page directory), paging_map_page quando
+    alloca una tabella, heap_expand di kmalloc, dma_alloc, shm.
+    E' raro (la finestra e' di poche istruzioni) ma il danno e' il peggiore
+    possibile e non lascia traccia.
+    COME RIPARARE: una sezione a interrupt spenti dentro ogni funzione
+    pubblica del PMM (alloc, free, ref_inc, ref_count, free_pages). }
+
+! voce 3 { Manca cld negli ingressi a 32 bit: il kernel puo' copiare al contrario
+    DOVE: kernel/arch/x86/isr_stubs.asm: isr_common_stub (154), irq_common_stub
+    (195), syscall_stub (245). smp_irq_comune e smp_irq_tlb ce l'hanno, e ce
+    l'ha kernel/arch/x86_64/isr64.asm (82 e 138, col commento "il C vuole DF a
+    zero"). A 32 bit e' stato dimenticato.
+    COSA SUCCEDE: ne' un interrupt ne' int 0x80 azzerano il flag di direzione.
+    Se il programma interrotto aveva DF=1 (una memmove all'indietro fa
+    std ... rep movsb ... cld, e il timer puo' cadere in mezzo) il kernel gira
+    con DF=1, e ogni "rep movs"/"rep stos" che GCC ha generato copia
+    all'INDIETRO. In build/kernel.elf ce ne sono 66: proc_prepara_fork,
+    proc_set_entry, sys_time, la cache delle pagine (pc_metti_rimbalzo),
+    leggi_blk, sha256, dynlink_load_lib, termios. Risultato: memoria del
+    kernel sovrascritta a caso. Un programma puo' anche farlo apposta
+    (std; int 0x80).
+    COME RIPARARE: una riga "cld" nei tre stub, subito dopo aver caricato i
+    segmenti del kernel, come in smp_irq_comune. }
+
+! voce 4 { Un programma qualunque puo' leggere e scrivere la memoria del kernel
+    DOVE: kernel/syscall/syscall.c 21-30, syscall_verify_ptr.
+    COSA SUCCEDE: il controllo accetta ogni indirizzo fra 0x1000 e
+    USER_SPACE_END. Ma da 0 a USER_SPACE_BASE (64 MB) c'e' la fascia del
+    kernel, mappata per identita' in ogni page directory, e il kernel in ring 0
+    ci accede senza nessun impedimento. Quindi:
+        write(1, (void *)0x00100000, 4096)   stampa il codice del kernel
+        read(fd, (void *)0x00100000, n)      lo SOVRASCRIVE col contenuto di
+                                             un file
+    e cosi' per ogni chiamata che prende un puntatore (114 usi in
+    syscall_impl.c): stat, pipe, getcwd, ipc_recv, poll, klog... Un utente
+    senza privilegi diventa root (basta scrivere il proprio uid nel PCB) o
+    ferma la macchina. Tutta la separazione fra utenti e i permessi dei file
+    reggono su questo controllo.
+    COME RIPARARE: "if (addr < USER_SPACE_BASE) return 0;" al posto di
+    "addr < 0x1000", e lo stesso in syscall_verify_str. Prima controllare se
+    qualche programma di casa passa davvero puntatori sotto i 64 MB (non
+    dovrebbe: i programmi si caricano da USER_SPACE_BASE in su). }
+
+! voce 5 { Un puntatore sbagliato passato a una chiamata di sistema ferma la macchina
+    DOVE: kernel/mm/paging.c, page_fault_handler 2215-2483 (il ramo finale,
+    2468-2481: "PAGE FAULT (KERNEL)" e kpanic).
+    COSA SUCCEDE: syscall_verify_ptr guarda solo che l'indirizzo stia nello
+    spazio utente, non che sia mappato. Se un programma passa un indirizzo
+    valido ma vuoto - write(1, (char *)0x50000000, 10), o un puntatore non
+    inizializzato, cosa che capita ai programmi con un difetto - il kernel lo
+    tocca in ring 0, il fault non e' ne' stack, ne' pagina pigra, ne' swap, ne'
+    pagina dell'eseguibile, e si arriva al kpanic. Un errore di UN programma
+    spegne tutto il sistema. vm_precarica_utente (sys_read, sys_write, pread)
+    porta dentro le pagine che esistono, non ripara questo caso.
+    COME RIPARARE: nel ramo "fault dal kernel su un indirizzo utente" non fare
+    kpanic ma far fallire la chiamata con EFAULT. Il modo pulito e' la voce 36
+    (copia_da_utente / copia_a_utente con recupero). Il rimedio corto, in
+    attesa: se il fault viene da ring 0, l'indirizzo e' >= USER_SPACE_BASE e
+    c'e' un processo corrente, terminare QUEL processo (proc_esci_fatale) con
+    il messaggio di fault, invece di fermare la macchina. Va fatto solo dopo
+    la voce 6, perche' quel processo puo' avere in mano un lucchetto. }
+
+! voce 6 { Un filo ucciso mentre tiene il lucchetto dei file blocca tutto il sistema
+    DOVE: kernel/sched/sched.c proc_gruppo_termina 2579-2598 e proc_kill
+    3034-3059; kernel/fs/vfs.c fs_prendi_n 379-426 e fs_rilascia 428-445;
+    kernel/block/ata.c ata_prendi 1683-1725.
+    COSA SUCCEDE: quando il capogruppo esce (exit), o un filo muore di guasto,
+    o un filo fa exec, proc_gruppo_termina mette ZOMBIE gli altri fili DOVE
+    SONO e li toglie dalla coda. Se uno di loro in quel momento dorme dentro
+    il kernel con un lucchetto in mano - sta leggendo un file e aspetta il
+    disco, quindi tiene g_fs_detentore e magari g_disco_detentore - non
+    girera' mai piu' e il lucchetto non torna mai libero. fs_prendi_n aspetta
+    che g_fs_detentore valga 0 e non guarda se chi lo tiene e' ancora vivo:
+    da li' in poi OGNI operazione sui file di OGNI processo si ferma. La
+    macchina sembra viva (il timer gira, la rete risponde al ping) ma niente
+    apre piu' un file.
+    Lo stesso vale per: la posizione di un file (posizione_di, pero' qui
+    fd_posizione_prendi controlla se il detentore e' morto: bene),
+    spazio_occupato del gruppo (proc_spazio_prendi non lo controlla), la coda
+    del registro ext4.
+    E' il candidato piu' serio per i blocchi che si vedono chiudendo Firefox o
+    fermando MariaDB mentre lavorano sul disco. Il commento nel PCB
+    (sched.h, "NON SI MUORE DOVE SI E'") dice la regola giusta: qui non e'
+    rispettata.
+    COME RIPARARE: non fare zombie un filo che e' dentro il kernel. Segnarlo
+    (da_finire, che esiste gia' per chi gira su un altro processore),
+    svegliarlo se e' bloccato, e farlo uscire da solo al ritorno dalla
+    chiamata di sistema, come gia' fa "interrotto" in syscall_handler. Solo
+    chi sta in ring 3 o e' fermo in un'attesa senza lucchetti si puo' chiudere
+    subito. In piu', come rete di sicurezza: fs_prendi_n e ata_prendi, quando
+    trovano il lucchetto preso, controllino che il detentore sia vivo e lo
+    dicano nel registro se non lo e'. }
+
+
+===============================================================================
+ @  IMPORTANTI
+===============================================================================
+
+@ voce 7 { waitpid e pthread_join possono perdere il risveglio e dormire per sempre
+    DOVE: kernel/syscall/syscall_impl.c sys_waitpid 1282-1351 e
+    sys_thread_attendi 1569-1598.
+    COSA SUCCEDE: guardano se c'e' uno zombie a interrupt ACCESI e poi
+    chiamano sched_block. Se il timer li ferma fra il controllo e sched_block
+    e in quel tempo il figlio (o il filo) esce, sched_unblock_locked trova il
+    padre READY, non BLOCKED, e non fa niente; il padre poi si blocca e
+    nessuno lo svegliera' piu'. Sintomo: la shell che resta ferma dopo che il
+    comando e' finito, un make che non prosegue, un programma fermo in
+    pthread_join. Raro, ma make e la shell fanno migliaia di waitpid.
+    COME RIPARARE: lo schema giusto e' gia' in sys_poll (7170-7198) e in
+    pipe_leggi: interrupt spenti PRIMA del controllo e tenuti spenti fino a
+    sched_block. }
+
+@ voce 8 { L'immagine TLS dei fili passa per un buffer unico: due programmi se la scambiano
+    DOVE: kernel/sched/sched.c 2168 (g_tls_buf) e proc_thread_crea 2277-2294,
+    2399-2413.
+    COSA SUCCEDE: il commento dice "uno solo perche' proc_thread_crea gira
+    dentro una chiamata di sistema e finisce prima che un'altra cominci". Non
+    e' vero: vfs_read puo' bloccare (lo dice il commento venti righe sotto) e
+    il kernel e' prelazionabile; il lucchetto preso in sys_thread_crea e'
+    quello del GRUPPO, quindi due programmi diversi entrano insieme. A legge
+    la sua immagine, dorme sul disco, B ci scrive sopra la sua, A copia nel
+    filo nuovo le variabili __thread iniziali di B. Il filo parte con dati
+    thread-local sbagliati: guasti strani e non ripetibili all'avvio dei fili
+    (Firefox e MariaDB ne creano decine insieme).
+    COME RIPARARE: un lucchetto solo per g_tls_buf tenuto dalla lettura fino
+    alla copia, oppure - meglio - niente buffer: leggere il file a pezzi di
+    una pagina direttamente nelle pagine del filo attraverso la finestra. }
+
+@ voce 9 { Creare un filo che fallisce perde pagine fisiche per sempre
+    DOVE: kernel/sched/sched.c proc_thread_crea: 2252-2256 (map fallita), 2290
+    (lettura TLS fallita), 2324 (proc_create fallita), 2408/2421/2465.
+    COSA SUCCEDE: le pagine dello stack del filo vengono mappate PRIMA, e su
+    questi ritorni d'errore restano mappate. Al tentativo dopo
+    filo_posto_libero rende lo stesso posto e paging_map_page sovrascrive le
+    PTE in silenzio (e' il suo contratto): le pagine fisiche di prima non le
+    conosce piu' nessuno. Il caso vero e' EAGAIN con la tabella dei processi
+    piena: un server sotto carico che riprova a creare fili perde 2-3 pagine
+    a tentativo finche' la RAM finisce.
+    COME RIPARARE: un'unica uscita d'errore che smappa e libera cio' che e'
+    stato mappato (da "prima" a "cima"), oppure creare il PCB prima di mappare
+    lo stack. }
+
+@ voce 10 { Una exec che fallisce rovina il programma che l'ha chiamata
+    DOVE: kernel/loader/elf.c 197-202: PROC_EXE_PRENDI(proc), vfs_close e
+    n_vma = 0 stanno IN CIMA al caricamento, prima di vfs_eseguibile, di
+    vfs_open e di elf_verify_header.
+    COSA SUCCEDE: se il file non esiste, non e' eseguibile o non e' un ELF,
+    exec_con_argv (syscall_impl.c 2722-2732) rimette la page directory di
+    prima e torna ENOENT/EACCES/ENOEXEC. Ma il processo ha gia' perso
+    l'eseguibile aperto e l'elenco dei segmenti: le sue pagine non ancora
+    caricate non si possono piu' caricare, e al primo accesso muore con un
+    page fault. E' il percorso NORMALE di execvp, che prova ogni directory di
+    PATH: dopo il primo tentativo fallito il figlio di una fork non riesce
+    piu' nemmeno a stampare "comando non trovato" se quel codice non era gia'
+    in memoria.
+    COME RIPARARE: spostare quelle righe dopo che l'intestazione ELF del file
+    nuovo e' stata letta e verificata (il punto di non ritorno). Guardare
+    anche che heap_start/heap_end/stack/tls del PCB non vengano toccati prima
+    di quel punto. }
+
+@ voce 11 { Dopo una scrittura del kernel su una pagina di sola lettura la copia su scrittura resta spenta
+    DOVE: kernel/mm/paging.c pf_copia_su_scrittura 2049-2072; paging_wp_rimetti
+    2033-2041, chiamata solo da sched_switch_to (sched.c 1501).
+    COSA SUCCEDE: se il kernel scrive in una pagina utente di sola lettura
+    che non e' in copia su scrittura, viene "lasciato fare": CR0.WP si spegne
+    su quel processore e resta spento fino al prossimo cambio di processo.
+    In quel tempo ogni scrittura del kernel su una pagina in copia su
+    scrittura (per esempio una read() nel buffer di un processo che ha appena
+    fatto fork) NON da' piu' il fault e finisce nella pagina ancora in comune:
+    padre e figlio si vedono i dati l'uno dell'altro. Con un processo solo
+    che lavora, il cambio di processo puo' farsi aspettare a lungo. In piu' e'
+    un varco: read(fd, indirizzo_di_sola_lettura, n) scrive dove il programma
+    non potrebbe.
+    COME RIPARARE: riaccendere WP all'uscita da OGNI chiamata di sistema e da
+    ogni fault (in syscall_handler e in fondo a page_fault_handler), non solo
+    al cambio di processo. Poi, con la voce 36, far tornare EFAULT e togliere
+    del tutto il "lasciato fare". }
+
+@ voce 12 { Le pagine tolte mentre stanno nello swap perdono il loro posto nello swap
+    DOVE: kernel/mm/paging.c paging_unmap_page 587-614 (azzera la PTE e
+    basta). Chi la chiama: sys_munmap (syscall_impl.c 2166-2176), sbrk
+    negativo (3610-3621), mmap MAP_FIXED (2036-2042), lo stack di un filo che
+    finisce (sched.c 2934-2941).
+    COSA SUCCEDE: per una pagina che sta nello swap paging_get_physical rende
+    0 e paging_unmap_page scrive 0 sopra la PTE che ricordava lo slot. Nessuno
+    chiama swap_slot_molla: lo fa solo paging_destroy_directory quando il
+    processo intero finisce. Un programma che vive a lungo con lo swap acceso
+    (free() che rende memoria, fili che nascono e muoiono) consuma lo swap
+    fino a riempirlo.
+    COME RIPARARE: in paging_unmap_page, se la PTE e' di swap
+    (SWAP_PTE_E_SWAP) chiamare swap_slot_molla prima di azzerarla. }
+
+@ voce 13 { Chiunque puo' prendersi un IRQ e spegnere una periferica
+    DOVE: kernel/syscall/syscall_impl.c sys_irq_bind 5850-5858: non chiama
+    e_un_driver, a differenza di ioport_bind, dma_alloc e mmio_map.
+    COSA SUCCEDE: un programma senza privilegi fa irq_bind(1) o l'IRQ della
+    scheda di rete e diventa co-proprietario. Al primo interrupt la linea
+    viene mascherata e si riapre solo quando TUTTI i proprietari hanno
+    chiamato irq_done (isr.c 294-304): lui non lo fa mai, e tastiera o rete
+    restano morte. Riceve anche le notifiche di ogni interrupt.
+    COME RIPARARE: "if (!e_un_driver(self, "irq_bind")) return ERR(EPERM);"
+    in sys_irq_bind, e lo stesso controllo in sys_irq_fronti. }
+
+@ voce 14 { Una notifica di IRQ persa con la cassetta piena lascia la linea chiusa (DA VERIFICARE)
+    DOVE: kernel/arch/x86/isr.c irq_handler 940-981; kernel/ipc/ipc.c
+    ipc_notify_irq 136-166.
+    COSA SUCCEDE: la notifica di un interrupt usa gli stessi 4 posti della
+    cassetta dei messaggi ordinari. Il commento a 957-980 dice che una notifica
+    persa non fa danno "perche' in cassetta le notifiche precedenti ce le ha".
+    E' vero se la cassetta e' piena di notifiche; ma un driver sotto carico
+    (ip.drv, il driver della scheda) puo' averla piena di RICHIESTE dei
+    clienti. Allora la notifica cade, nessuno ha il bit in irq_pendenti, la
+    linea resta mascherata e il driver non chiamera' irq_done perche' non ha
+    saputo dell'interrupt: la scheda tace finche' qualcosa non la scuote.
+    Somiglia alla scheda di rete da far ripartire a mano (voce 12 di
+    in_lavorazione).
+    COME RIPARARE: l'interrupt non deve passare per la cassetta. Un bit per
+    IRQ nel PCB (irq_in_attesa), messo sempre da irq_handler, e ipc_recv che
+    lo consegna per primo come messaggio fabbricato sul momento. Costa una
+    parola per processo e non si puo' perdere. }
+
+@ voce 15 { ipc_send copia dal programma a interrupt spenti, dentro la sezione critica (DA VERIFICARE)
+    DOVE: kernel/ipc/ipc.c ipc_send 215-227 (e ipc_recv 335-340).
+    COSA SUCCEDE: i byte si copiano dal buffer del mittente nel posto della
+    cassetta PRIMA di far avanzare ipc_tail e ipc_count. Se quella pagina del
+    mittente non e' in memoria (una stringa costante in una pagina
+    dell'eseguibile mai toccata, o una pagina nello swap) parte un page fault
+    che puo' dormire sul disco; nel frattempo un altro mittente verso lo
+    stesso destinatario scrive nello stesso posto. Un messaggio perso o
+    mescolato.
+    COME RIPARARE: vm_precarica_utente(data, len) in sys_ipc_send prima di
+    entrare (e sul buffer di arrivo in sys_ipc_recv), oppure copiare in un
+    appoggio del kernel fuori dalla sezione, come fa pipe_scrivi. }
+
+@ voce 16 { mmap non riusa i buchi: lo spazio di indirizzamento di un servente si consuma
+    DOVE: kernel/syscall/syscall_impl.c sys_mmap 2005-2020, sys_munmap
+    2192-2196.
+    COSA SUCCEDE: senza MAP_FIXED l'indirizzo e' sempre heap_end, che sale.
+    munmap lo riabbassa solo se la zona tolta e' proprio l'ultima. Un
+    programma che chiede e rende zone grandi in ordine diverso (ogni malloc
+    grande di un servente, i fili, le cache di Firefox) sale fino a heap_max
+    e da li' riceve ENOMEM anche con la memoria quasi tutta libera. A 32 bit
+    sono meno di 3 GB di indirizzi.
+    COME RIPARARE: un elenco delle zone del processo (inizio, fine, permessi,
+    tipo) e la ricerca del primo buco abbastanza grande. Lo stesso elenco
+    serve alle voci 17, 37 e 39 e toglie il tetto di PROC_MAX_VMA = 4. }
+
+@ voce 17 { munmap e mmap MAP_FIXED liberano qualunque pagina trovino
+    DOVE: kernel/syscall/syscall_impl.c sys_munmap 2169-2174, sys_mmap
+    2036-2042.
+    COSA SUCCEDE: per ogni pagina dell'intervallo chiamano pmm_free_page senza
+    guardare la PTE. Su una zona DMA di un driver (PG_FISSA) la pagina torna
+    al PMM mentre la scheda ci scrive ancora: verra' data a un altro processo
+    e la scheda gliela sporchera'. paging_destroy_directory invece la salta
+    apposta (1018). Su una zona di memoria condivisa (shm) il conto dei
+    riferimenti scende, ma la tabella shm del processo crede di averla ancora
+    agganciata.
+    COME RIPARARE: saltare le PTE con PG_FISSA e rifiutare (EINVAL) gli
+    intervalli che toccano una zona shm, un framebuffer o una finestra MMIO:
+    quelle si chiudono con la loro chiamata. }
+
+@ voce 18 { I numeri dei processi: g_next_pid non e' protetto e non guarda se il numero e' in uso
+    DOVE: kernel/sched/sched.c 888 "proc->pid = g_next_pid++".
+    COSA SUCCEDE: a interrupt accesi, con due proc_create insieme (make -j2,
+    un servente che fa fili) due processi possono ricevere lo stesso PID: da
+    li' proc_get_by_pid, i risvegli, waitpid e i segnali colpiscono quello
+    sbagliato. E dopo 4 miliardi di processi il contatore torna a 0 senza
+    controllare i numeri vivi (lontano, ma un servente da 32 mila connessioni
+    ci arriva in mesi).
+    Nello stesso giro: g_proc_count non scende per i fili chiusi da
+    proc_gruppo_termina ne' per sched_fine_chiesta col caso 2, quindi il
+    numero mostrato da sched_dump sale col tempo.
+    COME RIPARARE: assegnare il PID dentro la sezione a interrupt spenti di
+    pcb_alloc, saltando 0 e i numeri gia' presi. }
+
+@ voce 19 { proc_kill chiude un processo senza avvisare nessuno
+    DOVE: kernel/sched/sched.c 3034-3059.
+    COSA SUCCEDE: mette ZOMBIE senza svegliare il padre, senza
+    segnali_figlio_finito, senza togliere il primo piano della console e
+    senza chiudere gli altri fili del gruppo. Oggi la chiamano solo i
+    percorsi d'errore di spawn/fork e l'avvio (kernel_main), dove il processo
+    non e' mai partito, quindi non fa danno; ma il nome invita a usarla
+    altrove, e li' lascerebbe un padre fermo in waitpid.
+    COME RIPARARE: chiamarla proc_scarta_nascente e rifiutare (con un
+    avviso) un processo che non sia NASCENTE; per tutto il resto la strada e'
+    quella della voce 6. }
+
+===============================================================================
+ $  OTTIMIZZABILI / MIGLIORABILI
+===============================================================================
+
+$ voce 20 { Un segnale a un compito del kernel lascia il flag "interrotto" alzato per sempre
+    DOVE: kernel/sched/segnali.c sys_seg_manda 728-734 (rifiuta solo pid <= 1)
+    e manda 771-779; syscall_impl.c sys_interrompi 6538.
+    Guardato: root che manda SIGKILL o SIGTERM al raccoglitore degli zombie
+    ("init", compito del kernel) NON lo chiude: finisce in proc_interrompi,
+    e un compito del kernel non passa mai da syscall_handler dove quel flag
+    fa uscire. Pero' il flag resta a 1 per sempre, e ogni attesa
+    interrompibile che il raccoglitore fa (chiudere l'eseguibile di uno
+    zombie, sul disco) puo' tornare subito con EINTR.
+    MEGLIO: rifiutare con EPERM ogni bersaglio con nel_kernel, in
+    sys_seg_manda e in sys_interrompi. }
+
+$ voce 21 { Il timer scorre tutta la tabella dei processi cento volte al secondo
+    DOVE: kernel/sched/sched.c sched_irq0_handler 1777-1802.
+    Per svegliare chi dorme guarda ogni posto a ogni tick, a interrupt spenti.
+    Con 64 processi non si nota; con migliaia di fili (l'obiettivo dei 32 mila
+    clienti) sono milioni di confronti al secondo.
+    MEGLIO: un elenco ordinato per scadenza di chi dorme (o una ruota del
+    tempo): a ogni tick si guarda solo la testa. }
+
+$ voce 22 { Cercare un processo per PID e svegliare un'attesa sono ricerche lineari
+    DOVE: proc_get_by_pid 3087, sched_unblock_locked 1892, proc_attesa_sveglia
+    2502 (ogni sblocco di un mutex scorre TUTTA la tabella), filo_posto_libero
+    2093 (due cicli annidati), padre_vivo 698, sveglia_chi_aspetta_figli 2640,
+    proc_gruppo_vivi 2078, proc_spazio_vivi 2052.
+    MEGLIO: una tabella hash PID -> PCB; per le attese dei fili una tabella
+    hash sull'indirizzo (come i futex); un elenco dei fili per gruppo. E' il
+    lavoro che piu' pesa su MariaDB e Firefox, che vivono di mutex. }
+
+$ voce 23 { Il raccoglitore degli zombie gira a tempo invece che a evento
+    DOVE: kernel/sched/sched.c init_reaper_task 709-788: ogni 10 ms scorre la
+    tabella, e ogni mezzo secondo percorre tutto lo heap (kmalloc_verifica).
+    MEGLIO: farlo dormire e svegliarlo quando un processo diventa zombie
+    senza padre; la verifica dello heap a richiesta o molto piu' di rado. }
+
+$ voce 24 { Un processo svegliato aspetta fino a 10 ms se l'altro processore dorme
+    DOVE: sched.c proc_set_ready / sched_unblock_locked; smp.c
+    smp_chiama_tutti (901) non viene usata dallo scheduler.
+    Un processore in hlt riguarda la coda solo al suo prossimo battito. Su un
+    servente ogni risposta puo' perdere fino a 10 ms.
+    MEGLIO: quando un processo diventa pronto e c'e' un processore in ozio
+    che lo puo' eseguire, mandargli un IPI. E' il "c'e' lavoro" gia' previsto
+    nel commento di smp.h. }
+
+$ voce 25 { Priorita' rigide senza invecchiamento
+    DOVE: sched.c sched_pick_next 1466-1488; proc_set_ready 1157 (ogni driver
+    sale a PRIO_HIGH).
+    Un driver che non cede mai (un ciclo di attesa attiva, un guasto) toglie
+    la CPU a TUTTI i programmi normali per sempre. E con una sola coda per
+    tutti i processori, pick_next scorre a vuoto chi e' legato a un altro
+    processore.
+    MEGLIO: alzare a tempo la priorita' di chi aspetta da troppo, o un tetto
+    alla quota di chi sta sopra; piu' avanti una coda per processore. }
+
+$ voce 26 { g_ticks e' a 32 bit e i confronti non reggono il giro
+    DOVE: sched.c 1781 e 1794 ("g_ticks >= p->sleep_until"), ipc.c 249 e 355,
+    syscall_impl.c 7176 (poll). Dopo 497 giorni accesa il contatore torna a
+    zero: chi ha una scadenza calcolata prima del giro dorme altri 497
+    giorni. segnali_allarmi_tick lo fa gia' bene: (int32_t)(ora - quando) >= 0.
+    MEGLIO: usare dappertutto quel confronto con la differenza. }
+
+$ voce 27 { sleep puo' tornare prima del tempo chiesto, e il tempo ha passi da 10 ms
+    DOVE: sched.c sched_sleep 2011-2028: ticks = (ms + 9) / 10 senza il "+1".
+    Una sleep di 10 ms chiesta poco prima del battito torna quasi subito;
+    POSIX vuole ALMENO il tempo chiesto (sys_attesa_dormi il +1 lo mette).
+    E ogni attesa piu' corta di 10 ms diventa 10 ms: i programmi che dormono
+    1 ms (basi di dati, giochi, audio) vanno dieci volte piu' piano del
+    dovuto in quei punti. Possibile parte della lentezza di MariaDB.
+    MEGLIO: +1 al conto; poi un timer a scadenza singola (il timer dell'APIC,
+    o il PIT riprogrammato) per le attese corte. }
+
+$ voce 28 { Lucchetti fatti girando a vuoto
+    DOVE: fd_posizione_prendi (syscall_impl.c 396-424) e proc_spazio_prendi
+    (sched.c 3129-3142) riprovano con sched_yield; fcntl F_SETLKW (1205-1210)
+    riprova ogni 10 ms; fs_prendi_n e ata_prendi svegliano TUTTI quelli in
+    attesa a ogni rilascio (vfs.c 440-442).
+    Con molti fili sullo stesso file o sullo stesso spazio la CPU si consuma
+    ad aspettare, e chi aspetta da piu' tempo non ha precedenza.
+    MEGLIO: una coda d'attesa unica per tutto il kernel (voce 38), col
+    risveglio di uno solo. }
+
+$ voce 29 { A ogni uscita di processo si riversa tutta la cache sul disco
+    DOVE: syscall_impl.c sys_exit 321 (vfs_sync) e syscall.c 92 (su Ctrl+C).
+    La scelta e' spiegata e ha senso su dischetto; ma con make o con un
+    servente che crea processi a raffica ogni exit paga la scrittura di cio'
+    che hanno sporcato TUTTI gli altri (la cache e' una sola).
+    MEGLIO: un compito del kernel che riversa a tempo (ogni pochi secondi) e
+    quando i blocchi sporchi passano una soglia; all'uscita solo fsync dei
+    file che il processo aveva aperti in scrittura. }
+
+$ voce 30 { Un lucchetto solo per tutti i file e uno per tutto il kernel
+    DOVE: vfs.c g_fs_detentore; smp.c bkl_entra.
+    Due processi che leggono due file diversi, anche su due dischi diversi,
+    si mettono in fila; chi aspetta il disco tiene fermo anche chi vuole solo
+    una stat su un file in cache. Con piu' processori le chiamate di sistema
+    non vanno in parallelo. E' la "tappa 4" gia' scritta in smp.h.
+    MEGLIO, per gradi: un lucchetto per volume montato; letture dalla cache
+    senza lucchetto globale; poi lucchetti per struttura. Prima pero' vanno
+    chiuse le voci 1, 2 e 6: senza quelle, togliere il lucchetto grande
+    scopre le corse che oggi nasconde. }
+
+$ voce 31 { Ogni filo costa 128 KB di pila del kernel
+    DOVE: sched.h KERNEL_STACK_SIZE 131072; sched.c pila_nuova.
+    A 32 bit le pile stanno nella fascia dei primi 64 MB insieme a heap,
+    tabelle delle pagine e PCB: il tetto vero e' qualche centinaio di fili.
+    A 64 bit sono 128 KB di RAM vera per filo: 32 mila fili = 4 GB di sole
+    pile. proc_pila_massimo misura gia' il consumo reale.
+    MEGLIO: leggere quel massimo dopo una prova di carico e scendere (16-32
+    KB), togliendo dalle pile i buffer grandi (uint8_t buf[PAGE_SIZE] in
+    pf_carica_da_file, char abs[VFS_PATH_MAX] annidati, SpawnBuf e' gia'
+    fuori); oppure mappare le pile a richiesta con una pagina di guardia. }
+
+$ voce 32 { kmalloc cerca a scorrimento e kfree ripercorre la regione
+    DOVE: kmalloc.c 439-449 (first-fit su tutto l'elenco dei liberi) e
+    625-660 (per trovare il blocco precedente parte dall'inizio della
+    regione: costo proporzionale al numero di blocchi).
+    MEGLIO: una parola in coda a ogni blocco con la sua misura (cosi' il
+    precedente si trova in un passo) ed elenchi separati per classi di
+    misura. Accorcia anche il tempo a interrupt spenti della voce 1. }
+
+$ voce 33 { Lo stato del coprocessore si salva e si rimette a ogni cambio di processo
+    DOVE: sched.c sched_switch_to 1545-1546, anche fra compiti del kernel e
+    programmi che non usano mai la virgola mobile.
+    MEGLIO: saltarlo per i compiti del kernel (nel_kernel); poi il salvataggio
+    pigro (bit TS e #NM). Collegato: guardare se fpu.c salva anche AVX
+    (XSAVE) o solo fino a SSE; in quel caso AVX va tenuto spento per i
+    programmi o salvato. }
+
+$ voce 34 { Le pagine di codice non si condividono fra processi dello stesso programma
+    DOVE: paging.c pf_carica_da_file 1625-1704: ogni processo legge dal file
+    e tiene la SUA copia di ogni pagina di testo. Dieci processi httpd o php
+    tengono dieci copie dello stesso codice e lo rileggono dieci volte.
+    MEGLIO: per i segmenti di sola lettura mappare la pagina della cache dei
+    file (un riferimento in piu', PG_CONDIVISA di sola lettura) invece di
+    copiarla. Nello stesso punto: cow_copia_fisica (1923-1937) copia due
+    volte passando per g_cow_buf perche' la finestra e' una sola; con una
+    seconda finestra la copia e' una. }
+
+$ voce 35 { La cassetta dei messaggi: 4 posti, 1536 byte copiati due volte a interrupt spenti
+    DOVE: sched.h IPC_MAILBOX_DEPTH 4; ipc.c 222-225 e 335-340.
+    Ogni messaggio verso ip.drv e ogni pacchetto di rete passano di qui. Con
+    molti clienti la cassetta e' sempre piena e i mittenti dormono in fila;
+    le copie byte per byte a interrupt spenti allungano la latenza degli
+    interrupt.
+    MEGLIO: copiare con rep movs fuori dalla sezione critica (prenotare il
+    posto, copiare, poi pubblicarlo); una cassetta piu' profonda o che cresce
+    per i servizi; per i dati grossi un anello in memoria condivisa fra
+    cliente e servizio (lo fa gia' il server grafico). }
+
+$ voce 36 { (DA IMPLEMENTARE) copia_da_utente e copia_a_utente con recupero dal fault
+    Oggi ogni chiamata di sistema tocca la memoria del programma direttamente.
+    Serve UNA coppia di funzioni per cui passino tutte: se la pagina manca
+    davvero rendono EFAULT invece del kpanic (voce 5), rispettano la sola
+    lettura (voce 11), e sono il posto unico dove sta il confine della voce
+    4. Si fa con una tabella "indirizzo dell'istruzione che puo' dare fault ->
+    indirizzo di ripresa" guardata da page_fault_handler, o piu' semplicemente
+    verificando e portando dentro le pagine prima della copia
+    (paging_utente_pronta esiste gia' e fa quasi tutto). }
+
+$ voce 37 { (DA IMPLEMENTARE) mmap di un file
+    sys_mmap da' solo memoria anonima. I programmi portati (MariaDB, Firefox,
+    il linker, PHP con opcache) mappano file: oggi la libc deve leggerli per
+    intero in memoria, con il doppio della RAM e senza MAP_SHARED vero su
+    file. Serve l'elenco delle zone (voce 16) e la cache dei file come
+    sorgente delle pagine, con la scrittura all'indietro delle pagine sporche. }
+
+$ voce 38 { (DA IMPLEMENTARE) una coda d'attesa del kernel
+    Il risveglio oggi e' "sveglia il PID x qualunque cosa stia aspettando":
+    ogni attesa deve ricontrollare in un ciclo, i risvegli a vuoto sono
+    normali e quelli persi sono facili (voce 7). Una struttura sola - elenco
+    di chi aspetta, "aspetta finche' la condizione e' vera" a interrupt
+    spenti, sveglia uno / sveglia tutti - da usare per figli, fili, file,
+    disco, pipe, pty, cassette. Toglie le voci 7 e 28 alla radice. }
+
+$ voce 39 { (DA IMPLEMENTARE) le attese dei fili fra processi diversi e con la scadenza che si riconosce
+    DOVE: sys_attesa_dormi 1619-1658, proc_attesa_sveglia 2502.
+    L'attesa vale solo dentro un gruppo (l'indirizzo e' virtuale): un mutex o
+    un semaforo messo in memoria condivisa fra due processi (pthread con
+    PTHREAD_PROCESS_SHARED, sem_open, le code di MariaDB e di Apache) non
+    sveglia l'altro processo. E sys_attesa_dormi rende 0 sia per il risveglio
+    sia per la scadenza: pthread_cond_timedwait non puo' rendere ETIMEDOUT
+    con certezza.
+    MEGLIO: per le pagine condivise usare come chiave (zona shm, scostamento);
+    rendere ETIMEDOUT quando e' stata la scadenza a svegliare. }
+
+$ voce 40 { (DA IMPLEMENTARE) SIGPIPE
+    DOVE: pipe.c pipe_scrivi 411 rende -EPIPE, ma nessuno manda il segnale
+    (nessun SIGPIPE in segnali.c ne' in syscall_impl.c).
+    Un programma che scrive in una pipe senza lettori deve morire di SIGPIPE
+    se non l'ha ignorato: "yes | head", "cat file | less" chiuso a meta'. Senza,
+    chi non controlla l'errore di write gira per sempre. }
+
+$ voce 41 { (DA IMPLEMENTARE) FD_CLOEXEC, O_CLOEXEC e close di 0, 1, 2
+    DOVE: sys_fcntl 1239-1240 (F_GETFD e F_SETFD non fanno niente); sys_close
+    912 rifiuta fd <= 2 con EBADF.
+    Senza close-on-exec ogni descrittore aperto passa ai programmi lanciati
+    con exec (file tenuti aperti che non si possono cancellare, pipe che non
+    arrivano mai alla fine perche' un nipote tiene aperto il capo di
+    scrittura). E close(0/1/2) e' cosa che i demoni e le redirezioni fatte a
+    mano fanno di norma: dup2 funziona, close no. }
+
+$ voce 42 { Le scritture piccole in una pipe non sono atomiche, e la pipe e' corta
+    DOVE: pipe.c pipe_scrivi 440-446 (scrive quel che entra e rende un numero
+    piu' basso), PIPE_DIM 4096, PIPE_TRANCHE 1024 (pipe.h 60 e 68).
+    POSIX vuole che una write fino a PIPE_BUF byte entri tutta o aspetti: con
+    due scrittori sulla stessa pipe (i messaggi di make -j, i registri) le
+    righe si spezzano una dentro l'altra. E ogni read/write muove al massimo
+    1 KB: un "cat grosso | grep" fa quattro cambi di processo per pagina.
+    MEGLIO: aspettare lo spazio per le scritture <= 4096; portare la pipe a
+    64 KB (allocata quando serve) e togliere il tetto di 1 KB copiando a
+    pezzi. }
+
+$ voce 43 { Chiamate senza controllo dei permessi, di poco conto ma da chiudere
+    sys_console_write (2380) e SPAWN_F_CONSOLE: chiunque scrive su qualunque
+    console, anche quella di root (un finto prompt di login).
+    sys_modo_testo (6375): chiunque rimette lo schermo in modo testo e butta
+    giu' la grafica. sys_klog (4477): chiunque legge il registro del kernel.
+    sys_console_setfg (1763): chiunque cambia il processo in primo piano
+    della propria console con un PID qualsiasi.
+    MEGLIO: stesso utente del proprietario della console, oppure root. }
+
+$ voce 44 { (DA IMPLEMENTARE) pagine non eseguibili
+    DOVE: paging.c paging_proteggi 2603-2605, sys_mmap 2026-2028: PROT_EXEC
+    vale come PROT_READ, ogni pagina leggibile e' anche eseguibile, pila e
+    heap compresi. A 64 bit il bit NX c'e' ed e' gratis: toglie di mezzo la
+    classe piu' comune di attacchi a un browser. A 32 bit serve PAE. }
+
+$ voce 45 { Gli avvisi di debug nei percorsi piu' battuti
+    DOVE: syscall.c 55 (a OGNI chiamata di sistema), sched.c 1529 (a ogni
+    cambio di processo), kmalloc.c 494 e 570, paging.c 383.
+    Guardato: klog scarta il livello di debug come prima cosa (kprintf.c 364)
+    e non formatta niente. Restano pero' la chiamata e il calcolo degli
+    argomenti: in syscall_handler sono due proc_get_current a chiamata,
+    ognuna con pushf/cli/sti.
+    MEGLIO: una macro che confronta il livello PRIMA di calcolare gli
+    argomenti, o che sparisce del tutto quando il debug non e' compilato. }
+
+
+===============================================================================
+ L'ORDINE CONSIGLIATO
+===============================================================================
+
+  1. voci 3 e 4      una riga e tre righe: chiudono due guasti gravi subito
+  2. voci 1 e 2      interrupt spenti negli allocatori: poche righe, e
+                     tolgono la fonte piu' probabile dei guasti "a caso"
+  3. voce 6          il filo ucciso col lucchetto in mano (i blocchi)
+  4. voci 7, 10, 12  risveglio perso, exec fallita, swap: correzioni corte
+  5. voci 5, 11, 36  il confine con la memoria dei programmi, fatto una volta
+  6. voci 8, 9, 13   fili e IRQ
+  7. il resto delle @, poi le $ secondo il carico che si vuole reggere
+     (21, 22, 24 e 27 sono quelle che piu' pesano su MariaDB)
+
+  Ogni correzione va provata in QEMU a 32 e 64 bit e poi sul portatile, come
+  sempre; le voci 1, 2 e 7 si possono far saltare fuori a comando mettendo
+  una sched_yield() nel punto della finestra, come e' stato fatto il 7
+  settembre per la corsa dei fili.

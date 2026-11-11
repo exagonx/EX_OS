@@ -36,6 +36,10 @@ static struct {
     uint32_t pm1a_cnt, pm1b_cnt; /* control ports (I/O space)                */
     uint32_t smi_cmd;
     uint8_t  acpi_enable;
+    uint32_t pm1a_evt, pm1b_evt; /* status + enable blocks (I/O space)       */
+    uint8_t  pm1_evt_len;
+    uint32_t gpe0;               /* GPE0 block: status half, enable half     */
+    uint8_t  gpe0_len;
     uint16_t slp_a, slp_b;       /* SLP_TYP for S5, already shifted (<< 10)  */
     int      s5;                 /* the _S5_ package was found               */
     int      reset;              /* the reset register can be used           */
@@ -201,6 +205,11 @@ void acpi_init(void)
     g_acpi.pm1a_cnt    = flen > 68 ? le32(f + 64) : 0;
     g_acpi.pm1b_cnt    = flen > 72 ? le32(f + 68) : 0;
     g_acpi.trovata     = g_acpi.pm1a_cnt != 0;
+    g_acpi.pm1a_evt    = flen > 60 ? le32(f + 56) : 0;
+    g_acpi.pm1b_evt    = flen > 64 ? le32(f + 60) : 0;
+    g_acpi.gpe0        = flen > 84 ? le32(f + 80) : 0;
+    g_acpi.pm1_evt_len = flen > 88 ? f[88] : 0;
+    g_acpi.gpe0_len    = flen > 92 ? f[92] : 0;
 
     /* the reset register: FADT revision 2+, flag RESET_REG_SUP (bit 10) */
     if (flen >= 129 && (le32(f + 112) & (1u << 10))) {
@@ -222,6 +231,9 @@ void acpi_init(void)
 
     klog(LOG_INFO, "ACPI: FADT a 0x%x, PM1a_CNT 0x%x, PM1b_CNT 0x%x, SMI_CMD 0x%x/%02x",
          (uint32_t)fadt, g_acpi.pm1a_cnt, g_acpi.pm1b_cnt, g_acpi.smi_cmd, g_acpi.acpi_enable);
+    klog(LOG_INFO, "ACPI: PM1a_EVT 0x%x (%u byte), GPE0 0x%x (%u byte), PM1a_CNT ora 0x%x",
+         g_acpi.pm1a_evt, g_acpi.pm1_evt_len, g_acpi.gpe0, g_acpi.gpe0_len,
+         g_acpi.pm1a_cnt ? port_inw((uint16_t)g_acpi.pm1a_cnt) : 0u);
     if (g_acpi.s5)
         klog(LOG_INFO, "ACPI: S5 (spegnimento) SLP_TYP a=%u b=%u", g_acpi.slp_a >> 10, g_acpi.slp_b >> 10);
     else
@@ -234,9 +246,28 @@ void acpi_init(void)
              f[8], flen, flen >= 116 ? le32(f + 112) : 0u, flen >= 117 ? f[116] : 0u);
 }
 
+/* the sleep register dance as ACPICA does it (hwsleep.c), minus the AML.
+ * ! THE OLD WAY WROTE SLP_TYP|SLP_EN OVER THE WHOLE REGISTER: SCI_EN and the
+ * other bits went to zero, and the MCP73 (.247) just sat there with the fans
+ * on. Now: wake status cleared, GPEs off, read-modify-write, SLP_TYP first
+ * and SLP_EN in a second write. */
+static void pm1_scrivi(uint32_t porta, uint16_t slp)
+{
+    uint16_t v = port_inw((uint16_t)porta);
+
+    v = (uint16_t)((v & ~((7u << 10) | (1u << 13))) | slp);
+    port_outw((uint16_t)porta, v);
+}
+
+static void pm1_scrivi_en(uint32_t porta)
+{
+    port_outw((uint16_t)porta, (uint16_t)(port_inw((uint16_t)porta) | (1u << 13)));
+}
+
 void acpi_spegni(void)
 {
     uint32_t i;
+    uint16_t prima;
 
     if (!g_acpi.trovata || !g_acpi.s5) return;
 
@@ -247,11 +278,31 @@ void acpi_spegni(void)
         port_outb((uint16_t)g_acpi.smi_cmd, g_acpi.acpi_enable);
         for (i = 0; i < 3000000u && !(port_inw((uint16_t)g_acpi.pm1a_cnt) & 1u); i++) { }
     }
+    prima = port_inw((uint16_t)g_acpi.pm1a_cnt);
 
-    port_outw((uint16_t)g_acpi.pm1a_cnt, (uint16_t)(g_acpi.slp_a | (1u << 13)));
-    if (g_acpi.pm1b_cnt)
-        port_outw((uint16_t)g_acpi.pm1b_cnt, (uint16_t)(g_acpi.slp_b | (1u << 13)));
+    /* GPEs off and their status cleared: a pending one wakes the box right
+     * back up, or keeps it from sleeping at all */
+    if (g_acpi.gpe0 && g_acpi.gpe0_len >= 2) {
+        uint32_t meta = g_acpi.gpe0_len / 2u;
+
+        for (i = 0; i < meta; i++) port_outb((uint16_t)(g_acpi.gpe0 + meta + i), 0);
+        for (i = 0; i < meta; i++) port_outb((uint16_t)(g_acpi.gpe0 + i), 0xFF);
+    }
+    /* fixed status bits (WAK_STS included) cleared by writing ones */
+    if (g_acpi.pm1a_evt && g_acpi.pm1_evt_len >= 4) port_outw((uint16_t)g_acpi.pm1a_evt, 0xFFFFu);
+    if (g_acpi.pm1b_evt && g_acpi.pm1_evt_len >= 4) port_outw((uint16_t)g_acpi.pm1b_evt, 0xFFFFu);
+
+    pm1_scrivi(g_acpi.pm1a_cnt, g_acpi.slp_a);
+    if (g_acpi.pm1b_cnt) pm1_scrivi(g_acpi.pm1b_cnt, g_acpi.slp_b);
+    pm1_scrivi_en(g_acpi.pm1a_cnt);
+    if (g_acpi.pm1b_cnt) pm1_scrivi_en(g_acpi.pm1b_cnt);
     for (i = 0; i < 3000000u; i++) __asm__ volatile ("pause");
+
+    /* still here: say what the chipset saw, for whoever photographs it */
+    kprintf("  ACPI: S5 non riuscito: PM1a_CNT 0x%x prima, 0x%x ora, PM1a_STS 0x%x, GPE0 0x%x/%u\n",
+            prima, port_inw((uint16_t)g_acpi.pm1a_cnt),
+            g_acpi.pm1a_evt ? port_inw((uint16_t)g_acpi.pm1a_evt) : 0u,
+            g_acpi.gpe0, g_acpi.gpe0_len);
 }
 
 int acpi_ha_reset(void) { return g_acpi.reset; }

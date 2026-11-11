@@ -7307,7 +7307,14 @@ int32_t sys_mmio_map(InterruptFrame *frame)
      * della memoria usabile (lo ricava da E820 in pmm_init), quindi questo e'
      * il primo indirizzo che RAM non e'. */
     limite_ram = pmm_get_total_pages() * PAGE_SIZE;
-    if (base < limite_ram) {
+    /* ! EXCEPT THE LEGACY HOLE, 0xA0000-0xFFFFF (0.327, voce 99): VGA memory
+     * and the option ROMs. Below the end of RAM, but never RAM: E820 says
+     * reserved and the PMM never hands it out. An IGP has no ROM chip, its
+     * video BIOS (with the PLL reference clock) lives ONLY at 0xC0000; the
+     * check above made it unreadable and sonda.drv -rom failed. Stupid. */
+    if (base >= 0xA0000u && fine <= 0x100000u && fine > base) {
+        /* the legacy hole: fine */
+    } else if (base < limite_ram) {
         klog(LOG_WARN, "SYSCALL mmio_map: PID %u chiede 0x%08x, che e' RAM "
              "(la RAM finisce a 0x%08x) - rifiutato",
              proc->pid, z->fisico, limite_ram);

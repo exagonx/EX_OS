@@ -48,7 +48,7 @@
 #include "accel_proto.h"
 
 /* +0.001 a ogni modifica: `nv50.drv -version` la stampa. */
-EX_VERSIONE("nv50.drv", "0.009");
+EX_VERSIONE("nv50.drv", "0.011");
 
 #define NV_VENDITORE   0x10DE
 
@@ -68,7 +68,7 @@ static Finestra g_fin[] = {
     { 0x614000, 0x1000, 0, 0 },     /* gli orologi delle teste e dei SOR */
     { 0x616000, 0x1000, 0, 0 },     /* le capacita' delle teste */
     { 0x619000, 0x1000, 0, 0 },     /* la VGA ereditata */
-    { 0x61A000, 0x2000, 0, 0 },     /* i DAC */
+    { 0x61A000, 0x3000, 0, 0 },     /* i DAC: tre, l'ultimo a 0x61B000 */
     { 0x61C000, 0x2000, 0, 0 },     /* i SOR: LVDS e digitali */
     /* Il motore 2D (G80InitHW): si mappano solo per -2d... */
     { 0x001000, 0x1000, 0, 1 },     /* 0x1700: dove guarda la finestra PRAMIN */
@@ -298,6 +298,8 @@ static void testa(int t, int tutto)
     }
 }
 
+static int integrata(void);
+
 static int stato(int tutto)
 {
     unsigned int boot0 = rd(0x000000), sel = rd(0x610050), t;
@@ -309,6 +311,9 @@ static int stato(int tutto)
     printf("  0x610200 canale principale         0x%08x\n", rd(0x610200));
     printf("  0x610300 comandi per registri      0x%08x\n", rd(0x610300));
     printf("  0x610304 dato del comando          0x%08x\n", rd(0x610304));
+    for (t = 0; t < 3; t++)
+        printf("  DAC%u 0x%06x 0x%08x  0x%06x 0x%08x\n", t, 0x61A004 + t * 0x800,
+               rd(0x61A004 + t * 0x800), 0x61A00C + t * 0x800, rd(0x61A00C + t * 0x800));
     printf("  SOR0 0x61C004 0x%08x  0x61C030 0x%08x\n", rd(0x61C004), rd(0x61C030));
     printf("  SOR1 0x61C804 0x%08x  0x61C830 0x%08x\n", rd(0x61C804), rd(0x61C830));
     for (t = 0; t < 2; t++)
@@ -317,7 +322,8 @@ static int stato(int tutto)
 
     /* Come in g80_sor.c (GetLVDSNativeMode): 2 nei bit 0-1 = la testa 0 e'
      * sull'LVDS, 2 nei bit 8-9 = la testa 1. */
-    if ((sel & 3) == 2)              printf("Il pannello (LVDS) e' sulla testa 0.\n");
+    if (!integrata())                printf("Teste accese (0x610050): 0x%08x; il monitor sul DAC acceso qui sopra.\n", sel);
+    else if ((sel & 3) == 2)         printf("Il pannello (LVDS) e' sulla testa 0.\n");
     else if ((sel & 0x300) == 0x200) printf("Il pannello (LVDS) e' sulla testa 1.\n");
     else                             printf("Nessuna testa sull'LVDS (0x610050 = 0x%08x).\n", sel);
 
@@ -348,10 +354,15 @@ static int stato(int tutto)
  * appesa e nessuna riga che dica dove: qui si stampa e si va avanti o ci si
  * ferma.
  * ============================================================================= */
+#define RISERVATA   0xe000u         /* G80_RESERVED_VIDMEM */
 #define FB_OFFSET   0x800000u       /* dove sta il framebuffer nuovo, in VRAM */
-#define FB_W        1366u
-#define FB_H        768u
-#define FB_PITCH    5632u           /* 1366*4 = 5464, arrotondato a 256 */
+/* ! THE SIZE IS A VARIABLE SINCE 0.010 (the N210 on the .247, 11/11): the
+ * CQ60's panel keeps 1366x768 as before, -modo LxA sets another one, and the
+ * 2D engine takes it from video_info when the screen is ours. */
+static unsigned int g_fbw = 1366, g_fbh = 768, g_fbpitch = 5632;
+#define FB_W        g_fbw
+#define FB_H        g_fbh
+#define FB_PITCH    g_fbpitch       /* 1366*4 = 5464, arrotondato a 256 */
 
 /* =============================================================================
  * fb_fisico — where the CPU writes the framebuffer (25 October 2026)
@@ -456,12 +467,79 @@ static void calcola_pll(double pclk, int *pna, int *pma, int *pnb, int *pmb, int
 }
 
 static unsigned int g_pclk;         /* kHz, della testa 0 */
+static int          g_dac = -1;     /* -modo: the DAC that drives the VGA, -1 = the panel's SOR0 */
 
-/* G80CrtcSetPClk per la testa 0, e G80SorSetPClk per il SOR0 */
+/* The GT21x (0xa3, 0xa5, 0xa8, 0xaf) have the other PLL: one stage, N/M/PL
+ * (G80CalcPLL2 of xf86-video-nv). The G80/G9x and the MCP7x the two-stage one. */
+static int pll_nuovo(void)
+{
+    unsigned int a = (rd(0) >> 20) & 0x1ff;
+
+    return !(a <= 0xa0 || a == 0xaa || a == 0xac);
+}
+
+static void calcola_pll2(unsigned int pclk, int *pn, int *pm, int *ppl)
+{
+    const int refclk = 27000;
+    int pl, m, migliore = 0x7fffffff, vco = (int)(pclk + pclk / 50), max_vco = 1000000;
+    int alto, basso;
+
+    if (max_vco < vco) max_vco = vco;
+    alto = (max_vco + vco - 1) / (int)pclk;
+    if (alto > 63) alto = 63;
+    if (alto < 1) alto = 1;
+    basso = 500000 / vco;
+    if (basso > 63) basso = 63;
+    if (basso < 1) basso = 1;
+    *pn = *pm = *ppl = 0;
+    for (pl = alto; pl >= basso; pl--)
+        for (m = 1; m <= 255; m++) {
+            int n, f, e;
+
+            if (refclk / m < 25000) break;
+            if (refclk / m > 50000) continue;
+            n = (int)((pclk * (unsigned int)pl * (unsigned int)m + refclk / 2) / refclk);   /* m is 1 here: no overflow */
+            if (n > 255) break;
+            if (n < 8) continue;
+            f = refclk * n / m / pl;
+            e = f > (int)pclk ? f - (int)pclk : (int)pclk - f;
+            /* ! THE MARGIN FIRST (as nv40.drv, 11/11): among the values
+             * within 0.5% the VCO farthest from 500 and 1000 MHz. The
+             * plain best-error one gave 972 MHz for 1024x768: a PLL on the
+             * edge unlocks now and then, and the monitor flickers. Points =
+             * error in kHz, plus a penalty when within 0.5% isn't reached. */
+            {
+                int vco_qui = refclk * n / m, marg, punti;
+
+                marg = vco_qui - 500000 < 1000000 - vco_qui ? vco_qui - 500000 : 1000000 - vco_qui;
+                punti = e <= (int)pclk / 200 ? -marg : 0x1000000 + e;
+                if (punti < migliore) { migliore = punti; *pn = n; *pm = m; *ppl = pl; }
+            }
+        }
+}
+
+/* G80CrtcSetPClk per la testa 0, e G80SorSetPClk per il SOR0 (o
+ * G80DacSetPClk per il DAC di -modo) */
 static void imposta_pll(void)
 {
     unsigned int lo = rd(0x614104), hi = rd(0x614108);
     int na, ma, nb, mb, p;
+
+    if (pll_nuovo()) {
+        int n, m, pl;
+        unsigned int r = rd(0x614104) & 0xffc00000u;
+
+        wr(0x614100, 0x50000610);
+        calcola_pll2(g_pclk, &n, &m, &pl);
+        r |= (unsigned int)pl << 16 | (unsigned int)m << 8 | (unsigned int)n;
+        wr(0x614104, r);
+        wr(0x614200, 0);
+        if (g_dac >= 0) wr(0x614280 + 0x800 * (unsigned int)g_dac, 0);
+        else wr(0x614300, 0x70000 | (g_pclk > 165000 ? 0x101 : 0));
+        TRACCIA("nv50:   PLL testa 0 per %u kHz: N %d, M %d, PL %d -> 0x%08x (%u kHz)\n",
+                g_pclk, n, m, pl, r, m && pl ? 27000u * (unsigned int)n / (unsigned int)m / (unsigned int)pl : 0);
+        return;
+    }
 
     wr(0x614100, 0x10000610);
     lo &= 0xff00ff00;
@@ -472,7 +550,8 @@ static void imposta_pll(void)
     wr(0x614104, lo);
     wr(0x614108, hi);
     wr(0x614200, 0);
-    wr(0x614300, 0x70000 | (g_pclk > 165000 ? 0x101 : 0));
+    if (g_dac >= 0) wr(0x614280 + 0x800 * (unsigned int)g_dac, 0);
+    else wr(0x614300, 0x70000 | (g_pclk > 165000 ? 0x101 : 0));
     TRACCIA("nv50:   PLL testa 0 per %u kHz: A %d/%d, B %d/%d, P %d -> 0x%08x 0x%08x\n",
            g_pclk, na, ma, nb, mb, p, lo, hi);
 }
@@ -642,6 +721,12 @@ static int prova(int motivo_si)
     unsigned int lut, i;
     unsigned int tempi[4];
 
+    /* the panel's timings exist only on the laptops' IGPs: a card with a
+     * VGA output gets its mode from -modo / -avvio LxA */
+    if (!integrata()) {
+        TRACCIA("nv50: niente pannello su questa scheda: per il VGA  nv50.drv -modo 1024x768\n");
+        return g_zitto ? 0 : 1;
+    }
     if (memoria() != 0) return 1;
 
     /* I tempi del pannello, come li ha lasciati il BIOS (in uso). */
@@ -756,6 +841,182 @@ static int prova(int motivo_si)
     return g_scadute ? 2 : 0;
 }
 
+
+/* =============================================================================
+ * -modo LxA[@Hz]: A MODE OF OURS ON THE VGA (the N210 on the .247, 11/11)
+ *
+ * prova() takes the panel's timings from the BIOS; a card with a VGA output
+ * has no panel to copy, so here the timings are VESA's (DMT/CVT, the same
+ * table as nv40.drv), packed as G80CrtcDoModeFixup does, on the DAC the BIOS
+ * left on, head 0, scale off, as G80DacModeSet. The PLL is the one of the
+ * chip (pll_nuovo: the GT21x have a single stage).
+ * ============================================================================= */
+typedef struct {
+    unsigned int  w, h, hz, khz;
+    unsigned int  hss, hse, ht, vss, vse, vt;
+    int           hneg, vneg;
+} Tempi;
+
+static const Tempi TEMPI[] = {
+    {  640,  480, 60,  25175,  656,  752,  800,  490,  492,  525, 1, 1 },
+    {  800,  600, 60,  40000,  840,  968, 1056,  601,  605,  628, 0, 0 },
+    { 1024,  768, 60,  65000, 1048, 1184, 1344,  771,  777,  806, 1, 1 },
+    { 1024,  768, 75,  78750, 1040, 1136, 1312,  769,  772,  800, 0, 0 },
+    { 1152,  864, 75, 108000, 1216, 1344, 1600,  865,  868,  900, 0, 0 },
+    { 1280,  720, 60,  74250, 1390, 1430, 1650,  725,  730,  750, 0, 0 },
+    { 1280,  800, 60,  83500, 1352, 1480, 1680,  803,  809,  831, 1, 0 },
+    { 1280,  960, 60, 108000, 1376, 1488, 1800,  961,  964, 1000, 0, 0 },
+    { 1280, 1024, 60, 108000, 1328, 1440, 1688, 1025, 1028, 1066, 0, 0 },
+    { 1280, 1024, 75, 135000, 1296, 1440, 1688, 1025, 1028, 1066, 0, 0 },
+    { 1360,  768, 60,  85500, 1424, 1536, 1792,  771,  777,  795, 0, 0 },
+    { 1440,  900, 60, 106500, 1520, 1672, 1904,  903,  909,  934, 1, 0 },
+    { 1600, 1200, 60, 162000, 1664, 1856, 2160, 1201, 1204, 1250, 0, 0 },
+    { 1680, 1050, 60, 146250, 1784, 1960, 2240, 1053, 1059, 1089, 1, 0 },
+    { 1920, 1080, 60, 148500, 2008, 2052, 2200, 1084, 1089, 1125, 0, 0 },
+};
+#define N_TEMPI (sizeof(TEMPI) / sizeof(TEMPI[0]))
+
+static const Tempi *tempi_di(const char *s)
+{
+    unsigned int w = 0, h = 0, hz = 0, i;
+    const Tempi *primo = NULL;
+
+    w = (unsigned int)strtoul(s, (char **)&s, 10);
+    if (*s != 'x' && *s != 'X') return NULL;
+    h = (unsigned int)strtoul(s + 1, (char **)&s, 10);
+    if (*s == '@') hz = (unsigned int)strtoul(s + 1, NULL, 10);
+    for (i = 0; i < N_TEMPI; i++)
+        if (TEMPI[i].w == w && TEMPI[i].h == h) {
+            if (!hz || TEMPI[i].hz == hz) return &TEMPI[i];
+            if (!primo) primo = &TEMPI[i];
+        }
+    return hz ? NULL : primo;
+}
+
+static void elenco_modi(void)
+{
+    unsigned int i;
+
+    printf("nv50: i modi che conosco (-modo LxA[@Hz]):\n");
+    for (i = 0; i < N_TEMPI; i++)
+        printf("  %ux%u@%u  (%u kHz)\n", TEMPI[i].w, TEMPI[i].h, TEMPI[i].hz, TEMPI[i].khz);
+}
+
+static int modo_vga(const char *quale, int secondi)
+{
+    const Tempi *t = tempi_di(quale);
+    unsigned int lut, i, y, hbs, hbe, vbs, vbe;
+    VideoCambio  v;
+    VideoInfo    prima;
+
+    if (!t) { printf("nv50: modo '%s' sconosciuto\n", quale); elenco_modi(); return 1; }
+    if (integrata()) {
+        printf("nv50: sulle integrate col pannello c'e' -nativo; -modo e' per le uscite VGA\n");
+        return 1;
+    }
+    if (memoria() != 0) return 1;
+    g_fbw = t->w; g_fbh = t->h; g_fbpitch = (t->w * 4 + 255) & ~255u;
+    if (FB_OFFSET + FB_PITCH * FB_H > g_vram_kb * 1024 - RISERVATA) {
+        printf("nv50: %ux%u non ci sta nei 16 MB che uso\n", t->w, t->h);
+        return 1;
+    }
+    /* the DAC that is on (DPMS bits 0x7f clear): the one the BIOS drives */
+    for (i = 0; i < 3; i++)
+        if ((rd(0x61A004 + i * 0x800) & 0x7f) == 0 && rd(0x61A004 + i * 0x800) != 0) break;
+    if (i == 3) { printf("nv50: nessun DAC acceso dal BIOS: non so dov'e' il monitor\n"); return 1; }
+    g_dac = (int)i;
+    g_pclk = t->khz;
+    TRACCIA("nv50: %ux%u@%u, %u kHz, riga %u byte, DAC%d, framebuffer a +0x%x\n",
+            t->w, t->h, t->hz, t->khz, FB_PITCH, g_dac, FB_OFFSET);
+
+    lut = g_vram_kb * 1024 - 0x5000;
+    if (secondi > 0) motivo();
+    else
+        for (y = 0; y < FB_H; y++) {
+            volatile unsigned int *r = (volatile unsigned int *)(g_vram + FB_OFFSET + y * FB_PITCH);
+            unsigned int x;
+
+            for (x = 0; x < FB_PITCH / 4; x++) r[x] = 0;
+        }
+    tavolozza(lut);
+
+    video_info(&prima);
+    v.fisico = fb_fisico(); v.larghezza = FB_W; v.altezza = FB_H; v.passo = FB_PITCH; v.bit = 32;
+    if (secondi <= 0 && video_cambia(&v) != 0) {
+        printf("nv50: il kernel non passa al framebuffer nuovo (errno %d%s): non tocco la scheda.\n",
+               errno, errno == 16 ? ", la scrivania tiene la grafica: chiudila" : "");
+        return 1;
+    }
+
+    preinit();
+    if (prendi_display() != 0) return 1;
+    for (i = 0; i < 3; i++) if ((int)i != g_dac) C(0x0400 + i * 0x80, 0);
+    C(0x0600, 0);
+    C(0x0640, 0);
+
+    /* G80CrtcDoModeFixup: blank = the visible part's edges */
+    hbs = t->w; hbe = t->ht; vbs = t->h; vbe = t->vt;
+    C(0x0804, t->khz | 0x800000);
+    C(0x0808, 0);
+    C(0x0810, 0);
+    C(0x082C, 0);
+    C(0x0814, t->vt << 16 | t->ht);
+    C(0x0818, (t->vse - t->vss - 1) << 16 | (t->hse - t->hss - 1));
+    C(0x081C, (vbe - t->vss - 1) << 16 | (hbe - t->hss - 1));
+    C(0x0820, (t->vt - t->vss + vbs - 1) << 16 | (t->ht - t->hss + hbs - 1));
+    C(0x0868, FB_H << 16 | FB_W);
+    C(0x086C, FB_PITCH | 0x100000);
+    C(0x0870, 0xCF00);
+    C(0x08A0, 0);                               /* no dither on a VGA */
+    C(0x08A8, 0x40000);
+    C(0x08C0, 0);
+    C(0x08C8, FB_H << 16 | FB_W);
+    C(0x08D4, 0);
+
+    C(0x0860, FB_OFFSET >> 8);
+    C(0x0864, 0);
+    wr(0x610380, 0);
+    wr(0x610384, g_vram_kb * 1024 - 1);
+    wr(0x610388, 0x150000);
+    wr(0x61038C, 0);
+    C(0x0884, (g_vram_kb << 2) - 0x40);
+    C(0x089C, 1);
+    C(0x0880, 0x05000000);
+    C(0x0840, 0xC0000000);
+    C(0x0844, lut >> 8);
+    C(0x085C, 1);
+    C(0x0874, 1);
+
+    /* G80DacModeSet: DPMS on, the DAC on head 0, the sync polarities */
+    {
+        unsigned int o = 0x800 * (unsigned int)g_dac, tmp;
+
+        aspetta(0x61A004 + o, 0x80000000, 0, 1000, "DAC libero");
+        tmp = (rd(0x61A004 + o) & ~0x7fu) | 0x80000000u;
+        wr(0x61A004 + o, tmp);
+        C(0x0400 + 0x80 * (unsigned int)g_dac, 1 | 0x40);
+        C(0x0404 + 0x80 * (unsigned int)g_dac, (t->hneg ? 1u : 0u) | (t->vneg ? 2u : 0u));
+    }
+    C(0x08A4, 0);
+    C(0x08D8, FB_H << 16 | FB_W);
+    C(0x08DC, FB_H << 16 | FB_W);
+
+    C(0x0C40, 0); C(0x0C44, 0); C(0x0C5C, 0); C(0x0C74, 0); C(0x0C9C, 0);
+    C(0x0080, 0);
+
+    if (secondi > 0) {
+        printf("nv50: il motivo a %ux%u per %d secondi%s. Poi lo schermo resta li': il\n"
+               "      modo di prima torna col riavvio (la console non e' stata spostata).\n",
+               FB_W, FB_H, secondi, g_scadute ? " (attese scadute, vedi sopra)" : "");
+        sleep((unsigned int)secondi);
+        return g_scadute ? 2 : 0;
+    }
+    printf("nv50: %ux%u@%u sul DAC%d%s\n", FB_W, FB_H, t->hz, g_dac,
+           g_scadute ? " (con attese scadute, vedi sopra)" : "");
+    (void)prima;
+    return g_scadute ? 2 : 0;
+}
+
 /* =============================================================================
  * IL MOTORE 2D (voce 25 della coda, 23 ottobre 2026)
  *
@@ -797,7 +1058,6 @@ static int prova(int motivo_si)
  * ! QEMU NON HA UNA G80: questa parte si prova solo sul portatile, con
  * `nv50.drv -2dprova`, che disegna, RILEGGE e dice se e' venuto giusto.
  * ============================================================================= */
-#define RISERVATA   0xe000u         /* G80_RESERVED_VIDMEM */
 #define SALTA       8u              /* SKIPS: le prime parole del push buffer */
 #define FMT_24      0xe6u           /* X8R8G8B8: profondita' 24 a 32 bit */
 
@@ -935,6 +1195,10 @@ static int motore_accendi(int verboso)
     /* ! IL FRAMEBUFFER DEVE ESSERE IL NOSTRO: le superfici del motore sono
      * quelle di prova() (8 MB, pitch 5632). Col modo del BIOS il motore
      * disegnerebbe dove nessuno guarda. */
+    if (video_info(&vi) == 0 && fb_nostro(vi.fisico) && vi.bit == 32 && vi.larghezza &&
+        (vi.passo & 255) == 0 && FB_OFFSET + vi.passo * vi.altezza <= g_vram_kb * 1024 - RISERVATA) {
+        g_fbw = vi.larghezza; g_fbh = vi.altezza; g_fbpitch = vi.passo;
+    }
     if (video_info(&vi) != 0 || !fb_nostro(vi.fisico) ||
         vi.larghezza != FB_W || vi.altezza != FB_H || vi.bit != 32) {
         if (verboso)
@@ -1272,6 +1536,15 @@ static int misura_2d(void)
          { if (motore_riempi(0, 0, w, h, giri * 0x010101u) != 0) break; });
     GIRA("motore: copiare schermo -> schermo",
          { if (motore_copia(0, 0, 0, h, w, h) != 0) break; });
+    /* (0.011) where the copy is slow: the shape tells per-row overhead from
+     * bandwidth, the overlap tells the terminal's scroll */
+    GIRA("motore: scorrere di 16 righe", {
+         if (motore_copia(0, 16, 0, 0, w, h) != 0) break; });
+    GIRA("motore: copiare a strisce di 16", {
+         for (j = 0; j < h; j += 16) if (motore_copia(0, j, 0, h + j, w, 16) != 0) break; });
+    GIRA("motore: copiare meta' sinistra", {
+         if (motore_copia(0, 0, w / 2, h, w / 2, h) != 0) break;
+         if (motore_copia(0, h, w / 2, 0, w / 2, h) != 0) break; });
 
     /* ! ON THE INTEGRATED ONES (0xaa/0xac) THE "VRAM" IS RAM, and the BAR1 is
      * a detour: the CPU writes to the card, the card writes back to RAM. The
@@ -1403,6 +1676,10 @@ static void uso(void)
     printf("                          /boot/avvio.sh (-remove lo toglie)\n");
     printf("     nv50.drv -avvio      -nativo zitto, quello di /boot/avvio.sh: su una\n");
     printf("                          macchina senza questa scheda esce e basta\n");
+    printf("     nv50.drv -modi       i modi VESA per le uscite VGA\n");
+    printf("     nv50.drv -provamodo 1024x768 [S]  un modo sul VGA col motivo di prova,\n");
+    printf("                          la console resta dov'e' (torna col riavvio)\n");
+    printf("     nv50.drv -modo 1024x768[@Hz]  il modo sul VGA, e la console ci passa\n");
     printf("     nv50.drv -2dprova    accende il motore 2D, disegna, rilegge e dice\n");
     printf("                          se e' giusto (dopo -nativo)\n");
     printf("     nv50.drv -2dmisura   CPU contro motore: scrivere, leggere, copiare\n");
@@ -1424,10 +1701,32 @@ static void uso(void)
  * la scheda: se avvio.sh non lo accende gia' (la catena della rete), lo si
  * accende nel blocco.
  * ============================================================================= */
-static int installa(int togli)
+static int installa(int togli, const char *modo)
 {
-    char righe[512];
+    char righe[640];
     int  rc = 0;
+
+    /* -install LxA: a card with a VGA output (the N210): the mode, then the
+     * 2D engine for wserver. */
+    if (!togli && modo) {
+        int pci;
+
+        if (getuid() != 0) { printf("nv50: -install solo da root\n"); return 1; }
+        if (!tempi_di(modo)) { printf("nv50: modo '%s' sconosciuto\n", modo); elenco_modi(); return 1; }
+        if (avvio_blocco("nv50.drv", NULL) < 0) rc = -1;
+        pci = avvio_ha_riga("pci.drv") || avvio_ha_riga("/dev/pci.drv");
+        snprintf(righe, sizeof(righe),
+                 "# La scheda NVIDIA G80/GT2xx sull'uscita VGA a %s, poi il motore 2D\n"
+                 "# alla scrivania. Esce zitto dove la scheda non c'e'.\n"
+                 "# `nv50.drv -remove` toglie questo blocco.\n"
+                 "%s"
+                 "nv50.drv -avvio %s\n"
+                 "nv50.drv -2dservizio &\n", modo, pci ? "" : "pci.drv &\n", modo);
+        if (rc == 0) rc = avvio_blocco("nv50.drv", righe);
+        if (rc < 0) { printf("nv50: non riesco a scrivere /boot/avvio.sh (errno %d)\n", errno); return 1; }
+        printf("nv50: in /boot/avvio.sh: al prossimo avvio %s e il motore 2D\n", modo);
+        return 0;
+    }
 
     if (getuid() != 0) { printf("nv50: -install e -remove solo da root\n"); return 1; }
     if (togli) rc = avvio_blocco("nv50.drv", NULL);
@@ -1470,10 +1769,39 @@ int main(int argc, char **argv)
         g_zitto = 1;
         return trova_scheda(&s) == 0 ? 0 : 1;
     }
-    if (argc >= 2 && strcmp(argv[1], "-install") == 0) return installa(0);
-    if (argc >= 2 && strcmp(argv[1], "-remove") == 0)  return installa(1);
+    if (argc >= 2 && strcmp(argv[1], "-install") == 0) return installa(0, argc >= 3 ? argv[2] : NULL);
+    if (argc >= 2 && strcmp(argv[1], "-remove") == 0)  return installa(1, NULL);
+    /* -avvio LxA: -modo from avvio.sh, quiet, nothing if already there */
+    if (argc >= 3 && strcmp(argv[1], "-avvio") == 0) {
+        VideoInfo v;
+
+        g_zitto = 1;
+        if (getuid() != 0 || trova_scheda(&d) != 0) return 0;
+        g_bar0 = d.bar[0];
+        g_bar1 = d.bar[1];
+        if (mappa(0) != 0) return 0;
+        {
+            const Tempi *t = tempi_di(argv[2]);
+
+            if (!t || integrata()) return 0;
+            if (video_info(&v) == 0 && v.fisico == fb_fisico() && v.larghezza == t->w &&
+                v.altezza == t->h && v.bit == 32) return 0;
+        }
+        return modo_vga(argv[2], 0);
+    }
     if (argc >= 2 && strcmp(argv[1], "-avvio") == 0) { g_zitto = 1; argv[1] = "-nativo"; }
     if (argc >= 2 && strcmp(argv[1], "-2dservizio") == 0) g_zitto = 1;
+    if (argc >= 2 && strcmp(argv[1], "-modi") == 0) { elenco_modi(); return 0; }
+    if (argc >= 3 && (strcmp(argv[1], "-modo") == 0 || strcmp(argv[1], "-provamodo") == 0)) {
+        if (getuid() != 0) { printf("nv50: %s solo da root\n", argv[1]); return 1; }
+        if (trova_scheda(&d) != 0) return 1;
+        g_bar0 = d.bar[0];
+        g_bar1 = d.bar[1];
+        TRACCIA("Scheda: %04x:%04x in %02x:%02x.%x, registri a 0x%08x, memoria video a 0x%08x\n",
+               d.venditore, d.dispositivo, d.bus, d.slot, d.funzione, d.bar[0], d.bar[1]);
+        if (mappa(0) != 0) return 1;
+        return modo_vga(argv[2], strcmp(argv[1], "-provamodo") == 0 ? (argc >= 4 ? atoi(argv[3]) : 20) : 0);
+    }
     if (argc < 2 || (strcmp(argv[1], "-stato") != 0 && strcmp(argv[1], "-tutto") != 0 &&
                      strcmp(argv[1], "-prova") != 0 && strcmp(argv[1], "-nativo") != 0 &&
                      strncmp(argv[1], "-2d", 3) != 0)) {

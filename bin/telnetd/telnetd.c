@@ -52,7 +52,7 @@
 #define BARRA_TELNET(t) extaskbar_voce("TELNET", 12, "TELNET " t, 0)
 
 /* +0.001 a ogni modifica: `telnetd -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("telnetd", "0.012");
+EX_VERSIONE("telnetd", "0.013");
 
 /* I comandi del protocollo, quelli che servono. */
 #define IAC     255
@@ -1065,6 +1065,14 @@ int main(int argc, char **argv)
      * che permette di provare una configurazione senza scriverla, e di aprire
      * una porta diversa per un istante senza toccare quella di sempre. */
     if (porta > 0) cfg.porta = porta;
+
+    /* ! WITH -auto, WAIT FOR THE NETWORK: hwconfig puts this line BEFORE the
+     * network card and ip.drv, on purpose (see avvio.sh). rete_richiedi gives
+     * up after 2 s, and on the MCP73 with an rtl8169 (11/11/2026) ip.drv
+     * wasn't there yet: telnetd exited with 1, without a word, and the box
+     * in the other room was unreachable. Stupid. We run with '&' anyway:
+     * three minutes of quiet waiting cost nothing. */
+    if (auto_avvio) ipc_attendi(IP_SERVIZIO, 180000);
 
     pid_ip = rete_richiedi(IP_SERVIZIO);
     if (pid_ip <= 0) return 1;

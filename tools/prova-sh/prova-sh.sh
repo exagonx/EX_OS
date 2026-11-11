@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# tools/prova-sh/prova-sh.sh -- sh 0.011 in QEMU: variables, if, test
+# tools/prova-sh/prova-sh.sh -- sh 0.012 in QEMU: variables, if, test
 #
 # Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>
 # SPDX-License-Identifier: GPL-2.0-or-later
@@ -50,6 +50,6 @@ grep -aq '6 \$? dopo false' "$S" || { echo "  NO 6: \\\$ fra virgolette non e' u
 grep -aq "manca fi alla fine dello script" "$S" && echo "  ok lo script senza fi lo dice" || { echo "  NO messaggio 'manca fi'"; esito=1; }
 grep -aq "dentro lo script rotto" "$S" || { echo "  NO lo script rotto non e' partito"; esito=1; }
 grep -aq "^prova-sh: fine" "$S" || { echo "  NO non e' arrivato alla fine"; esito=1; }
-grep -aq "0\.011" "$S" && echo "  ok sh 0.011" || { echo "  NO la shell del CD non e' la 0.011"; esito=1; }
+grep -aq "0\.012" "$S" && echo "  ok sh 0.012" || { echo "  NO la shell del CD non e' la 0.012"; esito=1; }
 [ $esito = 0 ] && echo "=== [OK] ===" || { echo "=== [NO] ==="; echo "  la seriale: $S"; }
 exit $esito

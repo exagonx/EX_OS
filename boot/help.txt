@@ -503,8 +503,8 @@ le porte USB: cosa c'e', togliere, riprendere
   usb -unplug           ferma una chiavetta prima di toglierla
   usb -refresh          riguarda le porte
 
-[nv50.drv]
-il pannello alla risoluzione nativa sulle NVIDIA G80 (CQ60)
+[nv50.drv nv50 g80 gt218 n210 geforce 210]
+le NVIDIA G80, G9x e GT2xx: il pannello del CQ60 e le schede col VGA
 
   nv50.drv -stato       il display com'e' (sola lettura)
   nv50.drv -nativo      pannello e console a 1366x768 nativi
@@ -517,6 +517,42 @@ il pannello alla risoluzione nativa sulle NVIDIA G80 (CQ60)
 Non sostituisce svga.drv: parte dal modo VESA che svga.drv sceglie
 e porta il pannello al nativo. Su un'altra macchina esce zitto.
 Il motore 2D vuole prima -nativo. In prova: non e' ancora in -install.
+
+Sulle schede con l'uscita VGA (la GeForce 210 / N210, GT218):
+  nv50.drv -modi        i modi VESA che conosce
+  nv50.drv -provamodo 1024x768 20   il modo col motivo di prova; la
+                        console resta dov'era (torna col riavvio)
+  nv50.drv -modo 1024x768[@Hz]   il modo, e la console ci passa
+  nv50.drv -install 1024x768     modo e motore 2D a ogni avvio
+Il modo va sul DAC che il BIOS ha acceso. Sulla N210 a 1024x768 il
+processore scrive lo schermo a 2,9 GB/s e il motore lo riempie a 1,1.
+
+[nv40.drv nv40 geforce 7100 c73 mcp73 nforce 630i]
+le NVIDIA NV4x: GeForce 6 e 7, e le integrate C51, C61, C73
+
+  nv40.drv -stato       chip, memoria video e modo di ogni testa (legge)
+  nv40.drv -bios        la ROM video: limiti dei PLL, uscite, bus I2C
+  nv40.drv -edid        il monitor (dal BIOS all'avvio e dalla DDC)
+  nv40.drv -modi        i modi che conosce (VESA)
+  nv40.drv -prova 1024x768 10   il modo con un motivo di prova per 10
+                        secondi, poi torna a quello di prima
+  nv40.drv -modo 1280x1024@60   il modo, e ci resta
+  nv40.drv -2dprova     il motore 2D disegna, e si rilegge se e' giusto
+  nv40.drv -2dmisura    processore contro motore, in MB/s
+  nv40.drv -2dservizio  il motore alla scrivania (servizio accel2d), con &
+  nv40.drv -2dchiedi    prova il servizio da fuori, come wserver
+  nv40.drv -install 1024x768   il modo e il servizio a ogni avvio
+                        (senza modo solo il servizio); -remove li toglie
+
+Nato sul PC MCP73 (GeForce 7100 integrata, 256 MB presi dalla RAM).
+Le G80 e dopo sono di nv50.drv. Il cambio di modo tocca solo tempi,
+riga, orologio e FIFO, e il kernel sposta la console sul modo nuovo.
+Il motore 2D riempie e copia: sul MCP73 a 1024x768 riempie a 3500 MB/s
+e scorre a 2000. Sulle integrate la memoria video e' RAM: -stato dice
+dove ("La RAM della GPU"), e -modo da' al kernel quell'indirizzo invece
+della BAR1. Sul MCP73 lo schermo si legge 27 volte piu' veloce (187
+MB/s invece di 7) e si scrive a 3000. Il servizio segue i cambi di
+modo fatti con -modo mentre e' acceso.
 
 [cpufreq.drv cpufreq frequenza risparmio]
 la frequenza del processore: piu' bassa quando c'e' poco da fare
@@ -786,6 +822,18 @@ CD di EX-OS (o dal dischetto di soccorso), monta il disco e scrivi nella
 sezione [kernel] di /boot/kernel.cfg la riga  smp = 1  (accesi ma fermi) o
 smp = 0  (solo contati). Poi `hwinfo` dice cosa ha trovato: scrivilo a chi
 sviluppa EX-OS.
+
+USCENDO DA ExWin LO SCHERMO RESTA FERMO sull'ultima immagine, con nv50.drv o
+nv40.drv che hanno cambiato il modo (GeForce 210 e simili): il sistema e' vivo
+(telnet risponde), ma fino al kernel 0.328 tornava al modo testo VGA, che quei
+display ignorano. Dalla 0.329 la console si ridisegna nel framebuffer del
+driver. Si ripara con netupdate -check -yes.
+
+`shutdown -r` SPEGNE INVECE DI RIAVVIARE, o finisce in "Sistema arrestato":
+fino a sh 0.011 il comando interno shutdown non guardava -r. Dalla 0.012 -r
+riavvia; nel frattempo  reboot  fa la cosa giusta. Se `shutdown` lascia la
+macchina accesa con "ACPI: S5 non riuscito", fotografa la riga coi registri
+PM1a e mandala a chi sviluppa EX-OS.
 
 LO SPEGNIMENTO SI FERMA A "Spegnimento fra 3..." (da ExWin o dalla shell),
 col kernel 0.319 e due o piu' processori: il programma che lo chiedeva girava
@@ -1607,6 +1655,14 @@ ferma il sistema senza spegnerlo; smonta le unita' come reboot
 
 [poweroff shutdown]
 ferma e spegne dopo tre secondi; smonta le unita' come reboot
+
+  shutdown                         spegne
+  shutdown -r                      riavvia (come reboot)
+  shutdown -h                      ferma senza spegnere (come halt)
+
+Su un PC vero si spegne con ACPI (S5). Se la macchina resta accesa compare
+`ACPI: S5 non riuscito` con i registri PM1a: fotografarli e segnalarli
+(vedi `help problemi`).
 
 [exit]
 termina la shell

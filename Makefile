@@ -427,10 +427,10 @@ PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exht
 # solo di rimbalzo, perche' la ricetta di exos.iso lo nominava fra le
 # proprie prerequisite. `make all` non lo faceva, e chi costruiva senza
 # passare dalla ISO si ritrovava un driver in meno senza un messaggio.
-DRIVER_CD := ar5k_drv wifisim_drv fetta_drv ne2k_drv pcnet_drv sis900_drv cardbus_drv e1000_drv nforce_drv nv50_drv cpufreq_drv dpms_drv lpt_drv rtl8169_drv ip_drv sb_drv es1371_drv ac97_drv hdaudio_drv sonda_drv mappa_drv ramdisk_drv ehci_drv ohci_drv floppy_drv sis_drv
+DRIVER_CD := ar5k_drv wifisim_drv fetta_drv ne2k_drv pcnet_drv sis900_drv cardbus_drv e1000_drv nforce_drv nv50_drv nv40_drv cpufreq_drv dpms_drv lpt_drv rtl8169_drv ip_drv sb_drv es1371_drv ac97_drv hdaudio_drv sonda_drv mappa_drv ramdisk_drv ehci_drv ohci_drv floppy_drv sis_drv
 
 # I driver che sul floppy NON devono comparire. Serve a `make verify`.
-DRIVER_SOLO_CD := ar5k.drv pci.drv ne2k.drv pcnet.drv nforce.drv nv50.drv cpufreq.drv dpms.drv lpt.drv rtl8169.drv ip.drv sb.drv es1371.drv ac97.drv hdaudio.drv sonda.drv ramdisk.drv ehci.drv ohci.drv floppy.drv sis.drv
+DRIVER_SOLO_CD := ar5k.drv pci.drv ne2k.drv pcnet.drv nforce.drv nv50.drv nv40.drv cpufreq.drv dpms.drv lpt.drv rtl8169.drv ip.drv sb.drv es1371.drv ac97.drv hdaudio.drv sonda.drv ramdisk.drv ehci.drv ohci.drv floppy.drv sis.drv
 
 # Directory di drivers/ che NON producono un .drv, con il perche'. Serve a
 # verifica-programmi, che senza le segnalerebbe come driver dimenticati.
@@ -5510,6 +5510,29 @@ $(NV50_DRV_OUT): $(NV50_DRV_SRC) $(PCI_DRV_PROTO) drivers/accel/accel_proto.h $(
 .PHONY: nv50_drv
 nv50_drv: dirs $(NV50_DRV_OUT)
 
+# --- nv40.drv: NVIDIA NV4x, GeForce 6/7 e le integrate C51/C61/C73 (voce 99) -
+# Passo 1 (11 novembre 2026): -stato e -edid leggono. Nato sul .247 (C73).
+# QEMU non ha NVIDIA: solo sul ferro.
+NV40_DRV_SRC  := drivers/nv40/nv40.c
+NV40_DRV_OUT  := $(BUILD_DRIVERS_CD)/nv40.drv
+NV40_DRV_LD   := drivers/nv40/nv40.ld
+
+$(NV40_DRV_OUT): $(NV40_DRV_SRC) $(PCI_DRV_PROTO) drivers/accel/accel_proto.h $(NV40_DRV_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione driver ring3 nv40.drv ==="
+	@mkdir -p $(BUILD_DRIVERS_CD)
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -I drivers/accel -c $(NV40_DRV_SRC) -o $(BUILD_DRIVERS_CD)/nv40_main.o
+	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/nv40_libc.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/nv40_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(NV40_DRV_LD) \
+	    $(BUILD_DRIVERS_CD)/nv40_start.o \
+	    $(BUILD_DRIVERS_CD)/nv40_main.o  \
+	    $(BUILD_DRIVERS_CD)/nv40_libc.o  \
+	    -o $@
+	@echo "[OK] nv40.drv compilato: $@"
+
+.PHONY: nv40_drv
+nv40_drv: dirs $(NV40_DRV_OUT)
+
 # --- cpufreq.drv: the CPU frequency (voce 78, kernel 0.311, solo CD) ----------
 # The governor is in the kernel (kernel/arch/x86/cpufreq.c); this program shows
 # and sets the mode with SYS_CPUFREQ and has -install/-remove.
@@ -8319,7 +8342,7 @@ BINARI_SOLO_CD := $(SYNC_BIN) $(GUARDIA_BIN) $(WIFID_BIN) $(EXTASKBAR_BIN) $(PRO
 # Il controllo che manca lo fa `verifica-dipendenze-cd` qui sotto.
 DRIVER_SOLO_CD_OUT := $(AR5K_DRV_OUT) $(WIFISIM_OUT) $(FETTA_OUT) $(NE2K_DRV_OUT) $(PCNET_DRV_OUT) \
                       $(SIS900_DRV_OUT) $(CARDBUS_DRV_OUT) \
-                      $(E1000_DRV_OUT) $(NFORCE_DRV_OUT) $(NV50_DRV_OUT) $(CPUFREQ_DRV_OUT) $(DPMS_DRV_OUT) $(LPT_DRV_OUT) $(RTL8169_DRV_OUT) \
+                      $(E1000_DRV_OUT) $(NFORCE_DRV_OUT) $(NV50_DRV_OUT) $(NV40_DRV_OUT) $(CPUFREQ_DRV_OUT) $(DPMS_DRV_OUT) $(LPT_DRV_OUT) $(RTL8169_DRV_OUT) \
                       $(IP_DRV_OUT) \
                       $(SB_DRV_OUT) $(ES1371_DRV_OUT) \
                       $(AC97_DRV_OUT) $(HDAUDIO_DRV_OUT) \

@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.326
+**Versione:** 0.329
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -112,6 +112,31 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### La GeForce 210 col suo motore 2D, un driver per le NV4x, e `shutdown -r` che riavvia (kernel 0.327-0.329, nv50.drv 0.011, nv40.drv 0.005, sh 0.012, voce 99)
+
+- **nv50.drv guida una GT218 dedicata (GeForce 210, N210) sul VGA**: `-modi`, `-provamodo LxA`,
+  `-modo LxA`, `-install LxA` (il modo e il servizio `accel2d` a ogni avvio). Tempi VESA
+  impacchettati come G80CrtcDoModeFixup, il PLL a uno stadio dei GT21x. Visto sul .247
+  (MCP73 + Q9650): 1024x768 pulito, ExWin e Firefox "fluido perfetto". `-2dmisura`: la CPU
+  scrive 2,8 GB/s, il motore riempie 1,1 GB/s e copia solo ~100 MB/s qualunque sia la forma
+  (da capire: probabilmente le superfici lineari). **testato**
+- **nv40.drv 0.005**: il motore 2D delle NV4x (GeForce 7100 IGP del MCP73), la RAM rubata
+  trovata con un segno, `-2dservizio`, `-install`. Il display dell'integrata sfarfalla con
+  bande di FIFO a ogni modo provato: su quella scheda madre la strada e' la N210.
+  **testato, sfarfallio aperto**
+- **Kernel 0.328**: la pagina 0xD000 (mappa E820 di Stage 2, modi VBE, nomi della scheda) la
+  tiene il PMM: con 4 GB di RAM e piu' il kernel la prendeva prima di copiarla, e
+  `svga.drv -lista` diceva "0x0 0 bit". **Kernel 0.327**: `mmio_map` mappa anche
+  0xA0000-0xFFFFF (il BIOS video di un'integrata). **testato**
+- **Kernel 0.329: uscire da ExWin sul framebuffer di un driver** (nv50, nv40) non passa piu'
+  al modo testo VGA 3, che quei display ignorano: lo schermo teneva l'ultimo fotogramma e la
+  macchina sembrava bloccata. Il framebuffer si pulisce e la console si ridisegna li' dentro.
+  **da testare sul .247**
+- **`shutdown -r` riavvia** (sh 0.012): lo `shutdown` interno della shell ignorava -r e
+  spegneva. Lo spegnimento ACPI segue ACPICA (GPE spenti, stati di risveglio azzerati, PM1
+  letto-modificato-scritto, SLP_TYP e poi SLP_EN) e stampa i registri PM1a se la macchina resta
+  accesa (il MCP73 restava acceso). **da testare sul .247**
 
 ### Uno script e il suo figlio in sottofondo non si cancellano piu' le righe (kernel 0.326, sh 0.011, voce 94), e `mount` scrive /proc come proc (kernel 0.325, mount 0.004, voce 93)
 

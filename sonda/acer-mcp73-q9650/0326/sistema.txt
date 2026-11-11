@@ -1,0 +1,693 @@
+ex-os:/> ver
+EX OS (Extensible Operating System)
+Copyright (C) 2025 Graziano Falcone <exagonx@hotmail.com>
+Licenza: GPL 2.0 (GNU General Public License)
+Versione: 0.326 (x86 64-bit)
+
+Shell
+L'interprete di comandi di EX-OS: pipe, redirezioni, lavori in
+background, cronologia e completamento.
+
+Graziano Falcone  -  exagonx@hotmail.com
+
+Memoria di questo programma: 227 KB
+  programma 207 KB, heap 0 KB, pila 20 KB
+  (le librerie condivise non sono contate: sono di tutti)
+ex-os:/> hwinfo
+=============================================================
+ EX-OS - inventario dell'hardware
+=============================================================
+  generato il      2026-11-11 10:49:11
+  generato da      hwinfo
+
+  A cosa serve: raccogliere in un posto solo i dati che servono a
+  scrivere un driver - identificatori su cui agganciarsi, classe,
+  dove rispondono i registri, su quale IRQ, e cosa il BIOS ha gia'
+  acceso. In fondo c'e' l'elenco di cio' che un driver non ce l'ha.
+
+=============================================================
+ PROCESSORE
+=============================================================
+  venditore        GenuineIntel
+  foglia massima   13
+  famiglia         6
+  modello          23
+  revisione        10
+  firma            0x0001067a
+  capacita'        fpu tsc msr pae cx8 apic sep pge cmov clfsh mmx fxsr sse sse2 htt sse3 cx16 sse4_1 
+  CPUID(1).edx     0xbfebfbff
+  CPUID(1).ecx     0x0408e3fd
+
+  Cosa ne discende per il kernel:
+    APIC locale    SI  - l'SMP e' possibile su questa macchina
+    RDTSC          SI  - si possono misurare i tempi senza il PIT
+    SYSENTER       SI  - le chiamate di sistema possono lasciare int 0x80
+
+  nome             Intel(R) Core(TM)2 Quad CPU    Q9650  @ 3.00GHz
+
+=============================================================
+ PROCESSORI
+=============================================================
+  trovati          4
+  elenco da        ACPI, tabella MADT
+  APIC locale      0xfee00000
+  I/O APIC         1, il primo a 0xfec00000
+
+  cpu 0  APIC 0    IN USO   - e' quello su cui gira EX-OS
+                   famiglia 6 modello 23 stepping 10
+  cpu 1  APIC 1    LAVORA   - esegue processi
+                   famiglia 6 modello 23 stepping 10
+  cpu 2  APIC 2    LAVORA   - esegue processi
+                   famiglia 6 modello 23 stepping 10
+  cpu 3  APIC 3    LAVORA   - esegue processi
+                   famiglia 6 modello 23 stepping 10
+
+  Eseguono processi 4 processori su 4 (smp = 2, il predefinito).
+
+=============================================================
+ MEMORIA
+=============================================================
+  convenzionale    640 KB
+  superiore (UMA)  384 KB
+  estesa           3930752 KB
+  totale           3931776 KB (3839 MB), libera 3909596 KB
+  pagina           4096 byte
+
+=============================================================
+ BUS PCI
+=============================================================
+  dispositivi trovati: 28
+
+-------------------------------------------------------------
+  00:00.0  ponte host (northbridge)
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x07c5  (non in tabella)
+    revisione      0xa2
+    classe         06.00.00  (classe.sottoclasse.progIF)
+    sottosistema   0x1025:0x0137
+    IRQ            nessuno assegnato dal BIOS
+    comando        0x0006  [memoria busmaster]
+    stato          0x00a0
+    DRIVER         (non serve)
+    nota           i ponti li configura il BIOS; il sistema non li pilota
+
+-------------------------------------------------------------
+  00:00.1  controller di memoria
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x07cb  (non in tabella)
+    revisione      0xa2
+    classe         05.00.00  (classe.sottoclasse.progIF)
+    sottosistema   0x1025:0x0137
+    IRQ            nessuno assegnato dal BIOS
+    comando        0x0004  [busmaster]
+    stato          0x00a0
+    DRIVER         (non serve)
+    nota           controller di memoria: lo configura il BIOS
+
+-------------------------------------------------------------
+  00:01.0  controller di memoria
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x07cd  (non in tabella)
+    revisione      0xa1
+    classe         05.00.00  (classe.sottoclasse.progIF)
+    sottosistema   0x1025:0x0137
+    IRQ            nessuno assegnato dal BIOS
+    comando        0x0000  [spento]
+    stato          0x0020
+    DRIVER         (non serve)
+    nota           controller di memoria: lo configura il BIOS
+
+-------------------------------------------------------------
+  00:01.1  controller di memoria
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x07ce  (non in tabella)
+    revisione      0xa1
+    classe         05.00.00  (classe.sottoclasse.progIF)
+    sottosistema   0x1025:0x0137
+    IRQ            nessuno assegnato dal BIOS
+    comando        0x0000  [spento]
+    stato          0x0020
+    DRIVER         (non serve)
+    nota           controller di memoria: lo configura il BIOS
+
+-------------------------------------------------------------
+  00:01.2  controller di memoria
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x07cf  (non in tabella)
+    revisione      0xa1
+    classe         05.00.00  (classe.sottoclasse.progIF)
+    sottosistema   0x1025:0x0137
+    IRQ            nessuno assegnato dal BIOS
+    comando        0x0000  [spento]
+    stato          0x0020
+    DRIVER         (non serve)
+    nota           controller di memoria: lo configura il BIOS
+
+-------------------------------------------------------------
+  00:01.3  controller di memoria
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x07d0  (non in tabella)
+    revisione      0xa1
+    classe         05.00.00  (classe.sottoclasse.progIF)
+    sottosistema   0x1025:0x0137
+    IRQ            nessuno assegnato dal BIOS
+    comando        0x0000  [spento]
+    stato          0x0020
+    DRIVER         (non serve)
+    nota           controller di memoria: lo configura il BIOS
+
+-------------------------------------------------------------
+  00:01.4  controller di memoria
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x07d1  (non in tabella)
+    revisione      0xa1
+    classe         05.00.00  (classe.sottoclasse.progIF)
+    sottosistema   0x1025:0x0137
+    IRQ            nessuno assegnato dal BIOS
+    comando        0x0000  [spento]
+    stato          0x0020
+    DRIVER         (non serve)
+    nota           controller di memoria: lo configura il BIOS
+
+-------------------------------------------------------------
+  00:01.5  controller di memoria
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x07d2  (non in tabella)
+    revisione      0xa1
+    classe         05.00.00  (classe.sottoclasse.progIF)
+    sottosistema   0x1025:0x0137
+    IRQ            nessuno assegnato dal BIOS
+    comando        0x0000  [spento]
+    stato          0x0020
+    DRIVER         (non serve)
+    nota           controller di memoria: lo configura il BIOS
+
+-------------------------------------------------------------
+  00:01.6  controller di memoria
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x07d3  (non in tabella)
+    revisione      0xa1
+    classe         05.00.00  (classe.sottoclasse.progIF)
+    sottosistema   0x1025:0x0137
+    IRQ            nessuno assegnato dal BIOS
+    comando        0x0000  [spento]
+    stato          0x0020
+    DRIVER         (non serve)
+    nota           controller di memoria: lo configura il BIOS
+
+-------------------------------------------------------------
+  00:02.0  controller di memoria
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x07d6  (non in tabella)
+    revisione      0xa1
+    classe         05.00.00  (classe.sottoclasse.progIF)
+    sottosistema   0x1025:0x0137
+    IRQ            nessuno assegnato dal BIOS
+    comando        0x0000  [spento]
+    stato          0x0020
+    DRIVER         (non serve)
+    nota           controller di memoria: lo configura il BIOS
+
+-------------------------------------------------------------
+  00:03.0  ponte ISA (southbridge)
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x07d7  (non in tabella)
+    revisione      0xa2
+    classe         06.01.00  (classe.sottoclasse.progIF)
+    sottosistema   0x1025:0x0137
+    IRQ            nessuno assegnato dal BIOS
+    BAR0           0x00004f00  spazio I/O  (inb/outb, serve ioport_bind)
+    comando        0x000f  [io memoria busmaster]
+    stato          0x20a0
+    DRIVER         (non serve)
+    nota           i ponti li configura il BIOS; il sistema non li pilota
+
+-------------------------------------------------------------
+  00:03.1  controller SMBus
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x07d8  (non in tabella)
+    revisione      0xa1
+    classe         0c.05.00  (classe.sottoclasse.progIF)
+    sottosistema   0x1025:0x0137
+    IRQ            11
+    BAR0           0x00004900  spazio I/O  (inb/outb, serve ioport_bind)
+    BAR4           0x00004d00  spazio I/O  (inb/outb, serve ioport_bind)
+    BAR5           0x00004e00  spazio I/O  (inb/outb, serve ioport_bind)
+    comando        0x0001  [io]
+    stato          0x00b0
+    DRIVER         DA SCRIVERE - modello non in tabella
+
+-------------------------------------------------------------
+  00:03.2  controller di memoria
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x07d9  (non in tabella)
+    revisione      0xa1
+    classe         05.00.00  (classe.sottoclasse.progIF)
+    sottosistema   0x1025:0x0137
+    IRQ            nessuno assegnato dal BIOS
+    comando        0x0400  [spento]
+    stato          0x00a0
+    DRIVER         (non serve)
+    nota           controller di memoria: lo configura il BIOS
+
+-------------------------------------------------------------
+  00:03.3  processore
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x07da  (non in tabella)
+    revisione      0xa2
+    classe         0b.40.00  (classe.sottoclasse.progIF)
+    sottosistema   0x1025:0x0137
+    IRQ            7
+    BAR0           0xfea80000  memoria     (serve una mappatura)
+    comando        0x0006  [memoria busmaster]
+    stato          0x00a0
+    DRIVER         DA SCRIVERE - modello non in tabella
+
+-------------------------------------------------------------
+  00:03.4  controller di memoria
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x07c8  (non in tabella)
+    revisione      0xa1
+    classe         05.00.00  (classe.sottoclasse.progIF)
+    sottosistema   0x1025:0x0137
+    IRQ            nessuno assegnato dal BIOS
+    comando        0x0000  [spento]
+    stato          0x0020
+    DRIVER         (non serve)
+    nota           controller di memoria: lo configura il BIOS
+
+-------------------------------------------------------------
+  00:04.0  controller USB
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x07fe  NVIDIA MCP73 USB 1.1 (OHCI)
+    revisione      0xa1
+    classe         0c.03.10  (classe.sottoclasse.progIF)
+    interfaccia    OHCI (USB 1.1, il resto)
+    sottosistema   0x1025:0x0137
+    IRQ            10
+    BAR0           0xfea7f000  memoria     (serve una mappatura)
+    comando        0x0007  [io memoria busmaster]
+    stato          0x00b0
+    DRIVER         /dev/ohci.drv - presente su questo supporto
+    nota           chiavette e dischi USB a piena velocita'
+
+-------------------------------------------------------------
+  00:04.1  controller USB
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x056a  NVIDIA MCP73 USB 2.0 (EHCI)
+    revisione      0xa1
+    classe         0c.03.20  (classe.sottoclasse.progIF)
+    interfaccia    EHCI (USB 2.0)
+    sottosistema   0x1025:0x0137
+    IRQ            11
+    BAR0           0xfea7ec00  memoria     (serve una mappatura)
+    comando        0x0006  [memoria busmaster]
+    stato          0x00b0
+    DRIVER         /dev/ehci.drv - presente su questo supporto
+    nota           chiavette e dischi USB
+
+-------------------------------------------------------------
+  00:08.0  controller IDE
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x056c  NVIDIA MCP73 IDE
+    revisione      0xa1
+    classe         01.01.8a  (classe.sottoclasse.progIF)
+    interfaccia    IDE con bus master (DMA possibile)
+    sottosistema   0x1025:0x0137
+    IRQ            nessuno assegnato dal BIOS
+    BAR4           0x0000ffa0  spazio I/O  (inb/outb, serve ioport_bind)
+    comando        0x0005  [io busmaster]
+    stato          0x00b0
+    DRIVER         (nel kernel)
+    nota           kernel/block/ata.c gestisce l'IDE generico
+
+-------------------------------------------------------------
+  00:09.0  audio ad alta definizione (HDA)
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x07fc  NVIDIA MCP73 HD Audio
+    revisione      0xa1
+    classe         04.03.00  (classe.sottoclasse.progIF)
+    sottosistema   0x1025:0x0137
+    IRQ            7
+    BAR0           0xfea78000  memoria     (serve una mappatura)
+    comando        0x0006  [memoria busmaster]
+    stato          0x00b0
+    DRIVER         /dev/hdaudio.drv - presente su questo supporto
+    nota           HD Audio; sul PC di prova il codec e' un Realtek ALC888
+
+-------------------------------------------------------------
+  00:0a.0  ponte PCI-PCI
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x056d  (non in tabella)
+    revisione      0xa1
+    classe         06.04.01  (classe.sottoclasse.progIF)
+    IRQ            nessuno assegnato dal BIOS
+    comando        0x0007  [io memoria busmaster]
+    stato          0x00b0
+    DRIVER         (non serve)
+    nota           i ponti li configura il BIOS; il sistema non li pilota
+
+-------------------------------------------------------------
+  01:06.0  scheda Ethernet
+-------------------------------------------------------------
+    venditore      0x10ec  Realtek
+    dispositivo    0x8169  Realtek RTL8169/8110 Gigabit
+    revisione      0x10
+    classe         02.00.00  (classe.sottoclasse.progIF)
+    sottosistema   0x10ec:0x8169
+    IRQ            10
+    BAR0           0x0000e800  spazio I/O  (inb/outb, serve ioport_bind)
+    BAR1           0xfebffc00  memoria     (serve una mappatura)
+    comando        0x0007  [io memoria busmaster]
+    stato          0x02b8
+    DRIVER         /dev/rtl8169.drv - presente su questo supporto
+    nota           registri in memoria (BAR1); senza interrupt, si guarda a intervalli
+
+-------------------------------------------------------------
+  01:07.0  controller FireWire
+-------------------------------------------------------------
+    venditore      0x1106  VIA
+    dispositivo    0x3044  (non in tabella)
+    revisione      0xc0
+    classe         0c.00.10  (classe.sottoclasse.progIF)
+    sottosistema   0x1462:0x309d
+    IRQ            11
+    BAR0           0xfebff000  memoria     (serve una mappatura)
+    BAR1           0x0000ec00  spazio I/O  (inb/outb, serve ioport_bind)
+    comando        0x0007  [io memoria busmaster]
+    stato          0x0210
+    DRIVER         DA SCRIVERE - modello non in tabella
+
+-------------------------------------------------------------
+  00:0b.0  ponte PCI-PCI
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x056e  (non in tabella)
+    revisione      0xa1
+    classe         06.04.00  (classe.sottoclasse.progIF)
+    IRQ            nessuno assegnato dal BIOS
+    comando        0x0004  [busmaster]
+    stato          0x0010
+    DRIVER         (non serve)
+    nota           i ponti li configura il BIOS; il sistema non li pilota
+
+-------------------------------------------------------------
+  00:0c.0  ponte PCI-PCI
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x056f  (non in tabella)
+    revisione      0xa1
+    classe         06.04.00  (classe.sottoclasse.progIF)
+    IRQ            nessuno assegnato dal BIOS
+    comando        0x0004  [busmaster]
+    stato          0x0010
+    DRIVER         (non serve)
+    nota           i ponti li configura il BIOS; il sistema non li pilota
+
+-------------------------------------------------------------
+  00:0d.0  ponte PCI-PCI
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x056f  (non in tabella)
+    revisione      0xa1
+    classe         06.04.00  (classe.sottoclasse.progIF)
+    IRQ            nessuno assegnato dal BIOS
+    comando        0x0004  [busmaster]
+    stato          0x0010
+    DRIVER         (non serve)
+    nota           i ponti li configura il BIOS; il sistema non li pilota
+
+-------------------------------------------------------------
+  00:0e.0  controller RAID
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x07f8  NVIDIA MCP73 SATA (RAID)
+    revisione      0xa2
+    classe         01.04.85  (classe.sottoclasse.progIF)
+    sottosistema   0x1025:0x0137
+    IRQ            5
+    BAR0           0x0000d480  spazio I/O  (inb/outb, serve ioport_bind)
+    BAR1           0x0000d400  spazio I/O  (inb/outb, serve ioport_bind)
+    BAR2           0x0000d080  spazio I/O  (inb/outb, serve ioport_bind)
+    BAR3           0x0000d000  spazio I/O  (inb/outb, serve ioport_bind)
+    BAR4           0x0000cc00  spazio I/O  (inb/outb, serve ioport_bind)
+    BAR5           0xfea7c000  memoria     (serve una mappatura)
+    comando        0x0007  [io memoria busmaster]
+    stato          0x00b0
+    DRIVER         (nel kernel)
+    nota           IDE in modo nativo: le porte dai BAR, vedi g_can in kernel/block/ata.c
+
+-------------------------------------------------------------
+  00:0f.0  scheda Ethernet
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x07dc  NVIDIA nForce MCP73 Ethernet
+    revisione      0xa2
+    classe         02.00.00  (classe.sottoclasse.progIF)
+    sottosistema   0x1025:0x0137
+    IRQ            7
+    BAR0           0xfea73000  memoria     (serve una mappatura)
+    BAR1           0x0000c880  spazio I/O  (inb/outb, serve ioport_bind)
+    BAR2           0xfea7e800  memoria     (serve una mappatura)
+    BAR3           0xfea7e400  memoria     (serve una mappatura)
+    comando        0x0007  [io memoria busmaster]
+    stato          0x00b0
+    DRIVER         /dev/nforce.drv - presente su questo supporto
+    nota           registri in memoria (BAR0); senza interrupt, si guarda a intervalli
+
+-------------------------------------------------------------
+  00:10.0  scheda video VGA
+-------------------------------------------------------------
+    venditore      0x10de  NVIDIA
+    dispositivo    0x07e5  (non in tabella)
+    revisione      0xa2
+    classe         03.00.00  (classe.sottoclasse.progIF)
+    sottosistema   0x1025:0x0137
+    IRQ            10
+    BAR0           0xfd000000  memoria     (serve una mappatura)
+    BAR1           0xd0000000  memoria     (serve una mappatura)
+    BAR3           0xfc000000  memoria     (serve una mappatura)
+    comando        0x0007  [io memoria busmaster]
+    stato          0x00b0
+    DRIVER         DA SCRIVERE
+    nota           video: /dev/svga.drv copre VGA/VBE standard, non l'accelerazione
+
+=============================================================
+ DA FARE - dispositivi senza driver
+=============================================================
+  00:03.1  controller SMBus
+            id        10de:07d8  NVIDIA
+            classe    0c.05.00
+  00:03.3  processore
+            id        10de:07da  NVIDIA
+            classe    0b.40.00
+  01:07.0  controller FireWire
+            id        1106:3044  VIA
+            classe    0c.00.10
+  00:10.0  scheda video VGA
+            id        10de:07e5  NVIDIA
+            classe    03.00.00
+            video: /dev/svga.drv copre VGA/VBE standard, non l'accelerazione
+
+=============================================================
+ COSA QUESTO RAPPORTO NON DICE
+=============================================================
+  Le fonti sono quattro e tutte di sola lettura: CPUID, lo spazio
+  di configurazione PCI, la bitmap della memoria e l'elenco dei
+  processori che il kernel ha fatto all'avvio. Niente e' stato
+  sondato scrivendo. Percio' NON compaiono:
+
+  schede ISA      non hanno spazio di configurazione: si trovano
+                  solo scrivendo sulla loro porta di reset, e se
+                  a quell'indirizzo c'e' un'altra scheda le si
+                  scrive addosso. Vanno dichiarate a mano:
+                      /dev/ne2k.drv -p 0x300 -q 3
+
+  dischi ATA      le porte 0x1F0-0x1F7 le sta usando il kernel in
+                  questo istante. Il CONTROLLER si vede qui sopra
+                  fra i dispositivi PCI; i dischi attaccati li
+                  elenca `disk`.
+
+  porte seriali   0x3F8 e' la console su cui esce il log del
+                  kernel: riconoscerne una si fa scrivendo nel
+                  registro scratch, e sulla console attiva vuol
+                  dire sporcare l'unica traccia utile quando
+                  qualcosa va male.
+
+  USB             i dispositivi attaccati a un controller USB non
+                  stanno sul PCI: si vedono solo interrogando il
+                  controller, e serve prima uno stack USB.
+
+  dimensione      quanto e' larga la finestra di un BAR si misura
+  dei BAR         scrivendoci 0xFFFFFFFF e rileggendo. Per quel
+                  tempo il dispositivo decodifica un indirizzo
+                  assurdo - sul controller ATA vuol dire perdere
+                  il disco. La dimensione la sa chi scrive il
+                  driver: viene dalla scheda tecnica.
+
+hwinfo: rapporto scritto in /hwinfo.txt
+ex-os:/> mem
+
+Fascia            totale      usata     libera
+----------------------------------------------------------------------------
+convenzionale        640        556         84  [#################...]  KB
+superiore            384        384          0  [####################]  KB
+estesa           3930752      21232    3909520  [#...................]  KB
+espansa                -          -          -                          KB
+----------------------------------------------------------------------------
+TOTALE           3931776      22172    3909604  [#...................]  KB
+scambio (swap)   4194300          0    4194300  [....................]  KB
+  pagine da 4 KB mandate sul disco dall'avvio: 0, tornate in RAM: 0
+
+convenzionale = sotto 640 KB   superiore = 640 KB-1 MB (BIOS, video)
+estesa        = da 1 MB in su  pagina    = 4096 byte
+
+La memoria ESPANSA (EMS) non esiste su questo sistema, e non e' una
+lacuna: era il meccanismo a banchi commutati con cui 8086 e 286
+superavano il limite di 1 MB del modo reale. EX-OS gira in modo
+protetto con paginazione, dove quel limite non c'e': tutta la RAM
+oltre 1 MB e' gia' direttamente indirizzabile come memoria estesa.
+
+ex-os:/> cpu
+processori al lavoro: 4 (elencati 4)
+  cpu 0   APIC 0   d'avvio: kernel e periferiche, e programmi
+  cpu 1   APIC 1   di tutti
+  cpu 2   APIC 2   di tutti
+  cpu 3   APIC 3   di tutti
+ex-os:/> disk
+
+hd0  canale primario, master
+  Dispositivo non riconosciuto.
+
+hd1  canale primario, slave
+  Dispositivo non riconosciuto.
+
+hd2  canale secondario, master
+  Modello       : Hitachi HTS543225L9A300
+  Seriale       : 081001FB0D00LJC28GEA
+  Firmware      : FBEOC40C
+  Indirizzamento: LBA48, supporta HPA
+  Capacita'     : 488397168 settori (238475 MB)
+  Di fabbrica   : coincide, nessuno spazio nascosto
+  Schema        : MBR
+  Anomalie      : nessuna
+
+  n.  tipo MBR      avv      inizio       MB  filesys.  etichetta   
+  --------------------------------------------------------------------
+  1   Linux         si         2048   201001  ext4      SYSTEM      
+        51456256 blocchi da 8 settori
+  2   swap Linux          411652096     4096  -                     
+  'L' = partizione logica. Il numero e' quello di fdisk: 1-4 sono
+  gli SLOT delle primarie, le logiche partono da 5. Il dispositivo
+  a blocchi si chiama hd<disco>p<numero>.
+  Il filesystem e' dedotto dal NUMERO DI CLUSTER (regola FAT), non
+  dal byte di tipo MBR, che e' solo un suggerimento e puo' mentire.
+
+cd0  (slot ATA 3)  canale secondario, master
+  Lettore ottico ATAPI (CD/DVD)
+  Modello       : ATAPI   DVD A  DH16A6S
+  Firmware      : YA16
+  Si monta come dispositivo a blocchi 'cd0' (ISO 9660,
+  sola lettura): mount cd0 /cdrom
+
+Dispositivi a blocchi
+  nome    tipo           primo LBA     settori        MB
+  ----------------------------------------------------------
+  fd0     floppy                 0        2880         1
+  cd0     CD/DVD                 0           0         0  (sola lettura)
+  hd2     disco                  0   488397168    238475
+  hd2p1   partizione          2048   411650048    201001
+  hd2p2   partizione     411652096     8388608      4096
+  rdb0    in RAM                 0        8192         4
+  Un cd0 con zero settori non e' un lettore rotto: e' un lettore
+  che nessuno ha ancora sondato, o con il vassoio vuoto. La sua
+  lunghezza appartiene al disco inserito, non al dispositivo.
+  Ogni accesso e' relativo al dispositivo e viene RIFIUTATO se
+  esce dalla sua finestra: e' cio' che impedisce a un filesystem
+  di toccare un'altra partizione o la tabella delle partizioni.
+
+Sola lettura: questo programma non modifica nulla.
+I dati vengono dal disco (IDENTIFY DEVICE), non dal BIOS.
+
+ex-os:/> mount
+Punto                    Dispositivo  Filesystem  Accesso
+------------------------ ------------ ----------- -------------
+/                        hd2p1        ext4        lettura/scrittura
+/rdboot                  rdb0         ext2        lettura/scrittura
+/proc                    proc         proc        sola lettura
+ex-os:/> ps
+PID   PADRE UTENTE    STATO   FILE DA       NOME
+1     0     root      pronto  0    (RAM)    idle
+2     0     root      pronto  0    (RAM)    init
+3     1     root      pronto  0    (RAM)    ozio
+4     1     root      esecuz  0    (RAM)    ozio
+5     1     root      esecuz  0    (RAM)    ozio
+6     2     root      blocc.  0    (RAM)    kbd
+52    18    root      blocc.  0    /        /bin/sh
+8     2     root      dorme   0    (RAM)    giornale
+9     7     root      blocc.  0    /rdboot  sh0
+10    7     root      blocc.  0    /rdboot  sh1
+11    7     root      blocc.  0    /rdboot  sh2
+12    7     root      blocc.  0    /rdboot  sh3
+13    7     root      blocc.  0    /rdboot  sh4
+58    52    root      esecuz  0    /        /bin/ps
+17    14    root      blocc.  0    /        /dev/pci.drv
+18    14    root      pronto  0    /        /bin/telnetd
+20    14    root      pronto  0    /        /dev/rtl8169.drv
+21    14    root      esecuz  0    /        /dev/ip.drv
+25    14    root      blocc.  0    /        /dev/ehci.drv
+26    14    root      blocc.  0    /        /dev/ohci.drv
+27    14    root      dorme   0    /        /bin/automount
+ex-os:/> ipcfg
+indirizzo   192.168.0.247
+maschera    255.255.0.0
+gateway     192.168.0.1
+DNS         8.8.8.8
+MAC         00:e0:4c:69:24:c6
+
+IP inviati        393
+IP ricevuti       1838
+scartati          5165
+somme errate      0
+frammenti         0
+ARP chiesti       1
+ARP risposti      208
+echo serviti      0
+UDP inviati       4
+UDP ricevuti      4
+UDP senza porta   1460
+TCP letti          766 byte
+TCP riaperture     0
+TCP finestra a 0   0
+TCP fuori sequenza 0
+TCP buffer pieno   0
+TCP rimandati      0 subito, 0 a tempo scaduto
+TCP code grandi    1
+ex-os:/> usb
+ohci: 1 controller, 8 porte
+  porta 1: memoria di massa che non diventa pronta (lettore vuoto?)  [058f:9360]
+  le altre porte sono vuote
+ehci: 1 controller, 8 porte
+  tutte le porte sono vuote
+ex-os:/> exit
+

@@ -1292,6 +1292,10 @@ void vga_init_grafica(const BootInfo *info)
  * vga_ripristina_testo: fra il cambio dei numeri e il ridisegno chi scrive
  * sulla console disegnerebbe col passo vecchio dentro il framebuffer nuovo.
  * ============================================================================= */
+/* 1 = the framebuffer came from a driver (video_cambia): the mode is the
+ * driver's, and the legacy VGA registers don't reach the screen any more. */
+static int g_fb_del_driver = 0;
+
 int vga_cambia_fb(uint32_t fisico, uint32_t w, uint32_t h, uint32_t pitch,
                   uint32_t bpp)
 {
@@ -1313,8 +1317,12 @@ int vga_cambia_fb(uint32_t fisico, uint32_t w, uint32_t h, uint32_t pitch,
     vga_init_grafica(&b);
     if (eflags & 0x200) __asm__ volatile ("sti");
 
-    return (g_fb == (uint8_t *)paging_framebuffer_virt(fisico) && g_fb_w == w &&
-            g_fb_h == h && g_fb_pitch == pitch) ? 0 : -1;
+    if (g_fb == (uint8_t *)paging_framebuffer_virt(fisico) && g_fb_w == w &&
+        g_fb_h == h && g_fb_pitch == pitch) {
+        g_fb_del_driver = 1;
+        return 0;
+    }
+    return -1;
 }
 
 /* =============================================================================
@@ -1381,6 +1389,43 @@ void vga_ripristina_testo(void)
      * ===================================================================== */
     __asm__ volatile ("pushf; pop %0" : "=r"(eflags));
     __asm__ volatile ("cli");
+
+    /* ! A MODE SET BY A DRIVER IS NOT LEFT FOR MODE 3 (0.329, voce 99). nv50.drv
+     * and nv40.drv drive the display themselves (the N210's DAC, the C73's
+     * CRTC) and the legacy registers don't reach the screen: on the .247 the
+     * monitor kept the desktop's last frame, the console went on in 0xB8000
+     * where nobody looks, and leaving ExWin looked like a frozen machine.
+     * Here the framebuffer IS the known state: wipe it, redraw the consoles. */
+    if (g_fb_del_driver && g_fb) {
+        uint32_t y;
+
+        for (y = 0; y < g_fb_h; y++) {
+            uint32_t *r = (uint32_t *)(g_fb + y * g_fb_pitch), x;
+
+            for (x = 0; x < g_fb_pitch / 4; x++) r[x] = 0;
+        }
+        g_cur_disegnato = 0;
+        for (n = 0; n < VGA_N_CONSOLE; n++) {
+            Console *c = &g_console[n];
+
+            for (i = 0; i < g_totale; i++)
+                c->cella[i] = vga_make_entry(' ', c->colore);
+            c->row = 0;
+            c->col = 0;
+            c->alt_on = 0;
+            c->reg_alto = c->reg_basso = 0;
+        }
+        {
+            Console *c = cons(g_visibile);
+            riversa_tutto(c);
+            cursore_hw(c->cursore_on);
+            vga_update_cursor(c);
+        }
+        if (eflags & (1u << 9)) __asm__ volatile ("sti");
+        klog(LOG_INFO, "VGA: console ridisegnata nel framebuffer del driver (%ux%u): "
+             "il modo e' suo, la VGA non si tocca", g_fb_w, g_fb_h);
+        return;
+    }
 
     /* ! PRIMA SI SMETTE DI CREDERE AL FRAMEBUFFER, POI SI TOCCA LA SCHEDA.
      * L'ordine inverso lasciava una finestra in cui il kernel disegnava

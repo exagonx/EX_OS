@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.326
+**Version:** 0.329
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -110,6 +110,29 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### The GeForce 210 with its 2D engine, a driver for the NV4x, and `shutdown -r` that reboots (kernel 0.327-0.329, nv50.drv 0.011, nv40.drv 0.005, sh 0.012, voce 99)
+
+- **nv50.drv drives a dedicated GT218 (GeForce 210, N210) on VGA**: `-modi`, `-provamodo LxA`,
+  `-modo LxA`, `-install LxA` (the mode and the `accel2d` service at every boot). VESA timings
+  packed as G80CrtcDoModeFixup does, the single-stage PLL of the GT21x. Seen on the .247
+  (MCP73 + Q9650): 1024x768 clean, ExWin and Firefox "smooth, no jerks". `-2dmisura`: the
+  CPU writes 2.8 GB/s, the engine fills 1.1 GB/s and copies only ~100 MB/s whatever the
+  shape (being looked at: probably the linear surfaces). **tested**
+- **nv40.drv 0.005**: the 2D engine of the NV4x (GeForce 7100 IGP of the MCP73), its stolen
+  RAM found with a marker, `-2dservizio`, `-install`. The IGP's display flickers with FIFO
+  bands at every mode tried: on that board the N210 is the way. **tested, flicker open**
+- **Kernel 0.328**: the page 0xD000 (Stage 2's E820 map, VBE modes, card strings) is kept by
+  the PMM: with 4 GB of RAM and more the kernel took it before copying it, and
+  `svga.drv -lista` said "0x0 0 bit". **Kernel 0.327**: `mmio_map` maps 0xA0000-0xFFFFF too
+  (the video BIOS of an IGP). **tested**
+- **Kernel 0.329: leaving ExWin on a driver's framebuffer** (nv50, nv40) no longer goes to VGA
+  text mode 3, which those displays ignore — the screen kept the last frame and the machine
+  looked frozen. The framebuffer is wiped and the console redrawn in it. **to be tested on the .247**
+- **`shutdown -r` reboots** (sh 0.012): the shell's built-in `shutdown` ignored -r and powered
+  off. The ACPI power-off follows ACPICA (GPEs off, wake status cleared, PM1 control
+  read-modify-write, SLP_TYP then SLP_EN), and prints the PM1a registers if the machine stays
+  on (the MCP73 did). **to be tested on the .247**
 
 ### A script and its background child no longer wipe each other's lines (kernel 0.326, sh 0.011, voce 94), and `mount` shows /proc as proc (kernel 0.325, mount 0.004, voce 93)
 

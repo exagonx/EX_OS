@@ -77,6 +77,14 @@ uint32_t pmm_get_total_pages(void);
  * come from the RAM above 4 GB while there is some, then from the rest; at
  * 32 bit this is pmm_alloc_page. PMM_OLTRE_RAM(a): «a is not RAM» (a device,
  * MMIO) - at 32 bit exactly the old test against the top of RAM. */
+/* ! THE LEGACY HOLE 0xA0000-0xFFFFF IS NOT RAM (0.327): VGA memory and the
+ * option ROMs, below the top of RAM. mmio_map gives it to a driver (the
+ * video BIOS of an IGP); when the driver died, the teardown took those pages
+ * for RAM, and being PG_FISSA, for DMA: "16 pagine DMA di un driver finito
+ * restano fuori uso" at every nv40.drv. Without PG_FISSA it would have
+ * freed 0xC0000 into the PMM. Fucked either way. */
+#define  PMM_BUCO_VGA(a)        ((a) >= 0xA0000u && (a) < 0x100000u)
+
 #if defined(__x86_64__)
 paddr_t  pmm_alloc_page_utente(void);
 int      pmm_e_ram(paddr_t a);
@@ -87,7 +95,7 @@ uint64_t pmm_alta_fine(void);
 #define  PMM_E_RAM_SOTTO(a, r)  pmm_e_ram(a)
 #else
 #define  pmm_alloc_page_utente  pmm_alloc_page
-#define  PMM_OLTRE_RAM(a)       ((a) >= pmm_get_total_pages() * PAGE_SIZE)
+#define  PMM_OLTRE_RAM(a)       ((a) >= pmm_get_total_pages() * PAGE_SIZE || PMM_BUCO_VGA(a))
 #define  PMM_E_RAM_SOTTO(a, r)  ((a) < (r))
 #endif
 int      pmm_is_page_free(paddr_t addr);

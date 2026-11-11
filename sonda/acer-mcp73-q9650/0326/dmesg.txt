@@ -1,0 +1,946 @@
+ex-os:/> dmesg
+  ================================================
+EX OS (Extensible Operating System)
+Copyright (C) 2025 Graziano Falcone <exagonx@hotmail.com>
+Licenza: GPL 2.0 (GNU General Public License)
+Versione: 0.326 (x86 64-bit)
+  ================================================
+
+[INFO]  Kernel avviato in Long Mode a 64 bit
+[INFO]  Verifica BootInfo da Stage 2...
+[INFO]  BootInfo verificata (magic OK: 0x4d594f53)
+[INFO]  --- Informazioni Sistema ---
+[INFO]    Drive di boot : 0x80
+[INFO]    RAM convenz.  : 640 KB
+[INFO]    RAM estesa    : 65535 KB (63 MB)
+[INFO]    RAM totale    : 66175 KB (64 MB)
+[INFO]    Entry E820    : 12
+[INFO]    Kernel base   : 0x00100000
+[INFO]    Kernel end    : 0x00247f54
+[INFO]    Kernel size   : 1343316 byte (1311 KB)
+[INFO]    Video         : 800x600 32 bpp, framebuffer 0xd0000000, 3200 byte/riga
+[INFO]  ----------------------------
+[INFO]  [PASSO 5] Installazione GDT...
+[INFO]  [PASSO 5] GDT OK
+[INFO]  [PASSO 6] Installazione IDT...
+[INFO]  [PASSO 6] IDT OK
+[INFO]  [PASSO 7] Installazione ISR...
+[INFO]  ISR: handler installati, tutti gli IRQ mascherati
+[INFO]  [PASSO 7] ISR OK
+[INFO]  [PASSO 7b] Inizializzazione FPU x87...
+[INFO]  FPU: x87 presente, salvataggio con FXSAVE (512 byte per processo)
+[INFO]  CPU: cpuid mmx sse sse2 sse3 cmov
+[INFO]  Entropia: RDRAND assente, 0 bit all'avvio
+[INFO]  TSC: 3000.057 MHz (150002856 cicli in 50 ms)
+[INFO]  [PASSO 7b] FPU OK
+[INFO]  RD: rdboot decompresso: 663624 -> 4194304 byte a 0x00600000
+[INFO]  [PASSO 8] Inizializzazione Physical Memory Manager...
+[INFO]  PMM: inizializzazione Physical Memory Manager...
+[INFO]  PMM: RAM massima rilevata: 0xbffa0000 (3071 MB)
+[INFO]  PMM: pagine totali: 786336 (bitmap: 98304 byte)
+[INFO]  PMM: bitmap a 0x00248000 (dimensione: 98304 byte)
+[INFO]  PMM: riferimenti a 0x00260000 (786432 byte, 1 per pagina)
+[INFO]  PMM: kernel+bitmap+riferimenti protetti: 0x00100000 - 0x00320000
+[INFO]  PMM: sistema di base protetto: 0x00600000 - 0x00a00000
+[INFO]  PMM: RAM oltre i 4 GB: 768 MB in 196608 pagine (bitmap 24 KB)
+[INFO]  PMM: inizializzazione completata
+[INFO]  PMM: pagine libere  : 784600 (3064 MB)
+[INFO]  PMM: pagine usate   : 1736 (6944 KB)
+[INFO]  PMM: pagine totali  : 786336 (3071 MB)
+[INFO]  [PASSO 8] PMM OK - 784600 pagine libere (3064 MB)
+[INFO]  [PASSO 9] Inizializzazione paginazione...
+[INFO]  PAGING: inizializzazione (quattro livelli)...
+[INFO]  PAGING: RAM 0x0 - 0xbfffffff su se stessa (3072 MB): 4 MB a pagine da 4 KB, 1534 blocchi da 2 MB
+[INFO]  PAGING: CR3 = 0x00185000, tabelle del kernel in uso
+[INFO]  PAGING: spezzamento provato su 0xbfe00000 - le traduzioni coincidono
+[INFO]  PAGING: mappa diretta a 0x18000000000: 3840 MB di RAM in 1920 blocchi da 2 MB (4 PD); tabelle delle pagine da tutta la RAM
+[INFO]  [PASSO 9] Paginazione OK (CR0.PG=1)
+[INFO]  PAT: voce 1 = WC (0x0007040600070106): il framebuffer si mappa combinabile in scrittura
+[INFO]  MTRR: 8 fasce variabili, WC si, abilitati, predefinito UC (non cacheabile)
+[INFO]  MTRR:   [0] 0x00000000  2097152 KB  WB (write-back)
+[INFO]  MTRR:   [1] 0x80000000  1048576 KB  WB (write-back)
+[INFO]  MTRR:   [2] 0xc0000000  262144 KB  WB (write-back)
+[INFO]  MTRR:   [3] 0x00000000  524288 KB  WB (write-back)
+[INFO]  MTRR:   [4] 0x20000000  262144 KB  WB (write-back)
+[INFO]  MTRR: framebuffer 0xd0000000, 2048 KB combinabili in scrittura (fascia 5 di 8)
+[INFO]  VGA: console grafica 100x37 caratteri (800x600 pixel, 32 bpp)
+[INFO]  [PASSO 9b] Inizializzazione heap kernel...
+[INFO]  KMALLOC: inizializzazione heap kernel...
+[INFO]  KMALLOC: heap base = 0x00400000
+[INFO]  KMALLOC: heap inizializzato (64 KB iniziali)
+[INFO]  KMALLOC: blocco iniziale a 0x04000010 (65480 byte payload)
+[INFO]  KMALLOC statistiche:
+[INFO]    Heap base   : 0x00400000 (nominale)
+[INFO]    Heap size   : 64 KB
+[INFO]    Blocchi lib.: 1 (65480 byte)
+[INFO]    Allocazioni : 0 totali
+[INFO]    Liberazioni : 0 totali
+[INFO]    Regioni     : 1 (letture fuori evitate: 0 in coda a una regione, 0 fuori dalla prima)
+[INFO]  [PASSO 9b] Heap kernel OK
+[INFO]  [PASSO 10] Inizializzazione scheduler preemptive...
+[INFO]  SCHED: inizializzazione scheduler preemptive...
+[INFO]  SCHED: pile del kernel nella finestra 0x0000010000000000, da tutta la RAM
+[INFO]  CFG: lettura /boot/kernel.cfg...
+[WARN]  CFG: /boot/kernel.cfg non trovato, uso valori default
+[INFO]  SCHED: 64 posti per processi e fili, fino a 24568
+[INFO]  SCHED: processo creato PID=1 'idle' entry=0x001155c0 prio=0 (kernel)
+[INFO]  SCHED: idle task creato (PID 1)
+[INFO]  SCHED: processo creato PID=2 'init' entry=0x001187c0 prio=0 (kernel)
+[INFO]  SCHED: init/reaper task creato (PID 2)
+[INFO]  SCHED: scheduler inizializzato, idle task attivo
+[INFO]  PAGING: CR0.WP acceso (copia su scrittura)
+[INFO]  [PASSO 10] Scheduler OK (100Hz, round-robin, 5 livelli priorita')
+[INFO]  [PASSO 11] Inizializzazione syscall interface (int 0x80)...
+[INFO]  SYSCALL: inizializzazione tabella...
+[INFO]  SYSCALL: 144 syscall registrate (int 0x80)
+[INFO]  [PASSO 11] Syscall OK
+[INFO]  [PASSO 12] Abilitazione interrupt...
+[INFO]  [PASSO 13] Avvio da disco (0x80): FDC non sondato
+[INFO]  [PASSO 13a] Rilevamento dischi ATA/IDE...
+[INFO]  ATA: bus master IDE a 0xffa0 (PCI 0:8.0)
+[INFO]  ATA: canale nativo 2 a 0xd480/0xd402, in PIO (bus master 0xcc00 non usato; PCI 0:14.0)
+[INFO]  ATA: canale nativo 3 a 0xd080/0xd002, in PIO (bus master 0xcc08 non usato; PCI 0:14.0)
+[INFO]  ATA: rilevamento unita' sui canali primario e secondario...
+[WARN]  ATA: canale 0 master: firma sconosciuta (0x6c 0x6c)
+[WARN]  ATA: canale 0 slave: firma sconosciuta (0x6c 0x6c)
+[INFO]  ATA: canale 2 master: 'Hitachi HTS543225L9A300' 238475 MB LBA48
+[INFO]  ATA: hd2 e' sul canale nativo 2 (0xd480), unita' 0
+[INFO]  ATA: canale 3 master: lettore ottico ATAPI ATAPI   DVD A  DH16A6S
+[WARN]  ATA: i quattro posti sono presi: il canale nativo 3 non si guarda oltre
+[INFO]  [PASSO 13a] ATA: 1 disco/dischi rigidi
+[INFO]  ATAPI: lettore ottico su canale 3 master
+[INFO]  [PASSO 13a] ATAPI: 1 lettore/i CD-DVD
+[INFO]  BLK: 5 dispositivi a blocchi registrati
+[INFO]  BLK: volume in RAM a 0x00600000, 8192 settori
+[INFO]  BLK: cache di 2048 settori a 0x00400000
+[INFO]  BLK: cache delle pagine fino a 383 MB
+[INFO]  EXT2: montato dispositivo 3: 51456256 blocchi da 4096 byte, 12869632 inode da 256 byte, 1571 gruppi, 'SYSTEM'
+[INFO]  VFS: root '/' su hd2p1 (ext2, avvio da disco 0x80)
+[INFO]  EXT2: montato dispositivo 5: 4096 blocchi da 1024 byte, 1024 inode da 128 byte, 1 gruppi, 'rdboot'
+[WARN]  VFS: sistema di base su /rdboot (rdb0, ext2)
+[INFO]  ext4.mod 0.005: ext2, ext3 and ext4 writing
+[INFO]  EXT2: write module ext4.mod registered
+[INFO]  ext3: 'SYSTEM': journal of 32254 blocks, 64 per transaction
+[INFO]  VFS: / (hd2p1) is now read/write
+[INFO]  VFS: /rdboot (rdb0) is now read/write
+[INFO]  MODULO: ext4.mod loaded (81920 bytes)
+[INFO]  [PASSO 13b] Lettura /boot/kernel.cfg...
+[INFO]  CFG: lettura /boot/kernel.cfg...
+[INFO]  CFG: configurazione caricata:
+[INFO]    loglevel  = 3
+[INFO]    timer_hz  = 100
+[INFO]    verbose   = 0
+[INFO]    shell     = /bin/sh
+[INFO]    moduli    = kbd (1)
+[INFO]    modulo[0]: kbd = /dev/kbd.drv
+[INFO]    env[0]: OSNAME = EX OS
+[INFO]    env[1]: OSVER = 0.326
+[INFO]    env[2]: AUTHOR = Graziano Falcone
+[INFO]    env[3]: PATH = /bin:/dev:/exos/bin:/rdboot/bin:/rdboot/dev
+[INFO]    env[4]: HOME = /
+[INFO]    env[5]: TERM = vga
+[INFO]    env[6]: TMPDIR = /
+[INFO]  [PASSO 13b] Configurazione caricata
+[INFO]  SCHED: processo creato PID=3 'ozio' entry=0x001155c0 prio=0 (kernel)
+[INFO]  SCHED: processo creato PID=4 'ozio' entry=0x001155c0 prio=0 (kernel)
+[INFO]  SCHED: processo creato PID=5 'ozio' entry=0x001155c0 prio=0 (kernel)
+[INFO]  SMP: 4 processori (ACPI (MADT)), 3 in piu' accesi, 3 dei quali lavorano
+[INFO]  ACPI: FADT a 0xbffa0200, PM1a_CNT 0x4004, PM1b_CNT 0x0, SMI_CMD 0x442e/e1
+[INFO]  ACPI: S5 (spegnimento) SLP_TYP a=7 b=0
+[INFO]  ACPI: nessun registro di reset (FADT revisione 1, 132 byte, flag 0x1a5, spazio 1)
+[INFO]  CPUFREQ: nessun controllo della frequenza (P-state non dichiarati o processore che non conosco), famiglia 6h modello 17h
+[INFO]  ext3: 'SYSTEM': commit 0 per operazione, 0 giornale pieno o 5 s, 0 chiusura/fsync, 0 sync; 0 blocchi
+[INFO]  VFS: smontato /
+[WARN]  VFS: la radice e' il sistema di base (rdb0): il disco di sistema si puo' modificare
+[WARN]  [PASSO 13d] il disco di sistema hd2p1 si monta dopo l'avvio, dal sistema di base
+[INFO]  SWAP: 'hd2p2' attiva: 1048575 slot da 4 KB (4095 MB), elenco di 131072 byte
+EX OS 0.326 (Extensible Operating System) - Copyright (C) 2025 Graziano Falcone - GPL 2.0
+
+  Avvio silenzioso: 7 problema/i durante l'inizializzazione
+[WARN]  CFG: /boot/kernel.cfg non trovato, uso valori default
+[WARN]  ATA: canale 0 master: firma sconosciuta (0x6c 0x6c)
+[WARN]  ATA: canale 0 slave: firma sconosciuta (0x6c 0x6c)
+[WARN]  ATA: i quattro posti sono presi: il canale nativo 3 non si guarda oltre
+[WARN]  VFS: sistema di base su /rdboot (rdb0, ext2)
+[WARN]  VFS: la radice e' il sistema di base (rdb0): il disco di sistema si puo' modificare
+[WARN]  [PASSO 13d] il disco di sistema hd2p1 si monta dopo l'avvio, dal sistema di base
+
+[INFO]  [PASSO 14] Inizializzazione driver TTY...
+[INFO]  TTY: inizializzazione driver...
+[INFO]  TTY: output VGA pronto, sorgente input da definire
+[INFO]  TTY: ring buffer input 512 byte
+[INFO]  [PASSO 14] TTY OK (output VGA)
+[INFO]  [PASSO 14b] Caricamento driver come processi ring3...
+[INFO]  SCHED: processo creato PID=6 'kbd' entry=0x00000000 prio=3 (user)
+[INFO]  ELF: caricamento '/rdboot/dev/kbd.drv'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xa2a0 filesz=0xa2a0 flags=0x5
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800b000 memsz=0x76ac filesz=0x1d0 flags=0x6
+[INFO]  ELF: stack utente 0xfffed000 - 0xfffef000 impegnato (8 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08013000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/rdboot/dev/kbd.drv' caricato con successo, entry=0x08000000
+[INFO]  [PASSO 14b] Driver 'kbd' (/rdboot/dev/kbd.drv) avviato: PID=6 entry=0x08000000
+[INFO]  [PASSO 14b] Caricamento driver completato
+[INFO]  TTY: input dal servizio ring3 'kbd' via IPC
+[INFO]  [PASSO 14c] Tastiera: driver ring3 'kbd'
+[INFO]  SCHED: processo creato PID=7 'sistema' entry=0x00157210 prio=2 (kernel)
+[INFO]  SCHED: processo creato PID=8 'giornale' entry=0x00156980 prio=2 (kernel)
+[INFO]  Avvio scheduler - sblocco timer e cessione controllo.
+[INFO]  SCHED: avvio - sblocco IRQ0, 8 processi pronti
+[INFO]  SYSCALL ipc_register('kbd') PID=6 -> 0
+[INFO]  SYSCALL ioport_bind(base=0x60, count=5) PID=6 [finestra 1]
+[INFO]  EXT2: montato dispositivo 3: 51456256 blocchi da 4096 byte, 12869632 inode da 256 byte, 1571 gruppi, 'SYSTEM'
+[INFO]  SYSCALL irq_bind(irq=1) PID=6 -> 0
+[INFO]  ext3: 'SYSTEM': journal of 32254 blocks, 64 per transaction
+[WARN]  VFS: hd2p1 e' di nuovo la radice, sopra il sistema di base
+[INFO]  VFS: montato hd2p1 su / (ext2, lettura/scrittura)
+[INFO]  [PASSO 14b] Caricamento driver come processi ring3...
+[INFO]  [PASSO 14b] Driver che mancavano, dal disco di sistema...
+[INFO]  [PASSO 14b] Caricamento driver completato
+[INFO]  [PASSO 13d] Montaggi automatici: 1 da applicare
+[INFO]  SYSCALL irq_bind(irq=12) PID=6 -> 0
+[INFO]  [PASSO 13d] 'cd0' su '/cdrom': nessun disco nel lettore, montaggio saltato
+[INFO]  [PASSO 13d] 0 montaggi su 1 riusciti (1 saltati)
+[INFO]  [PASSO 15] Avvio di 5 shell (una per console): /bin/sh
+[INFO]  SCHED: processo creato PID=9 'sh0' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/rdboot/bin/login'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xbda0 filesz=0xbda0 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800c000 (12 pagine, file@0x1000, dati fino a 0x0800bda0)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800c000 memsz=0x68c0 filesz=0x1b4 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800c000-0x08013000 (7 pagine, file@0xd000, dati fino a 0x0800c1b4)
+[INFO]  ELF: stack utente 0xfffed000 - 0xfffef000 impegnato (8 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08013000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/rdboot/bin/login' caricato con successo, entry=0x08000000
+[INFO]  [PASSO 15] Console 0: shell '/rdboot/bin/login' caricata (PID 9, entry=0x08000000 stack=0xfffeefe0)
+[INFO]  SCHED: processo creato PID=10 'sh1' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/rdboot/bin/login'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xbda0 filesz=0xbda0 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800c000 (12 pagine, file@0x1000, dati fino a 0x0800bda0)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800c000 memsz=0x68c0 filesz=0x1b4 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800c000-0x08013000 (7 pagine, file@0xd000, dati fino a 0x0800c1b4)
+[INFO]  ELF: stack utente 0xfffed000 - 0xfffef000 impegnato (8 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08013000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/rdboot/bin/login' caricato con successo, entry=0x08000000
+[INFO]  [PASSO 15] Console 1: shell '/rdboot/bin/login' caricata (PID 10, entry=0x08000000 stack=0xfffeefe0)
+[INFO]  SCHED: processo creato PID=11 'sh2' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/rdboot/bin/login'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xbda0 filesz=0xbda0 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800c000 (12 pagine, file@0x1000, dati fino a 0x0800bda0)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800c000 memsz=0x68c0 filesz=0x1b4 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800c000-0x08013000 (7 pagine, file@0xd000, dati fino a 0x0800c1b4)
+[INFO]  ELF: stack utente 0xfffed000 - 0xfffef000 impegnato (8 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08013000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/rdboot/bin/login' caricato con successo, entry=0x08000000
+[INFO]  [PASSO 15] Console 2: shell '/rdboot/bin/login' caricata (PID 11, entry=0x08000000 stack=0xfffeefe0)
+[INFO]  SCHED: processo creato PID=12 'sh3' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/rdboot/bin/login'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xbda0 filesz=0xbda0 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800c000 (12 pagine, file@0x1000, dati fino a 0x0800bda0)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800c000 memsz=0x68c0 filesz=0x1b4 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800c000-0x08013000 (7 pagine, file@0xd000, dati fino a 0x0800c1b4)
+[INFO]  ELF: stack utente 0xfffed000 - 0xfffef000 impegnato (8 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08013000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/rdboot/bin/login' caricato con successo, entry=0x08000000
+[INFO]  [PASSO 15] Console 3: shell '/rdboot/bin/login' caricata (PID 12, entry=0x08000000 stack=0xfffeefe0)
+[INFO]  SCHED: processo creato PID=13 'sh4' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/rdboot/bin/login'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xbda0 filesz=0xbda0 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800c000 (12 pagine, file@0x1000, dati fino a 0x0800bda0)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800c000 memsz=0x68c0 filesz=0x1b4 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800c000-0x08013000 (7 pagine, file@0xd000, dati fino a 0x0800c1b4)
+[INFO]  ELF: stack utente 0xfffed000 - 0xfffef000 impegnato (8 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08013000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/rdboot/bin/login' caricato con successo, entry=0x08000000
+[INFO]  [PASSO 15] Console 4: shell '/rdboot/bin/login' caricata (PID 13, entry=0x08000000 stack=0xfffeefe0)
+[INFO]  SCHED: PID 7 'sistema' terminato con codice 0
+[INFO]  SYSCALL spawn('/bin/sh') argc=3 envc=0 PID_parent=9
+[INFO]  SCHED: processo creato PID=14 '/bin/sh' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/sh'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xc510 filesz=0xc510 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800d000 (13 pagine, file@0x1000, dati fino a 0x0800c510)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800d000 memsz=0x26890 filesz=0x10 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800d000-0x08034000 (39 pagine, file@0xe000, dati fino a 0x0800d010)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08034000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/sh' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 14 (entry=0x08000000 usp=0xfffeef80) parent=9
+[INFO]  PF: stack di PID 14 '/bin/sh' cresciuto a 0xfffeb000 (16 KB, ring3)
+[INFO]  PF: stack di PID 14 '/bin/sh' cresciuto a 0xfffea000 (20 KB, ring3)
+[INFO]  SYSCALL spawn('/bin/extaskbar') argc=2 envc=7 PID_parent=14
+[INFO]  SCHED: processo creato PID=15 '/bin/extaskbar' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/extaskbar'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xd060 filesz=0xd060 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800e000 (14 pagine, file@0x1000, dati fino a 0x0800d060)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800e000 memsz=0x28f6c filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800e000-0x08037000 (41 pagine, file@0xf000, dati fino a 0x0800e130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08037000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/extaskbar' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 15 (entry=0x08000000 usp=0xfffeeec0) parent=14
+[INFO]  SYSCALL exit(0) PID=15
+[INFO]  SCHED: PID 15 '/bin/extaskbar' terminato con codice 0
+[INFO]  SYSCALL spawn('/dev/svga.drv') argc=2 envc=7 PID_parent=14
+[INFO]  SCHED: processo creato PID=16 '/dev/svga.drv' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/dev/svga.drv'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xb640 filesz=0xb640 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800c000 (12 pagine, file@0x1000, dati fino a 0x0800b640)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800c000 memsz=0x22aac filesz=0x250 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800c000-0x0802f000 (35 pagine, file@0xd000, dati fino a 0x0800c250)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x0802f000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/dev/svga.drv' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 16 (entry=0x08000000 usp=0xfffeeec0) parent=14
+[INFO]  SYSCALL spawn('/dev/pci.drv') argc=1 envc=7 PID_parent=14
+[INFO]  SCHED: processo creato PID=17 '/dev/pci.drv' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/dev/pci.drv'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0x5040 filesz=0x5040 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x08006000 (6 pagine, file@0x1000, dati fino a 0x08005040)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x08006000 memsz=0x314c filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x08006000-0x0800a000 (4 pagine, file@0x7000, dati fino a 0x08006130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x0800a000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/dev/pci.drv' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 17 (entry=0x08000000 usp=0xfffeeed0) parent=14
+[INFO]  SYSCALL ioport_bind(base=0xcf8, count=8) PID=17 [finestra 1]
+[INFO]  SYSCALL exit(0) PID=16
+[INFO]  SYSCALL ipc_register('pci') PID=17 -> 0
+[INFO]  SCHED: PID 16 '/dev/svga.drv' terminato con codice 0
+[INFO]  SYSCALL spawn('/bin/telnetd') argc=2 envc=7 PID_parent=14
+[INFO]  SCHED: processo creato PID=18 '/bin/telnetd' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/telnetd'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xa2a0 filesz=0xa2a0 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800b000 (11 pagine, file@0x1000, dati fino a 0x0800a2a0)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800b000 memsz=0x2f6c filesz=0x1b0 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800b000-0x0800e000 (3 pagine, file@0xc000, dati fino a 0x0800b1b0)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x0800e000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/telnetd' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 18 (entry=0x08000000 usp=0xfffeeec0) parent=14
+[INFO]  SYSCALL spawn('/bin/wifid') argc=2 envc=7 PID_parent=14
+[INFO]  SCHED: processo creato PID=19 '/bin/wifid' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/wifid'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xd280 filesz=0xd280 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800e000 (14 pagine, file@0x1000, dati fino a 0x0800d280)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800e000 memsz=0x35ac filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800e000-0x08012000 (4 pagine, file@0xf000, dati fino a 0x0800e130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08012000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/wifid' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 19 (entry=0x08000000 usp=0xfffeeec0) parent=14
+[INFO]  SYSCALL mkdir('/cfg') -> -17
+[INFO]  SYSCALL mkdir('/cfg/wifi') -> -17
+[INFO]  SYSCALL spawn('/dev/rtl8169.drv') argc=1 envc=7 PID_parent=14
+[INFO]  SCHED: processo creato PID=20 '/dev/rtl8169.drv' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/dev/rtl8169.drv'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0x7480 filesz=0x7480 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x08008000 (8 pagine, file@0x1000, dati fino a 0x08007480)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x08008000 memsz=0x27ac filesz=0x170 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x08008000-0x0800b000 (3 pagine, file@0x9000, dati fino a 0x08008170)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x0800b000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/dev/rtl8169.drv' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 20 (entry=0x08000000 usp=0xfffeeed0) parent=14
+[INFO]  SYSCALL exit(0) PID=19
+[INFO]  SCHED: PID 19 '/bin/wifid' terminato con codice 0
+[INFO]  SYSCALL spawn('/dev/ip.drv') argc=1 envc=7 PID_parent=14
+[INFO]  SCHED: processo creato PID=21 '/dev/ip.drv' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/dev/ip.drv'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xcdf0 filesz=0xcdf0 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800d000 (13 pagine, file@0x1000, dati fino a 0x0800cdf0)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800d000 memsz=0x19c8c filesz=0x150 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800d000-0x08027000 (26 pagine, file@0xe000, dati fino a 0x0800d150)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08027000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/dev/ip.drv' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 21 (entry=0x08000000 usp=0xfffeeed0) parent=14
+[INFO]  SYSCALL mmio_map: PID 20, fisico 0xfebffc00 -> virt 0x0800bc00 (1 pagine, non cacheabili)
+[INFO]  SYSCALL dma_alloc: PID 20, 645 pagine, virt 0x0800c000 fisico 0x041eb000
+[INFO]  SYSCALL spawn('/bin/dhcp') argc=1 envc=7 PID_parent=14
+[INFO]  SCHED: processo creato PID=22 '/bin/dhcp' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/dhcp'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0x61c0 filesz=0x61c0 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x08007000 (7 pagine, file@0x1000, dati fino a 0x080061c0)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x08007000 memsz=0x282c filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x08007000-0x0800a000 (3 pagine, file@0x8000, dati fino a 0x08007130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x0800a000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/dhcp' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 22 (entry=0x08000000 usp=0xfffeeed0) parent=14
+[INFO]  SYSCALL ipc_register('rete0') PID=20 -> 0
+[INFO]  SYSCALL ipc_register('ip') PID=21 -> 0
+[INFO]  SYSCALL exit(0) PID=22
+[INFO]  SCHED: PID 22 '/bin/dhcp' terminato con codice 0
+[INFO]  SYSCALL spawn('/bin/date') argc=2 envc=7 PID_parent=14
+[INFO]  SCHED: processo creato PID=23 '/bin/date' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/date'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xcc40 filesz=0xcc40 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800d000 (13 pagine, file@0x1000, dati fino a 0x0800cc40)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800d000 memsz=0x26ac filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800d000-0x08010000 (3 pagine, file@0xe000, dati fino a 0x0800d130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08010000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/date' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 23 (entry=0x08000000 usp=0xfffeeec0) parent=14
+[INFO]  SYSCALL spawn('/bin/netupdate') argc=2 envc=7 PID_parent=14
+[INFO]  SCHED: processo creato PID=24 '/bin/netupdate' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/netupdate'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0x327e0 filesz=0x327e0 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x08033000 (51 pagine, file@0x1000, dati fino a 0x080327e0)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x08033000 memsz=0x233300 filesz=0x1d0 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x08033000-0x08267000 (564 pagine, file@0x34000, dati fino a 0x080331d0)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08267000, tetto 0xef96c000 (3703 MB)
+[INFO]  ELF: '/bin/netupdate' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 24 (entry=0x08000000 usp=0xfffeeec0) parent=14
+[INFO]  SYSCALL exit(0) PID=24
+[INFO]  SCHED: PID 24 '/bin/netupdate' terminato con codice 0
+[INFO]  SYSCALL spawn('/dev/ehci.drv') argc=2 envc=7 PID_parent=14
+[INFO]  SCHED: processo creato PID=25 '/dev/ehci.drv' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/dev/ehci.drv'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0x7fc0 filesz=0x7fc0 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x08008000 (8 pagine, file@0x1000, dati fino a 0x08007fc0)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x08008000 memsz=0x49e0 filesz=0x138 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x08008000-0x0800d000 (5 pagine, file@0x9000, dati fino a 0x08008138)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x0800d000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/dev/ehci.drv' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 25 (entry=0x08000000 usp=0xfffeeec0) parent=14
+[INFO]  SYSCALL spawn('/dev/ohci.drv') argc=2 envc=7 PID_parent=14
+[INFO]  SCHED: processo creato PID=26 '/dev/ohci.drv' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/dev/ohci.drv'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0x9148 filesz=0x9148 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800a000 (10 pagine, file@0x1000, dati fino a 0x08009148)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800a000 memsz=0x4c00 filesz=0x138 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800a000-0x0800f000 (5 pagine, file@0xb000, dati fino a 0x0800a138)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x0800f000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/dev/ohci.drv' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 26 (entry=0x08000000 usp=0xfffeeec0) parent=14
+[INFO]  SYSCALL spawn('/bin/automount') argc=1 envc=7 PID_parent=14
+[INFO]  SCHED: processo creato PID=27 '/bin/automount' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/automount'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0x57c0 filesz=0x57c0 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x08006000 (6 pagine, file@0x1000, dati fino a 0x080057c0)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x08006000 memsz=0x128c filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x08006000-0x08008000 (2 pagine, file@0x7000, dati fino a 0x08006130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08008000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/automount' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 27 (entry=0x08000000 usp=0xfffeeed0) parent=14
+[INFO]  SYSCALL spawn('/dev/sis.drv') argc=2 envc=7 PID_parent=14
+[INFO]  SCHED: processo creato PID=28 '/dev/sis.drv' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/dev/sis.drv'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0x12268 filesz=0x12268 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x08013000 (19 pagine, file@0x1000, dati fino a 0x08012268)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x08013000 memsz=0x2ea0 filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x08013000-0x08016000 (3 pagine, file@0x14000, dati fino a 0x08013130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08016000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/dev/sis.drv' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 28 (entry=0x08000000 usp=0xfffeeec0) parent=14
+[INFO]  SYSCALL ioport_bind(base=0xcf8, count=8) PID=25 [finestra 1]
+[INFO]  SYSCALL mmio_map: PID 25, fisico 0xfea7ec00 -> virt 0x0800dc00 
+----- gli ultimi messaggi -----
+[INFO]  ELF: caricamento '/dev/lpt.drv'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xd3c0 filesz=0xd3c0 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800e000 (14 pagine, file@0x1000, dati fino a 0x0800d3c0)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800e000 memsz=0x42ec filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800e000-0x08013000 (5 pagine, file@0xf000, dati fino a 0x0800e130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08013000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/dev/lpt.drv' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 35 (entry=0x08000000 usp=0xfffeeec0) parent=32
+[INFO]  SYSCALL ioport_bind(base=0x378, count=8) PID=35 [finestra 1]
+[INFO]  SYSCALL ioport_bind(base=0x278, count=8) PID=35 [finestra 2]
+[INFO]  SYSCALL ioport_bind(base=0x3bc, count=3) PID=35 [finestra 3]
+[INFO]  SYSCALL exit(1) PID=35
+[INFO]  SCHED: PID 35 '/dev/lpt.drv' terminato con codice 1
+[INFO]  SYSCALL spawn('/dev/lpt.drv') argc=1 envc=7 PID_parent=32
+[INFO]  SCHED: processo creato PID=36 '/dev/lpt.drv' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/dev/lpt.drv'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xd3c0 filesz=0xd3c0 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800e000 (14 pagine, file@0x1000, dati fino a 0x0800d3c0)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800e000 memsz=0x42ec filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800e000-0x08013000 (5 pagine, file@0xf000, dati fino a 0x0800e130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08013000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/dev/lpt.drv' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 36 (entry=0x08000000 usp=0xfffeeed0) parent=32
+[INFO]  SYSCALL exit(1) PID=36
+[INFO]  SCHED: PID 36 '/dev/lpt.drv' terminato con codice 1
+[INFO]  SYSCALL spawn('/dev/lpt.drv') argc=2 envc=7 PID_parent=32
+[INFO]  SCHED: processo creato PID=37 '/dev/lpt.drv' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/dev/lpt.drv'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xd3c0 filesz=0xd3c0 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800e000 (14 pagine, file@0x1000, dati fino a 0x0800d3c0)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800e000 memsz=0x42ec filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800e000-0x08013000 (5 pagine, file@0xf000, dati fino a 0x0800e130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08013000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/dev/lpt.drv' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 37 (entry=0x08000000 usp=0xfffeeec0) parent=32
+[INFO]  SYSCALL exit(1) PID=37
+[INFO]  SCHED: PID 37 '/dev/lpt.drv' terminato con codice 1
+[INFO]  SYSCALL exit(0) PID=32
+[INFO]  SCHED: PID 32 '/bin/sh' terminato con codice 0
+[INFO]  SYSCALL interrompi(32) da PID 18
+[INFO]  SYSCALL pty_apri() PID=18 -> master 3, slave 4
+[INFO]  SYSCALL spawn('/bin/sh') argc=1 envc=7 PID_parent=18
+[INFO]  SCHED: processo creato PID=38 '/bin/sh' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/sh'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xc510 filesz=0xc510 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800d000 (13 pagine, file@0x1000, dati fino a 0x0800c510)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800d000 memsz=0x26890 filesz=0x10 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800d000-0x08034000 (39 pagine, file@0xe000, dati fino a 0x0800d010)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08034000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/sh' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: fd 0 del figlio = fd 4 del padre (tipo 9)
+[INFO]  SYSCALL spawn: fd 1 del figlio = fd 4 del padre (tipo 9)
+[INFO]  SYSCALL spawn: fd 2 del figlio = fd 4 del padre (tipo 9)
+[INFO]  SYSCALL spawn: PID 38 (entry=0x08000000 usp=0xfffeeed0) parent=18
+[INFO]  PF: stack di PID 38 '/bin/sh' cresciuto a 0xfffea000 (20 KB, ring3)
+[INFO]  SYSCALL spawn('/dev/lpt.drv') argc=3 envc=7 PID_parent=38
+[INFO]  SCHED: processo creato PID=39 '/dev/lpt.drv' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/dev/lpt.drv'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xd3c0 filesz=0xd3c0 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800e000 (14 pagine, file@0x1000, dati fino a 0x0800d3c0)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800e000 memsz=0x42ec filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800e000-0x08013000 (5 pagine, file@0xf000, dati fino a 0x0800e130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08013000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/dev/lpt.drv' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 39 (entry=0x08000000 usp=0xfffeeeb0) parent=38
+[INFO]  SYSCALL ioport_bind(base=0x378, count=8) PID=39 [finestra 1]
+[INFO]  SYSCALL exit(1) PID=39
+[INFO]  SCHED: PID 39 '/dev/lpt.drv' terminato con codice 1
+[INFO]  SYSCALL spawn('/dev/lpt.drv') argc=3 envc=7 PID_parent=38
+[INFO]  SCHED: processo creato PID=40 '/dev/lpt.drv' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/dev/lpt.drv'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xd3c0 filesz=0xd3c0 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800e000 (14 pagine, file@0x1000, dati fino a 0x0800d3c0)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800e000 memsz=0x42ec filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800e000-0x08013000 (5 pagine, file@0xf000, dati fino a 0x0800e130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08013000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/dev/lpt.drv' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 40 (entry=0x08000000 usp=0xfffeeeb0) parent=38
+[INFO]  SYSCALL ioport_bind(base=0x278, count=8) PID=40 [finestra 1]
+[INFO]  SYSCALL exit(1) PID=40
+[INFO]  SCHED: PID 40 '/dev/lpt.drv' terminato con codice 1
+[INFO]  SYSCALL spawn('/dev/lpt.drv') argc=3 envc=7 PID_parent=38
+[INFO]  SCHED: processo creato PID=41 '/dev/lpt.drv' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/dev/lpt.drv'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xd3c0 filesz=0xd3c0 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800e000 (14 pagine, file@0x1000, dati fino a 0x0800d3c0)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800e000 memsz=0x42ec filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800e000-0x08013000 (5 pagine, file@0xf000, dati fino a 0x0800e130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08013000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/dev/lpt.drv' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 41 (entry=0x08000000 usp=0xfffeeeb0) parent=38
+[INFO]  SYSCALL ioport_bind(base=0x3bc, count=3) PID=41 [finestra 1]
+[INFO]  SYSCALL exit(1) PID=41
+[INFO]  SCHED: PID 41 '/dev/lpt.drv' terminato con codice 1
+[INFO]  SYSCALL spawn('/bin/dmesg') argc=1 envc=7 PID_parent=38
+[INFO]  SCHED: processo creato PID=42 '/bin/dmesg' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/dmesg'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0x4480 filesz=0x4480 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x08005000 (5 pagine, file@0x1000, dati fino a 0x08004480)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x08005000 memsz=0x10bcc filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x08005000-0x08016000 (17 pagine, file@0x6000, dati fino a 0x08005130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08016000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/dmesg' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: fd 1 del figlio = fd 4 del padre (tipo 7)
+[INFO]  SYSCALL spawn: PID 42 (entry=0x08000000 usp=0xfffeeed0) parent=38
+[INFO]  SYSCALL spawn('/bin/grep') argc=4 envc=7 PID_parent=38
+[INFO]  SCHED: processo creato PID=43 '/bin/grep' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/grep'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xa540 filesz=0xa540 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800b000 (11 pagine, file@0x1000, dati fino a 0x0800a540)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800b000 memsz=0x126cc filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800b000-0x0801e000 (19 pagine, file@0xc000, dati fino a 0x0800b130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x0801e000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/grep' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: fd 0 del figlio = fd 3 del padre (tipo 6)
+[INFO]  SYSCALL spawn: PID 43 (entry=0x08000000 usp=0xfffeeea0) parent=38
+[INFO]  SYSCALL exit(0) PID=42
+[INFO]  SCHED: PID 42 '/bin/dmesg' terminato con codice 0
+[INFO]  SYSCALL exit(0) PID=43
+[INFO]  SCHED: PID 43 '/bin/grep' terminato con codice 0
+[INFO]  SYSCALL exit(0) PID=38
+[INFO]  SCHED: PID 38 '/bin/sh' terminato con codice 0
+[INFO]  SYSCALL interrompi(38) da PID 18
+[INFO]  SYSCALL pty_apri() PID=18 -> master 3, slave 4
+[INFO]  SYSCALL spawn('/bin/sh') argc=1 envc=7 PID_parent=18
+[INFO]  SCHED: processo creato PID=44 '/bin/sh' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/sh'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xc510 filesz=0xc510 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800d000 (13 pagine, file@0x1000, dati fino a 0x0800c510)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800d000 memsz=0x26890 filesz=0x10 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800d000-0x08034000 (39 pagine, file@0xe000, dati fino a 0x0800d010)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08034000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/sh' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: fd 0 del figlio = fd 4 del padre (tipo 9)
+[INFO]  SYSCALL spawn: fd 1 del figlio = fd 4 del padre (tipo 9)
+[INFO]  SYSCALL spawn: fd 2 del figlio = fd 4 del padre (tipo 9)
+[INFO]  SYSCALL spawn: PID 44 (entry=0x08000000 usp=0xfffeeed0) parent=18
+[INFO]  PF: stack di PID 44 '/bin/sh' cresciuto a 0xfffea000 (20 KB, ring3)
+[INFO]  SYSCALL spawn('/bin/grep') argc=5 envc=7 PID_parent=44
+[INFO]  SCHED: processo creato PID=45 '/bin/grep' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/grep'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xa540 filesz=0xa540 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800b000 (11 pagine, file@0x1000, dati fino a 0x0800a540)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800b000 memsz=0x126cc filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800b000-0x0801e000 (19 pagine, file@0xc000, dati fino a 0x0800b130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x0801e000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/grep' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 45 (entry=0x08000000 usp=0xfffeee90) parent=44
+[INFO]  SYSCALL exit(2) PID=45
+[INFO]  SCHED: PID 45 '/bin/grep' terminato con codice 2
+[INFO]  SYSCALL exit(0) PID=44
+[INFO]  SCHED: PID 44 '/bin/sh' terminato con codice 0
+[INFO]  SYSCALL interrompi(44) da PID 18
+[INFO]  SYSCALL pty_apri() PID=18 -> master 3, slave 4
+[INFO]  SYSCALL spawn('/bin/sh') argc=1 envc=7 PID_parent=18
+[INFO]  SCHED: processo creato PID=46 '/bin/sh' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/sh'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xc510 filesz=0xc510 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800d000 (13 pagine, file@0x1000, dati fino a 0x0800c510)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800d000 memsz=0x26890 filesz=0x10 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800d000-0x08034000 (39 pagine, file@0xe000, dati fino a 0x0800d010)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08034000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/sh' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: fd 0 del figlio = fd 4 del padre (tipo 9)
+[INFO]  SYSCALL spawn: fd 1 del figlio = fd 4 del padre (tipo 9)
+[INFO]  SYSCALL spawn: fd 2 del figlio = fd 4 del padre (tipo 9)
+[INFO]  SYSCALL spawn: PID 46 (entry=0x08000000 usp=0xfffeeed0) parent=18
+[INFO]  PF: stack di PID 46 '/bin/sh' cresciuto a 0xfffea000 (20 KB, ring3)
+[INFO]  SYSCALL spawn('/bin/grep') argc=6 envc=7 PID_parent=46
+[INFO]  SCHED: processo creato PID=47 '/bin/grep' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/grep'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xa540 filesz=0xa540 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800b000 (11 pagine, file@0x1000, dati fino a 0x0800a540)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800b000 memsz=0x126cc filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800b000-0x0801e000 (19 pagine, file@0xc000, dati fino a 0x0800b130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x0801e000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/grep' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 47 (entry=0x08000000 usp=0xfffeee90) parent=46
+[INFO]  SYSCALL exit(2) PID=47
+[INFO]  SCHED: PID 47 '/bin/grep' terminato con codice 2
+[INFO]  SYSCALL exit(0) PID=46
+[INFO]  SCHED: PID 46 '/bin/sh' terminato con codice 0
+[INFO]  SYSCALL interrompi(46) da PID 18
+[INFO]  SYSCALL pty_apri() PID=18 -> master 3, slave 4
+[INFO]  SYSCALL spawn('/bin/sh') argc=1 envc=7 PID_parent=18
+[INFO]  SCHED: processo creato PID=48 '/bin/sh' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/sh'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xc510 filesz=0xc510 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800d000 (13 pagine, file@0x1000, dati fino a 0x0800c510)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800d000 memsz=0x26890 filesz=0x10 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800d000-0x08034000 (39 pagine, file@0xe000, dati fino a 0x0800d010)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08034000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/sh' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: fd 0 del figlio = fd 4 del padre (tipo 9)
+[INFO]  SYSCALL spawn: fd 1 del figlio = fd 4 del padre (tipo 9)
+[INFO]  SYSCALL spawn: fd 2 del figlio = fd 4 del padre (tipo 9)
+[INFO]  SYSCALL spawn: PID 48 (entry=0x08000000 usp=0xfffeeed0) parent=18
+[INFO]  PF: stack di PID 48 '/bin/sh' cresciuto a 0xfffea000 (20 KB, ring3)
+[INFO]  SYSCALL spawn('/bin/ls') argc=2 envc=7 PID_parent=48
+[INFO]  SCHED: processo creato PID=49 '/bin/ls' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/ls'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0x9940 filesz=0x9940 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800a000 (10 pagine, file@0x1000, dati fino a 0x08009940)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800a000 memsz=0x368c filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800a000-0x0800e000 (4 pagine, file@0xb000, dati fino a 0x0800a130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x0800e000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/ls' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 49 (entry=0x08000000 usp=0xfffeeec0) parent=48
+[INFO]  SYSCALL exit(0) PID=49
+[INFO]  SCHED: PID 49 '/bin/ls' terminato con codice 0
+[INFO]  SYSCALL spawn('/bin/ls') argc=2 envc=7 PID_parent=48
+[INFO]  SCHED: processo creato PID=50 '/bin/ls' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/ls'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0x9940 filesz=0x9940 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800a000 (10 pagine, file@0x1000, dati fino a 0x08009940)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800a000 memsz=0x368c filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800a000-0x0800e000 (4 pagine, file@0xb000, dati fino a 0x0800a130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x0800e000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/ls' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 50 (entry=0x08000000 usp=0xfffeeec0) parent=48
+[INFO]  SYSCALL exit(0) PID=50
+[INFO]  SCHED: PID 50 '/bin/ls' terminato con codice 0
+[INFO]  SYSCALL spawn('/bin/grep') argc=5 envc=7 PID_parent=48
+[INFO]  SCHED: processo creato PID=51 '/bin/grep' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/grep'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xa540 filesz=0xa540 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800b000 (11 pagine, file@0x1000, dati fino a 0x0800a540)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800b000 memsz=0x126cc filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800b000-0x0801e000 (19 pagine, file@0xc000, dati fino a 0x0800b130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x0801e000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/grep' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 51 (entry=0x08000000 usp=0xfffeeea0) parent=48
+[INFO]  SYSCALL exit(0) PID=51
+[INFO]  SCHED: PID 51 '/bin/grep' terminato con codice 0
+[INFO]  SYSCALL exit(0) PID=48
+[INFO]  SCHED: PID 48 '/bin/sh' terminato con codice 0
+[INFO]  SYSCALL interrompi(48) da PID 18
+[INFO]  SYSCALL pty_apri() PID=18 -> master 3, slave 4
+[INFO]  SYSCALL spawn('/bin/sh') argc=1 envc=7 PID_parent=18
+[INFO]  SCHED: processo creato PID=52 '/bin/sh' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/sh'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xc510 filesz=0xc510 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800d000 (13 pagine, file@0x1000, dati fino a 0x0800c510)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800d000 memsz=0x26890 filesz=0x10 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800d000-0x08034000 (39 pagine, file@0xe000, dati fino a 0x0800d010)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08034000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/sh' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: fd 0 del figlio = fd 4 del padre (tipo 9)
+[INFO]  SYSCALL spawn: fd 1 del figlio = fd 4 del padre (tipo 9)
+[INFO]  SYSCALL spawn: fd 2 del figlio = fd 4 del padre (tipo 9)
+[INFO]  SYSCALL spawn: PID 52 (entry=0x08000000 usp=0xfffeeed0) parent=18
+[INFO]  PF: stack di PID 52 '/bin/sh' cresciuto a 0xfffea000 (20 KB, ring3)
+[INFO]  SYSCALL spawn('/bin/hwinfo') argc=1 envc=7 PID_parent=52
+[INFO]  SCHED: processo creato PID=53 '/bin/hwinfo' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/hwinfo'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xc300 filesz=0xc300 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800d000 (13 pagine, file@0x1000, dati fino a 0x0800c300)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800d000 memsz=0x322c filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800d000-0x08011000 (4 pagine, file@0xe000, dati fino a 0x0800d130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08011000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/hwinfo' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 53 (entry=0x08000000 usp=0xfffeeed0) parent=52
+[INFO]  SYSCALL exit(0) PID=53
+[INFO]  SCHED: PID 53 '/bin/hwinfo' terminato con codice 0
+[INFO]  SYSCALL spawn('/bin/mem') argc=1 envc=7 PID_parent=52
+[INFO]  SCHED: processo creato PID=54 '/bin/mem' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/mem'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0x4480 filesz=0x4480 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x08005000 (5 pagine, file@0x1000, dati fino a 0x08004480)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x08005000 memsz=0xb8c filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x08005000-0x08006000 (1 pagine, file@0x6000, dati fino a 0x08005130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08006000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/mem' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 54 (entry=0x08000000 usp=0xfffeeed0) parent=52
+[INFO]  SYSCALL exit(0) PID=54
+[INFO]  SCHED: PID 54 '/bin/mem' terminato con codice 0
+[INFO]  SYSCALL spawn('/bin/cpu') argc=1 envc=7 PID_parent=52
+[INFO]  SCHED: processo creato PID=55 '/bin/cpu' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/cpu'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0x67a0 filesz=0x67a0 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x08007000 (7 pagine, file@0x1000, dati fino a 0x080067a0)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x08007000 memsz=0xc2c filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x08007000-0x08008000 (1 pagine, file@0x8000, dati fino a 0x08007130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08008000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/cpu' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 55 (entry=0x08000000 usp=0xfffeeed0) parent=52
+[INFO]  SYSCALL exit(0) PID=55
+[INFO]  SCHED: PID 55 '/bin/cpu' terminato con codice 0
+[INFO]  SYSCALL spawn('/bin/disk') argc=1 envc=7 PID_parent=52
+[INFO]  SCHED: processo creato PID=56 '/bin/disk' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/disk'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0x7a20 filesz=0x7a20 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x08008000 (8 pagine, file@0x1000, dati fino a 0x08007a20)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x08008000 memsz=0x364c filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x08008000-0x0800c000 (4 pagine, file@0x9000, dati fino a 0x08008130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x0800c000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/disk' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 56 (entry=0x08000000 usp=0xfffeeed0) parent=52
+[INFO]  SYSCALL exit(0) PID=56
+[INFO]  SCHED: PID 56 '/bin/disk' terminato con codice 0
+[INFO]  SYSCALL spawn('/bin/mount') argc=1 envc=7 PID_parent=52
+[INFO]  SCHED: processo creato PID=57 '/bin/mount' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/mount'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0x4840 filesz=0x4840 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x08005000 (5 pagine, file@0x1000, dati fino a 0x08004840)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x08005000 memsz=0xb8c filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x08005000-0x08006000 (1 pagine, file@0x6000, dati fino a 0x08005130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08006000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/mount' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 57 (entry=0x08000000 usp=0xfffeeed0) parent=52
+[INFO]  SYSCALL exit(0) PID=57
+[INFO]  SCHED: PID 57 '/bin/mount' terminato con codice 0
+[INFO]  SYSCALL spawn('/bin/ps') argc=1 envc=7 PID_parent=52
+[INFO]  SCHED: processo creato PID=58 '/bin/ps' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/ps'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0x6140 filesz=0x6140 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x08007000 (7 pagine, file@0x1000, dati fino a 0x08006140)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x08007000 memsz=0x364c filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x08007000-0x0800b000 (4 pagine, file@0x8000, dati fino a 0x08007130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x0800b000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/ps' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 58 (entry=0x08000000 usp=0xfffeeed0) parent=52
+[INFO]  SYSCALL exit(0) PID=58
+[INFO]  SCHED: PID 58 '/bin/ps' terminato con codice 0
+[INFO]  SYSCALL spawn('/bin/ipcfg') argc=1 envc=7 PID_parent=52
+[INFO]  SCHED: processo creato PID=59 '/bin/ipcfg' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/ipcfg'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0x5c20 filesz=0x5c20 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x08006000 (6 pagine, file@0x1000, dati fino a 0x08005c20)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x08006000 memsz=0x2c0c filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x08006000-0x08009000 (3 pagine, file@0x7000, dati fino a 0x08006130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08009000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/ipcfg' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 59 (entry=0x08000000 usp=0xfffeeed0) parent=52
+[INFO]  SYSCALL exit(0) PID=59
+[INFO]  SCHED: PID 59 '/bin/ipcfg' terminato con codice 0
+[INFO]  SYSCALL spawn('/bin/usb') argc=1 envc=7 PID_parent=52
+[INFO]  SCHED: processo creato PID=60 '/bin/usb' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/usb'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0x59c0 filesz=0x59c0 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x08006000 (6 pagine, file@0x1000, dati fino a 0x080059c0)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x08006000 memsz=0x260c filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x08006000-0x08009000 (3 pagine, file@0x7000, dati fino a 0x08006130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08009000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/usb' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 60 (entry=0x08000000 usp=0xfffeeed0) parent=52
+[INFO]  SYSCALL exit(0) PID=60
+[INFO]  SCHED: PID 60 '/bin/usb' terminato con codice 0
+[INFO]  SYSCALL exit(0) PID=52
+[INFO]  SCHED: PID 52 '/bin/sh' terminato con codice 0
+[INFO]  SYSCALL interrompi(52) da PID 18
+[INFO]  SYSCALL pty_apri() PID=18 -> master 3, slave 4
+[INFO]  SYSCALL spawn('/bin/sh') argc=1 envc=7 PID_parent=18
+[INFO]  SCHED: processo creato PID=61 '/bin/sh' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/sh'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0xc510 filesz=0xc510 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x0800d000 (13 pagine, file@0x1000, dati fino a 0x0800c510)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x0800d000 memsz=0x26890 filesz=0x10 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x0800d000-0x08034000 (39 pagine, file@0xe000, dati fino a 0x0800d010)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08034000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/sh' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: fd 0 del figlio = fd 4 del padre (tipo 9)
+[INFO]  SYSCALL spawn: fd 1 del figlio = fd 4 del padre (tipo 9)
+[INFO]  SYSCALL spawn: fd 2 del figlio = fd 4 del padre (tipo 9)
+[INFO]  SYSCALL spawn: PID 61 (entry=0x08000000 usp=0xfffeeed0) parent=18
+[INFO]  PF: stack di PID 61 '/bin/sh' cresciuto a 0xfffea000 (20 KB, ring3)
+[INFO]  SYSCALL spawn('/bin/dmesg') argc=1 envc=7 PID_parent=61
+[INFO]  SCHED: processo creato PID=62 '/bin/dmesg' entry=0x00000000 prio=2 (user)
+[INFO]  ELF: caricamento '/bin/dmesg'...
+[INFO]  ELF: header valido, entry=0x08000000, phnum=3
+[INFO]  ELF: PT_LOAD[0] vaddr=0x08000000 memsz=0x4480 filesz=0x4480 flags=0x5
+[INFO]  ELF: segmento su richiesta 0x08000000-0x08005000 (5 pagine, file@0x1000, dati fino a 0x08004480)
+[INFO]  ELF: PT_LOAD[1] vaddr=0x08005000 memsz=0x10bcc filesz=0x130 flags=0x6
+[INFO]  ELF: segmento su richiesta 0x08005000-0x08016000 (17 pagine, file@0x6000, dati fino a 0x08005130)
+[INFO]  ELF: stack utente 0xfffec000 - 0xfffef000 impegnato (12 KB, riserva fino a 0xff7ef000, 8192 KB)
+[INFO]  ELF: TLS 0xff7ed000-0xff7ee000, tp=0xff7ed000 (memsz=0 filesz=0 align=0)
+[INFO]  ELF: heap utente 0x08016000, tetto 0xef96c000 (3705 MB)
+[INFO]  ELF: '/bin/dmesg' caricato con successo, entry=0x08000000
+[INFO]  SYSCALL spawn: PID 62 (entry=0x08000000 usp=0xfffeeed0) parent=61
+ex-os:/> exit
+

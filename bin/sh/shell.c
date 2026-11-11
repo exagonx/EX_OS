@@ -1128,7 +1128,7 @@ static void verbose_init(void)
  * supera i 256. Un nome che si puo' creare ed elencare ma non digitare e'
  * un nome irraggiungibile per meta'. */
 /* +0.001 a ogni modifica: `sh -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define SH_VERSIONE  "0.011"
+#define SH_VERSIONE  "0.012"
 
 #define MAX_LINE    512
 
@@ -2700,7 +2700,26 @@ static int esegui_builtin(int argc, char **argv, int background,
     if (sh_strcmp(cmd, "reboot")== 0) { cmd_reboot();         return 0; }
     if (sh_strcmp(cmd, "halt")  == 0) { cmd_halt();           return 0; }
     if (sh_strcmp(cmd, "poweroff") == 0) { cmd_poweroff();    return 0; }
-    if (sh_strcmp(cmd, "shutdown") == 0) { cmd_poweroff();    return 0; }
+    if (sh_strcmp(cmd, "shutdown") == 0) {
+        /* (0.012) -r/-h/-p like /bin/shutdown: `shutdown -r` used to
+         * power the box off, and a reboot that halts is pure bullshit */
+        int i, cosa = 0;
+
+        for (i = 1; i < argc; i++) {
+            if (sh_strcmp(argv[i], "-r") == 0)      cosa = 1;
+            else if (sh_strcmp(argv[i], "-h") == 0) cosa = 2;
+            else if (sh_strcmp(argv[i], "-p") == 0) cosa = 0;
+            else {
+                printerr("uso: shutdown [-r riavvia | -h arresta | -p spegne]");
+                g_ultimo_stato = 1;
+                return 0;
+            }
+        }
+        if (cosa == 1)      cmd_reboot();
+        else if (cosa == 2) cmd_halt();
+        else                cmd_poweroff();
+        return 0;
+    }
 
     if (sh_strcmp(cmd, "exit")  == 0) {
         /* (0.010) the whole number, not its first digit: `exit 12` was 1 */

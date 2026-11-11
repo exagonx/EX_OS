@@ -421,6 +421,14 @@ void pmm_init(BootInfo *info)
     /* BootInfo (0xC000-0xC0FF) — FIX BUG #3: era 0xB000 */
     pmm_mark_used(0x0000C000, PAGE_SIZE);
 
+    /* ! AND THE PAGE AFTER IT (0.328, voce 99): Stage 2's E820 map (0xD000),
+     * the VBE modes (0xD400) and the card's strings (0xD600). Unprotected,
+     * on a machine with 4 GB and more the kernel's own pages ran out above
+     * 1 MB and wrapped down here before vga_modi_prendi copied them: on the
+     * .247 `svga.drv -lista` said "0x0 0 bit" and the card had no name.
+     * 128 MB in QEMU never got that far. 4 KB, kept for good. */
+    pmm_mark_used(0x0000D000, PAGE_SIZE);
+
     /* ! IL VOLUME IN RAM, se Stage 2 ce n'e' messo uno. E820 lo dichiara
      * memoria libera — perche' lo e', fino a un istante fa — e senza questa
      * riga il PMM lo consegnerebbe al primo che chiede pagine: la radice del
@@ -892,6 +900,7 @@ static uint8_t *rif_alto(paddr_t a)
 
 int pmm_e_ram(paddr_t a)
 {
+    if (PMM_BUCO_VGA(a)) return 0;
     if (a < GB4_) return a < (paddr_t)g_total_pages * PAGE_SIZE;
     return alta_dentro(a);
 }

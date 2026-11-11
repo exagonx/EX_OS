@@ -92,3 +92,28 @@ funzioni PCI. In piu' oggi: una scheda di rete Realtek RTL8169 su PCI
   ne prende una parte, e questo spiega probabilmente la differenza. Da
   rivedere dopo l'aggiornamento del sistema; l'utente forse aggiunge un
   modulo di RAM.
+
+## Aggiornamento dell'11 novembre 2026 (EX-OS 0.326 a 64 bit)
+
+Referti nuovi in `0326/` (stessi comandi, sola lettura): `sistema.txt`
+(ver, hwinfo, mem, cpu, disk, mount, ps, ipcfg, usb), `dmesg.txt`,
+`sonde-sola-lettura.txt` (hdaudio.drv -i, ahci -d, svga.drv -lista,
+nv50.drv -stato).
+
+- **Processori**: 4 al lavoro (`cpu`: APIC 0-3; il registro dice "3 in piu'
+  accesi, 3 dei quali lavorano").
+- **Memoria**: la domanda del 9/11 e' chiusa. Il PMM conta 3071 MB sotto i
+  4 GB (fino a 0xbffa0000) e in piu' "RAM oltre i 4 GB: 768 MB": insieme
+  fanno i 3839 MB di hwinfo e mem, e si usano tutti. Ai 4 GB mancano circa
+  257 MB: e' quasi certamente la memoria presa dalla GPU (UMA) e dal BIOS,
+  che il chipset toglie dalla mappa E820. Non misurato registro per registro.
+- **Porta parallela**: nessuna. `lpt.drv -avvia` (anche con -porta:0x378,
+  0x278, 0x3BC) non trova un registro dati che rilegga 0xAA e 0x55, e fra i
+  dispositivi PCI non c'e' una scheda parallela. Da guardare nel BIOS, o una
+  scheda PCI/PCIe in uno slot.
+- **telnetd** riparte da solo dopo il riavvio (telnetd 0.013 e
+  `/boot/telnetd.cfg` con `avvio = root`, `da = 192.168.0.0/24`).
+- Senza driver, come il 9/11: video NVIDIA C73 10de:07e5, FireWire VIA
+  1106:3044, SMBus 10de:07d8, e 10de:07da (classe 0b.40, non serve).
+  `svga.drv -lista` da' ancora "0x0 0 bit", nv50.drv ancora tutti zero
+  (non e' una G80). AHCI come il 9/11: GHC 0, disco su porta 0, DVD su 1.

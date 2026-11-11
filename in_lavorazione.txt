@@ -8983,6 +8983,126 @@ tools/netinst/velocita tolto da netinst.
         probabilmente la differenza fra i 3839 MB di hwinfo e i 3071 del
         registro; da verificare con la versione nuova. L'utente forse
         aggiunge un modulo di RAM.
+      11/11 RIFATTI I REFERTI col .247 alla 0.326 (sonda/acer-mcp73-q9650/0326,
+      LEGGIMI.md aggiornato): 4 processori al lavoro; la memoria e' chiusa
+      (3071 MB sotto i 4 GB + 768 MB sopra = 3839, tutti usati, ~257 MB
+      mancanti = GPU e BIOS, dedotto); nessuna porta parallela (BIOS o
+      scheda PCI); telnetd riparte da solo (0.013). I driver mancanti sono
+      quelli di sopra. DA CHIEDERE: da quale si comincia.
+      11/11 a) IN CORSO, drivers/nv40/nv40.c (l'utente: "procedi con i driver
+      mancanti", "testali ... accelerazione, ram, gpu, 2d e 3d"):
+        nv40.drv 0.002: -stato, -bios (PLL, DCB, I2C), -edid, -modi, -prova,
+        -modo; provato sul .247 a 800x600 e 1024x768 (il motivo visto
+        dall'utente). Il monitor Acer VGA non da' EDID, neanche al BIOS.
+        nv40.drv 0.003: il motore 2D come xf86-video-nv (canale 0 in DMA,
+        push buffer a 14 MB nella memoria video, ramo IGP della 0x0530):
+        -2dprova tutto giusto al primo colpo; -2dmisura a 1024x768:
+        riempire 3529 MB/s (CPU 162), scorrere 2068 MB/s (CPU 6);
+        -2dservizio (accel2d) segue i cambi di -modo, -2dchiedi: 100
+        schermate in 80 ms, rilettura 0 sbagliati; -install 1024x768 nel
+        .247, ripartito da solo dopo l'accensione.
+        nv40.drv 0.004 (l'utente: "in questo pc la memoria e' condivisa non
+        e' memoria video, ma sfruttare l'hardware e' la via"): la RAM della
+        GPU trovata col segno (BAR1 -> RAM, passi di 16 MB sotto la BAR1)
+        a 0xC0000000 sul .247, e -modo da' al kernel quell'indirizzo come
+        nv50 sul CQ60. Misure a 1024x768 con fb_map (write-combining):
+        BAR1 scrive 2000 MB/s e legge 7; RAM scrive 3000 e legge 187. I 160
+        MB/s di prima erano la mappa non cacheabile del driver, non un
+        difetto del kernel. -2dprova e -2dchiedi giusti anche dalla RAM.
+        ! wserver con l'ombra NON usa il riempimento del motore: compone in
+          RAM e copia con la CPU, che ora costa ~1 ms a schermata intera.
+          Il passo hardware che resta: l'ombra nella RAM della GPU fuori
+          dallo schermo (riempimenti e presentazione col motore), che
+          chiede fb_map piu' grande del visibile (kernel), un campo in
+          AccInfo e wserver. DA DECIDERE CON L'UTENTE se vale la pena.
+        Resta: 1280x1024 e altri modi con l'utente, il 3D (Mesa software
+        sui 4 processori, poi l'hardware), la voce nel manuale.
+      11/11 sera, IL DISTURBO SULLO SCHERMO (l'utente: "come quando qualcuno da'
+        dei colpetti sul cavo video", a tratti, piu' forte con Exilla che
+        scorre; foto foto/20261111_170448.jpg: fasce di righe ripetute e
+        spostate per pochi millisecondi = la coda del display a secco):
+        - CR1B (raffica) 0x80 di xf86-video-nv -> 0x85 del BIOS: molto meglio;
+          0x86 rompe lo schermo (foto 20261111_161354.jpg, strisce).
+        - CR47/CR20 (soglia) 0x480 -> 0x580 -> 0x780: nessuna differenza.
+        - Il VPLL di 1024x768 aveva VCO1 = 300 MHz, il massimo della ROM:
+          pll_cerca ora sceglie il margine (233 MHz, 65064 kHz).
+        - -bar1 (processore attraverso la scheda): il disturbo resta, quindi
+          la scrittura diretta nella RAM della GPU NON e' la causa.
+        - 800x600 col driver: c'e' ancora, ma meno. Il BIOS VESA non offre
+          1024x768 per il confronto.
+        nv40.drv 0.005 (raffica 0x85, PLL col margine, -bar1, -reg, -cr).
+        L'UTENTE: "dato che si tratta di una gpu integrata proviamo con la
+        NVidia N210" (GT218, scheda con VRAM sua: nv50.drv, da adattare al
+        DAC/VGA e al modo VESA). Il blocco nv40 tolto da avvio.sh del .247.
+        Resta da capire se il disturbo dell'integrata e' la banda della RAM
+        condivisa coi 4 processori o un registro ancora diverso dal BIOS.
+      11/11 sera, LA N210 (GT218, 10de:0a65, 1 GB) MONTATA NEL .247:
+        - la RAM: 4095 MB (sopra i 4 GB 1024 invece di 768).
+        - kernel 0.328: la pagina 0xD000 (E820, modi VBE, stringhe della
+          scheda di Stage 2) protetta nel PMM: con 4 GB e piu' il kernel la
+          prendeva prima di copiarla, e svga.drv -lista diceva "0x0 0 bit"
+          (anche con l'integrata). Regressioni QEMU a posto. Sul .247 con
+          netupdate (impronta d84f91a8...), da riavviare a mano.
+        - nv50.drv 0.010: -modi, -provamodo, -modo LxA, -install LxA,
+          -avvio LxA sul DAC acceso dal BIOS (DAC0), tempi VESA come
+          G80CrtcDoModeFixup, il PLL a uno stadio dei GT21x (G80CalcPLL2)
+          col margine (783 MHz, non 972), la misura dello schermo non piu'
+          fissa a 1366x768 (il ramo del pannello CQ60 com'era). Visto
+          dall'utente: motivo pulito. -2dprova giusto al primo colpo;
+          -2dmisura: CPU scrive 2846 MB/s, legge 4; motore riempie 1117,
+          ! copia schermo->schermo solo 102 MB/s: da capire.
+          -install 1024x768 nel .247.
+        - 11/11 19:05, dopo il riavvio a mano col kernel 0.328: modo e
+          servizio partiti da soli, svga.drv -lista vede 18 modi (fino a
+          1600x1200). L'UTENTE con ExWin e Firefox su yahoo.com: "Fluido
+          perfetto, senza scatti ne disturbi". Tenuto d'occhio 4 minuti:
+          nessun avviso nuovo (20, tutti dell'avvio: dischi non smontati
+          per gli spegnimenti a mano, firme ATA 0x6c del canale 0,
+          "/boot/kernel.cfg non trovato": da guardare).
+        - LA LAN INTEGRATA (nForce MCP73 10de:07dc, nforce.drv): link 1000
+          full, -p: 10 inviati, 29 ricevuti, 10 risposte ARP, nessun errore.
+          Non provata in servizio (il telnet passa dalla RTL8169).
+      ! 11/11 sera, DUE BLOCCHI DI ExWin SUL .247 (non visti in QEMU):
+        a) "esci" da ExWin non torna alla console: tutto fermo, riavvio.
+        b) Spegnimento dal menu: la finestra resta su "Chiedo ai programmi
+           di chiudersi..." per minuti (il conto dei secondi e "Procedi
+           comunque" non arrivano mai: pm o wserver fermi dopo
+           ex_close_others). Tolta la corrente a mano.
+        Da guardare col telnet mentre e' bloccato (ps, stati), con la N210.
+      ! 11/11 IL .247 NON SI RIAVVIA: `shutdown -r` finisce in "Sistema
+        arrestato" (verde), e l'utente ha dovuto spegnere a mano. Il reset
+        che usiamo non va su questa scheda madre MCP73: da guardare (0xCF9,
+        il registro di reset ACPI della FADT, la tastiera 0x64).
+        TROVATO: il comando interno `shutdown` di sh chiamava sempre lo
+        spegnimento e non guardava -r: il "riavvio" era uno spegnimento, e
+        lo spegnimento ACPI (S5) sul MCP73 non spegneva. sh 0.012: -r/-h/-p
+        come /bin/shutdown. Kernel 0.329: S5 come ACPICA (GPE spenti, stati
+        di risveglio azzerati, PM1_CNT letto-modificato-scritto, SLP_TYP poi
+        SLP_EN); se resta acceso stampa PM1a_CNT/PM1a_STS da fotografare.
+        Il riavvio vero (0xCF9, tastiera, triplo errore: la FADT revisione 1
+        non ha il registro di reset) sul .247 e' ancora da provare.
+      ! 11/11 PERCHE' ESCE "esci" SEMBRAVA BLOCCATO: wserver chiude e il
+        kernel torna al modo testo VGA 3, che il display della N210 (guidato
+        da nv50) ignora: lo schermo tiene l'ultimo fotogramma, il sistema e'
+        vivo (ps via telnet: i programmi di ExWin finiti). Kernel 0.329: col
+        framebuffer di un driver (video_cambia) si pulisce il framebuffer e
+        si ridisegna la console li' dentro. Il punto b) da riprovare col
+        0.329.
+      ! 11/11 LA COPIA DEL MOTORE NV50 SULLA N210 (nv50.drv 0.011, misure
+        nuove in -2dmisura): schermo->schermo 102 MB/s, scorrere di 16
+        righe 106, a strisce di 16 101, meta' sinistra 108. Sempre uguale:
+        non e' il costo per riga ne' la sovrapposizione, e' la banda per
+        pixel. Anche il riempimento (1117) e' un decimo di quel che una
+        GT218 fa. Pista: le superfici sono LINEARI (0x204 = 1) e il motore
+        G80 corre sulle "block linear"; nouveau tiene tutto block linear.
+        Per provarlo: un'ombra block linear fuori schermo e la copia da li'
+        allo schermo. Non urgente: l'utente vede fluido (la CPU scrive 2,8
+        GB/s).
+      ! 11/11 IL 3D SUL .247: Mesa (netupdate mesa, gia' installato)
+        /exos/bin/provaegl: "Mesa | softpipe | OpenGL ES 3.1 Mesa 26.2.6",
+        8 OK, 0 NO. softpipe usa un processore solo: per i 4 core serve
+        llvmpipe (LLVM condiviso per EX-OS, voce 88). Il 3D della N210
+        (nouveau) vuole dal kernel un'interfaccia tipo DRM: lavoro grande.
 
   98. UN DRIVER UNICO PER LA PORTA PARALLELA (l'utente, 9/11): "dato che il
       driver per la porta parallela dovra' servire anche per la stampa su

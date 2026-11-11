@@ -59,7 +59,20 @@ telnetd -s &       dà una shell da amministratore SENZA password
 Per averla a ogni avvio non si tocca nessuno script: in `/boot/avvio.sh` c'è
 già la riga `telnetd -auto &`, che legge `/boot/telnetd.cfg` e parte solo se
 la chiave `avvio` dice `login` (chiede la password) o `root` (non la
-chiede). `telnetd -h` spiega i valori.
+chiede). `telnetd -h` spiega i valori. Per esempio, per una macchina di prova
+sulla rete di casa:
+
+```
+avvio = root
+porta = 23
+shell = /bin/sh
+da    = 192.168.0.0/24
+```
+
+La riga sta prima di quelle della scheda di rete, apposta: dalla 0.013
+telnetd con `-auto` aspetta lui che la rete ci sia (fino a tre minuti).
+Prima aspettava due secondi, e su un PC vero, dove scheda di rete e `ip.drv`
+ci mettono di più, usciva senza dire niente.
 
 ! **`-s` E' UNA PORTA APERTA, E VA SCELTO SAPENDOLO.** Su una rete di casa, per
   provare i driver di una macchina in un'altra stanza, è esattamente quel che
@@ -189,6 +202,61 @@ nv50.drv -2dservizio &   il motore offerto alla scrivania (accel2d)
 
 Finché le prove non sono passate sul portatile non entra in `-install`, e
 la scrivania a 1366x768 disegna con il processore.
+
+### NVIDIA GeForce 210 e le altre G80/GT2xx con l'uscita VGA (`nv50.drv`)
+
+Lo stesso `nv50.drv` del CQ60 porta anche le schede da inserire, come la
+GeForce 210 (N210, GT218), all'uscita VGA:
+
+```
+nv50.drv -modi                   i modi che conosce
+nv50.drv -provamodo 1024x768 20  il modo col motivo di prova per 20 secondi
+nv50.drv -modo 1024x768          il modo, e la console ci passa
+nv50.drv -install 1024x768       modo e motore 2D a ogni avvio
+nv50.drv -2dprova                il motore disegna, e si rilegge
+```
+
+Il modo va sul DAC che il BIOS ha lasciato acceso, con i tempi VESA. Sulla
+N210 a 1024x768 il processore scrive lo schermo a 2,9 GB/s e il motore lo
+riempie a 1,1. La scheda ha la sua memoria video: la RAM che il BIOS dava
+alla grafica integrata torna al sistema.
+
+! **CON `-provamodo` LO SCHERMO NON TORNA DA SOLO**: la console resta sul
+  modo di prima, ma il monitor mostra il motivo finché non si riavvia.
+
+### NVIDIA GeForce 6 e 7 e le integrate C51, C61, C73 (`nv40.drv`)
+
+Per le NV4x c'è `nv40.drv`, nato sul PC con nForce 630i (GeForce 7100
+integrata, 256 MB presi dalla RAM). Cambia il modo da sé, con i tempi VESA e
+i limiti degli orologi letti dalla ROM della scheda, e accende il motore 2D:
+
+```
+nv40.drv -stato              com'è adesso (non tocca niente)
+nv40.drv -modi               i modi che conosce
+nv40.drv -prova 1280x1024 10 il modo con un motivo per 10 secondi, poi indietro
+nv40.drv -modo 1024x768      il modo, e ci resta
+nv40.drv -2dprova            il motore disegna, e si rilegge: «giusto» o NO
+nv40.drv -2dmisura           processore contro motore, in MB/s
+nv40.drv -install 1024x768   modo e motore a ogni avvio; -remove li toglie
+```
+
+Sul nForce 630i a 1024x768 il motore riempie lo schermo a 3500 MB/s e lo
+scorre a 2000. `-install` senza modo accende solo il motore e lascia il modo
+di `svga.drv`.
+
+! **SULLE INTEGRATE LA MEMORIA VIDEO È RAM** (256 MB sul nForce 630i): come
+  `nv50.drv` sul CQ60, `nv40.drv` dà al kernel l'indirizzo di quella RAM
+  invece della finestra della scheda, così console e scrivania ci scrivono
+  direttamente. Il driver non lo legge da un registro, lo misura: scrive un
+  segno attraverso la scheda e lo cerca nella RAM; `-stato` dice dove l'ha
+  trovato («La RAM della GPU: 0xc0000000»). Sul nForce 630i lo schermo si
+  rilegge a 187 MB/s invece di 7, e si scrive a 3000.
+
+! **PROVA PRIMA CON `-prova`**: se il monitor non regge il modo resta nero
+  per i secondi chiesti e poi torna quello di prima. `-modo` invece resta.
+
+! **IL MONITOR SENZA EDID** (un VGA vecchio non lo manda) non impedisce
+  niente: il modo si sceglie a mano, e `-edid` dice solo che non c'è.
 
 ### Se resta in testo dopo il riavvio
 
@@ -357,7 +425,7 @@ nv50.drv -remove             lo toglie
 
 Il blocco comincia con `# -install <driver>` e finisce alla prima riga
 vuota; `hwconfig`, che riscrive `avvio.sh`, lo riporta avanti. Oggi lo hanno
-`nv50.drv`, `cpufreq.drv` e `dpms.drv`; gli altri driver lo ricevono man mano. Fino ad allora vale il
+`nv50.drv`, `nv40.drv`, `cpufreq.drv` e `dpms.drv`; gli altri driver lo ricevono man mano. Fino ad allora vale il
 vecchio modo: la riga in `avvio.sh` (che `hwconfig` riscrive) o la voce in
 `[modules]` di `kernel.cfg` per ciò che deve esserci prima di tutto, come la
 tastiera.

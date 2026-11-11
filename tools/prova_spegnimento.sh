@@ -24,7 +24,8 @@
 #   4. shutdown -h from processor 1: "Sistema arrestato";
 #   5. shutdown from processor 1 while a program computes on processor 0
 #      (smpprova -figlio): off all the same, the program ended by the kernel;
-#   6. 4 processors, shutdown from processor 3: off.
+#   6. 4 processors, shutdown from processor 3: off;
+#   7./8. the shell's built-in shutdown -r and -h (not /bin/shutdown).
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1
 ARCH="${EXOS_ARCH:-i386}"
@@ -84,6 +85,20 @@ spenta carico "5. shutdown dal processore 1 con un programma che calcola sullo 0
 
 caso quattro 4 "cpu -x 3 shutdown@40"
 spenta quattro "6. 4 processori, shutdown dal 3"
+
+# ! THE SHELL'S OWN `shutdown` IGNORED -r up to sh 0.011 and powered off:
+# the .247 "rebooted" into "Sistema arrestato". Typed as is, no cpu -x, so
+# the built-in runs and not /bin/shutdown.
+caso interno 2 "shutdown -r@60"
+grep -aq "Riavvio del sistema in corso" "$D/interno.txt" && ! grep -aq "Spegnimento fra" "$D/interno.txt" \
+    && ! grep -aq "^ANCORA-ACCESA" "$D/interno.txt" \
+    && si "7. shutdown -r della shell (comando interno): la macchina si resetta" \
+    || no "7. shutdown -r della shell (comando interno) ($D/interno.txt)"
+
+caso internoh 2 "shutdown -h@30"
+grep -aq "Sistema arrestato" "$D/internoh.txt" && ! grep -aq "Spegnimento fra" "$D/internoh.txt" \
+    && si "8. shutdown -h della shell (comando interno): sistema arrestato" \
+    || no "8. shutdown -h della shell (comando interno) ($D/internoh.txt)"
 
 echo "=== $ok riusciti, $no no ($ARCH) ==="
 [ $no = 0 ]
