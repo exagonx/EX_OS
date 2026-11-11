@@ -254,6 +254,12 @@ typedef struct {
      * fsync of the directory after creating a file in it, fchdir. read and
      * ftruncate give EISDIR, write EBADF; the rest is the same as a file. */
     uint8_t  cartella;
+    /* ! THE POSITION LIVES HERE, NOT IN THE PROCESS (0.326, voce 94): this
+     * slot IS the POSIX open file description - every dup, dup2, spawn and
+     * fork already shares it with vfs_dup. With the position in each
+     * process's descriptor, `sh x.sh > log &` and its background child wrote
+     * over each other from two private offsets: lines gone, no error. */
+    VfsPosizione posiz;
 } VfsFile;
 
 /* THE TABLE OF OPEN FILES GROWS (kernel 0.282). It was VfsFile[256] for the
@@ -1511,6 +1517,8 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
     g_file_(slot).h12   = -1;
     g_file_(slot).orfano = 0;
     g_file_(slot).cartella = 0;
+    g_file_(slot).posiz.pos = 0;
+    g_file_(slot).posiz.di  = 0;
     v_copia(g_file_(slot).interno, interno, VFS_PATH_MAX);
 
     if (g_mnt[im].tipo == VFS_FS_FAT12FD) {
@@ -2798,6 +2806,15 @@ int vfs_luc_chi(int h, const void *chi, int *tipo, uint64_t *da, uint64_t *a, ui
     else { *tipo = l->tipo; *da = l->da; *a = l->a; *pid = l->pid; }
     fs_rilascia();
     return r;
+}
+
+/* The shared position of an open handle (0.326). Slots never move (see
+ * vfs_blocco_in_piu), so the pointer holds while the caller keeps its
+ * reference. NULL for a handle that is not open. */
+VfsPosizione *vfs_posizione(int h)
+{
+    if (!VFS_H_VALIDO(h) || !g_file_(h).usato) return NULL;
+    return &g_file_(h).posiz;
 }
 
 int vfs_dup(int h)

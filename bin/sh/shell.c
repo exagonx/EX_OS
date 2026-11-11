@@ -745,16 +745,46 @@ static void print(const char *s)
     if (s) sh_write(STDOUT, s, sh_strlen(s));
 }
 
+/* ! ONE LINE = ONE write(), like bash (sh 0.011, voce 94). Since kernel
+ * 0.326 a script and its background child share the file position, and on
+ * two CPUs they really write at the same time: a line written in pieces
+ * (text, then "\n") came out shredded, "P16/a/f.sh> echo F02". The pieces
+ * go together into `riga`; a line longer than that goes in pieces, as before
+ * (correct, just not atomic). */
+#define RIGA_INSIEME 1024
+
+static void scrivi_insieme(int fd, const char *const *pezzi, int n)
+{
+    char     riga[RIGA_INSIEME];
+    uint32_t tot = 0, l;
+    int      i;
+
+    for (i = 0; i < n; i++) {
+        if (!pezzi[i]) continue;
+        l = sh_strlen(pezzi[i]);
+        if (tot + l > sizeof(riga)) {               /* too long: in pieces */
+            if (tot) sh_write(fd, riga, tot);
+            tot = 0;
+            if (l > sizeof(riga)) { sh_write(fd, pezzi[i], l); continue; }
+        }
+        { uint32_t k; for (k = 0; k < l; k++) riga[tot + k] = pezzi[i][k]; }
+        tot += l;
+    }
+    if (tot) sh_write(fd, riga, tot);
+}
+
 static void println(const char *s)
 {
-    print(s);
-    sh_write(STDOUT, "\n", 1);
+    const char *p[2] = { s, "\n" };
+
+    scrivi_insieme(STDOUT, p, 2);
 }
 
 static void printerr(const char *s)
 {
-    sh_write(STDERR, s, sh_strlen(s));
-    sh_write(STDERR, "\n", 1);
+    const char *p[2] = { s, "\n" };
+
+    scrivi_insieme(STDERR, p, 2);
 }
 
 /* Stampa un numero decimale */
@@ -1098,7 +1128,7 @@ static void verbose_init(void)
  * supera i 256. Un nome che si puo' creare ed elencare ma non digitare e'
  * un nome irraggiungibile per meta'. */
 /* +0.001 a ogni modifica: `sh -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define SH_VERSIONE  "0.010"
+#define SH_VERSIONE  "0.011"
 
 #define MAX_LINE    512
 
@@ -1490,14 +1520,19 @@ static void cmd_helpconfig(void)
     println("e si perde la modalita' raw (niente frecce, niente gfedit).");
 }
 
+/* One write() for the whole line (see scrivi_insieme): 2 pointers per word. */
 static void cmd_echo(int argc, char *argv[])
 {
-    int i;
+    const char *p[2 * 64 + 1];
+    int i, n = 0;
+
     for (i = 1; i < argc; i++) {
-        print(argv[i]);
-        if (i < argc - 1) print(" ");
+        if (n >= 2 * 64) { scrivi_insieme(STDOUT, p, n); n = 0; }
+        p[n++] = argv[i];
+        if (i < argc - 1) p[n++] = " ";
     }
-    print("\n");
+    p[n++] = "\n";
+    scrivi_insieme(STDOUT, p, n);
 }
 
 static void cmd_cls(void)
@@ -4245,11 +4280,9 @@ static int esegui_script(const char *nome, const char *etichetta,
         }
 
         if (!zitto && !zitto_sempre) {
-            print(CLR_CYAN);
-            print(etic);
-            print("> ");
-            print(CLR_RESET);
-            println(riga);
+            const char *p[6] = { CLR_CYAN, etic, "> ", CLR_RESET, riga, "\n" };
+
+            scrivi_insieme(STDOUT, p, 6);   /* one write (voce 94) */
         }
 
         r = esegui_riga(riga, n);

@@ -181,7 +181,7 @@ int kbd_stato(FdPasso *out, unsigned int max)
     int      src = tty_input_source();
     uint32_t pid = irq_proprietario(1);
     int      kpid = ipc_lookup("kbd");
-    uint8_t  imr = port_inb(0x21);
+    uint8_t  imr = (uint8_t)pic_maschera();     /* the true one (pic.c) */
 
     g_out = out;
     g_max = out ? max : 0;
@@ -330,7 +330,7 @@ int kbd_diagnostica(FdPasso *out, unsigned int max)
      * vedeva — le risposte ai comandi del controller non alzano la linea —
      * ed e' il tipo di differenza per cui questa prova esiste. La linea si
      * riapre al passo 8, che e' l'unico che la vuole. */
-    imr_prima = port_inb(0x21);
+    imr_prima = (uint8_t)pic_maschera();
     pic_mask_irq(1);
 
     /* --- 0: c'e' un driver di mezzo? ---------------------------------- */

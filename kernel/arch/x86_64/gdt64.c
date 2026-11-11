@@ -36,6 +36,7 @@
 #include "k64.h"
 #include "smp.h"
 #include "kmalloc.h"     /* the tables of the extra processors (0.319) */
+#include "gdt.h"         /* GDT_MAPPA_IO_BYTE (0.324) */
 
 typedef struct PACKED {
     uint32_t riservato0;
@@ -44,7 +45,7 @@ typedef struct PACKED {
     uint64_t ist[7];
     uint64_t riservato2;
     uint16_t riservato3;
-    uint16_t mappa_io;              /* oltre la fine: nessuna porta ai programmi */
+    uint16_t mappa_io;              /* where the I/O bitmap starts (0.324) */
 } Tss64;
 
 /* One of each per processor: see gdt_installa_cpu. Slot 7 (selector 0x38)
@@ -55,8 +56,16 @@ typedef struct PACKED {
 typedef struct {
     uint64_t gdt[8];
     Tss64    tss;
+    /* ! RIGHT AFTER THE TSS (a byte array after a packed struct: no padding),
+     * with one byte more of ones past the last port (0.324, see gdt.h). */
+    uint8_t  mappa[GDT_MAPPA_IO_BYTE + 1];
+    uint32_t aperti_da, aperti_a;           /* bytes of mappa not all ones */
     uint8_t  pila_doppio[8192] __attribute__((aligned(16)));   /* double fault */
 } Gdt64Cpu;
+
+_Static_assert(__builtin_offsetof(Gdt64Cpu, mappa) ==
+               __builtin_offsetof(Gdt64Cpu, tss) + sizeof(Tss64),
+               "the I/O bitmap must follow the TSS");
 
 static Gdt64Cpu   g_avvio __attribute__((aligned(16)));
 static Gdt64Cpu  *g_cpu_1[1] = { &g_avvio };
@@ -99,11 +108,13 @@ static void gdt64_carica(uint32_t n)
     Gdt64Cpu *c   = g_cpu[n];
     Tss64    *tss = &c->tss;
     uint64_t *gdt = c->gdt;
-    uint64_t  base = (uint64_t)tss, lim = sizeof(*tss) - 1;
+    uint64_t  base = (uint64_t)tss, lim = sizeof(*tss) + sizeof(c->mappa) - 1;
 
     __builtin_memset(tss, 0, sizeof(*tss));
     tss->ist[0]   = (uint64_t)(c->pila_doppio + sizeof(c->pila_doppio));
-    tss->mappa_io = sizeof(*tss);
+    tss->mappa_io = sizeof(*tss);           /* the bitmap, right after */
+    __builtin_memset(c->mappa, 0xFF, sizeof(c->mappa));
+    c->aperti_da = c->aperti_a = 0;
 
     gdt[0] = 0;
     gdt[1] = 0x00209A0000000000ull;       /* codice kernel: presente, ring 0, L */
@@ -146,6 +157,32 @@ void gdt_install(void) { gdt64_installa(); }
 /* Dove atterra il processore arrivando da ring 3. Le pile del kernel stanno
  * nella fascia (sotto i 64 MB): 32 bit bastano, e il prototipo e' comune. */
 void gdt_set_kernel_stack(vaddr_t stack_top) { g_tss_di(cpu_n()).rsp0 = stack_top; }
+
+/* The I/O bitmap of this processor (gdt.h). Interrupts off, from the
+ * scheduler or from the system call that asks for it. */
+void gdt_porte_apri(uint32_t base, uint32_t quante)
+{
+    Gdt64Cpu *c = g_cpu[cpu_n()];
+    uint32_t  p, fine = base + quante;
+
+    if (fine > 65536u) fine = 65536u;
+    if (base >= fine) return;
+    for (p = base; p < fine; p++) c->mappa[p >> 3] &= (uint8_t)~(1u << (p & 7));
+    if (c->aperti_da == c->aperti_a) { c->aperti_da = base >> 3; c->aperti_a = ((fine - 1) >> 3) + 1; }
+    else {
+        if ((base >> 3) < c->aperti_da) c->aperti_da = base >> 3;
+        if (((fine - 1) >> 3) + 1 > c->aperti_a) c->aperti_a = ((fine - 1) >> 3) + 1;
+    }
+}
+
+void gdt_porte_chiudi(void)
+{
+    Gdt64Cpu *c = g_cpu[cpu_n()];
+    uint32_t  i;
+
+    for (i = c->aperti_da; i < c->aperti_a; i++) c->mappa[i] = 0xFF;
+    c->aperti_da = c->aperti_a = 0;
+}
 
 /* The GDT and TSS of processor `n`, loaded on whoever calls. Every extra
  * processor calls it before it starts working. */

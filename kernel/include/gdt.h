@@ -25,4 +25,25 @@ void gdt_set_tls_base(uint32_t base);
  * gdt.c, «una GDT e un TSS per processore». */
 void gdt_installa_cpu(uint32_t n);
 
+/* =============================================================================
+ * THE I/O PERMISSION BITMAP (0.324, voce 98)
+ *
+ * After every CPU's TSS: one bit per port, 0 = ring 3 may `in`/`out` it.
+ * 8 KB + the trailing 0xFF byte the CPU wants. All closed, except for the
+ * process running there that asked (SYS_IOPORT_DIRETTO); sched_switch_to
+ * closes the leaving one's ports and opens the coming one's, rewriting only
+ * the bytes that were opened.
+ *
+ * ! WHY: a syscall per byte takes the kernel lock. Two CPUs, and a wave on
+ * the parallel port came out 1.3 ms late against 180 us half-waves. Bullshit
+ * timing. With the bitmap the driver never enters the kernel.
+ *
+ * ! NOTHING NEW IS GIVEN: only the ports ioport_bind already gave (a *.drv
+ * run by root).
+ * ========================================================================== */
+#define GDT_MAPPA_IO_BYTE   (65536u / 8u)
+
+void gdt_porte_apri(uint32_t base, uint32_t quante);    /* on this processor */
+void gdt_porte_chiudi(void);                            /* all, on this processor */
+
 #endif

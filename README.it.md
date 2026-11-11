@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.323
+**Versione:** 0.326
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -112,6 +112,41 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### Uno script e il suo figlio in sottofondo non si cancellano piu' le righe (kernel 0.326, sh 0.011, voce 94), e `mount` scrive /proc come proc (kernel 0.325, mount 0.004, voce 93)
+
+- **La posizione di un file aperto e' condivisa**, come vuole POSIX, fra tutti i descrittori
+  nati dalla stessa apertura: `dup`, `dup2`, spawn e fork. Sta nell'handle del VFS
+  (`VfsPosizione`), che `vfs_dup` divideva gia'; anche il suo lucchetto, che passa di mano se
+  chi lo teneva non c'e' piu'. Prima ognuno aveva la sua: `sh x.sh > log &` con dentro un
+  programma in sottofondo perdeva le righe del padre (visto sul portatile il 9/11).
+- **La shell scrive ogni riga con una `write` sola** (`echo`, i messaggi, la riga di uno script
+  che si ripete): con due processori padre e figlio scrivono davvero insieme, e una riga scritta
+  a pezzi usciva mescolata con quella dell'altro.
+- **`mount` scrive "proc"** per `/proc` invece di "FAT4294967295": `mountinfo` da' il tipo 10
+  (`VOL_FS_PROC`); anche toolinst 0.006 lo chiama per nome, e ISO 9660.
+- `tools/prova_sottofondo.sh` (nuova): 40 righe dello script e 40 del figlio in sottofondo nello
+  stesso file, su ext2 e su FAT16, a 32 e 64 bit, con uno e con due processori: 80 su 80.
+
+### Nessun fronte perso con due processori, e la porta parallela senza chiamate di sistema (kernel 0.324, lpt.drv 0.002, voce 98)
+
+- **L'EOI prima del lucchetto.** `irq_prima` (`kernel/arch/x86/isr.c`), chiamata dalle entrate
+  degli interrupt prima del lucchetto del kernel, annota l'istante, manda l'EOI e mette un fronte
+  nel suo anello (con un lucchetto suo). Prima l'EOI partiva dopo il lucchetto: un interrupt che
+  aspettava (il timer, un disco) teneva il suo bit in servizio nel PIC e fermava l'IRQ 7.
+- **Il processore 0 aspetta il lucchetto con le linee dei fronti aperte**, quando una linea e' in
+  modo fronti: il PIC ha per quel tempo una maschera con solo quelle linee, la priorita' dell'APIC
+  e' alzata, e un fronte arrivato nell'attesa si avvisa appena il lucchetto e' preso. Senza linee
+  in modo fronti l'attesa e' quella di prima.
+- **Il PIC dei due kernel in un file solo**, `kernel/arch/x86/pic.c`, con la maschera tenuta in
+  memoria e un lucchetto per il chip.
+- **La bitmap I/O nel TSS** (`SYS_IOPORT_DIRETTO` 267, `ioport_diretto()` nella libc): le finestre
+  date da `ioport_bind` a un driver si aprono a `in`/`out` in ring 3 mentre gira, e si richiudono a
+  ogni cambio di processo. Non da' porte nuove. lpt.drv 0.002 la usa.
+- `tools/prova_lpt.sh`: 13 su 13 a 32 e a 64 bit con un processore. Con `-smp 2`, sei giri: 300
+  fronti su 300 in quattro, 299 e 298 negli altri due (la prova li manda a 60-100 us l'uno
+  dall'altro; prima 297). L'onda: ritardo peggiore 58-254 us invece di 1,3 ms, una volta 1,9 ms.
+  Non ancora provato su una porta vera.
 
 ### Un driver solo per la porta parallela (kernel 0.323, lpt.drv 0.001, voce 98)
 
@@ -9303,7 +9338,6 @@ timer. I contatori `notifiche IRQ 0, battiti 131` lo hanno detto in chiaro.
 | | |
 |---|---|
 | **`gcc` come programma di guida** | `cc1` compila e produce assembly, `as` e `ld` ci sono: manca chi li concatena passando i file intermedi |
-| **posizione condivisa fra fd duplicati** | `dup()` funziona, ma i due descrittori tengono ognuno il proprio offset |
 | **TCP fuori sequenza** | i segmenti arrivati in disordine si scartano invece di riordinarli, e l'RTO è fisso invece che misurato |
 | **DNS: solo record A** | i CNAME si saltano invece di seguirli; se la risposta non contiene già il record A finale, il nome non si risolve |
 | **rinnovo DHCP** | `dhcp` prende la concessione e finisce; il rinnovo vuole un processo che resti acceso |

@@ -868,6 +868,10 @@ typedef struct Process {
      * volta sola si comporta esattamente come prima. */
     IoFinestra      io_finestre[IO_FINESTRE_MAX];
     uint32_t        io_finestre_n;
+    /* 1 = its windows are open in the TSS's I/O bitmap while it runs: `in`
+     * and `out` in ring 3, no system call (SYS_IOPORT_DIRETTO, 0.324; see
+     * gdt.h). Off again at every exec (elf_load). */
+    uint32_t        io_diretto;
 
     /* --- E' un driver? Il varco verso l'hardware, in un campo solo ---
      *
@@ -962,6 +966,9 @@ typedef struct Process {
     uint32_t  aff_parole;
 
 } Process;
+
+/* The TSS I/O bitmap of this processor for p (syscall_impl.c, 0.324). */
+void ioport_mappa_per(const Process *p);
 
 /* Processor affinity and reservations (0.319, voce 92): sched.c. */
 void     sched_aff_eredita(Process *figlio, const Process *da, int intera);

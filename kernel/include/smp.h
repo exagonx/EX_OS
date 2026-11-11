@@ -178,7 +178,7 @@ static inline uint32_t cpu_n(void)
 int gdt_posti(uint32_t posti);
 int sched_posti(uint32_t posti);
 int paging_posti(uint32_t posti);
-int irq_posti(uint32_t posti);      /* isr.c: the instants of the edges (0.323) */
+int irq_posti(uint32_t posti);      /* isr.c: nothing per processor since 0.324 */
 
 /* Mette al lavoro, a macchina avviata, i processori parcheggiati. Rende
  * quanti lavorano dopo. Vedi smp.c: e' il modo di provare senza `smp = 2`. */
@@ -189,6 +189,7 @@ void bkl_esci(const void *frame);   /* uscendone: lo lascia se si torna in ring 
 void bkl_lascia(void);              /* lo lascia e basta: i primi ingressi in ring 3 */
 void bkl_stato(uint32_t *coda, uint32_t *turno, uint32_t *chi);
 void bkl_ozio(void);                /* lo lascia chi sta per fermarsi con hlt */
+int  bkl_aspetta_qui(void);         /* 1 = this processor is waiting for it with the edge lines open (0.324) */
 
 /* ! A WAIT FOR THE CLOCK, ON A PROCESSOR THAT IS NOT 0, LETS THE LOCK GO BY
  * (0.320). g_ticks rises on processor 0, in a handler that takes the kernel's

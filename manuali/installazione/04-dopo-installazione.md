@@ -457,16 +457,26 @@ Device ID, i fronti di nACK e un'onda sulle linee dei dati.
   nACK dove il dato è la durata di ogni onda (fra 180 e 500 microsecondi
   circa).
 
-! **Con due processori un fronte può andare perso**: il processore 0 aspetta
-  il lucchetto del kernel a interrupt spenti, e due fronti arrivati in
-  quell'attesa diventano un interrupt solo. In QEMU, 3 su 300 a 64 bit con
-  due processori, nessuno con uno. `lpt.drv -fronti` dice quanti ne ha visti.
+! **Con due processori, dal kernel 0.324, i fronti non si perdono più.**
+  Fino alla 0.323 il processore 0 aspettava il lucchetto del kernel a
+  interrupt spenti, e l'interrupt che aspettava (il timer, un disco) teneva
+  il suo bit «in servizio» nel PIC, che così fermava l'IRQ 7, il meno
+  importante di tutti: due fronti arrivati in quell'attesa diventavano uno
+  (3 su 300 in QEMU a 64 bit). Dalla 0.324 l'EOI parte prima dell'attesa, e
+  il processore 0 aspetta con gli interrupt accesi solo per le linee dei
+  fronti: in QEMU con due processori, su sei giri, 300 su 300 in quattro, 299
+  e 298 negli altri due, quando la prova li manda a 60-100 µs l'uno
+  dall'altro (il datasette ne manda uno ogni 180-500 µs). `lpt.drv -fronti` dice quanti ne
+  ha visti.
 
 ! **L'onda sulle linee dei dati** (la scrittura sul nastro) la fa il driver
   aspettando sull'orologio fine, su un processore riservato quando ce ne sono
-  due: ogni fronte esce in ritardo del costo di una syscall, di più se l'altro
-  processore tiene il kernel. `lpt.drv -prova-onda:N:US` dice il ritardo
-  peggiore.
+  due. Dal kernel 0.324 il driver fa `in` e `out` da solo (la bitmap I/O del
+  TSS, `ioport_diretto`), senza chiamate di sistema né lucchetto del kernel:
+  in QEMU con due processori il ritardo peggiore è sceso da 1,3 ms a
+  58-254 µs (una volta su quattro 1,9 ms: il processore riservato riceve
+  ancora il suo battito del timer). `lpt.drv -prova-onda:N:US` dice il
+  ritardo peggiore e se gli in/out sono diretti.
 
 ---
 

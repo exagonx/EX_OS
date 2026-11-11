@@ -26,7 +26,7 @@
 #include "libc.h"
 
 /* +0.001 a ogni modifica: `mount -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("mount", "0.003");
+EX_VERSIONE("mount", "0.004");
 
 /* Gli stessi errno del kernel (kernel/include/syscall.h): la syscall
  * ritorna il valore negato. */
@@ -69,17 +69,24 @@ static void elenca(void)
         int i;
         for (i = 0; i < n; i++) {
             /* Il campo `fs` non e' piu' solo la larghezza di una FAT: 2 e'
-             * ext2 e 9 e' ISO 9660. Stampare "FAT2" o "FAT9" sarebbe un
-             * filesystem che non esiste. */
-            if ((m[i].fs >= 2 && m[i].fs <= 4) || m[i].fs == 9) {
+             * ext2, 9 ISO 9660, 10 /proc (kernel 0.325). Stampare "FAT2" o
+             * "FAT9" sarebbe un filesystem che non esiste. */
+            if ((m[i].fs >= 2 && m[i].fs <= 4) || m[i].fs == 9 || m[i].fs == 10) {
                 printf("%-24s %-12s %-11s %s\n",
                        m[i].punto, m[i].dev,
                        (m[i].fs == 2) ? "ext2" : (m[i].fs == 3) ? "ext3" :
-                       (m[i].fs == 4) ? "ext4" : "ISO 9660",
+                       (m[i].fs == 4) ? "ext4" : (m[i].fs == 10) ? "proc" : "ISO 9660",
                        m[i].sola_lettura ? "sola lettura" : "lettura/scrittura");
-            } else {
+            } else if (m[i].fs == 12 || m[i].fs == 16 || m[i].fs == 32) {
                 printf("%-24s %-12s FAT%-8u %s\n",
                        m[i].punto, m[i].dev, m[i].fs,
+                       m[i].sola_lettura ? "sola lettura" : "lettura/scrittura");
+            } else {
+                /* a kernel newer than this program, or one before 0.325
+                 * with /proc (0xFFFFFFFF): not a FAT of any width */
+                printf("%-24s %-12s %-11s %s\n",
+                       m[i].punto, m[i].dev,
+                       (m[i].fs == 0xFFFFFFFFu && strcmp(m[i].dev, "proc") == 0) ? "proc" : "?",
                        m[i].sola_lettura ? "sola lettura" : "lettura/scrittura");
             }
         }

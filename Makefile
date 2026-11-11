@@ -5913,6 +5913,7 @@ $(BUILD_KERNEL)/boothd_bin.o: $(BOOTHD_C)
 
 KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/arch/x86/idt.c \
+                  $(KERNEL_DIR)/arch/x86/pic.c \
                   $(KERNEL_DIR)/arch/x86/isr.c \
                   $(KERNEL_DIR)/arch/x86/fpu.c \
                   $(KERNEL_DIR)/arch/x86/entropia.c \

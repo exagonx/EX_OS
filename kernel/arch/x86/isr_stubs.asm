@@ -14,7 +14,7 @@
 extern isr_handler      ; Handler C in isr.c
 extern irq_handler      ; Handler C IRQ in isr.c
 extern syscall_handler  ; Handler C syscall in syscall/syscall.c
-extern irq_istante      ; the instant of the edge, before the lock (0.323, isr.c)
+extern irq_prima        ; what does not wait for the lock (0.324, isr.c)
 extern bkl_entra        ; il lucchetto del kernel, con piu' processori (smp.c)
 extern bkl_esci
 extern smp_ap_irq       ; timer e messaggi dei processori in piu' (smp.c)
@@ -202,10 +202,15 @@ irq_common_stub:
     mov es, ax
     mov fs, ax
 
-    ; ! THE INSTANT FIRST: with two processors bkl_entra may wait for the
-    ; other one, and the edge would be stamped late by that wait (isr.c,
-    ; IRQ EDGES WITH THEIR INSTANT).
-    call irq_istante
+    ; ! WHAT DOES NOT WAIT, FIRST (0.324): the instant, the end of interrupt
+    ; and an edge into its ring, before the lock that may make this
+    ; processor wait for the other one (isr.c, irq_prima). 1 = this entry
+    ; interrupted bkl_entra itself: back at once, it cannot wait twice.
+    push esp
+    call irq_prima
+    add esp, 4
+    test eax, eax
+    jnz .indietro
     ; Chiama handler C: irq_handler(InterruptFrame *frame)
     call bkl_entra
     push esp
@@ -215,7 +220,7 @@ irq_common_stub:
     push esp
     call bkl_esci
     add esp, 4
-
+.indietro:
     pop eax
     mov ds, ax
     mov es, ax

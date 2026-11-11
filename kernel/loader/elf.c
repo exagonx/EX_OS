@@ -770,6 +770,7 @@ if (n <= 0) {
      * caricamento riesce vorrebbe dire togliere — o dare — il privilegio a un
      * processo che sta ancora eseguendo un altro programma. */
     if (proc != NULL) proc->is_driver = (uint32_t)percorso_di_driver(path);
+    if (proc != NULL) proc->io_diretto = 0;     /* the new program asks again (0.324) */
 
     result->entry_point = hdr.e_entry;
     klog(LOG_INFO, "ELF: '%s' caricato con successo, entry=0x%08x", path, hdr.e_entry);

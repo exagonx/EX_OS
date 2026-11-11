@@ -1521,6 +1521,11 @@ static void sched_switch_to(Process *next)
      * non viaggiano nei registri salvati da context_switch. */
     gdt_set_tls_base(next->tls_tp);
 
+    /* The I/O bitmap (0.324): the ports of the one leaving closed, those of
+     * the one coming open if it asked (SYS_IOPORT_DIRETTO). One comparison
+     * when neither has any. */
+    ioport_mappa_per(next);
+
     klog(LOG_DEBUG, "SCHED: switch PID %u -> PID %u (tick=%u)",
          prev->pid, next->pid, g_ticks);
 

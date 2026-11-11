@@ -54,6 +54,11 @@ Dove va l'output:
 
   uno | due                 l'uscita del primo diventa l'ingresso del secondo
 
+Uno script e i programmi che lancia scrivono nello stesso file uno
+dopo l'altro, senza cancellarsi a vicenda: `sh x.sh > log &` tiene
+anche cio' che scrive un figlio in sottofondo (dal kernel 0.326 la
+posizione nel file e' condivisa, come su ogni Unix).
+
 Le virgolette tengono insieme cio' che contiene spazi, e si possono usare
 anche in mezzo a una parola:
 
@@ -580,9 +585,15 @@ preso dal kernel (dalla 0.323) all'entrata dell'interrupt: e' cosi'
 che si legge un datasette (READ su nACK, SENSE su Paper End, WRITE
 su D1, come nell'adattatore C64S).
 
-! Con due processori un fronte puo' andare perso se ne arriva un
-  altro mentre il processore 0 aspetta il kernel: `-fronti` dice
-  quanti ne ha visti. In QEMU 3 su 300 a 64 bit.
+Dalla 0.324 il processore 0 aspetta il kernel con le linee dei
+fronti aperte, e l'EOI parte prima dell'attesa: in QEMU con due
+processori 300 fronti su 300 in quattro giri su sei, 1-2 persi
+negli altri (la prova li manda a 60-100 us l'uno dall'altro).
+`-fronti` dice quanti ne ha visti.
+
+Dalla 0.324 lpt.drv fa in/out da solo, senza chiamate di sistema
+(la bitmap I/O del TSS, ioport_diretto): l'onda su D1 esce in
+ritardo di decine di microsecondi invece che di millisecondi.
 
 [driver -install]
 far partire un driver a ogni avvio

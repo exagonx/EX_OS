@@ -201,6 +201,15 @@ int  vfs_close  (int h);
 int  vfs_lucchetto(int h, const void *chi, uint32_t pid, int tipo, uint64_t da, uint64_t a);
 int  vfs_luc_chi  (int h, const void *chi, int *tipo, uint64_t *da, uint64_t *a, uint32_t *pid);
 int  vfs_close_di (int h, const void *chi);
+
+/* The position of an open file, shared by every descriptor that came from
+ * the same open (dup, dup2, spawn, fork), as POSIX wants (0.326, voce 94).
+ * `di` = pid of who is moving it now, 0 = nobody (see fd_posizione_prendi). */
+typedef struct {
+    uint32_t          pos;
+    volatile uint32_t di;
+} VfsPosizione;
+VfsPosizione *vfs_posizione(int h);
 int  vfs_stat   (const char *abs, VfsStat *st);
 
 /* Dichiara un descrittore in piu' sullo stesso file aperto: ritorna `h`

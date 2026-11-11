@@ -166,12 +166,38 @@ typedef struct {
     uint32_t  coda;         /* next to read */
     uint32_t  persi;        /* edges that found the ring full */
     uint32_t  avvisato;     /* a notification is on its way */
+    uint32_t  da_avvisare;  /* an edge came, nobody told the owner yet (0.324) */
     uint32_t  fronti;       /* edges seen since the mode was turned on */
     uint32_t  spuri;        /* of which taken from a "spurious" IRQ 7 or 15 */
 } IrqFronti;
 
 static IrqFronti g_fronti[16];
 static void fronti_spegni(uint8_t irq);
+
+/* ! THE RINGS HAVE THEIR OWN LOCK (0.324): irq_prima fills them on processor 0
+ * with no kernel lock, the driver empties them from a syscall on any CPU.
+ * Interrupts off, a few loads and stores, nothing else. */
+static volatile uint32_t g_fronti_ll;
+static volatile uint16_t g_fronti_linee;    /* lines in edge mode, for bkl_entra */
+static volatile uint32_t g_fronti_rimandati; /* edges taken while waiting for the lock */
+
+static uintptr_t fronti_chiudi(void)
+{
+    uintptr_t flag = read_eflags();
+
+    interrupts_disable();
+    while (__sync_lock_test_and_set(&g_fronti_ll, 1u))
+        while (g_fronti_ll) __asm__ volatile ("pause");
+    return flag;
+}
+
+static void fronti_apri(uintptr_t flag)
+{
+    __sync_lock_release(&g_fronti_ll);
+    if (flag & 0x200u) interrupts_enable();
+}
+
+uint16_t irq_fronti_linee(void) { return g_fronti_linee; }
 
 static uint32_t irq_ripulisci(uint8_t irq)
 {
@@ -345,28 +371,14 @@ int32_t irq_unbind_uno(uint8_t irq, uint32_t pid)
  * ONE owner: a shared PCI line is level-triggered by nature.
  * ============================================================================= */
 
-/* The fine clock at the entry of the last interrupt, one slot per processor
- * (grown by irq_posti from posti_cresci, like the other per-processor tables). */
-static uint64_t  g_istante_1[1];
-static uint64_t *g_istante = g_istante_1;
-static uint32_t  g_istante_posti = 1;
-
+/* ! NO INSTANT PER PROCESSOR ANY MORE (0.324): up to 0.323 the stub noted
+ * it in a table, one slot per processor, and irq_handler stored it later;
+ * now irq_prima stores it at once, and an edge taken while the processor
+ * waited for the lock would have overwritten the slot of the interrupt
+ * waiting under it. irq_posti stays for posti_cresci (smp.c). */
 int irq_posti(uint32_t posti)
 {
-    uint64_t *nuovo;
-    uint32_t  i;
-    uintptr_t flag;
-
-    if (posti <= g_istante_posti) return 0;
-    nuovo = (uint64_t *)kmalloc(posti * sizeof(uint64_t));
-    if (nuovo == NULL) return -1;
-    for (i = 0; i < posti; i++) nuovo[i] = 0;
-    flag = read_eflags();
-    interrupts_disable();
-    nuovo[0]         = g_istante[0];
-    g_istante        = nuovo;
-    g_istante_posti  = posti;
-    if (flag & 0x200u) interrupts_enable();
+    (void)posti;
     return 0;
 }
 
@@ -393,58 +405,130 @@ uint32_t orologio_fine_hz(void)
     return tsc_c_e() ? tsc_hz() : 1193182u;
 }
 
-/* Called by the stubs before bkl_entra, interrupts off: nothing shared. */
-void irq_istante(void)
-{
-    uint32_t n = cpu_n();
-
-    if (n < g_istante_posti) g_istante[n] = orologio_fine();
-}
-
-
 static void fronti_spegni(uint8_t irq)
 {
-    uint64_t *a = g_fronti[irq].anello;
-    uintptr_t flag = read_eflags();
+    uint64_t *a;
+    uintptr_t flag = fronti_chiudi();
 
-    interrupts_disable();
+    a = g_fronti[irq].anello;
     g_fronti[irq].pid = 0;
     g_fronti[irq].anello = NULL;
     g_fronti[irq].cap = 0;
-    if (flag & 0x200u) interrupts_enable();
+    g_fronti[irq].da_avvisare = 0;
+    g_fronti_linee &= (uint16_t)~(1u << irq);
+    fronti_apri(flag);
     if (a) kfree(a);
 }
 
-/* From irq_handler: 1 if the edge was taken here (and nothing else to do). */
-static int fronti_prendi(uint8_t irq, uint64_t quando)
+/* Into the ring, from irq_prima: interrupts off, no kernel lock. 1 = the
+ * line is in edge mode and the edge was taken (or counted as lost). */
+static int fronti_metti(uint8_t irq, uint64_t quando, int spurio)
 {
     IrqFronti *f = &g_fronti[irq];
+    uintptr_t  flag;
     uint32_t   dopo;
+    int        preso = 0;
 
-    if (f->pid == 0) return 0;
-    f->fronti++;
-    dopo = f->testa + 1;
-    if (dopo == f->cap) dopo = 0;
-    if (dopo == f->coda) f->persi++;
-    else { f->anello[f->testa] = quando; f->testa = dopo; }
-    if (!f->avvisato && ipc_notify_irq(f->pid, irq)) f->avvisato = 1;
+    if (!(g_fronti_linee & (1u << irq))) return 0;
+    flag = fronti_chiudi();
+    if (f->pid != 0 && f->anello != NULL) {
+        f->fronti++;
+        if (spurio) f->spuri++;
+        dopo = f->testa + 1;
+        if (dopo == f->cap) dopo = 0;
+        if (dopo == f->coda) f->persi++;
+        else { f->anello[f->testa] = quando; f->testa = dopo; }
+        f->da_avvisare = 1;
+        preso = 1;
+    }
+    fronti_apri(flag);
+    return preso;
+}
+
+/* The notification, under the kernel's lock: once until the owner reads. */
+static void fronti_avvisa(uint8_t irq)
+{
+    IrqFronti *f = &g_fronti[irq];
+    uintptr_t  flag = fronti_chiudi();
+    uint32_t   pid = 0;
+
+    if (f->pid != 0 && f->da_avvisare) {
+        if (f->avvisato) f->da_avvisare = 0;
+        else pid = f->pid;
+    }
+    fronti_apri(flag);
+    if (pid == 0 || !ipc_notify_irq(pid, irq)) return;
+    flag = fronti_chiudi();
+    if (f->pid == pid) { f->avvisato = 1; f->da_avvisare = 0; }
+    fronti_apri(flag);
+}
+
+/* From bkl_entra, as soon as the lock is taken: the edges that came while
+ * this processor waited for it, with nobody told. */
+void irq_fronti_rimandati(void)
+{
+    uint32_t i;
+
+    if (!g_fronti_rimandati) return;
+    g_fronti_rimandati = 0;
+    for (i = 0; i < 16; i++)
+        if (g_fronti_linee & (1u << i)) fronti_avvisa((uint8_t)i);
+}
+
+/* =============================================================================
+ * irq_prima - THE PART OF AN INTERRUPT THAT DOES NOT WAIT (0.324, voce 98)
+ *
+ * From the stubs, vectors 32-47, BEFORE bkl_entra, interrupts off, no kernel
+ * lock: touches only the chip (pic.c), the clock and the rings (own locks).
+ *
+ * ! WHY: 297 EDGES OF 300 WITH TWO PROCESSORS (9/11/2026, QEMU 64 bit). The
+ * 8259 talks to processor 0 only, and two things made it deaf:
+ *   - processor 0 spun on the kernel lock with interrupts off;
+ *   - the interrupt spinning there (timer, disk) still had its bit IN SERVICE,
+ *     because the EOI came from irq_handler, after the lock. In service blocks
+ *     every lower line, and IRQ 7 is the lowest asshole of them all.
+ * Two edges in that time = one. So the EOI goes here, and bkl_entra waits
+ * with interrupts ON for the edge lines only (smp.c).
+ *
+ * ! A SPURIOUS IRQ 7/15 ON AN EDGE LINE IS AN EDGE: the line DID go up, it
+ * just dropped before the CPU looked (nACK is short). Counted in `spuri`.
+ *
+ * Result in the frame's error code (PIC interrupts have none) for
+ * irq_handler: IRQP_NORMALE, IRQP_FRONTE (only the notification left),
+ * IRQP_SPURIO. Returns 1 = back at once: we interrupted bkl_entra itself, and
+ * waiting for the lock twice is a deadlock.
+ * ============================================================================= */
+#define IRQP_NORMALE 0u
+#define IRQP_FRONTE  1u
+#define IRQP_SPURIO  2u
+
+static volatile uint32_t g_fuori_posto;     /* see the last case below */
+
+int irq_prima(InterruptFrame *frame)
+{
+    uint8_t  irq = (uint8_t)(frame->int_no - 32);
+    uint64_t quando = orologio_fine();      /* ! FIRST: see the head of this part */
+    int      spurio;
+
+    if (irq >= 16) return 0;
+    spurio = pic_fine_o_spurio(irq);
+    if (irq_handlers[irq] == NULL && fronti_metti(irq, quando, spurio))
+        frame->err_code = IRQP_FRONTE;
+    else
+        frame->err_code = spurio ? IRQP_SPURIO : IRQP_NORMALE;
+
+    if (!bkl_aspetta_qui()) return 0;
+    if (frame->err_code == IRQP_FRONTE) { g_fronti_rimandati = 1; return 1; }
+    if (frame->err_code == IRQP_SPURIO) return 1;
+    /* ! CAN'T HAPPEN (only edge lines are open during the wait; a request
+     * already in flight comes as spurious 7). If it does anyway: entering the
+     * lock from here = waiting for ourselves forever. EOI is gone, so the
+     * interrupt is lost - counted, not a hang. */
+    g_fuori_posto++;
     return 1;
 }
 
-/* ! A "SPURIOUS" IRQ 7 ON A LINE IN EDGE MODE IS AN EDGE. The 8259 gives
- * IRQ 7 (15 on the slave) with nothing in service when the request went
- * down before the processor took it: the line DID go up. With two
- * processors the one the PIC talks to may be waiting for the kernel's lock
- * with interrupts off, and a parallel port keeps its line up only while nACK
- * is low: half a wave of a datasette, or less. In QEMU, at 32 bit with two
- * processors, 6 edges of 300 were lost so (9 November 2026). Counted apart
- * in `spuri`, so a driver knows. */
-static void spurio_fronte(uint8_t irq)
-{
-    if (g_fronti[irq].pid == 0) return;
-    g_fronti[irq].spuri++;
-    fronti_prendi(irq, g_istante[cpu_n() < g_istante_posti ? cpu_n() : 0]);
-}
+uint32_t irq_fuori_posto(void) { return g_fuori_posto; }
 
 static int irq_mio(uint8_t irq, uint32_t pid, int *altri)
 {
@@ -473,15 +557,24 @@ int32_t irq_fronti(uint32_t op, uint8_t irq, uintptr_t a, uint32_t b, uint32_t p
         IrqFrontiStato *s = (IrqFrontiStato *)a;
         int mio = (f->pid == pid);
 
+        IrqFrontiStato c;
+        uintptr_t      flag;
+
         if (!syscall_verify_ptr(s, sizeof(*s))) return ERR(EFAULT);
-        s->hz      = orologio_fine_hz();
-        s->tsc     = tsc_c_e() ? 1u : 0u;
-        s->cap     = mio ? f->cap : 0;
-        s->persi   = mio ? f->persi : 0;
-        s->fronti  = mio ? f->fronti : 0;
-        s->spuri   = mio ? f->spuri : 0;
-        s->in_coda = mio ? (f->testa + f->cap - f->coda) % f->cap : 0;
-        s->adesso  = orologio_fine();
+        __builtin_memset(&c, 0, sizeof(c));
+        c.hz  = orologio_fine_hz();
+        c.tsc = tsc_c_e() ? 1u : 0u;
+        flag = fronti_chiudi();
+        if (mio && f->cap) {
+            c.cap     = f->cap;
+            c.persi   = f->persi;
+            c.fronti  = f->fronti;
+            c.spuri   = f->spuri;
+            c.in_coda = (f->testa + f->cap - f->coda) % f->cap;
+        }
+        fronti_apri(flag);
+        c.adesso = orologio_fine();
+        *s = c;
         return 0;
     }
     irq_ripulisci(irq);
@@ -503,12 +596,13 @@ int32_t irq_fronti(uint32_t op, uint8_t irq, uintptr_t a, uint32_t b, uint32_t p
         anello = (uint64_t *)kmalloc(cap * sizeof(uint64_t));
         if (anello == NULL) return ERR(ENOMEM);
         if (f->pid) fronti_spegni(irq);
-        flag = read_eflags();
-        interrupts_disable();
+        flag = fronti_chiudi();
         f->anello = anello; f->cap = cap;
         f->testa = f->coda = 0; f->persi = 0; f->avvisato = 0; f->fronti = 0; f->spuri = 0;
+        f->da_avvisare = 0;
         f->pid = pid;
-        if (flag & 0x200u) interrupts_enable();
+        g_fronti_linee |= (uint16_t)(1u << irq);
+        fronti_apri(flag);
         pic_unmask_irq(irq);
         return 0;
     }
@@ -521,15 +615,25 @@ int32_t irq_fronti(uint32_t op, uint8_t irq, uintptr_t a, uint32_t b, uint32_t p
 
         if (b == 0) return 0;
         if (!syscall_verify_ptr(fuori, b * sizeof(uint64_t))) return ERR(EFAULT);
-        flag = read_eflags();
-        interrupts_disable();
-        while (n < b && f->coda != f->testa) {
-            fuori[n++] = f->anello[f->coda];
-            if (++f->coda == f->cap) f->coda = 0;
+        /* ! Into the user's memory a few at a time, never under the rings'
+         * lock: a page fault there would wait for the disk with the boot
+         * processor's edges locked out. */
+        for (;;) {
+            uint64_t pezzo[16];
+            uint32_t k = 0, j;
+
+            flag = fronti_chiudi();
+            while (n + k < b && k < 16 && f->coda != f->testa) {
+                pezzo[k++] = f->anello[f->coda];
+                if (++f->coda == f->cap) f->coda = 0;
+            }
+            /* a later edge notifies again */
+            if (k == 0 || n + k == b) f->avvisato = 0;
+            fronti_apri(flag);
+            for (j = 0; j < k; j++) fuori[n + j] = pezzo[j];
+            n += k;
+            if (k == 0 || n == b) break;
         }
-        /* a later edge notifies again */
-        f->avvisato = 0;
-        if (flag & 0x200u) interrupts_enable();
         return (int32_t)n;
     }
     return ERR(EINVAL);
@@ -783,63 +887,20 @@ void irq_handler(InterruptFrame *frame)
      * — vedi kernel/arch/x86/entropia.c. */
     entropia_evento(irq);
 
-    /* Gestisci IRQ spurio dal master PIC (IRQ7) */
-    if (irq == 7) {
-        /* FIX BUG #6: la sequenza corretta è prima inviare il comando OCW3
-         * "leggi ISR" (0x0B) alla porta command, POI leggere il risultato
-         * dalla stessa porta. L'ordine precedente era invertito: si leggeva
-         * prima di inviare il comando, ottenendo un valore casuale (IRR o
-         * stato precedente) invece dell'ISR effettivo. */
-        port_outb(0x20, 0x0B);          /* OCW3: comando "leggi ISR" */
-        uint8_t isr = port_inb(0x20);   /* Leggi In-Service Register */
-        if (!(isr & 0x80)) {
-            /* IRQ7 spurio: ignora (non mandare EOI) */
-            spurio_fronte(7);
-            return;
-        }
-    }
+    /* ! SPURIOUS CHECK AND EOI: in irq_prima now (0.324), before the lock.
+     * The EOI goes BEFORE the handler since July 2026: after it, IRQ 0's
+     * handler may context_switch() and never come back, IRQ 0 stays in
+     * service, no more ticks, everything waiting on g_ticks frozen forever
+     * (`hello` from the shell, irr=03 isr=01). Same line can't re-enter:
+     * interrupt gates, IF=0 until iret. */
+    if (frame->err_code == IRQP_SPURIO) return;
 
-    /* Gestisci IRQ spurio dallo slave PIC (IRQ15) */
-    if (irq == 15) {
-        port_outb(0xA0, 0x0B);          /* OCW3 allo slave */
-        uint8_t isr = port_inb(0xA0);   /* Leggi ISR slave */
-        if (!(isr & 0x80)) {
-            /* IRQ15 spurio: manda EOI solo al master */
-            port_outb(0x20, 0x20);
-            spurio_fronte(15);
-            return;
-        }
-    }
-
-    /* Invia End Of Interrupt al PIC PRIMA di eseguire l'handler.
-     *
-     * DEADLOCK RISOLTO (luglio 2026): l'EOI era inviato DOPO l'handler.
-     * L'handler di IRQ0 (sched_irq0_handler) può però chiamare
-     * sched_switch_to() -> context_switch(), che cambia lo stack kernel e
-     * NON ritorna: riprende l'esecuzione di un altro processo. La riga
-     * pic_send_eoi(irq) restava così non eseguita fino a quando il
-     * processo preemptato non veniva rischedulato — cioè fino al tick
-     * successivo, che il PIC però non consegnava più perché IRQ0 era
-     * ancora marcato In-Service (ISR bit 0 = 1 blocca IRQ0 e tutti gli
-     * IRQ di priorità inferiore).
-     *
-     * Sintomo: qualunque codice che attendesse l'avanzare di g_ticks dopo
-     * un context switch si bloccava per sempre. Il caso tipico era
-     * `hello` (o qualunque programma) lanciato dalla shell:
-     *   IRQ0 -> switch alla shell (EOI mai inviato)
-     *   -> shell: spawn() -> elf_load() -> fat12_read_sector()
-     *   -> fdc_motor_on() -> fdc_delay_ms(300) -> hlt in attesa di g_ticks
-     *   -> nessun IRQ0 possibile -> sistema congelato (irr=03 isr=01).
-     *
-     * L'EOI qui è sicuro: gli IRQ entrano da interrupt gate (IF=0 per
-     * tutta la durata dell'handler, vedi irq_common_stub), quindi non è
-     * possibile un rientro dello stesso IRQ prima dell'iret finale. */
-    pic_send_eoi(irq);
-
-    /* An edge with its instant (0.323): taken, notified, the line stays open. */
-    if (irq < 16 && irq_handlers[irq] == NULL &&
-        fronti_prendi(irq, g_istante[cpu_n() < g_istante_posti ? cpu_n() : 0]))
+    /* An edge with its instant: already in its ring (irq_prima), the owner
+     * is told here, and the line stays open. */
+    if (frame->err_code == IRQP_FRONTE) {
+        fronti_avvisa(irq);
         return;
+    }
 
     /* Chiama handler registrato se presente, altrimenti notifica il
      * driver ring3 che ha rivendicato questo IRQ (se esiste) */
@@ -937,8 +998,7 @@ void isr_install(void)
     for (i = 0; i < 16; i++) irq_handlers[i] = NULL;
 
     /* Maschera tutti gli IRQ (verranno abilitati dai driver) */
-    port_outb(0x21, 0xFF);  /* Master PIC: maschera tutto */
-    port_outb(0xA1, 0xFF);  /* Slave PIC: maschera tutto */
+    pic_maschera_tutto();   /* the mask in memory too (pic.c, 0.324) */
 
     klog(LOG_INFO, "ISR: handler installati, tutti gli IRQ mascherati");
 }

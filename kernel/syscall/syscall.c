@@ -211,6 +211,7 @@ void syscall_init(void)
     syscall_table[SYS_IOPORT_OUT16] = sys_ioport_out16;
     syscall_table[SYS_IOPORT_IN32]  = sys_ioport_in32;
     syscall_table[SYS_IOPORT_OUT32] = sys_ioport_out32;
+    syscall_table[SYS_IOPORT_DIRETTO] = sys_ioport_diretto;
     syscall_table[SYS_IRQ_DONE]     = sys_irq_done;
     syscall_table[SYS_IRQ_UNBIND]   = sys_irq_unbind;
     syscall_table[SYS_FDPROVA]      = sys_fdprova;

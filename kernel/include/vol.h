@@ -19,6 +19,7 @@
 #define VOL_FS_SCONOSCIUTO  0
 #define VOL_FS_EXT2         2
 #define VOL_FS_ISO9660      9      /* CD/DVD dati: kernel/fs/iso9660.c */
+#define VOL_FS_PROC         10     /* /proc, no device (mountinfo only, 0.325) */
 #define VOL_FS_FAT12        12
 #define VOL_FS_FAT16        16
 #define VOL_FS_FAT32        32

@@ -298,6 +298,7 @@ typedef struct {
 #define SYS_ALLARME      264     /* kernel 0.317: see alarm() */
 #define SYS_CPU_AFFINITA 265     /* kernel 0.319: see cpu_aff_leggi() */
 #define SYS_IRQ_FRONTI   266     /* kernel 0.323: see irq_fronti_accendi() */
+#define SYS_IOPORT_DIRETTO 267   /* kernel 0.324: see ioport_diretto() */
 #define SYS_SMP_LAVORA   87
 #define SYS_PROCINFO    188
 #define SYS_PROC_USO    180
@@ -10100,6 +10101,12 @@ int ioport_in32(unsigned int port, unsigned int *out)
 int ioport_out32(unsigned int port, unsigned int value)
 {
     return (int)_syscall2(SYS_IOPORT_OUT32, port, value);
+}
+
+/* The windows open to in/out in ring 3 (kernel 0.324): see libc.h. */
+int ioport_diretto(int acceso)
+{
+    return (int)_syscall1(SYS_IOPORT_DIRETTO, acceso ? 1 : 0);
 }
 
 int irq_done(unsigned int irq)

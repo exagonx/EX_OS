@@ -128,8 +128,10 @@ GRUPPO  VOCI             COSA
                          b FATTO in QEMU (kernel 0.321, TLB shootdown, fili insieme: 1,97 con 2);
                          Firefox ricollegato (vede 2 core); portatile a 0.321: b 8/8 anche li' (8/11)
  --     93               (8/11) mount: /proc mostrato come "FAT4294967295"
+                         FATTO (11/11, kernel 0.325, mount 0.004) in QEMU
  --     94               (9/11) stdout di uno script e del suo figlio in sottofondo si
-                         sovrascrivono nello stesso file: da verificare
+                         sovrascrivono nello stesso file: VERO, FATTO (11/11, kernel
+                         0.326 posizione condivisa, sh 0.011 una write per riga) in QEMU
  --     95               (9/11) flash bianchi nei video di Firefox con due core: zona di
                          ExWin senza doppio buffer; nsWindow col buffer suo FATTO, ma
                          in QEMU i lampi non si riproducono: misura sul portatile
@@ -137,10 +139,12 @@ GRUPPO  VOCI             COSA
                          mancanti video NV4x, DMA/AHCI del disco, FireWire, SMBus
  --     98               (9/11) un driver unico della porta parallela: FATTO lpt.drv
                          0.001 e kernel 0.323 (fronti con l'istante), provato in QEMU;
-                         IN PAUSA (l'utente, 9/11): fronti persi con 2 processori e
-                         ritardo dell'onda da decidere, poi porta vera e voce 96
+                         10/11 kernel 0.324 + lpt.drv 0.002: EOI prima del lucchetto,
+                         attesa con le linee dei fronti aperte, bitmap I/O nel TSS
+                         (scelte dell'utente) FATTO in QEMU; poi porta vera e voce 96
  --     97               (9/11) exwin lanciato mentre girano i lavori d'avvio torna al
-                         prompt senza wserver e senza dire niente (prova-lampi 4/4)
+                         prompt senza wserver e senza dire niente (prova-lampi 4/4);
+                         11/11 non riprodotto con la 0.326 (prova_exwin_presto.sh, 5 giri)
  --     96               (9/11) datasette sulla porta parallela: un'app a finestre di
                          testo da mtap/ptap (3p_app_source/c64tap), TAP e backup PC
 
@@ -9049,8 +9053,39 @@ tools/netinst/velocita tolto da netinst.
         Da misurare sul ferro; se no la bitmap I/O del TSS (in/out diretti).
       IN PAUSA dal 9/11 sera (l'utente: "metti in pausa il driver lpt"):
       si riprende dalle due domande qui sopra (fronti persi, onda).
-      DA FARE: provarlo su una porta vera con una stampante e col datasette;
-      ZIP e scanner quando l'utente dice quali; poi la voce 96.
+      RIPRESO il 10/11 (l'utente: "riprendi la coda con il driver LPT").
+      Trovato leggendo mtap: il nastro si legge INTERROGANDO il piedino a
+      interrupt spenti, non con l'IRQ. LE SCELTE DELL'UTENTE (10/11):
+      "Bitmap I/O nel TSS" e "Via rapida senza lucchetto".
+      FATTO (10/11 sera), kernel 0.324 e lpt.drv 0.002, non committato:
+      - un secondo motivo dei fronti persi: l'interrupt che aspettava il
+        lucchetto (timer, disco) teneva il suo bit in servizio nel PIC
+        perche' l'EOI partiva dopo il lucchetto, e bloccava l'IRQ 7.
+        irq_prima (isr.c) prima di bkl_entra: istante, spuri, EOI, fronte
+        nell'anello (lucchetto suo); irq_handler manda solo l'avviso.
+      - bkl_entra sul processore 0, se una linea e' in modo fronti: attesa a
+        interrupt accesi con nel PIC solo quelle linee (pic_attesa), TPR
+        dell'APIC a 0xF0; un fronte nell'attesa torna subito e si avvisa
+        preso il lucchetto (irq_fronti_rimandati).
+      - kernel/arch/x86/pic.c: il PIC dei due kernel, maschera in memoria.
+      - bitmap I/O nel TSS (gdt.c, gdt64.c), SYS_IOPORT_DIRETTO 267,
+        ioport_diretto() nella libc; lpt.drv la usa.
+      - tools/prova_lpt.sh 13/13 a 32 e 64 con un processore. -smp 2, sei
+        giri: 300/300 in quattro, 299 (64 bit) e 298 (32 bit) negli altri
+        (impulsi della prova a 58-100 us). Onda: peggiore 58-254 us (era
+        1,3 ms), una volta 1,9 ms.
+      ! RESTA: il processore riservato riceve ancora il battito del timer,
+        che prende il lucchetto del kernel: e' la causa probabile dei picchi
+        dell'onda (NON misurata). Rimedio possibile: niente battito su un
+        processore riservato a un processo solo. E i 1-2 fronti persi su 300
+        in due giri su sei: il processore 0 con interrupt spenti per piu' di
+        ~60 us in un gestore o in una sezione del kernel, oppure il processore
+        virtuale fermo nell'ospite (QEMU): da misurare, e da vedere sul ferro.
+      ! La lettura del nastro alla mtap (interrogare il piedino col TSC sul
+        processore riservato) ora si puo' fare nel driver: con la voce 96.
+      DA FARE: provarlo su una porta vera (sul PC 192.168.0.247, che ha anche
+      slot PCI e PCIe, con l'utente) con una stampante e col datasette; ZIP e
+      scanner quando l'utente dice quali; poi la voce 96.
 
   97. exwin SUBITO DOPO L'AVVIO NON PARTE (visto il 9/11 con
       tools/exilla/prova-lampi.sh, kernel 0.322, -smp 1 e -smp 2): `mount
@@ -9064,6 +9099,19 @@ tools/netinst/velocita tolto da netinst.
       cosi'). Da capire dove si ferma exwin (video_info? console_info? il
       caricamento da CD?) con la sonda della guardia; sul portatile l'utente
       lancia exwin a sistema pronto, quindi non lo vede.
+      11/11 NON RIPRODOTTO col kernel 0.326: tools/prova_exwin_presto.sh
+      (nuova) fa come prova-lampi senza l'attesa di 30 s (disco montato, le
+      cinque export, exwin subito, poi ps). Cinque giri: 64 bit con KVM (due,
+      il primo senza disco), 32
+      bit TCG -smp 2, e 32 e 64 TCG -smp 2 insieme (due QEMU, host carico);
+      negli ultimi tre ehci.drv e ohci.drv giravano ancora quando exwin e'
+      partito. Sempre la riga di exwin e wserver nel ps. Letti il codice di
+      exwin (ogni uscita stampa) e della shell (attesa per pid, i job raccolti
+      solo al prompt, la tastiera resta della shell): niente che perda la
+      riga. Il 9/11 c'erano anche gli ATA timeout e il DMA fermo del 0.322, e
+      la 0.324 ha cambiato EOI e attesa del lucchetto: forse c'entrava, NON
+      misurato. RESTA APERTA: rifare prova-lampi senza l'attesa di 30 s con
+      la compilazione di Firefox accesa; l'attesa in prova-lampi resta.
 
   96. IL DATASETTE SULLA PORTA PARALLELA (l'utente, 9/11): "nella directory
       3p_app_source/c64tap/ ci sono i sorgenti di mtap e ptap due
@@ -9143,11 +9191,32 @@ tools/netinst/velocita tolto da netinst.
       posizione nel file (POSIX: dopo fork padre e figlio hanno la stessa
       descrizione di file aperto, e scrivono uno dopo l'altro). Da
       verificare con una prova piccola in QEMU prima di toccare niente.
+      VERIFICATO (11/11, tools/prova_sottofondo.sh nuova): 40 righe dello
+      script e 40 del figlio nello stesso file: c'erano P01, le F01-F40 e
+      NIENTE di P02-P40. Causa: la posizione stava nel descrittore di ogni
+      processo (FileDescriptor.offset) e spawn/fork/dup la copiavano; il
+      commento sopra fd_duplica lo diceva gia' ("il giorno che una shell
+      scrivera' in append da due fd, questa diventera' la cosa da sistemare
+      per prima").
+      FATTO (11/11), non committato:
+      - kernel 0.326: la posizione e il suo lucchetto nell'handle del VFS
+        (VfsPosizione in vfs.c, vfs_posizione), che vfs_dup divideva gia';
+        read, write, O_APPEND e lseek passano da fd_pos/fd_pos_di. Il
+        lucchetto passa di mano se chi lo tiene e' morto o zombie.
+      - sh 0.011: echo, println, printerr e la riga ripetuta degli script con
+        una write sola (scrivi_insieme): con due processori le righe scritte
+        a pezzi uscivano mescolate.
+      - prova_sottofondo: ext2 e FAT16, 32 e 64 bit, -smp 1 e 2: 80 su 80.
+      ! Non provato sul portatile.
 
   93. mount MOSTRA /proc COME "FAT4294967295" (visto il 8/11 nella prova
       ext4 di prova-letture): il tipo del filesystem proc non ha un nome e
       si stampa come un FAT col numero -1. Piccolo, da correggere in bin/mount
       o dove il VFS da' il nome del tipo.
+      FATTO (11/11): sys_mountinfo passava /proc (mnt = -1) a fat_tipo, che
+      rispondeva -1. Kernel 0.325: VOL_FS_PROC = 10; mount 0.004 scrive
+      "proc" (e "?" per un tipo che non conosce, invece di un FAT finto);
+      toolinst 0.006 nomina proc e ISO 9660. Provato in prova_sottofondo.
 
   92. TUTTI I CORE (l'utente, 7/11 sera): "da chiarire se smp = 2
       significa che e' abilitato il secondo core oppure il multi core,

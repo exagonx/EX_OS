@@ -1673,7 +1673,7 @@ int blkinfo(BlkInfo *buf, unsigned int max, unsigned int start);
 typedef struct {
     char         punto[MOUNTINFO_PUNTO_MAX];
     char         dev[BLKINFO_NOME_MAX];
-    unsigned int fs;             /* 12, 16, 32 */
+    unsigned int fs;             /* 12, 16, 32 FAT; 2, 3, 4 ext; 9 ISO 9660; 10 proc */
     unsigned int sola_lettura;
 } MountInfo;
 
@@ -1833,15 +1833,11 @@ int truncate64(const char *path, off64_t size);
 /* =============================================================================
  * Un secondo descrittore sullo stesso file — dup, dup2, fcntl
  *
- * ! CONDIVIDONO IL FILE, NON LA POSIZIONE. Su POSIX due fd duplicati
- * hanno un offset SOLO: una read() da uno sposta anche l'altro. Qui no —
- * la posizione sta nel descrittore del processo, e ognuno tiene la sua.
- * Quello che condividono e' il file aperto: finche' ne resta uno, il file
- * non si chiude, che e' il motivo per cui dup() esiste.
- *
- * Chi legge da un fd duplicato faccia una lseek() esplicita invece di dare
- * per scontato di ripartire da dove stava l'altro. Il perche' della scelta
- * sta in kernel/syscall/syscall_impl.c, sopra fd_duplica().
+ * ! CONDIVIDONO IL FILE E LA POSIZIONE, come su POSIX, dal kernel 0.326:
+ * una read() da uno sposta anche l'altro, e cosi' fra padre e figlio dopo
+ * spawn o fork (voce 94: `sh x.sh > log &` e il suo figlio in sottofondo si
+ * scrivevano sopra). Fino alla 0.325 ognuno teneva la sua posizione. Finche'
+ * ne resta uno, il file non si chiude, che e' il motivo per cui dup() esiste.
  *
  * dup2() e' anche l'unico modo di sostituire stdin/stdout/stderr: close()
  * su 0, 1 o 2 e' rifiutata apposta, perche' lascerebbe il processo senza
@@ -4022,6 +4018,13 @@ int     ioport_in16(unsigned int port);
 int     ioport_out16(unsigned int port, unsigned int value);
 int     ioport_in32(unsigned int port, unsigned int *out);
 int     ioport_out32(unsigned int port, unsigned int value);
+/* ioport_diretto(1): the windows of ioport_bind open to `in` and `out`
+ * straight from ring 3 while this process runs (kernel 0.324, the TSS's I/O
+ * bitmap): no system call and no kernel lock per byte, for loops timed to
+ * the microsecond. 0 = back to the system calls. Only for a driver with at
+ * least one window; -ENOSYS on a kernel before 0.324. A port outside the
+ * windows ends in a protection fault, as it should. */
+int     ioport_diretto(int acceso);
 
 /* =============================================================================
  * Configurazione e identità del sistema

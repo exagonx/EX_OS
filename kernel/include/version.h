@@ -869,7 +869,25 @@
  * kernel's lock; a line in this mode keeps every edge with its instant in a
  * ring the driver reads, notifies once until read, and is not masked between
  * edges. Only for the sole owner of an edge-triggered line (ISA). */
-#define EXOS_VERSION    "0.323"
+/* 0.323 -> 0.324 (voce 98): no edge lost with two processors, and the
+ * parallel port without system calls. irq_prima (isr.c), called by the
+ * stubs BEFORE the kernel's lock, notes the instant, sends the end of
+ * interrupt (an interrupt waiting for the lock with its bit in service
+ * blocked IRQ 7, the lowest) and puts an edge in its ring under a lock of
+ * the rings' own. The boot processor waits for the kernel's lock with
+ * interrupts on for the edge lines only (pic_attesa, APIC priority raised)
+ * while some line is in edge mode. The 8259 code for both kernels is in
+ * pic.c, with the mask kept in memory. SYS_IOPORT_DIRETTO (267): the TSS
+ * of every processor has the I/O bitmap, and a driver's ioport_bind windows
+ * are open to in/out in ring 3 while it runs. */
+/* 0.324 -> 0.325 (voce 93): mountinfo gives /proc as VOL_FS_PROC (10). It
+ * went through fat_tipo(-1), and mount printed "FAT4294967295". */
+/* 0.325 -> 0.326 (voce 94): the position of an open file is shared by every
+ * descriptor that came from the same open - dup, dup2, spawn, fork - as
+ * POSIX wants. It lives in the VFS handle (VfsPosizione), which vfs_dup
+ * already shared; its lock too, taken over if the holder is gone. A script
+ * run with `> log &` and its background child wrote over each other. */
+#define EXOS_VERSION    "0.326"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

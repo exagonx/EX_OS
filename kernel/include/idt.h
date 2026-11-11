@@ -19,6 +19,11 @@ void idt_set_gate(uint8_t num, uint32_t handler, uint16_t sel, uint8_t flags);
 void pic_send_eoi(uint8_t irq);
 void pic_mask_irq(uint8_t irq);
 void pic_unmask_irq(uint8_t irq);
+/* kernel/arch/x86/pic.c (0.324): the mask kept in memory, see there */
+void     pic_maschera_tutto(void);
+uint16_t pic_maschera(void);                /* the true mask, slave << 8 */
+int      pic_fine_o_spurio(uint8_t irq);    /* 1 = spurious, else EOI sent */
+void     pic_attesa(int inizio, uint16_t aperte);
 
 /* Struttura frame passata agli ISR handler da isr_stubs.asm.
  *

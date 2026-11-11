@@ -73,7 +73,7 @@
 #include "libc.h"
 
 /* +0.001 a ogni modifica: `toolinst -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("toolinst", "0.005");
+EX_VERSIONE("toolinst", "0.006");
 
 #define PERC_MAX   320
 #define BLOCCO     4096
@@ -451,6 +451,8 @@ static const char *nome_fs(unsigned int fs)
         case 2:  return "ext2";
         case 3:  return "ext3";
         case 4:  return "ext4";
+        case 9:  return "ISO 9660";
+        case 10: return "proc";
         case 12: return "FAT12";
         case 16: return "FAT16";
         case 32: return "FAT32";

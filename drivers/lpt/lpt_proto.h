@@ -157,6 +157,8 @@ typedef struct {
     unsigned int       ritardo_max_ns;  /* the latest edge, against its instant */
     unsigned int       ritardi_10us;    /* edges later than 10 microseconds */
     unsigned int       processore;  /* the processor reserved (0 = none) */
+    unsigned int       diretto;     /* 1 = in/out straight from the driver
+                                     * (kernel 0.324, ioport_diretto) */
 } LptOndaFatta;
 
 #endif

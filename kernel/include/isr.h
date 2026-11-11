@@ -54,7 +54,13 @@ void    irq_unbind_process(uint32_t pid);
 /* Edges with their instant (0.323): see isr.c and SYS_IRQ_FRONTI. */
 int32_t  irq_fronti(uint32_t op, uint8_t irq, uintptr_t a, uint32_t b, uint32_t pid);
 int      irq_posti(uint32_t posti);
-void     irq_istante(void);
+/* 0.324: the part of an interrupt from the PIC that does not wait for the
+ * kernel's lock (end of interrupt, spurious check, the edge into its ring).
+ * 1 = the stub goes straight back (this processor waits for the lock). */
+int      irq_prima(InterruptFrame *frame);
+void     irq_fronti_rimandati(void);    /* from bkl_entra, lock just taken */
+uint16_t irq_fronti_linee(void);        /* lines in edge mode */
+uint32_t irq_fuori_posto(void);         /* interrupts lost in the wait (never, so far) */
 uint64_t orologio_fine(void);
 uint32_t orologio_fine_hz(void);
 

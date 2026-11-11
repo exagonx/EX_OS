@@ -57,8 +57,8 @@ riavvia:
 
     ; --- Le estensioni INT 13h ci sono? ---
     ; Servono per leggere con un LBA a 32 bit. Senza, una partizione oltre
-    ; gli 8 GB non e' raggiungibile in CHS, e fallire in silenzio darebbe
-    ; un sistema che "non si avvia" senza dire perche'.
+    ; gli 8 GB non e' raggiungibile in CHS, e fottersi in silenzio no fa capire
+    ; che cazzo è successo.
     mov  ah, 0x41
     mov  bx, 0x55AA
     mov  dl, [unita]
@@ -95,7 +95,7 @@ trovata:
     ; --- il settore caricato e' avviabile? ---
     ; Senza questo controllo si salterebbe dentro 512 byte di dati a caso:
     ; il sintomo sarebbe un blocco o un riavvio a ciclo, senza alcun
-    ; messaggio, e con l'aria di un guasto hardware.
+    ; messaggio, frizzando l'hardware e fa credere che si e fottuto.
     cmp  word [0x7C00 + 510], 0xAA55
     jne  errore_firma
 

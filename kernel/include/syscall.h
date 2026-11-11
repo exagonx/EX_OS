@@ -135,6 +135,14 @@
 #define IRQF_ACCENDI     1
 #define IRQF_LEGGI       2
 #define IRQF_STATO       3
+/* SYS_IOPORT_DIRETTO (267, kernel 0.324, voce 98): the ports a driver has
+ * with ioport_bind, open to `in` and `out` straight from ring 3 while it
+ * runs (the TSS's I/O bitmap, see gdt.h), with no system call and no
+ * kernel lock: for loops timed to the microsecond (the datasette, a wave on
+ * the parallel port's pins). ebx = 1 on, 0 off. Every window, the ones
+ * asked later too. Only for a driver (*.drv run by root) with at least one
+ * window. A port outside the windows still ends in a protection fault. */
+#define SYS_IOPORT_DIRETTO 267
 typedef struct {
     uint32_t hz;            /* ticks of the clock per second */
     uint32_t cap;           /* instants the ring holds */
@@ -258,7 +266,7 @@ typedef struct {
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   267     /* la piu' alta e' SYS_IRQ_FRONTI = 266 */
+#define SYSCALL_COUNT   268     /* la piu' alta e' SYS_IOPORT_DIRETTO = 267 */
 
 /* =============================================================================
  * Codici errno
@@ -2011,6 +2019,7 @@ int32_t sys_ioport_in16(InterruptFrame *f);
 int32_t sys_ioport_out16(InterruptFrame *f);
 int32_t sys_ioport_in32(InterruptFrame *f);
 int32_t sys_ioport_out32(InterruptFrame *f);
+int32_t sys_ioport_diretto(InterruptFrame *f);   /* 267, 0.324 */
 int32_t sys_irq_done(InterruptFrame *f);
 int32_t sys_irq_unbind(InterruptFrame *f);
 int32_t sys_fdprova(InterruptFrame *f);

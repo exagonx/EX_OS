@@ -58,6 +58,7 @@
 #include "sched.h"      /* g_ticks */
 #include "gdt.h"        /* gdt_installa_cpu: la tappa 3 */
 #include "power.h"      /* guardia_controlla */
+#include "isr.h"        /* the edge lines, for the lock's wait (0.324) */
 #include "kmalloc.h"    /* the list and the per-processor tables, as long as needed (0.319) */
 
 /* ! UGUALE A SMP_TRAMP_BASE di smp_tramp.asm. E' la pagina 0x8000-0x8FFF, che
@@ -71,6 +72,7 @@
 
 #define APIC_ID             0x020
 #define APIC_VERSIONE       0x030
+#define APIC_PRIORITA       0x080   /* TPR: which vectors may come in */
 #define APIC_FATTO          0x0B0   /* conferma di fine interrupt (EOI) */
 #define APIC_SPURIO         0x0F0
 #define APIC_LVT_TIMER      0x320
@@ -523,6 +525,54 @@ static volatile uint8_t *g_tlb_chiesto = g_tlb_chiesto_1;
 
 static inline void tlb_butta_qui(void) { write_cr3(read_cr3()); }
 
+/* =============================================================================
+ * PROCESSOR 0 WAITS WITH THE EDGE LINES OPEN (0.324, voce 98)
+ *
+ * The 8259 talks to processor 0 only. Spinning here with interrupts off it
+ * was deaf while the other CPU held the kernel: two parallel port edges
+ * became one (297/300 in QEMU), and a datasette sends one every 180-500 us.
+ *
+ * ! INTERRUPTS ON, BUT ONLY FOR STUFF THAT NEVER TAKES THE LOCK. Anything
+ * entering the lock from inside this wait takes a later ticket and waits for
+ * itself forever - fucked. So for the wait: the 8259 gets only the edge lines
+ * (pic_attesa; the rest stays pending in IRR), the APIC priority goes over
+ * every vector (ExtINT ignores it), and g_bkl_aspetta0 tells irq_prima to go
+ * straight back; the owner is told once we hold the lock.
+ *
+ * ! ONLY WHILE SOME LINE IS IN EDGE MODE. Otherwise the old wait, to the
+ * instruction: only the parallel port driver pays for this.
+ * ========================================================================== */
+static volatile uint32_t g_bkl_aspetta0;
+
+int bkl_aspetta_qui(void)
+{
+    return g_bkl_aspetta0 && cpu_n() == 0;
+}
+
+static void bkl_aspetta_aperto(uint32_t mio)
+{
+    uint32_t priorita = 0;
+
+    if (g_apic) {
+        priorita = apic_leggi(APIC_PRIORITA);
+        apic_scrivi(APIC_PRIORITA, 0xF0u);
+    }
+    pic_attesa(1, irq_fronti_linee());
+    g_bkl_aspetta0 = 1;
+    __asm__ volatile ("sti" ::: "memory");
+    while (g_bkl_turno != mio) {
+        /* the TLB request as in bkl_entra: its message is held by the
+         * priority, so it is answered from here */
+        if (g_tlb_chiesto[0]) { tlb_butta_qui(); g_tlb_chiesto[0] = 0; }
+        __asm__ volatile ("pause");
+        guardia_controlla();
+    }
+    __asm__ volatile ("cli" ::: "memory");
+    g_bkl_aspetta0 = 0;
+    pic_attesa(0, 0);
+    if (g_apic) apic_scrivi(APIC_PRIORITA, priorita);
+}
+
 void bkl_entra(void)
 {
     uintptr_t eflags;
@@ -534,6 +584,8 @@ void bkl_entra(void)
     if (!g_bkl_tiene[n]) {
         uint32_t mio = __sync_fetch_and_add(&g_bkl_coda, 1);
 
+        if (n == 0 && g_bkl_turno != mio && irq_fronti_linee() != 0)
+            bkl_aspetta_aperto(mio);
         while (g_bkl_turno != mio) {
             /* ! THE ONE HOLDING THE LOCK MAY BE WAITING FOR US (0.321): it
              * changed a page of the space we run and asked every processor
@@ -546,6 +598,7 @@ void bkl_entra(void)
             guardia_controlla();    /* a kernel stuck on this lock stops the timer */
         }
         g_bkl_tiene[n] = 1;
+        irq_fronti_rimandati();     /* edges taken during the wait (0.324) */
     }
     if (eflags & 0x200u) __asm__ volatile ("sti");
 }

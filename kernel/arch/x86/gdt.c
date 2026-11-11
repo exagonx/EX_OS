@@ -107,7 +107,17 @@ typedef struct {
     GDTDescriptor tabella[GDT_ENTRIES] ALIGNED(8);
     GDTRegister   registro;
     TSS           tss ALIGNED(4);
+    /* ! RIGHT AFTER THE TSS, no padding (a byte array follows a packed
+     * struct): the TSS's iomap_base says where it starts from the TSS's own
+     * base. One byte more of ones, which the processor reads past the last
+     * port (0.324, see gdt.h). */
+    uint8_t       mappa[GDT_MAPPA_IO_BYTE + 1];
+    uint32_t      aperti_da, aperti_a;      /* bytes of mappa not all ones */
 } GdtCpu;
+
+_Static_assert(__builtin_offsetof(GdtCpu, mappa) ==
+               __builtin_offsetof(GdtCpu, tss) + sizeof(TSS),
+               "the I/O bitmap must follow the TSS");
 
 static GdtCpu   gdt_avvio;
 static GdtCpu  *gdt_cpu_1[1] = { &gdt_avvio };
@@ -256,7 +266,8 @@ void gdt_install(void)
     gdt_set_descriptor(7, 0x00000000, 0x00000000, 0x92, 0x40);
 
     uint32_t tss_base  = (uint32_t)&kernel_tss;
-    uint32_t tss_limit = (uint32_t)sizeof(TSS) - 1;
+    /* the TSS and its I/O bitmap (0.324) */
+    uint32_t tss_limit = (uint32_t)(sizeof(TSS) + sizeof(gdt_avvio.mappa)) - 1;
     gdt_set_descriptor(5, tss_base, tss_limit, 0x89, 0x00);
 
     /* Inizializza TSS */
@@ -266,7 +277,9 @@ void gdt_install(void)
 
     kernel_tss.ss0        = GDT_KERNEL_DATA_SEL;    /* Stack segment ring 0 */
     kernel_tss.esp0       = 0;                       /* Aggiornato dallo scheduler */
-    kernel_tss.iomap_base = sizeof(TSS);             /* Nessuna I/O permission map */
+    kernel_tss.iomap_base = sizeof(TSS);             /* the bitmap, right after */
+    for (i = 0; i < sizeof(gdt_avvio.mappa); i++) gdt_avvio.mappa[i] = 0xFF;
+    gdt_avvio.aperti_da = gdt_avvio.aperti_a = 0;
 
     /* Carica GDTR */
     gdt_reg.limit = (uint16_t)(sizeof(gdt_table) - 1);
@@ -295,6 +308,32 @@ void gdt_set_kernel_stack(vaddr_t stack_top)
     gdt_cpu[gdt_cpu_n()]->tss.esp0 = stack_top;
 }
 
+/* The I/O bitmap of this processor (gdt.h). Interrupts off, from the
+ * scheduler or from the system call that asks for it. */
+void gdt_porte_apri(uint32_t base, uint32_t quante)
+{
+    GdtCpu  *c = gdt_cpu[gdt_cpu_n()];
+    uint32_t p, fine = base + quante;
+
+    if (fine > 65536u) fine = 65536u;
+    if (base >= fine) return;
+    for (p = base; p < fine; p++) c->mappa[p >> 3] &= (uint8_t)~(1u << (p & 7));
+    if (c->aperti_da == c->aperti_a) { c->aperti_da = base >> 3; c->aperti_a = ((fine - 1) >> 3) + 1; }
+    else {
+        if ((base >> 3) < c->aperti_da) c->aperti_da = base >> 3;
+        if (((fine - 1) >> 3) + 1 > c->aperti_a) c->aperti_a = ((fine - 1) >> 3) + 1;
+    }
+}
+
+void gdt_porte_chiudi(void)
+{
+    GdtCpu  *c = gdt_cpu[gdt_cpu_n()];
+    uint32_t i;
+
+    for (i = c->aperti_da; i < c->aperti_a; i++) c->mappa[i] = 0xFF;
+    c->aperti_da = c->aperti_a = 0;
+}
+
 /* La GDT e il TSS del processore numero `n` (da 1 in su): una copia di quella
  * d'avvio col suo TSS e il suo numero, caricata SU CHI CHIAMA. La chiama ogni
  * processore in piu' prima di cominciare a lavorare. */
@@ -314,6 +353,8 @@ void gdt_installa_cpu(uint32_t n)
     for (i = 0; i < sizeof(TSS); i++) b[i] = 0;
     c->tss.ss0        = GDT_KERNEL_DATA_SEL;
     c->tss.iomap_base = sizeof(TSS);
+    for (i = 0; i < sizeof(c->mappa); i++) c->mappa[i] = 0xFF;
+    c->aperti_da = c->aperti_a = 0;
 
     base = (uint32_t)&c->tss;
     t[5].base_low    = (uint16_t)(base & 0xFFFF);

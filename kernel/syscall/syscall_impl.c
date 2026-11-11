@@ -15,6 +15,7 @@
 #include "entropia.h"
 #include "sha256.h"
 #include "sched.h"
+#include "gdt.h"         /* the TSS I/O bitmap, SYS_IOPORT_DIRETTO (0.324) */
 #include "pmm.h"
 #include "paging.h"
 #include "swap.h"
@@ -373,19 +374,46 @@ static int32_t dev_pty_nome(const char *p)
  * same pid (a page fault inside the read cannot come back here, but cheap to
  * allow). Only FD_FILE has a position.
  * ============================================================================= */
+/* ! SINCE 0.326 THE POSITION AND ITS LOCK ARE THE OPEN FILE'S (VfsPosizione,
+ * shared by dup/spawn/fork), not the descriptor's: see vfs.c. The lock is
+ * now held across PROCESSES, so a holder that is gone (it cannot be, a
+ * syscall ends before its process does - but if it ever is) must not lock
+ * the file for everybody else forever: a dead holder is taken over. */
+static uint32_t *fd_pos(FileDescriptor *d)
+{
+    VfsPosizione *v = (d->type == FD_FILE) ? vfs_posizione((int)d->inode) : NULL;
+
+    return v ? &v->pos : &d->offset;
+}
+
+static volatile uint32_t *fd_pos_di(FileDescriptor *d)
+{
+    VfsPosizione *v = (d->type == FD_FILE) ? vfs_posizione((int)d->inode) : NULL;
+
+    return v ? &v->di : &d->posizione_di;
+}
+
 static int fd_posizione_prendi(FileDescriptor *d)
 {
-    Process  *io = proc_get_current();
-    uint32_t  me = (io != NULL) ? io->pid : 0xFFFFFFFFu;
+    Process           *io = proc_get_current();
+    uint32_t           me = (io != NULL) ? io->pid : 0xFFFFFFFFu;
+    volatile uint32_t *di = fd_pos_di(d);
 
     for (;;) {
         uintptr_t fl;
+        uint32_t  chi;
 
         __asm__ volatile ("pushf; pop %0; cli" : "=r"(fl) : : "memory");
-        if (d->posizione_di == 0 || d->posizione_di == me) {
-            int mio = (d->posizione_di == me);
+        chi = *di;
+        if (chi != 0 && chi != me) {
+            Process *t = proc_get_by_pid(chi);
 
-            d->posizione_di = me;
+            if (t == NULL || t->state == PROC_UNUSED || t->state == PROC_ZOMBIE) chi = 0;
+        }
+        if (chi == 0 || chi == me) {
+            int mio = (chi == me);
+
+            *di = me;
             if (fl & 0x200u) __asm__ volatile ("sti" : : : "memory");
             return mio;             /* 1: it was already ours, do not let go */
         }
@@ -397,7 +425,7 @@ static int fd_posizione_prendi(FileDescriptor *d)
 
 static void fd_posizione_lascia(FileDescriptor *d, int era_mio)
 {
-    if (!era_mio) d->posizione_di = 0;
+    if (!era_mio) *fd_pos_di(d) = 0;
 }
 
 int32_t sys_read(InterruptFrame *frame)
@@ -479,9 +507,10 @@ int32_t sys_read(InterruptFrame *frame)
         {
             FileDescriptor *d   = &FDV(proc, fd);
             int             mio = fd_posizione_prendi(d);
-            int32_t         n   = vfs_read((int)d->inode, buf, count, d->offset);
+            uint32_t       *pos = fd_pos(d);
+            int32_t         n   = vfs_read((int)d->inode, buf, count, *pos);
 
-            if (n >= 0) d->offset += (uint32_t)n;
+            if (n >= 0) *pos += (uint32_t)n;
             fd_posizione_lascia(d, mio);
             return n;
         }
@@ -734,6 +763,7 @@ int32_t sys_write(InterruptFrame *frame)
         {
             FileDescriptor *d   = &FDV(proc, fd);
             int             mio = fd_posizione_prendi(d);
+            uint32_t       *pos = fd_pos(d);
             int32_t         n;
 
             /* the end is read under the position lock: two threads appending
@@ -741,10 +771,10 @@ int32_t sys_write(InterruptFrame *frame)
             if (d->flags & O_APPEND) {
                 VfsStat st;
 
-                if (vfs_fstat((int)d->inode, &st) == 0) d->offset = st.dimensione;
+                if (vfs_fstat((int)d->inode, &st) == 0) *pos = st.dimensione;
             }
-            n = vfs_write((int)d->inode, buf, count, d->offset);
-            if (n >= 0) d->offset += (uint32_t)n;
+            n = vfs_write((int)d->inode, buf, count, *pos);
+            if (n >= 0) *pos += (uint32_t)n;
             fd_posizione_lascia(d, mio);
             return n;
         }
@@ -907,7 +937,9 @@ int32_t sys_close(InterruptFrame *frame)
  * altro. Senza dup() quel file si chiude e il rinomina finale scrive in un
  * descrittore morto.
  *
- * ! LA POSIZIONE NON E' CONDIVISA, e su POSIX invece lo sarebbe.
+ * ! DALLA 0.326 LA POSIZIONE E' CONDIVISA, come su POSIX: sta nell'handle
+ * del VFS (VfsPosizione), che dup gia' condivide. Quel che segue e' com'era
+ * prima, e perche' andava cambiato (voce 94).
  *
  * Qui l'offset sta nel descrittore del processo (FileDescriptor.offset),
  * non in un oggetto "file aperto" intermedio: due fd duplicati condividono
@@ -3060,8 +3092,9 @@ return ERR(ENOMEM); }
              * stesso stato sono un guasto. Stessa regola di SPAWN_AZ_FD, che
              * si rifiuta di ereditare un FD_DRIVER.
              *
-             * ! E LA POSIZIONE NON E' CONDIVISA (vedi dup() in libc.h): padre
-             * e figlio scrivono ognuno dalla propria. Per un registro che il
+             * ! LA POSIZIONE E' CONDIVISA dalla 0.326 (VfsPosizione in vfs.c):
+             * prima padre e figlio scrivevano ognuno dalla propria, e
+             * `sh x.sh > log &` perdeva le righe (voce 94). Per un registro che il
              * padre riempie mentre il figlio scrive, la forma giusta e'
              * O_APPEND — il kernel rilegge la fine a ogni write, e allora le
              * due scritture non si sovrappongono mai. */
@@ -3867,9 +3900,9 @@ static int32_t lseek_dentro(InterruptFrame *frame)
              * interi senza segno diventerebbe una posizione enorme, e la
              * lettura successiva fallirebbe con un errore che non
              * assomiglia alla causa. */
-            if (offset < 0 && (uint32_t)(-offset) > FDV(proc, fd).offset)
+            if (offset < 0 && (uint32_t)(-offset) > *fd_pos(&FDV(proc, fd)))
                 return ERR(EINVAL);
-            new_off = FDV(proc, fd).offset + (uint32_t)offset;
+            new_off = *fd_pos(&FDV(proc, fd)) + (uint32_t)offset;
             break;
         case 2: {
             /* SEEK_END — la dimensione si chiede al VFS, che la sa per
@@ -3891,7 +3924,7 @@ static int32_t lseek_dentro(InterruptFrame *frame)
             return ERR(EINVAL);
     }
 
-    FDV(proc, fd).offset = new_off;
+    *fd_pos(&FDV(proc, fd)) = new_off;
     return (int32_t)new_off;
 }
 
@@ -5178,6 +5211,9 @@ int32_t sys_mountinfo(InterruptFrame *frame)
         if      (m->tipo == VFS_FS_FAT12FD) o->fs = 12;
         else if (m->tipo == VFS_FS_EXT2)    o->fs = ext2_generazione(m->mnt);
         else if (m->tipo == VFS_FS_ISO)     o->fs = VOL_FS_ISO9660;
+        /* ! /proc HAS NO HANDLE (mnt = -1): fat_tipo(-1) answered -1, and
+         * mount printed "FAT4294967295" (voce 93, 0.325) */
+        else if (m->tipo == VFS_FS_PROC)    o->fs = VOL_FS_PROC;
         else                                o->fs = (uint32_t)fat_tipo(m->mnt);
         o->sola_lettura = m->sola_lettura;
         scritti++;
@@ -5943,9 +5979,49 @@ int32_t sys_ioport_bind(InterruptFrame *frame)
     self->io_finestre[self->io_finestre_n].base  = base;
     self->io_finestre[self->io_finestre_n].count = count;
     self->io_finestre_n++;
+    /* a window asked after ioport_diretto is direct too, at once */
+    if (self->io_diretto) {
+        uintptr_t flag = read_eflags();
+
+        interrupts_disable();
+        gdt_porte_apri(base, count);
+        if (flag & 0x200u) interrupts_enable();
+    }
 
     klog(LOG_INFO, "SYSCALL ioport_bind(base=0x%x, count=%u) PID=%u "
          "[finestra %u]", base, count, self->pid, self->io_finestre_n);
+    return 0;
+}
+
+/* The I/O bitmap of THIS processor for `p` (0.324): every port closed,
+ * then the windows of `p` open if it asked for it. From sched_switch_to
+ * and from the calls that change them, interrupts off. */
+void ioport_mappa_per(const Process *p)
+{
+    uint32_t i;
+
+    gdt_porte_chiudi();
+    if (p == NULL || !p->io_diretto) return;
+    for (i = 0; i < p->io_finestre_n; i++)
+        gdt_porte_apri(p->io_finestre[i].base, p->io_finestre[i].count);
+}
+
+/* SYS_IOPORT_DIRETTO (267): see syscall.h. */
+int32_t sys_ioport_diretto(InterruptFrame *frame)
+{
+    uint32_t  acceso = FR_A1(frame) ? 1u : 0u;
+    Process  *self   = proc_get_current();
+    uintptr_t flag;
+
+    if (!e_un_driver(self, "ioport_diretto")) return ERR(EPERM);
+    if (acceso && self->io_finestre_n == 0) return ERR(EINVAL);
+    flag = read_eflags();
+    interrupts_disable();
+    self->io_diretto = acceso;
+    ioport_mappa_per(self);         /* on this processor, now */
+    if (flag & 0x200u) interrupts_enable();
+    klog(LOG_INFO, "SYSCALL ioport_diretto(%u) PID=%u, %u finestre", acceso,
+         self->pid, self->io_finestre_n);
     return 0;
 }
 

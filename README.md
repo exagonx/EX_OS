@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.323
+**Version:** 0.326
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -110,6 +110,42 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### A script and its background child no longer wipe each other's lines (kernel 0.326, sh 0.011, voce 94), and `mount` shows /proc as proc (kernel 0.325, mount 0.004, voce 93)
+
+- **The position of an open file is shared**, as POSIX wants, by every descriptor that came
+  from the same open: `dup`, `dup2`, spawn and fork. It lives in the VFS handle
+  (`VfsPosizione`), which `vfs_dup` already shared; so does its lock, taken over if its holder is
+  gone. Before, each had its own: `sh x.sh > log &` with a background program inside lost the
+  parent's lines (seen on the laptop on 9/11).
+- **The shell writes each line with one `write`** (`echo`, messages, the echoed line of a
+  script): with two processors parent and child really write at the same time, and a line
+  written in pieces came out mixed with the other's.
+- **`mount` shows "proc"** for `/proc` instead of "FAT4294967295": `mountinfo` gives type 10
+  (`VOL_FS_PROC`); toolinst 0.006 names it too, and ISO 9660.
+- `tools/prova_sottofondo.sh` (new): 40 lines of the script and 40 of its background child in the
+  same file, on ext2 and FAT16, at 32 and 64 bit, with one and two processors: 80 out of 80.
+
+### No edge lost with two processors, and the parallel port without system calls (kernel 0.324, lpt.drv 0.002, voce 98)
+
+- **The end of interrupt before the lock.** `irq_prima` (`kernel/arch/x86/isr.c`), called by the
+  interrupt entries before the kernel's lock, notes the instant, sends the end of interrupt and
+  puts an edge in its ring (under a lock of its own). The end of interrupt used to go after the
+  lock: an interrupt waiting there (the timer, a disk) kept its bit in service in the PIC and
+  blocked IRQ 7.
+- **Processor 0 waits for the lock with the edge lines open**, while some line is in edge mode:
+  for that time the PIC has a mask with only those lines, the APIC's priority is raised, and an
+  edge that came during the wait is notified as soon as the lock is taken. With no line in edge
+  mode the wait is the one of before.
+- **The PIC of both kernels in one file**, `kernel/arch/x86/pic.c`, with the mask kept in memory
+  and a lock for the chip.
+- **The I/O bitmap in the TSS** (`SYS_IOPORT_DIRETTO` 267, `ioport_diretto()` in libc): the windows
+  `ioport_bind` gave a driver open to `in`/`out` in ring 3 while it runs, and close at every
+  context switch. It gives no new port. lpt.drv 0.002 uses it.
+- `tools/prova_lpt.sh`: 13 out of 13 at 32 and 64 bit with one processor. With `-smp 2`, six runs:
+  300 edges out of 300 in four, 299 and 298 in the other two (the test sends them 60-100 us apart;
+  297 before). The wave: worst delay 58-254 us instead of 1.3 ms, once 1.9 ms. Not tested on
+  real hardware yet.
 
 ### One driver for the parallel port (kernel 0.323, lpt.drv 0.001, voce 98)
 
@@ -9186,7 +9222,6 @@ it in plain words.
 | | |
 |---|---|
 | **`gcc` as the driver program** | `cc1` compiles and produces assembly, `as` and `ld` are there: what is missing is whoever chains them, passing the intermediate files |
-| **shared position between duplicated fds** | `dup()` works, but the two descriptors each keep their own offset |
 | **out-of-order TCP** | segments arriving out of order are dropped instead of reordered, and the RTO is fixed rather than measured |
 | **DNS: A records only** | CNAMEs are skipped instead of followed; if the reply does not already contain the final A record, the name does not resolve |
 | **DHCP renewal** | `dhcp` takes the lease and finishes; renewal wants a process that stays alive |

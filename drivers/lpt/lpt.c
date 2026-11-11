@@ -60,7 +60,7 @@
 #include "libc.h"
 #include "lpt_proto.h"
 
-EX_VERSIONE("lpt.drv", "0.001");
+EX_VERSIONE("lpt.drv", "0.002");
 
 #define PORTE_N 3
 static const unsigned int g_candidate[PORTE_N] = { 0x378, 0x278, 0x3BC };
@@ -70,12 +70,32 @@ static const unsigned int g_candidate[PORTE_N] = { 0x378, 0x278, 0x3BC };
 static unsigned int g_base, g_irq, g_modi;
 static int          g_ecp;
 
+/* ! IN AND OUT STRAIGHT FROM HERE when the kernel opens the port's windows in
+ * the TSS's I/O bitmap (0.324, ioport_diretto): a system call per byte took
+ * the kernel's lock, and with two processors a wave came out up to 1.3 ms
+ * late against half-waves of 180 us. With an older kernel, the calls. */
+static int          g_diretto;
+
 static unsigned int in8(unsigned int off)
 {
-    int v = ioport_in(g_base + off);
+    int v;
+
+    if (g_diretto) {
+        unsigned char b;
+        __asm__ volatile ("inb %w1, %0" : "=a"(b) : "Nd"((unsigned short)(g_base + off)));
+        return b;
+    }
+    v = ioport_in(g_base + off);
     return v < 0 ? 0xFFu : (unsigned int)v;
 }
-static void out8(unsigned int off, unsigned int v) { ioport_out(g_base + off, v & 0xFFu); }
+static void out8(unsigned int off, unsigned int v)
+{
+    if (g_diretto) {
+        __asm__ volatile ("outb %b0, %w1" : : "a"((unsigned char)v), "Nd"((unsigned short)(g_base + off)));
+        return;
+    }
+    ioport_out(g_base + off, v & 0xFFu);
+}
 
 /* 64 bits divided by 32 without libgcc's __udivdi3 (the drivers link only the
  * libc). The second division cannot overflow: the remainder is < d. */
@@ -517,8 +537,10 @@ static int onda_posta(void)
  * would cost more than a half-wave lasts. Busy waiting on the fine clock,
  * on a processor reserved to this process when there are two or more (the
  * other processes go to the others). Each edge is late by the cost of one
- * ioport_out, more if the other processor holds the kernel's lock: that is
- * measured and given back (ritardo_max_ns, ritardi_10us). */
+ * `out` (0.324, ioport_diretto), of one ioport_out with an older kernel -
+ * more if the other processor holds the kernel's lock - and of whatever
+ * interrupt this processor takes meanwhile: that is measured and given back
+ * (ritardo_max_ns, ritardi_10us). */
 static void onda_suona(int pid, const LptOndaSuona *o)
 {
     LptOndaFatta r;
@@ -554,6 +576,7 @@ static void onda_suona(int pid, const LptOndaSuona *o)
     (void)ora;
     if (cpu) cpu_libera(cpu);
     r.processore = cpu;
+    r.diretto = (unsigned int)g_diretto;
     g_onda_n = 0;
     rispondi(pid, LPT_MSG_ONDA_SUONA, &r, sizeof(r));
 }
@@ -570,6 +593,7 @@ static int servizio(unsigned int base, unsigned int irq, unsigned int n)
     g_base = base;
     ioport_bind(base, base == 0x3BC ? 3 : 8);
     if (g_ecp) ioport_bind(base + 0x400, 3);
+    g_diretto = (ioport_diretto(1) == 0);
     g_irq = irq;
     orologio_apri();
     snprintf(nome, sizeof(nome), "%s%u", LPT_SERVIZIO, n);
@@ -1047,6 +1071,7 @@ static int onda_prova(int pid, unsigned int n, unsigned int us)
     printf("onda: %u mezze onde di %u us su D1, la piu' in ritardo di %u.%03u us, %u oltre 10 us",
            r->suonate, us, r->ritardo_max_ns / 1000, r->ritardo_max_ns % 1000, r->ritardi_10us);
     if (r->processore) printf(", processore %u riservato", r->processore);
+    printf(r->diretto ? ", in/out diretti" : ", in/out con le chiamate di sistema");
     printf("\n");
     return 0;
 }

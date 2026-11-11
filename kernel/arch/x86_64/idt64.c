@@ -154,27 +154,7 @@ void isr64_gestisci(InterruptFrame *f)
 
 void idt_install(void) { idt64_installa(); }
 
-void pic_send_eoi(uint8_t irq)
-{
-    if (irq >= 8) k64_outb(0xA0, 0x20);
-    k64_outb(0x20, 0x20);
-}
-
-void pic_mask_irq(uint8_t irq)
-{
-    uint16_t porta_pic = (irq < 8) ? 0x21 : 0xA1;
-
-    k64_outb(porta_pic, k64_inb(porta_pic) | (uint8_t)(1u << (irq & 7)));
-}
-
-void pic_unmask_irq(uint8_t irq)
-{
-    uint16_t porta_pic = (irq < 8) ? 0x21 : 0xA1;
-
-    k64_outb(porta_pic, k64_inb(porta_pic) & (uint8_t)~(1u << (irq & 7)));
-    /* una linea del secondo PIC arriva solo se la cascata (IRQ 2) e' aperta */
-    if (irq >= 8) k64_outb(0x21, k64_inb(0x21) & (uint8_t)~(1u << 2));
-}
+/* pic_send_eoi, pic_mask_irq, pic_unmask_irq: kernel/arch/x86/pic.c (0.324). */
 #else
 void isr64_gestisci(InterruptFrame *f)
 {
