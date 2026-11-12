@@ -35,3 +35,14 @@
 -:cross_build
 # i file oggetto, dovunque (anche dentro gli alberi di FreeBASIC e acpica)
 -f:*.o
+
+# ! I DISCHI E GLI ALBERI DI LAVORO DELLE PROVE DI CARICO (12 novembre 2026,
+# l'utente: "escludere i file e directory che vengono create volta per volta
+# ad eccezione di dist"). Ogni giro di tools/stress rifa' lavoro/hd.img (2 GB)
+# e lavoro/albero (la copia dei programmi): 8 GB in tutto. I RISULTATI restano
+# sincronizzati e non si cancellano (seriale.txt, i registri, lavoro/*.log).
+-dpR:tools/stress/risultati/[^/]+/lavoro/albero
+-fpR:tools/stress/risultati/[^/]+/lavoro/hd\.img
+# le cartelle oggetto che due compilazioni si rifanno da sole
+-dp:firefox-main/obj-x86_64-pc-linux-gnu
+-dp:gftexteditor/obj

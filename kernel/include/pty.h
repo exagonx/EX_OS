@@ -45,7 +45,7 @@
 #include "kernel.h"
 
 /* PTY_MAX (4 pairs) is gone since kernel 0.282: see pty.c */
-#define PTY_DIM         1024    /* buffer, per direzione */
+#define PTY_DIM         4096    /* buffer, per direzione (1024 until 0.330) */
 #define PTY_RIGA_MAX    256     /* la riga in costruzione */
 
 /* I modi della disciplina. Il canonico e' quello di sempre: si accumula una
@@ -147,6 +147,7 @@ int     pty_attesa_registra_locked(int h, int master, uint32_t pid);
 void    pty_attesa_togli_locked(int h, int master, uint32_t pid);
 
 int     pty_pronto_master(int h);
+int     pty_spazio_master(int h);   /* room in the input: POLLOUT (0.331) */
 int     pty_pronto_slave(int h);
 
 #endif /* PTY_H */

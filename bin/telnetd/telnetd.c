@@ -52,7 +52,7 @@
 #define BARRA_TELNET(t) extaskbar_voce("TELNET", 12, "TELNET " t, 0)
 
 /* +0.001 a ogni modifica: `telnetd -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("telnetd", "0.013");
+EX_VERSIONE("telnetd", "0.014");
 
 /* I comandi del protocollo, quelli che servono. */
 #define IAC     255
@@ -645,6 +645,43 @@ static unsigned int filtra(int id, int pty, const unsigned char *d, unsigned int
  *
  * `msg` e' il messaggio INTERO, intestazione compresa.
  * --------------------------------------------------------------------------- */
+/* ! WHAT THE PTY DID NOT TAKE WAITS HERE (0.014, kernel 0.331, analisi voce
+ * 53). Until kernel 0.330 a full input ate the bytes and write said "all":
+ * a paste past 1 KB lost its end. Now the master takes what fits and says
+ * so; the rest goes again when poll() says POLLOUT. 64 KB, then the oldest
+ * paste is the one that loses - said on the console. */
+#define ATTESA_MAX 65536
+static unsigned char g_attesa[ATTESA_MAX];
+static unsigned int  g_att_n = 0;
+
+static void al_pty_svuota(int pty)
+{
+    while (g_att_n > 0) {
+        int w = (int)write(pty, g_attesa, g_att_n);
+
+        if (w <= 0) return;                 /* EAGAIN: full, later */
+        memmove(g_attesa, g_attesa + w, g_att_n - (unsigned int)w);
+        g_att_n -= (unsigned int)w;
+    }
+}
+
+static void al_pty(int pty, const unsigned char *d, unsigned int n)
+{
+    al_pty_svuota(pty);
+    if (g_att_n == 0) {
+        int w = (int)write(pty, d, n);
+
+        if (w > 0) { d += w; n -= (unsigned int)w; }
+    }
+    if (n == 0) return;
+    if (n > ATTESA_MAX - g_att_n) {
+        printf("telnetd: il programma non legge, %u byte persi\n", n - (ATTESA_MAX - g_att_n));
+        n = ATTESA_MAX - g_att_n;
+    }
+    memcpy(g_attesa + g_att_n, d, n);
+    g_att_n += n;
+}
+
 static void consegna(int id, int pty, const unsigned char *msg, unsigned int n)
 {
     unsigned char pulito[IPC_MSG_MAX_DATA];
@@ -664,7 +701,7 @@ static void consegna(int id, int pty, const unsigned char *msg, unsigned int n)
     if (len > sizeof(pulito)) len = sizeof(pulito);
 
     q = filtra(id, pty, msg + sizeof(d), len, pulito);
-    if (q > 0) write(pty, pulito, q);
+    if (q > 0) al_pty(pty, pulito, q);
 }
 
 /* -----------------------------------------------------------------------------
@@ -691,6 +728,7 @@ static void sessione(int id, const Config *cfg, int con_login)
     int           fermi = 0;   /* giri di seguito senza niente da fare */
     unsigned int  ultimo_stato;   /* quando si e' chiesto l'ultima volta */
 
+    g_att_n = 0;                  /* nothing left over from another session */
     if (pty_apri(fd) != 0) {
         /* ! CHI NON PUO' SERVIRE LO DICE, E CHIUDE. Prima qui c'era un printf
          * sulla console della macchina e un `return`: la connessione restava
@@ -873,7 +911,7 @@ static void sessione(int id, const Config *cfg, int con_login)
          * volta vorrebbe dire non accorgersi dell'altra finche' la prima non
          * si muove — cioe' una sessione che risponde solo se si batte
          * qualcosa. */
-        v[0].fd = fd[0];  v[0].events = POLLIN; v[0].revents = 0;
+        v[0].fd = fd[0];  v[0].events = POLLIN | (g_att_n ? POLLOUT : 0); v[0].revents = 0;
         v[1].fd = FD_IPC; v[1].events = POLLIN; v[1].revents = 0;
 
         {
@@ -890,6 +928,8 @@ static void sessione(int id, const Config *cfg, int con_login)
          * e il buffer di nvt_scrivi e' 1024. Chiedere di piu' vorrebbe dire
          * scrivere fuori da quel buffer nel caso peggiore, che non e' raro:
          * un'uscita fatta di righe corte e' quasi tutta capi riga. */
+        if (v[0].revents & POLLOUT) al_pty_svuota(fd[0]);
+
         if (v[0].revents & POLLIN) {
             int n = (int)read(fd[0], buf, 511);
 

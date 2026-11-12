@@ -6334,7 +6334,7 @@ int32_t sys_random(InterruptFrame *frame)
     if (len == 0) return 0;
 
     /* ! IL PUNTATORE SI VERIFICA UNA VOLTA SOLA, PER TUTTA LA LUNGHEZZA.
-     * entropia_preleva serve al massimo 32 byte per volta e una richiesta
+     * entropia_preleva serve a pezzi (4 KB qui) e una richiesta
      * piu' grande si compone di piu' prelievi, ma ogni scrittura resta
      * dentro l'intervallo gia' controllato qui: ricontrollarlo a ogni
      * giro non aggiungerebbe sicurezza, e dimenticarsene una volta la
@@ -6345,7 +6345,7 @@ int32_t sys_random(InterruptFrame *frame)
         uint32_t chiedo = len - fatti;
         int      n;
 
-        if (chiedo > 32u) chiedo = 32u;
+        if (chiedo > 4096u) chiedo = 4096u;     /* a generator since 0.331 (voce 67) */
 
         n = entropia_preleva(buf + fatti, chiedo);
         if (n <= 0) {
@@ -7088,12 +7088,11 @@ static int poll_guarda(Process *self, struct pollfd *v)
 
         /* ! LE DUE ESTREMITA' DEL PTY GUARDANO BUFFER DIVERSI, e sono le
          * funzioni del pty a saperlo: qui non si sbircia dentro la struttura.
-         * Scrivere e' sempre possibile (il buffer pieno butta l'ultimo
-         * arrivato invece di bloccare, vedi metti() in pty.c), quindi POLLOUT
-         * si concede sempre. */
+         * POLLOUT on the master only with room in the input (0.331, voce
+         * 53): a full one gives EAGAIN instead of eating the bytes. */
         case FD_PTY_M:
             if (pty_pronto_master((int)d->inode)) pronto |= POLLIN;
-            pronto |= POLLOUT;
+            if (pty_spazio_master((int)d->inode)) pronto |= POLLOUT;
             break;
 
         case FD_NULL:                   /* end of file to read, room to write */

@@ -46,7 +46,39 @@
 #include "excrypt.h"
 
 /* +0.001 a ogni modifica: `sshd -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("sshd", "0.001");
+EX_VERSIONE("sshd", "0.002");
+
+/* ! WHAT THE PTY DID NOT TAKE WAITS HERE (0.002, kernel 0.331, analisi voce
+ * 53): the master takes what fits in the input and says how much; the rest
+ * goes again when poll() says POLLOUT. Until kernel 0.330 it was eaten. */
+#define ATTESA_MAX 65536
+static unsigned char g_attesa[ATTESA_MAX];
+static unsigned int  g_att_n = 0;
+
+static void al_pty_svuota(int pty)
+{
+    while (g_att_n > 0) {
+        int w = (int)write(pty, g_attesa, g_att_n);
+
+        if (w <= 0) return;                 /* EAGAIN: full, later */
+        memmove(g_attesa, g_attesa + w, g_att_n - (unsigned int)w);
+        g_att_n -= (unsigned int)w;
+    }
+}
+
+static void al_pty(int pty, const unsigned char *d, unsigned int n)
+{
+    al_pty_svuota(pty);
+    if (g_att_n == 0) {
+        int w = (int)write(pty, d, n);
+
+        if (w > 0) { d += w; n -= (unsigned int)w; }
+    }
+    if (n == 0) return;
+    if (n > ATTESA_MAX - g_att_n) n = ATTESA_MAX - g_att_n;   /* the program does not read */
+    memcpy(g_attesa + g_att_n, d, n);
+    g_att_n += n;
+}
 
 /* I messaggi che ci servono. Gli altri si ignorano o chiudono. */
 #define SSH_DISCONNECT          1
@@ -936,9 +968,10 @@ static void sessione_dati(Sess *s, const char *shell, unsigned int righe,
          * Si chiede con una scadenza corta e si tratta il silenzio come «per
          * ora niente», invece di guardare FD_IPC: cosi' la prenotazione c'e'
          * sempre e non se ne accumulano due. */
-        v[0].fd = fd[0];  v[0].events = POLLIN; v[0].revents = 0;
+        v[0].fd = fd[0];  v[0].events = POLLIN | (g_att_n ? POLLOUT : 0); v[0].revents = 0;
 
         if (poll(v, 1, 60) < 0) break;
+        if (v[0].revents & POLLOUT) al_pty_svuota(fd[0]);
 
         /* Dal programma al client. */
         if (v[0].revents & POLLIN) {
@@ -963,7 +996,7 @@ static void sessione_dati(Sess *s, const char *shell, unsigned int righe,
             if (buf[0] == SSH_CHANNEL_DATA) {
                 unsigned int n = prendi32(buf + 5);
 
-                if (n > 0 && 9 + n <= (unsigned int)len) write(fd[0], buf + 9, n);
+                if (n > 0 && 9 + n <= (unsigned int)len) al_pty(fd[0], (const unsigned char *)buf + 9, n);
 
                 /* ! LA FINESTRA SI RIAPRE, o dopo un po' il client smette di
                  * mandare: e' il controllo di flusso di SSH, e chi non lo fa

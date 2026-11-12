@@ -843,6 +843,12 @@ irq_bind O console_setfg DANNO "Operation not permitted" (EPERM) dal kernel
 0.331: solo un driver (lanciato come driver) aggancia un interrupt, e solo root
 mette in primo piano un processo di un altro utente.
 
+UN PROGRAMMA CHE SCRIVE IN UN PTY MASTER RICEVE "Resource temporarily
+unavailable" (EAGAIN) o meno byte di quelli chiesti, dal kernel 0.332: il
+programma dall'altra parte non legge e l'ingresso (4 KB) e' pieno. Prima i byte
+in piu' sparivano in silenzio. Chi scrive deve tenere il resto e riprovare
+quando poll() dice POLLOUT, come fanno telnetd 0.014 e sshd 0.002.
+
 USCENDO DA ExWin LO SCHERMO RESTA FERMO sull'ultima immagine, con nv50.drv o
 nv40.drv che hanno cambiato il modo (GeForce 210 e simili): il sistema e' vivo
 (telnet risponde), ma fino al kernel 0.328 tornava al modo testo VGA, che quei

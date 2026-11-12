@@ -111,11 +111,69 @@ typedef struct {
      * "limitazione nota". */
     uint16_t       dir_lba;      /* settore che contiene la entry */
     uint32_t       dir_slot;     /* indice della entry dentro quel settore (0-15) */
+
+    /* ! NOT 0 = DELETED WHILE OPEN (analisi voce 70): the directory entry
+     * is somebody else's now, so it is never written; the chain is freed
+     * by the last close of this group (same number). */
+    uint32_t       orfano;
 } OpenFile;
 
 #define DIR_ENTRIES_PER_SECTOR  (BYTES_PER_SECTOR / 32)
 
 static OpenFile g_open_files[MAX_OPEN_FILES];
+static uint32_t g_orfani_n = 0;          /* numbers for the deleted-while-open groups */
+
+/* ! TWO HANDLES OF THE SAME FILE ARE ONE FILE (analisi voce 70): every slot
+ * has a copy of the entry, and B writing back ITS copy put back the size and
+ * the first cluster of before A made the file longer - A's clusters stayed
+ * taken in the FAT and nobody's. Same place on the disk = same file. */
+static int stesso_posto(const OpenFile *a, const OpenFile *b)
+{
+    if (!a->used || !b->used || a->orfano != b->orfano) return 0;
+    if (a->is_root_entry != b->is_root_entry) return 0;
+    if (a->is_root_entry) return a->root_index == b->root_index;
+    return a->dir_lba != 0 && a->dir_lba == b->dir_lba && a->dir_slot == b->dir_slot;
+}
+
+/* the copies of the others follow this one */
+static void fat12_allinea(int handle)
+{
+    int i;
+
+    for (i = 0; i < MAX_OPEN_FILES; i++)
+        if (i != handle && stesso_posto(&g_open_files[i], &g_open_files[handle]))
+            g_open_files[i].entry = g_open_files[handle].entry;
+}
+
+/* a file being opened takes the copy of who has it open already */
+static void fat12_prendi_copia(int slot)
+{
+    int i;
+
+    for (i = 0; i < MAX_OPEN_FILES; i++)
+        if (i != slot && stesso_posto(&g_open_files[i], &g_open_files[slot])) {
+            g_open_files[slot].entry = g_open_files[i].entry;
+            return;
+        }
+}
+
+/* Deleting an open file: its handles become a group of orphans and the
+ * chain stays. 1 = there were handles (do not free the chain). */
+static int fat12_orfani(int is_root, uint32_t root_index, uint16_t lba, uint32_t dslot)
+{
+    OpenFile chi;
+    uint32_t n = 0;
+    int      i;
+
+    chi.used = 1; chi.orfano = 0; chi.is_root_entry = (uint8_t)is_root;
+    chi.root_index = root_index; chi.dir_lba = lba; chi.dir_slot = dslot;
+    for (i = 0; i < MAX_OPEN_FILES; i++) {
+        if (!stesso_posto(&g_open_files[i], &chi)) continue;
+        if (n == 0) { if (++g_orfani_n == 0) g_orfani_n = 1; n = g_orfani_n; }
+        g_open_files[i].orfano = n;
+    }
+    return n != 0;
+}
 
 /* =============================================================================
  * Floppy I/O tramite porte hardware (PIO, senza DMA)
@@ -2231,8 +2289,16 @@ static int fat12_writeback_entry(int handle)
 {
     OpenFile *of = &g_open_files[handle];
 
+    /* ! ONLY WHAT THE CONTENT CHANGES - first cluster and size (voce 70).
+     * The whole copy put back the old name over a rename made meanwhile. */
+    fat12_allinea(handle);
+    if (of->orfano) return 0;          /* the entry is not ours any more */
+
     if (of->is_root_entry) {
-        ((Fat12DirEntry *)g_root_dir)[of->root_index] = of->entry;
+        Fat12DirEntry *e = &((Fat12DirEntry *)g_root_dir)[of->root_index];
+
+        e->first_cluster = of->entry.first_cluster;
+        e->file_size     = of->entry.file_size;
         g_root_dirty = 1;
         return 0;
     }
@@ -2244,7 +2310,8 @@ static int fat12_writeback_entry(int handle)
         Fat12DirEntry *entries = (Fat12DirEntry *)buf;
 
         if (fat12_read_sector(of->dir_lba, buf) != 0) return -1;
-        entries[of->dir_slot] = of->entry;
+        entries[of->dir_slot].first_cluster = of->entry.first_cluster;
+        entries[of->dir_slot].file_size     = of->entry.file_size;
         if (fat12_write_sector(of->dir_lba, buf) != 0) return -1;
     }
     return 0;
@@ -2607,6 +2674,7 @@ int fat12_open(const char *path, uint32_t flags)
     g_open_files[slot].root_index    = 0;
     g_open_files[slot].dir_lba       = 0;
     g_open_files[slot].dir_slot      = 0;
+    g_open_files[slot].orfano        = 0;
 
     if (fat12_split_path(path, &dir_cluster, name83) != 0)
         return fat12_open_fallito(slot, -2);
@@ -2632,6 +2700,7 @@ int fat12_open(const char *path, uint32_t flags)
             g_open_files[slot].entry         = entries[i];
             g_open_files[slot].is_root_entry = 1;
             g_open_files[slot].root_index    = i;   /* indice VERO, non dedotto */
+            fat12_prendi_copia(slot);
 
             if (flags & 0x0200) {                   /* O_TRUNC */
                 if (fat12_apply_trunc(slot) != 0)
@@ -2674,6 +2743,7 @@ int fat12_open(const char *path, uint32_t flags)
             g_open_files[slot].entry    = e;
             g_open_files[slot].dir_lba  = lba;
             g_open_files[slot].dir_slot = dslot;
+            fat12_prendi_copia(slot);
 
             if (flags & 0x0200) {                   /* O_TRUNC */
                 if (fat12_apply_trunc(slot) != 0)
@@ -2950,7 +3020,20 @@ fine_scrittura:
 int fat12_close(int handle)
 {
     if (handle >= 0 && (uint32_t)handle < MAX_OPEN_FILES) {
-        g_open_files[handle].used = 0;
+        OpenFile *of = &g_open_files[handle];
+        int       i, altri = 0;
+
+        /* the last handle of a deleted file frees its chain (voce 70) */
+        if (of->used && of->orfano) {
+            for (i = 0; i < MAX_OPEN_FILES; i++)
+                if (i != handle && stesso_posto(&g_open_files[i], of)) altri++;
+            if (!altri && of->entry.first_cluster >= 2) {
+                fat12_free_chain(of->entry.first_cluster);
+                g_fat_dirty = 1;
+            }
+        }
+        of->used   = 0;
+        of->orfano = 0;
     }
 
     /* Sincronizzazione completa: FAT, root directory E cache dei settori.
@@ -3137,7 +3220,7 @@ int fat12_delete(const char *path)
 
             if (root[i].attr & FAT12_ATTR_DIRECTORY) return -21;   /* EISDIR */
 
-            if (root[i].first_cluster >= 2) {
+            if (!fat12_orfani(1, i, 0, 0) && root[i].first_cluster >= 2) {
                 fat12_free_chain(root[i].first_cluster);
                 g_fat_dirty = 1;
             }
@@ -3168,7 +3251,7 @@ int fat12_delete(const char *path)
         if (fat12_dir_scan(dir_cluster, name83, &lba, &slot, &e) != 0) return -2;
         if (e.attr & FAT12_ATTR_DIRECTORY) return -21;
 
-        if (e.first_cluster >= 2) {
+        if (!fat12_orfani(0, 0, lba, slot) && e.first_cluster >= 2) {
             fat12_free_chain(e.first_cluster);
             g_fat_dirty = 1;
         }

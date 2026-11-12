@@ -70,6 +70,7 @@
 #include "tsc.h"    /* il jitter si misura col contatore di cicli */
 #include "entropia.h"
 #include "fpu.h"
+#include "sha256.h"
 
 /* =============================================================================
  * Il serbatoio
@@ -92,6 +93,17 @@ static uint32_t g_bit = 0;          /* stima conservativa, in bit */
 static uint32_t g_eventi = 0;       /* quanti ne sono arrivati in tutto */
 static uint32_t g_prec = 0;         /* istante dell'evento precedente */
 static uint8_t  g_rdrand = 0;
+
+/* ! THE NAKED POOL WENT OUT AS IT WAS (analisi voce 67): without RDRAND
+ * (the Q9650 of the .247, every CPU before 2012) whoever read 32 bytes knew
+ * the whole pool, and the next read differed by one TSC byte; with RDRAND
+ * we trusted RDRAND alone. Now a generator over SHA-256: key K, counter;
+ * out = SHA256(K | n | "u"), then K = SHA256(K | n | "k") after every
+ * request, so a key read later says nothing of what came before. Pool,
+ * events and RDRAND only reseed K. */
+static uint8_t  g_k[32];
+static uint64_t g_n = 0;
+static uint8_t  g_seminato = 0;     /* K got BIT_MINIMI bits once */
 
 /* =============================================================================
  * Il tempo, con la risoluzione piu' fine che questa macchina abbia
@@ -325,57 +337,103 @@ int entropia_jitter(uint32_t campioni)
     return (int)(campioni / 8);
 }
 
+/* K = SHA256(K | pool | RDRAND | time | n). The pool is copied with
+ * interrupts off: entropia_evento writes it from the IRQs. */
+static void risemina(void)
+{
+    uint8_t  m[32 + POOL_BYTE + 32 + 8 + 8];
+    uint32_t fl = read_eflags(), i, t;
+
+    interrupts_disable();
+    for (i = 0; i < POOL_BYTE; i++) m[32 + i] = g_pool[i];
+    if (fl & 0x200u) interrupts_enable();
+
+    for (i = 0; i < 8; i++) {
+        uint32_t v = 0;
+
+        if (g_rdrand) rdrand32(&v);
+        m[64 + i * 4 + 0] = (uint8_t)v;         m[64 + i * 4 + 1] = (uint8_t)(v >> 8);
+        m[64 + i * 4 + 2] = (uint8_t)(v >> 16); m[64 + i * 4 + 3] = (uint8_t)(v >> 24);
+    }
+    t = istante();
+    for (i = 0; i < 4; i++) m[96 + i] = (uint8_t)(t >> (i * 8));
+    t = istante();
+    for (i = 0; i < 4; i++) m[100 + i] = (uint8_t)(t >> (i * 8));
+
+    interrupts_disable();
+    for (i = 0; i < 8; i++) m[104 + i] = (uint8_t)(g_n >> (i * 8));
+    for (i = 0; i < 32; i++) m[i] = g_k[i];     /* K as it is NOW, not before RDRAND */
+    sha256(m, sizeof(m), g_k);
+    g_n++;
+    if (fl & 0x200u) interrupts_enable();
+}
+
+/* one block of 32 from K, or (quale 'k') the next K */
+static void blocco(uint8_t out[32], char quale)
+{
+    uint8_t  m[32 + 8 + 1];
+    uint32_t fl = read_eflags(), i;
+
+    interrupts_disable();
+    for (i = 0; i < 32; i++) m[i] = g_k[i];
+    for (i = 0; i < 8; i++) m[32 + i] = (uint8_t)(g_n >> (i * 8));
+    m[40] = (uint8_t)quale;
+    g_n++;
+    sha256(m, sizeof(m), out);
+    if (fl & 0x200u) interrupts_enable();
+}
+
 int entropia_preleva(uint8_t *dst, uint32_t n)
 {
-    uint32_t i;
+    uint8_t  b[32];
+    uint32_t i, fatti = 0;
 
     if (n == 0) return 0;
-    if (n > POOL_BYTE) n = POOL_BYTE;
 
-    /* Se c'e' RDRAND si serve direttamente da li': e' hardware, non si
-     * consuma, e non c'e' motivo di attingere al serbatoio. */
-    if (g_rdrand) {
-        uint32_t v;
-
-        for (i = 0; i < n; i += 4) {
-            uint32_t k, resto = n - i;
-
-            if (!rdrand32(&v)) break;          /* fallita: si ripiega sotto */
-            if (resto > 4) resto = 4;
-            for (k = 0; k < resto; k++) dst[i + k] = (uint8_t)(v >> (k * 8));
+    if (!g_seminato) {
+        /* ! PRIMA DI DIRE DI NO SI PROVA A GUADAGNARSELA. Rendere -EAGAIN a
+         * chi chiede la prima chiave di una sessione vuol dire, in pratica,
+         * non poter fare crittografia su una macchina senza RDRAND: il
+         * jitter costa qualche millisecondo e quasi sempre basta. Se non
+         * basta nemmeno quello, il no resta — ed e' un no onesto. */
+        if (g_bit < BIT_MINIMI) {
+            int fatti_j = entropia_jitter(BIT_MINIMI * 8);
+            /* ! NON E' UN ERRORE, E NON SI SCRIVE COME TALE (9 ottobre
+             * 2026): riuscita e' una notizia, e `dmesg ENTROPIA` la mostra;
+             * e' un avviso solo se non e' bastata. */
+            klog(g_bit >= BIT_MINIMI ? LOG_INFO : LOG_WARN,
+                 "ENTROPIA: jitter tsc=%d, %d bit stimati, ora %u",
+                 tsc_c_e(), fatti_j, g_bit);
         }
-        if (i >= n) return (int)n;
+        if (g_bit < BIT_MINIMI) return -11;    /* -EAGAIN */
+        risemina();
+        g_seminato = 1;
+    } else {
+        risemina();                 /* what came in since, every time */
     }
 
-    /* ! PRIMA DI DIRE DI NO SI PROVA A GUADAGNARSELA. Rendere -EAGAIN a chi
-     * chiede la prima chiave di una sessione vuol dire, in pratica, non poter
-     * fare crittografia su una macchina senza RDRAND: il jitter costa qualche
-     * millisecondo e quasi sempre basta. Se non basta nemmeno quello, il no
-     * resta — ed e' un no onesto. */
-    if (g_bit < BIT_MINIMI) {
-        int fatti = entropia_jitter(BIT_MINIMI * 8);
-        /* ! NON E' UN ERRORE, E NON SI SCRIVE COME TALE (9 ottobre 2026). Era
-         * a livello ERROR per vederla comunque, e su una macchina senza RDRAND
-         * compariva in rosso sulla console alla prima connessione cifrata: chi
-         * la leggeva chiedeva che guasto fosse. Riuscita e' una notizia, e
-         * `dmesg ENTROPIA` la mostra; e' un avviso solo se non e' bastata. */
-        klog(g_bit >= BIT_MINIMI ? LOG_INFO : LOG_WARN,
-             "ENTROPIA: jitter tsc=%d, %d bit stimati, ora %u",
-             tsc_c_e(), fatti, g_bit);
+    /* ! NO MORE 32 BYTES AT MOST: a seeded generator gives what it is asked
+     * for. Blocks are made with interrupts off and copied out with them
+     * on - dst is the program's memory, and it may fault. */
+    while (fatti < n) {
+        uint32_t q = n - fatti;
+
+        if (q > 32u) q = 32u;
+        blocco(b, 'u');
+        for (i = 0; i < q; i++) dst[fatti + i] = b[i];
+        fatti += q;
     }
+    blocco(b, 'k');
+    {
+        uint32_t fl = read_eflags();
 
-    if (g_bit < BIT_MINIMI) return -11;        /* -EAGAIN */
-
-    for (i = 0; i < n; i++) {
-        uint32_t p = (g_scritto + i) % POOL_BYTE;
-
-        dst[i] = g_pool[p];
-        /* Il byte consegnato non deve restare uguale nel serbatoio: chi
-         * lo ha letto lo conosce. */
-        g_pool[p] = (uint8_t)(g_pool[p] ^ (uint8_t)istante());
+        interrupts_disable();
+        for (i = 0; i < 32; i++) g_k[i] = b[i];
+        if (fl & 0x200u) interrupts_enable();
     }
+    for (i = 0; i < 32; i++) b[i] = 0;
 
-    g_bit = (g_bit > n * 8) ? (g_bit - n * 8) : 0;
+    g_bit = (g_bit > n * 8) ? (g_bit - n * 8) : 0;  /* the estimate, for entropia_stato */
     return (int)n;
 }
 

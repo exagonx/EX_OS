@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.331
+**Versione:** 0.332
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -113,6 +113,24 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Un incolla in telnet o ssh non si tronca piu', i file del floppy aperti due volte, un vero generatore di numeri casuali (kernel 0.332, telnetd 0.014, sshd 0.002, analisi_kernel voci 53, 55, 67, 70)
+
+- **Un incolla in telnet o in ssh non si tronca piu' a 1 KB** (voce 53, telnetd 0.014, sshd
+  0.002): l'ingresso pieno del pty mangiava i byte e la write diceva "tutto". Ora il master prende
+  quel che ci sta (4 KB, prima 1 KB), da' `EAGAIN` quando e' pieno, `poll` dice `POLLOUT` solo se
+  c'e' posto, e i due serventi tengono il resto e lo rimandano. Ctrl+C passa sempre.
+  **testato in QEMU**
+- **Due descrittori dello stesso file del floppy sono un file solo** (voce 70): il secondo
+  riscriveva la sua copia vecchia della voce e perdeva i cluster del primo; un file cancellato
+  mentre e' aperto si legge fino in fondo e i suoi cluster si liberano all'ultima chiusura; una
+  rinomina non viene piu' disfatta. **testato in QEMU**
+- **I numeri casuali vengono da un generatore** (voce 67): SHA-256 sopra il serbatoio, RDRAND
+  serve solo a riseminarlo, una chiave nuova dopo ogni richiesta; senza RDRAND (Core 2, il .247)
+  leggere il serbatoio non diceva piu' i numeri seguenti. **testato in QEMU** (`-cpu core2duo`)
+- **Il pty legge i byte e il termios del programma a interrupt accesi** (voce 55): una pagina
+  nello swap faceva un fault dentro la sezione critica. **testato in QEMU**
+- Prove nuove: `tools/prove/ptypienoprova.c`, `tools/prova_floppy.sh`, `tools/prova_caso.sh`.
+
 ### Un puntatore cattivo uccide il programma e non la macchina, e altri venti varchi del kernel chiusi (kernel 0.331, analisi_kernel)
 
 - **Un programma che passa al kernel un puntatore a niente muore da solo** (voce 5): il page
@@ -143,7 +161,7 @@ quella sull'hardware o sul caso reale — non è ancora stata fatta.
   del processo e non la pagina della libreria, la casella di un disco USB si libera quando muore
   il programma che la usava, e i lucchetti del disco, dei file e del pty rimettono il flag degli
   interrupt com'era. **testato in QEMU**
-- `tools/prove/varchiprova.c` ha i casi nuovi; `tools/prove/tlsprova.c` (nuova): due programmi
+- `tools/prove/varchiprova.c` ha i casi nuovi; `tools/prove/tlsfiliprova.c` (nuova): due programmi
   con immagini `__thread` diverse fanno 300 fili ciascuno nello stesso momento.
 
 ### Un utente qualunque non legge e non scrive piu' il kernel, ne' scrive un file aperto in lettura (kernel 0.330, analisi_kernel voci 1-4 e 46)

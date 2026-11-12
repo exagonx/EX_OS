@@ -927,7 +927,14 @@
  * dies, ticks compared across the wrap (51); the disk, file and pty locks
  * give IF back as found, the swap-in turns it on itself (54); new FAT
  * clusters zeroed when a write does not cover them (71). */
-#define EXOS_VERSION    "0.331"
+/* 0.331 -> 0.332 (analisi_kernel voci 55, 70, 67, 53): the pty copies the
+ * program's bytes and termios with interrupts on (55); two handles of one
+ * floppy file share size and clusters, a deleted open file keeps its chain
+ * until the last close, a rename is not undone (70); getrandom is a
+ * SHA-256 generator over the pool, RDRAND only reseeds it, no 32-byte cap
+ * (67); a full pty input makes the master write short or EAGAIN instead of
+ * eating the bytes, PTY_DIM 4096, POLLOUT only with room (53). */
+#define EXOS_VERSION    "0.332"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

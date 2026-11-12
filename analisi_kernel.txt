@@ -962,7 +962,12 @@ $ voce 45 { Gli avvisi di debug nei percorsi piu' battuti
     q->nel_kernel, o se self->uid != 0 && q->uid != self->uid. Poi chiudere
     insieme la voce 43 (sys_console_setfg), che ha lo stesso difetto. }
 
-@ voce 53 { Cio' che si incolla in un terminale oltre 1 KB si perde in silenzio
+# voce 53 { Cio' che si incolla in un terminale oltre 1 KB si perde in silenzio (FATTA, kernel 0.332)
+    FATTA COSI' (0.332), DIVERSA DAL PASSO SOTTO: il master NON dorme. Rende
+    i byte presi davvero, EAGAIN se nessuno; POLLOUT solo con posto; Ctrl+C
+    passa sempre. Dormire avrebbe fermato insieme telnetd/sshd e il
+    programma (un ciclo solo serve le due direzioni). telnetd 0.014 e sshd
+    0.002 tengono il resto e lo rimandano. PTY_DIM 4096.
     DOVE: pty.c metti 171 (scarta se pieno), pty_scrivi_master 461-480 (rende
     sempre n); PTY_DIM 1024 (pty.h 48).
     COSA SUCCEDE: telnetd o il terminale grafico scrivono nel master piu' in
@@ -985,7 +990,7 @@ $ voce 45 { Gli avvisi di debug nei percorsi piu' battuti
     sezione, in tutte quelle funzioni. DA VERIFICARE prima: leggere
     page_fault_handler e vedere se riaccende gia' lui gli interrupt. }
 
-@ voce 55 { Altre copie da/verso il programma fatte a interrupt spenti (stessa famiglia della voce 15)
+# voce 55 { Altre copie da/verso il programma fatte a interrupt spenti (stessa famiglia della voce 15) (FATTA, kernel 0.332)
     DOVE: pty.c pty_scrivi_master 471 e pty_scrivi_slave 534-540 (leggono
     src[i]), pty_ioctl 767, 776, 791-812 (leggono e scrivono arg).
     COME RIPARARE: come fanno gia' pty_leggi_slave e pty_leggi_master con
@@ -1220,7 +1225,7 @@ $ voce 63 { Il disco si aspetta girando a vuoto, col lucchetto del kernel in man
     file grandi e frammentati) con e2fsck pulito alla fine; un'immagine con
     eh_entries alterato in un nodo: truncate rende errore. }
 
-@ voce 67 { Senza RDRAND i numeri casuali sono il serbatoio nudo
+# voce 67 { Senza RDRAND i numeri casuali sono il serbatoio nudo (FATTA, kernel 0.332)
     DOVE: arch/x86/entropia.c, entropia_preleva 328-380. Se il processore
     non ha RDRAND (il Q9650 del .247 e ogni macchina prima del 2012) rende
     i byte di g_pool cosi' come sono (369-376) e poi li ritocca con un solo
@@ -1281,7 +1286,7 @@ $ voce 63 { Il disco si aspetta girando a vuoto, col lucchetto del kernel in man
     che partono insieme con librerie diverse devono partire tutti e due;
     senza la correzione uno dei due muore all'avvio. }
 
-@ voce 70 { Sul floppy due descrittori dello stesso file si rovinano a vicenda
+# voce 70 { Sul floppy due descrittori dello stesso file si rovinano a vicenda (FATTA, kernel 0.332)
     DOVE: fs/fat12.c. Ogni OpenFile tiene una COPIA della voce di
     directory (fat12_open 2610, 2636, 2652) e fat12_writeback_entry (2208)
     la riscrive intera a ogni scrittura.

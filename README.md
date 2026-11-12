@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.331
+**Version:** 0.332
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -111,6 +111,22 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### A paste into telnet or ssh is no longer cut, floppy files opened twice, a real random generator (kernel 0.332, telnetd 0.014, sshd 0.002, analisi_kernel voci 53, 55, 67, 70)
+
+- **A paste into telnet or ssh is no longer cut at 1 KB** (voce 53, telnetd 0.014, sshd 0.002):
+  a full pty input ate the bytes and the write said "all". Now the master takes what fits
+  (4 KB, was 1 KB), gives `EAGAIN` when full, `poll` says `POLLOUT` only with room, and the two
+  servers keep the rest and send it again. Ctrl+C always goes through. **tested in QEMU**
+- **Two handles of one floppy file are one file** (voce 70): the second rewrote its old copy of
+  the directory entry and lost the clusters of the first; a file deleted while open is read to
+  the end and its clusters freed at the last close; a rename is no longer undone. **tested in QEMU**
+- **The random numbers come from a generator** (voce 67): SHA-256 over the pool, RDRAND only
+  reseeds it, a new key after every request; without RDRAND (Core 2, the .247) reading the
+  pool no longer told the next numbers. **tested in QEMU** (`-cpu core2duo`)
+- **The pty reads the program's bytes and termios with interrupts on** (voce 55): a page in the
+  swap faulted inside the critical section. **tested in QEMU**
+- New tests: `tools/prove/ptypienoprova.c`, `tools/prova_floppy.sh`, `tools/prova_caso.sh`.
+
 ### A bad pointer kills the program, not the machine, and twenty more kernel holes closed (kernel 0.331, analisi_kernel)
 
 - **A program that hands the kernel a pointer to nothing dies alone** (voce 5): the page fault
@@ -138,7 +154,7 @@ the one on real hardware or on the real case — has not been done yet.
   mixed with another program's, a failed hook frees the process's copy and not the library's
   page, a USB disk box is freed when the program using it dies, and the disk, file and pty
   locks give the interrupt flag back as they found it. **tested in QEMU**
-- `tools/prove/varchiprova.c` grew the new cases; `tools/prove/tlsprova.c` (new): two
+- `tools/prove/varchiprova.c` grew the new cases; `tools/prove/tlsfiliprova.c` (new): two
   programs with different `__thread` images make 300 threads each at the same time.
 
 ### An ordinary user can no longer read or write the kernel, nor write a file opened for reading (kernel 0.330, analisi_kernel voci 1-4 and 46)

@@ -467,22 +467,56 @@ int32_t pty_scrivi_master(int h, const void *buf, uint32_t n)
 {
     uint32_t fl_if = read_eflags();   /* IF given back as found (voce 54) */
     const uint8_t *src = (const uint8_t *)buf;
+    uint8_t  pezzo[256];
     Pty     *p;
-    uint32_t i;
+    uint32_t i, fatti = 0;
 
-    interrupts_disable();
-    p = pty_da_handle(h);
-    if (!p) { if (fl_if & 0x200u) interrupts_enable(); return ERR(EBADF); }
+    /* ! THE PROGRAM'S BYTES ARE COPIED BEFORE THE SECTION (analisi voce 55):
+     * src[i] read with interrupts off faults on a page in the swap, and the
+     * fault sleeps on the disk inside the critical section. */
+    do {
+        uint32_t q = n - fatti;
 
-    for (i = 0; i < n; i++) disciplina(p, src[i]);
+        if (q > sizeof(pezzo)) q = sizeof(pezzo);
+        for (i = 0; i < q; i++) pezzo[i] = src[fatti + i];
 
-    /* Chi aspettava una riga puo' averla adesso; e l'eco ha messo roba anche
-     * nel tubo di ritorno. */
-    if (p->in_quanti)  attese_sveglia_locked(&p->att_in);
-    if (p->out_quanti) attese_sveglia_locked(&p->att_out);
+        interrupts_disable();
+        p = pty_da_handle(h);
+        if (!p) {
+            if (fl_if & 0x200u) interrupts_enable();
+            return fatti ? (int32_t)fatti : ERR(EBADF);
+        }
 
-    if (fl_if & 0x200u) interrupts_enable();
-    return (int32_t)n;
+        /* ! A FULL PIPE STOPS THE WRITER, IT DOES NOT EAT ITS BYTES (analisi
+         * voce 53): what went past PTY_DIM vanished and the write said "all
+         * of it". Now only what fits is taken and the count says so. Ctrl+C
+         * always goes through: a full input is exactly when it is needed. */
+        for (i = 0; i < q; i++) {
+            uint8_t c = pezzo[i];
+            int     segnale = (p->t.c_lflag & T_ISIG) && p->t.c_cc[T_VINTR] &&
+                              c == p->t.c_cc[T_VINTR];
+
+            if (!segnale && p->in_quanti + p->riga_n + 1u >= PTY_DIM) break;
+            disciplina(p, c);
+        }
+
+        /* Chi aspettava una riga puo' averla adesso; e l'eco ha messo roba
+         * anche nel tubo di ritorno. */
+        if (p->in_quanti)  attese_sveglia_locked(&p->att_in);
+        if (p->out_quanti) attese_sveglia_locked(&p->att_out);
+
+        if (fl_if & 0x200u) interrupts_enable();
+        fatti += i;
+        if (i < q) break;                   /* full */
+    } while (fatti < n);
+
+    /* ! THE MASTER NEVER SLEEPS HERE. telnetd, sshd and the ExWin terminal
+     * serve both directions from one loop: sleeping on a full input while
+     * the program sleeps on a full output (that nobody reads, because the
+     * loop is stuck here) stops both forever. Like O_NONBLOCK always: what
+     * did not fit is the caller's, poll() says POLLOUT when there is room. */
+    if (fatti == 0) return ERR(EAGAIN);
+    return (int32_t)fatti;
 }
 
 /* =============================================================================
@@ -518,6 +552,7 @@ int32_t pty_scrivi_slave(int h, const void *buf, uint32_t n)
 {
     uint32_t fl_if = read_eflags();   /* IF given back as found (voce 54) */
     const uint8_t *src = (const uint8_t *)buf;
+    uint8_t  pezzo[256];                /* voce 55: copied with IF on */
     Pty     *p;
     uint32_t scritti = 0;
 
@@ -525,6 +560,10 @@ int32_t pty_scrivi_slave(int h, const void *buf, uint32_t n)
 
     for (;;) {
         Process *cur;
+        uint32_t q = n - scritti, k = 0, j;
+
+        if (q > sizeof(pezzo)) q = sizeof(pezzo);
+        for (j = 0; j < q; j++) pezzo[j] = src[scritti + j];
 
         interrupts_disable();
         p = pty_da_handle(h);
@@ -538,20 +577,23 @@ int32_t pty_scrivi_slave(int h, const void *buf, uint32_t n)
         /* ! OPOST+ONLCR: the newline becomes CR LF here, and only when the
          * modes say so. A full-screen program switches it off and moves the
          * cursor down with a bare LF; when telnetd did it, it could not. */
-        while (scritti < n && p->out_quanti < PTY_DIM) {
-            if (src[scritti] == '\n' &&
+        while (k < q && p->out_quanti < PTY_DIM) {
+            if (pezzo[k] == '\n' &&
                 (p->t.c_oflag & (T_OPOST | T_ONLCR)) == (T_OPOST | T_ONLCR)) {
                 if (p->out_quanti > PTY_DIM - 2) break;
                 metti(p->out, &p->out_testa, &p->out_quanti, '\r');
             }
-            metti(p->out, &p->out_testa, &p->out_quanti, src[scritti++]);
+            metti(p->out, &p->out_testa, &p->out_quanti, pezzo[k++]);
         }
+        scritti += k;
 
         /* ! SI SVEGLIA IL LETTORE PRIMA DI ANDARE A DORMIRE, sempre: e' lui
          * che fara' il posto che stiamo per aspettare. */
         attese_sveglia_locked(&p->att_out);
 
         if (scritti == n) { if (fl_if & 0x200u) interrupts_enable(); return (int32_t)scritti; }
+        /* the piece went in whole: the next one, no sleeping */
+        if (k == q) { if (fl_if & 0x200u) interrupts_enable(); continue; }
 
         cur = proc_get_current();
         if (!cur) { if (fl_if & 0x200u) interrupts_enable(); return (int32_t)scritti; }
@@ -664,6 +706,8 @@ int32_t pty_leggi_slave(int h, void *buf, uint32_t n)
     }
 
     presi = prendi(p->in, &p->in_testa, &p->in_quanti, appoggio, n);
+    /* room in the input: who polls the master for POLLOUT waits on att_out */
+    if (presi) attese_sveglia_locked(&p->att_out);
     if (fl_if & 0x200u) interrupts_enable();
 
     for (i = 0; i < presi; i++) dst[i] = appoggio[i];
@@ -767,6 +811,29 @@ int32_t pty_ioctl(int h, uint32_t req, uintptr_t arg)
     uint32_t fl_if = read_eflags();   /* IF given back as found (voce 54) */
     Pty *p;
     int32_t r = 0;
+    /* ! THE PROGRAM'S MEMORY IS TOUCHED ONLY WITH INTERRUPTS ON (analisi
+     * voce 55): a page of arg in the swap or not loaded yet faults, and the
+     * fault sleeps on the disk - inside a critical section. In before the
+     * section, out after it. */
+    PtyTermios t;
+    uint16_t   w[4] = { 0, 0, 0, 0 };
+    int32_t    lck = 0;
+    int        fuori = 0;               /* 1 termios, 2 winsize, 3 pair number */
+
+    switch (req) {
+    case PTY_TCSETSF: case PTY_TCSETS: case PTY_TCSETSW:
+        t = *(const PtyTermios *)arg;
+        break;
+    case PTY_TIOCSWINSZ:
+        w[0] = ((const uint16_t *)arg)[0];
+        w[1] = ((const uint16_t *)arg)[1];
+        break;
+    case PTY_TIOCSPTLCK:
+        lck = *(const int32_t *)arg;
+        break;
+    default:
+        break;
+    }
 
     interrupts_disable();
     p = pty_da_handle(h);
@@ -774,7 +841,8 @@ int32_t pty_ioctl(int h, uint32_t req, uintptr_t arg)
 
     switch (req) {
     case PTY_TCGETS:
-        *(PtyTermios *)arg = p->t;
+        t = p->t;
+        fuori = 1;
         break;
 
     case PTY_TCSETSF:                       /* flush the input, then set */
@@ -783,7 +851,7 @@ int32_t pty_ioctl(int h, uint32_t req, uintptr_t arg)
     case PTY_TCSETS:
     case PTY_TCSETSW: {                     /* the output is never held */
         uint32_t era = p->t.c_lflag & T_ICANON;
-        p->t = *(const PtyTermios *)arg;
+        p->t = t;
         /* ! LEAVING CANONICAL MODE, THE HALF LINE IS GIVEN, not thrown away
          * as PTY_CTL_MODO does: POSIX keeps it, and a readline that switches
          * mode between two keys would otherwise lose what was typed ahead. */
@@ -797,35 +865,38 @@ int32_t pty_ioctl(int h, uint32_t req, uintptr_t arg)
         if (arg == 1 || arg == 2) p->out_quanti = 0;
         break;
 
-    case PTY_TIOCGWINSZ: {
-        uint16_t *w = (uint16_t *)arg;
+    case PTY_TIOCGWINSZ:
         w[0] = (uint16_t)p->righe; w[1] = (uint16_t)p->colonne;
         w[2] = (uint16_t)(p->colonne * 8); w[3] = (uint16_t)(p->righe * 16);
+        fuori = 2;
         break;
-    }
 
-    case PTY_TIOCSWINSZ: {
-        const uint16_t *w = (const uint16_t *)arg;
+    case PTY_TIOCSWINSZ:
         if (w[0]) p->righe = w[0];
         if (w[1]) p->colonne = w[1];
         break;
-    }
 
     /* (0.318) the number of the pair - the N of /dev/pts/N - and the lock
      * of a pair opened through /dev/ptmx. sys_ioctl lets them through only
      * on the master, as Linux does. */
     case PTY_TIOCGPTN:
-        *(uint32_t *)arg = (uint32_t)h;
+        fuori = 3;
         break;
 
     case PTY_TIOCSPTLCK:
-        p->bloccato = (*(const int32_t *)arg) != 0;
+        p->bloccato = lck != 0;
         break;
 
     default:
         r = ERR(ENOTTY);
     }
     if (fl_if & 0x200u) interrupts_enable();
+
+    if (fuori == 1) *(PtyTermios *)arg = t;
+    else if (fuori == 2) {
+        uint16_t *d = (uint16_t *)arg;
+        d[0] = w[0]; d[1] = w[1]; d[2] = w[2]; d[3] = w[3];
+    } else if (fuori == 3) *(uint32_t *)arg = (uint32_t)h;
     return r;
 }
 
@@ -868,6 +939,15 @@ int pty_pronto_slave(int h)
         !p->fine_dati && p->master_aperti)
         return 0;
     return (p->in_quanti > 0 || p->fine_dati || p->master_aperti == 0);
+}
+
+/* room for at least one byte in the input (POLLOUT on the master, voce 53) */
+int pty_spazio_master(int h)
+{
+    Pty *p = pty_da_handle(h);
+
+    if (!p) return 1;
+    return p->in_quanti + p->riga_n + 1u < PTY_DIM;
 }
 
 int pty_pronto_master(int h)
