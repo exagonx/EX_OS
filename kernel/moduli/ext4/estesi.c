@@ -380,17 +380,29 @@ uint32_t est_mappa_o_alloca(Ext2Mount *m, int mnt, uint32_t num, uint8_t *inode,
  * PRUNING: from logical block `primo` on, everything goes.
  * Returns 1 if the node is left empty, 0 if not, -1 on error.
  * ============================================================================= */
+/* prof = the depth this node must have (the parent's minus one); for the
+ * root, whatever it says. */
 static int pota_nodo(Ext2Mount *m, uint32_t num, uint8_t *inode, uint32_t liv,
-                     uint32_t blk, uint32_t primo, uint32_t *lib)
+                     uint32_t blk, uint32_t primo, uint32_t *lib, uint32_t prof)
 {
     uint8_t *h = liv ? g_nodo[liv] : inode + 40;
-    uint32_t voci;
+    uint32_t voci, max;
     int      cambiato = 0;
 
     if (liv >= EST_LIVELLI) return -1;
     if (liv && (blk >= m->n_blocchi || leggi_blocco(m, blk, h) != 0)) return -1;
     if (le16(h) != EXTENT_MAGIC) return -1;
     voci = le16(h + 2);
+    /* ! THE SIGNATURE ALONE WAS CHECKED (analisi voce 66): "voci" = 65535
+     * on a damaged disk wrote 786 KB past g_nodo[liv], or past the inode on
+     * the kernel stack. The same checks as carica and cammina. */
+    max = liv ? max_blocco(m) : 4u;
+    if (le16(h + 4) > max || voci > le16(h + 4) ||
+        (liv && le16(h + 6) != prof) || liv + le16(h + 6) >= EST_LIVELLI) {
+        klog(LOG_ERROR, "ext4: inode %u: extent node %u (level %u) is damaged: not pruned",
+             num, blk, liv);
+        return -1;
+    }
 
     if (le16(h + 6) == 0) {
         while (voci > 0) {
@@ -417,7 +429,8 @@ static int pota_nodo(Ext2Mount *m, uint32_t num, uint8_t *inode, uint32_t liv,
             int      r;
 
             if (le16(e + 8) != 0) return -1;
-            r = pota_nodo(m, num, inode, liv + 1u, figlio, primo, lib);
+            r = pota_nodo(m, num, inode, liv + 1u, figlio, primo, lib,
+                          (uint32_t)le16(h + 6) - 1u);
             if (r < 0) return -1;
             if (r == 0) break;              /* it keeps something: the ones before are whole */
             if (libera_blocco(m, figlio) != 0) return -1;
@@ -438,7 +451,7 @@ static int pota_nodo(Ext2Mount *m, uint32_t num, uint8_t *inode, uint32_t liv,
 int est_pota(Ext2Mount *m, uint32_t num, uint8_t *inode, uint32_t primo, uint32_t *liberati)
 {
     est_dimentica();
-    if (pota_nodo(m, num, inode, 0, 0, primo, liberati) < 0) {
+    if (pota_nodo(m, num, inode, 0, 0, primo, liberati, 0) < 0) {
         klog(LOG_ERROR, "ext4: inode %u: its extent tree could not be cut", num);
         est_dimentica();
         return -1;

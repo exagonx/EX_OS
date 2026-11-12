@@ -378,6 +378,7 @@ uint32_t vfs_stato_lucchetto(void) { return g_fs_detentore; }
 
 static void fs_prendi_n(const char *chi)
 {
+    uint32_t fl_if = read_eflags();   /* IF given back as found (voce 54) */
     Process *p  = proc_get_current();
     uint32_t io = (p != NULL) ? p->pid : FS_SENZA_PROCESSO;
 
@@ -393,14 +394,14 @@ static void fs_prendi_n(const char *chi)
         if (g_fs_detentore == 0) {
             g_fs_detentore = io;
             g_fs_chi       = chi;
-            interrupts_enable();
+            if (fl_if & 0x200u) interrupts_enable();
             return;
         }
 
         /* Fuori da un contesto di processo non c'e' nessuno da bloccare —
          * ed e' anche il caso in cui non puo' esserci contesa: l'avvio,
          * prima che lo scheduler parta. */
-        if (p == NULL) { interrupts_enable(); return; }
+        if (p == NULL) { if (fl_if & 0x200u) interrupts_enable(); return; }
 
         /* ! A DEAD HOLDER NEVER GIVES IT BACK (analisi_kernel voce 6, step
          * 1): a thread made zombie where it slept, inside a read, kept the
@@ -414,7 +415,7 @@ static void fs_prendi_n(const char *chi)
                 const char *cosa = g_fs_chi;
 
                 g_fs_detentore = 0;
-                interrupts_enable();
+                if (fl_if & 0x200u) interrupts_enable();
                 klog(LOG_ERROR, "VFS: file lock held by dead pid %u (%s): taken over",
                      morto, cosa);
                 continue;
@@ -427,7 +428,7 @@ static void fs_prendi_n(const char *chi)
          * processo esiste ancora, quindi qui non ci arriva. Se un domani
          * ci arrivasse, cedere e riprovare e' l'unica cosa che puo' fare. */
         if (p->priority == PRIO_IDLE) {
-            interrupts_enable();
+            if (fl_if & 0x200u) interrupts_enable();
             sched_yield();
             continue;
         }
@@ -446,6 +447,7 @@ static void fs_prendi_n(const char *chi)
 
 static void fs_rilascia(void)
 {
+    uint32_t fl_if = read_eflags();   /* IF given back as found (voce 54) */
     uint32_t i, n;
 
     interrupts_disable();
@@ -460,7 +462,7 @@ static void fs_rilascia(void)
     g_fs_n_attesa = 0;
     for (i = 0; i < n; i++) sched_unblock_locked(g_fs_attesa[i]);
 
-    interrupts_enable();
+    if (fl_if & 0x200u) interrupts_enable();
 }
 
 /* =============================================================================
@@ -1578,6 +1580,11 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
             }
             if (ext2_stat(g_mnt[im].mnt, interno, &e) != 0)
                 return apri_fallito(slot, ERR(EIO));
+        } else if ((flags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL)) {
+            /* ! O_EXCL DID NOT EXIST (analisi voce 47): two programs both
+             * "created" mysqld.pid. The file lock is held: test and create
+             * are one step. */
+            return apri_fallito(slot, ERR(EEXIST));
         } else if (e.is_dir) {
             /* before O_TRUNC: until 0.279 a directory opened with O_TRUNC
              * was truncated first and refused after */
@@ -1600,6 +1607,11 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
             }
             if (fat_stat(g_mnt[im].mnt, interno, &e) != 0)
                 return apri_fallito(slot, ERR(EIO));
+        } else if ((flags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL)) {
+            /* ! O_EXCL DID NOT EXIST (analisi voce 47): two programs both
+             * "created" mysqld.pid. The file lock is held: test and create
+             * are one step. */
+            return apri_fallito(slot, ERR(EEXIST));
         } else if (e.is_dir) {
             return apri_cartella(slot, flags);      /* before O_TRUNC, as ext2 */
         } else if (flags & O_TRUNC) {

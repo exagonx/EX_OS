@@ -1287,7 +1287,13 @@ int32_t sys_waitpid(InterruptFrame *frame)
     /* Cerca un figlio ZOMBIE */
     for (;;) {
         uint32_t figli_vivi = 0;
+        /* ! LOOK AND SLEEP WITH INTERRUPTS OFF (analisi voce 7): the timer
+         * between the scan and sched_block let the child exit while we were
+         * still READY, its wakeup found nobody blocked, and the shell slept
+         * for ever after the command had finished. As sys_poll does. */
+        uint32_t fl = read_eflags();
 
+        interrupts_disable();
         for (i = 0; i < g_proc_posti; i++) {
             Process *p = PROC_POSTO(i);
 
@@ -1322,6 +1328,9 @@ int32_t sys_waitpid(InterruptFrame *frame)
 
             int32_t  child_exit = p->exit_code;
             uint32_t child_pid  = p->pid;
+
+            /* interrupts back on before touching user memory or the disk */
+            if (fl & 0x200u) interrupts_enable();
             if (status) *status = child_exit;
 
             proc_reap_zombie(p);
@@ -1345,15 +1354,20 @@ int32_t sys_waitpid(InterruptFrame *frame)
          * 'jobs', che deve poter dire quali sono finiti senza fermarsi
          * sul primo ancora in esecuzione.
          * ================================================================= */
-        if (figli_vivi == 0)        return ERR(ECHILD);
-        if (options & WNOHANG)      return 0;
+        if (figli_vivi == 0 || (options & WNOHANG)) {
+            if (fl & 0x200u) interrupts_enable();
+            return figli_vivi == 0 ? ERR(ECHILD) : 0;
+        }
         /* After the scan, not before: the SIGCHLD that woke a program with a
          * handler comes with the child it announces, and that child is
          * returned above, not lost behind an EINTR. */
-        if (proc_da_interrompere()) return ERR(EINTR);
+        if (proc_da_interrompere()) {
+            if (fl & 0x200u) interrupts_enable();
+            return ERR(EINTR);
+        }
 
         current->aspetta_figli = 1;         /* see sveglia_chi_aspetta_figli */
-        sched_block(PROC_BLOCKED);
+        sched_block(PROC_BLOCKED);          /* entered with IF off, leaves it on */
         current->aspetta_figli = 0;
         /* ! INTERRUPTED, IT DOES NOT GO BACK TO WAIT (25 October 2026), as in
          * pipe_leggi: the exit happens on the way out of the syscall, and a
@@ -1574,7 +1588,9 @@ int32_t sys_thread_attendi(InterruptFrame *frame)
 
     for (;;) {
         Process *filo = NULL;
+        uint32_t fl = read_eflags();     /* look and sleep with IF off: voce 7 */
 
+        interrupts_disable();
         for (i = 0; i < g_proc_posti; i++) {
             Process *p = PROC_POSTO(i);
 
@@ -1582,16 +1598,23 @@ int32_t sys_thread_attendi(InterruptFrame *frame)
             if (p->pid != tid)           continue;
             /* ! DEVE ESSERE DEL NOSTRO GRUPPO. Aspettare un task qualunque
              * sarebbe un modo per sapere quando muore un programma altrui. */
-            if (p->tgid != self->tgid)   return ERR(ESRCH);
+            if (p->tgid != self->tgid) { filo = NULL; i = g_proc_posti + 1; break; }
             filo = p;
             break;
         }
-        if (filo == NULL) return ERR(ESRCH);
-        /* Staccato: il suo PCB e' gia' promesso al reaper di init. */
-        if (filo->staccato)   return ERR(EINVAL);
+        if (filo == NULL || filo->staccato) {
+            /* not ours / gone: ESRCH; detached: its PCB is init's reaper's */
+            int32_t e = (filo == NULL) ? ERR(ESRCH) : ERR(EINVAL);
+
+            if (fl & 0x200u) interrupts_enable();
+            return e;
+        }
 
         if (filo->state == PROC_ZOMBIE) {
-            if (codice) *codice = filo->exit_code;
+            int32_t ex = filo->exit_code;
+
+            if (fl & 0x200u) interrupts_enable();
+            if (codice) *codice = ex;
             proc_reap_zombie(filo);
             return 0;
         }
@@ -1766,11 +1789,29 @@ int32_t sys_proc_gruppo(InterruptFrame *frame)
  * si puo' toccare il primo piano di una console altrui, che sarebbe un
  * modo per rubare la tastiera a un'altra shell.
  * ============================================================================= */
+/* Who may be named "in the foreground" (the one Ctrl+C stops): nobody (0),
+ * or a live process of the same user; root names anybody. ! A pty and a
+ * byte 3 used to stop any process, a root daemon or ip.drv included
+ * (analisi voci 52 and 43). Kernel tasks never. */
+static int32_t primo_piano_permesso(Process *self, uint32_t pid)
+{
+    Process *q;
+
+    if (pid == 0) return 0;
+    q = proc_get_by_pid(pid);
+    if (q == NULL || q->state == PROC_ZOMBIE)   return ERR(ESRCH);
+    if (q->nel_kernel)                          return ERR(EPERM);
+    if (self->uid != 0 && q->uid != self->uid)  return ERR(EPERM);
+    return 0;
+}
+
 int32_t sys_console_setfg(InterruptFrame *frame)
 {
     uint32_t pid  = FR_A1(frame);
     Process *proc = proc_get_current();
+    int32_t  e    = primo_piano_permesso(proc, pid);
 
+    if (e != 0) return e;
     sched_set_console_fg(proc->console, pid);
     return 0;
 }
@@ -4391,12 +4432,15 @@ int32_t sys_cpufreq(InterruptFrame *frame)
 }
 
 /* SYS_IRQ_FRONTI (266, kernel 0.323, voce 98): see syscall.h and isr.c. */
+static int e_un_driver(Process *p, const char *chi);
+
 int32_t sys_irq_fronti(InterruptFrame *frame)
 {
     /* no check of its own: only the owner of the line gets through, and
      * irq_bind already asked who may own it */
     Process *p = proc_get_current();
 
+    if (!e_un_driver(p, "irq_fronti")) return ERR(EPERM);   /* voce 13 */
     return irq_fronti((uint32_t)FR_A1(frame), (uint8_t)FR_A2(frame),
                       (uintptr_t)FR_A3(frame), (uint32_t)FR_A4(frame), p->pid);
 }
@@ -5860,6 +5904,11 @@ int32_t sys_irq_bind(InterruptFrame *frame)
     uint8_t irq = (uint8_t)FR_A1(frame);
     uint32_t pid = proc_get_current()->pid;
 
+    /* ! ANYBODY COULD OWN A LINE (analisi voce 13): irq_bind(1) and never
+     * irq_done, and the keyboard was masked for good. Drivers only, as
+     * ioport_bind, dma_alloc and mmio_map. */
+    if (!e_un_driver(proc_get_current(), "irq_bind")) return ERR(EPERM);
+
     int32_t ret = irq_bind_process(irq, pid);
     klog(LOG_INFO, "SYSCALL irq_bind(irq=%u) PID=%u -> %d", irq, pid, ret);
     return ret;
@@ -6486,6 +6535,11 @@ int32_t sys_pty_ctl(InterruptFrame *frame)
     Process  *proc = proc_get_current();
 
     if (fd < 0 || fd >= FD_N(proc)) return ERR(EBADF);
+    if (cmd == PTY_CTL_FG) {
+        int32_t e = primo_piano_permesso(proc, arg);
+
+        if (e != 0) return e;
+    }
 
     /* ! ON THE KEYBOARD OF A TEXT CONSOLE ONE COMMAND MEANS SOMETHING TOO:
      * «who Ctrl+C stops» (@TASTI-SISTEMA, 28 September 2026). The shell
@@ -7424,6 +7478,7 @@ int32_t sys_blk_attendi(InterruptFrame *frame)
 
     rc = blkr3_attendi(self->pid, &op, &lba, &n, &quale, ms);
     if (rc != 0) return rc;
+    if (n > BLKR3_SETTORI_MAX) return ERR(EINVAL);   /* voce 50: never past d->dati */
 
     u->op      = op;
     u->lba_lo  = (uint32_t)(lba & 0xFFFFFFFFu);
@@ -7457,7 +7512,10 @@ int32_t sys_blk_risposta(InterruptFrame *frame)
 
     dati = u->dati;
     max  = u->dati_max;
-    n    = u->settori;
+    /* ! THE SERVER'S COUNT IS NOT TRUSTED (analisi voce 50): settori > 8
+     * from a buggy driver copied past d->dati (4 KB) into the kernel. */
+    n    = blkr3_n_in_corso(self->pid);
+    if (n > BLKR3_SETTORI_MAX) return ERR(EINVAL);
 
     /* In lettura i settori tornano indietro ORA. ! SOLO SE E' ANDATA BENE:
      * copiare il buffer di un servente che ha appena detto «errore» vorrebbe

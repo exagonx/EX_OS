@@ -866,23 +866,27 @@ static void ansi_apply_csi(Console *c, char finale)
     switch (finale) {
         case 'A':   /* CUU — su */
             n = ansi_param(c, 0, 1); if (n < 1) n = 1;
+            if (n > (int)RIGHE_C) n = (int)RIGHE_C;
             c->row = (uint8_t)((c->row > n) ? (c->row - n) : 0);
             break;
 
         case 'B':   /* CUD — giù */
             n = ansi_param(c, 0, 1); if (n < 1) n = 1;
+            if (n > (int)RIGHE_C) n = (int)RIGHE_C;
             n += c->row;
-            c->row = (uint8_t)((n >= RIGHE_C) ? (RIGHE_C - 1) : n);
+            c->row = (uint8_t)((n >= (int)RIGHE_C) ? ((int)RIGHE_C - 1) : n);
             break;
 
         case 'C':   /* CUF — avanti */
             n = ansi_param(c, 0, 1); if (n < 1) n = 1;
+            if (n > (int)g_cols) n = (int)g_cols;
             n += c->col;
-            c->col = (uint8_t)((n >= g_cols) ? (g_cols - 1) : n);
+            c->col = (uint8_t)((n >= (int)g_cols) ? ((int)g_cols - 1) : n);
             break;
 
         case 'D':   /* CUB — indietro */
             n = ansi_param(c, 0, 1); if (n < 1) n = 1;
+            if (n > (int)g_cols) n = (int)g_cols;
             c->col = (uint8_t)((c->col > n) ? (c->col - n) : 0);
             break;
 
@@ -896,8 +900,8 @@ static void ansi_apply_csi(Console *c, char finale)
              * Fuori schermo si aggancia al bordo invece di rifiutare: la
              * sequenza arriva da un programma utente, e un parametro
              * sbagliato non deve poter scrivere fuori dal buffer. */
-            if (riga > RIGHE_C) riga = RIGHE_C;
-            if (col  > g_cols) col  = g_cols;
+            if (riga > (int)RIGHE_C) riga = (int)RIGHE_C;
+            if (col  > (int)g_cols) col  = (int)g_cols;
             c->row = (uint8_t)(riga - 1);
             c->col = (uint8_t)(col - 1);
             break;
@@ -962,6 +966,7 @@ static void ansi_apply_csi(Console *c, char finale)
             uint32_t a = reg_alto(c), b = reg_basso(c);
 
             n = ansi_param(c, 0, 1); if (n < 1) n = 1;
+            if (n > (int)RIGHE_C) n = (int)RIGHE_C;
             if (c->row >= a && c->row <= b)
                 scorri(c, c->row, b, (uint32_t)n, finale == 'L');
             c->col = 0;
@@ -984,6 +989,7 @@ static void ansi_apply_csi(Console *c, char finale)
         case 'E':   /* CNL — down n rows, column 1 */
         case 'F':   /* CPL — up n rows, column 1 */
             n = ansi_param(c, 0, 1); if (n < 1) n = 1;
+            if (n > (int)RIGHE_C) n = (int)RIGHE_C;
             if (finale == 'E') n += c->row;
             else               n = c->row - n;
             if (n < 0) n = 0;
@@ -1081,7 +1087,11 @@ static void putchar_su(Console *c, char ch)
             return;
         }
         if (ch >= '0' && ch <= '9') {
-            if (c->param_count < 8) {
+            /* ! NO CEILING, NO END (analisi voce 64): "ESC[2147483600B"
+             * wrapped the sum in 'B'/'C' negative, row went to 255 and the
+             * next character landed 43000 cells past the console, in the
+             * kernel. Past 10000 the number just stops growing. */
+            if (c->param_count < 8 && c->params[c->param_count] < 10000) {
                 c->params[c->param_count] =
                     c->params[c->param_count] * 10 + (ch - '0');
                 c->cur_param_empty = 0;
@@ -1115,6 +1125,9 @@ static void putchar_su(Console *c, char ch)
     }
 
 testo:
+    /* safety net: whatever moved the cursor, it is inside the console */
+    if (c->row >= RIGHE_C) c->row = (uint8_t)(RIGHE_C - 1);
+    if (c->col >= g_cols)  c->col = (uint8_t)(g_cols - 1);
     switch (ch) {
         case '\n':  /* Newline: CR LF, unless the termios says LF alone (0.279) */
             if (!c->lf_nudo) c->col = 0;
@@ -1138,8 +1151,10 @@ testo:
                 uint32_t i;
                 c->col--;
                 i = (uint32_t)c->row * g_cols + c->col;
-                c->cella[i] = vga_make_entry(' ', c->colore);
-                riversa_cella(c, i);
+                if (i < TOTALE_C) {
+                    c->cella[i] = vga_make_entry(' ', c->colore);
+                    riversa_cella(c, i);
+                }
             }
             break;
 
@@ -1148,8 +1163,10 @@ testo:
             uint8_t  a = c->inverso
                        ? (uint8_t)(((c->colore & 0x07) << 4) | ((c->colore >> 4) & 0x0F))
                        : c->colore;
-            c->cella[i] = vga_make_entry(ch, a);
-            riversa_cella(c, i);
+            if (i < TOTALE_C) {
+                c->cella[i] = vga_make_entry(ch, a);
+                riversa_cella(c, i);
+            }
             c->col++;
 
             if (c->col >= g_cols) {

@@ -189,17 +189,9 @@ static int elf_carica(const char *path, Process *proc, ElfLoadResult *result,
     uint8_t      *seg_buf = NULL;
     uint32_t      i;
     int           ret = -1;
+    int           toccato = 0;      /* 1 = the caller's image already let go */
 
     klog(LOG_INFO, "ELF: caricamento '%s'...", path);
-
-    /* exec sostituisce l'immagine: l'eseguibile di prima non serve piu' e
-     * il suo handle non deve restare aperto per sempre. */
-    if (proc != NULL) {
-        int h = PROC_EXE_PRENDI(proc);
-
-        if (h >= 0) vfs_close(h);
-    }
-    if (proc != NULL) proc->n_vma = 0;
 
     /* ==========================================================================
      * Passo 1: Apri il file ELF dal FAT12
@@ -282,6 +274,20 @@ klog(LOG_INFO, "ELF: header valido, entry=0x%08x, phnum=%u",
         goto cleanup;
     }
 
+    /* exec sostituisce l'immagine: l'eseguibile di prima non serve piu' e
+     * il suo handle non deve restare aperto per sempre.
+     * ! ONLY PAST THE POINT OF NO RETURN (analisi voce 10): it was done
+     * first, so an exec of a missing or non-ELF file (execvp tries every
+     * PATH entry) left the caller without its executable and segment list,
+     * and its first page not yet loaded killed it with a page fault. */
+    if (proc != NULL) {
+        int h = PROC_EXE_PRENDI(proc);
+
+        if (h >= 0) vfs_close(h);
+    }
+    if (proc != NULL) proc->n_vma = 0;
+    toccato = 1;
+
     /* ==========================================================================
      * Passo 4: Alloca buffer temporaneo per i segmenti
      * Useremo un buffer di 1 pagina alla volta per non sprecare RAM.
@@ -326,16 +332,21 @@ for (i = 0; i < hdr.e_phnum; i++) {
             klog(LOG_ERROR, "ELF: segmento fuori spazio utente: 0x%08x", ph->p_vaddr);
             goto cleanup;
         }
-#if defined(__x86_64__)
         /* @EXOS-64: i campi dell'ELF64 sono di otto byte e qui sotto si
          * lavora a 32 (lo spazio dei programmi finisce a 3 GB): una misura
-         * che porta oltre verrebbe tagliata in silenzio. Si rifiuta prima. */
+         * che porta oltre verrebbe tagliata in silenzio. Si rifiuta prima.
+         * ! AND AT 32 BIT TOO (analisi voce 61): vaddr + memsz went round
+         * the 32 bits and the loop mapped pages from 0 up, over the kernel
+         * every directory shares. */
         if (ph->p_memsz > USER_SPACE_END - ph->p_vaddr || ph->p_filesz > ph->p_memsz ||
+#if defined(__x86_64__)
             ph->p_offset > 0xFFFFFFFFull - ph->p_filesz) {
+#else
+            ph->p_offset + ph->p_filesz < ph->p_offset) {
+#endif
             klog(LOG_ERROR, "ELF: segmento %u con misure fuori dallo spazio utente", i);
             goto cleanup;
         }
-#endif
 
         /* Calcola pagine necessarie */
         uint32_t vstart  = ALIGN_DOWN(ph->p_vaddr, PAGE_SIZE);
@@ -786,7 +797,7 @@ cleanup:
         proc->exe_handle = handle;
     } else {
         vfs_close(handle);
-        if (proc != NULL) proc->n_vma = 0;
+        if (proc != NULL && toccato) proc->n_vma = 0;
     }
     if (phdrs)   kfree(phdrs);
     if (seg_buf) kfree(seg_buf);

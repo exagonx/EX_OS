@@ -100,6 +100,7 @@ void *blkr3_dati(uint32_t pid, uint32_t *max);
 /* L'operazione della richiesta che `pid` ha in mano, o 0. Serve al confine
  * (syscall_impl.c) per sapere in che verso copiare i settori. */
 uint32_t blkr3_op_in_corso(uint32_t pid);
+uint32_t blkr3_n_in_corso(uint32_t pid);   /* sectors of the request in hand */
 
 /* Il servente dichiara com'e' andata. In lettura i settori sono gia' stati
  * messi nel buffer di blkr3_dati(). */

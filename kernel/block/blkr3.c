@@ -192,7 +192,20 @@ static int un_giro(R3Dev *d, uint32_t op, uint64_t lba, uint32_t n,
 
     /* Passo 3: la casella. Chi la trova occupata riguarda al tick dopo. */
     while (d->stato != CASELLA_LIBERA) {
-        if (g_ticks >= scadenza || !d->usato) { interrupts_enable(); return -EIO; }
+        /* ! THE CALLER DIED IN THE MIDDLE (analisi voce 51): only it gave the
+         * box back, and everybody else got EIO after 5 s on every read until
+         * the stick was pulled. A request not taken yet, or answered and
+         * never collected, is freed; IN_CORSO is left alone, the server is
+         * writing into d->dati and its answer frees it on the next look. */
+        if (d->stato == CASELLA_PRONTA || d->stato == CASELLA_SERVITA) {
+            Process *c = proc_get_by_pid(d->pid_chiamante);
+
+            if (c == NULL || c->state == PROC_ZOMBIE || c->state == PROC_UNUSED) {
+                d->stato = CASELLA_LIBERA;
+                break;
+            }
+        }
+        if ((int32_t)(g_ticks - scadenza) >= 0 || !d->usato) { interrupts_enable(); return -EIO; }
         me->block_until = g_ticks + 1;
         sched_block(PROC_BLOCKED);
         interrupts_disable();
@@ -216,7 +229,7 @@ static int un_giro(R3Dev *d, uint32_t op, uint64_t lba, uint32_t n,
      * blkr3_risposta(); la scadenza serve al caso in cui non arrivi mai. */
     while (d->stato != CASELLA_SERVITA) {
         if (!d->usato) { interrupts_enable(); return -EIO; }
-        if (g_ticks >= scadenza) {
+        if ((int32_t)(g_ticks - scadenza) >= 0) {
             klog(LOG_ERROR, "BLKR3: il PID %u non ha risposto in %d ms",
                  d->pid, BLKR3_SCADENZA_MS);
             d->stato = CASELLA_LIBERA;
@@ -302,7 +315,7 @@ int blkr3_attendi(uint32_t pid, uint32_t *op, uint64_t *lba, uint32_t *n,
         if (d != NULL) break;
 
         if (cerca_per_pid(pid, -1) == NULL) { interrupts_enable(); return -ENODEV; }
-        if (scadenza != 0 && g_ticks >= scadenza) {
+        if (scadenza != 0 && (int32_t)(g_ticks - scadenza) >= 0) {
             interrupts_enable();
             return -ETIMEDOUT;
         }
@@ -357,6 +370,20 @@ uint32_t blkr3_op_in_corso(uint32_t pid)
     interrupts_enable();
 
     return op;
+}
+
+/* the sectors the kernel asked for, not those the server says (voce 50) */
+uint32_t blkr3_n_in_corso(uint32_t pid)
+{
+    R3Dev   *d;
+    uint32_t n;
+
+    interrupts_disable();
+    d = cerca_per_pid(pid, CASELLA_IN_CORSO);
+    n = (d != NULL) ? d->n : 0;
+    interrupts_enable();
+
+    return n;
 }
 
 int blkr3_risposta(uint32_t pid, int esito)
@@ -449,6 +476,13 @@ void blkr3_processo_morto(uint32_t pid)
     interrupts_disable();
 
     for (i = 0; i < BLKR3_MAX_DEV; i++) {
+        /* the dead one was a CALLER: its request not taken yet, or its
+         * answer, gives the box back (voce 51) */
+        if (g_r3[i].usato && g_r3[i].pid != pid && g_r3[i].pid_chiamante == pid &&
+            (g_r3[i].stato == CASELLA_PRONTA || g_r3[i].stato == CASELLA_SERVITA)) {
+            g_r3[i].stato         = CASELLA_LIBERA;
+            g_r3[i].pid_chiamante = 0;
+        }
         if (!g_r3[i].usato || g_r3[i].pid != pid) continue;
 
         klog(LOG_WARN, "BLKR3: il PID %u e' morto: il suo disco sparisce", pid);

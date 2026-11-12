@@ -261,6 +261,13 @@ int paging_map_page(PDE *pd, uint32_t virt_addr, uint32_t phys_addr, uint32_t fl
     uint32_t  pt_idx = PT_INDEX(virt_addr);
     PTE      *pt;
 
+    /* a user page below USER_SPACE_BASE would sit in the kernel's zone,
+     * shared by every directory (analisi voce 61): never */
+    if ((flags & PG_USER) && virt_addr < USER_SPACE_BASE) {
+        klog(LOG_ERROR, "PAGING: user page at 0x%08x, inside the kernel's zone: refused", virt_addr);
+        return -1;
+    }
+
     /* Allineamento obbligatorio */
     virt_addr &= 0xFFFFF000;
     phys_addr &= 0xFFFFF000;
@@ -604,6 +611,10 @@ void paging_unmap_page(PDE *pd, uint32_t virt_addr)
     {
         PTE prima = pt[pt_idx];
 
+        /* ! A PAGE IN THE SWAP KEEPS ITS SLOT IN THE PTE (analisi voce 12):
+         * zeroing it alone lost the slot until the whole process died, and
+         * munmap/free/threads ending filled the swap. Given back here. */
+        if (SWAP_PTE_E_SWAP(prima)) swap_slot_molla(SWAP_PTE_SLOT(prima));
         pt[pt_idx] = 0;    /* Rimuovi entry */
 
         if (g_paging_enabled) {
@@ -1826,7 +1837,7 @@ int paging_pigra_tocca(Process *p, vaddr_t virt)
  * Le due si distinguono per un bit — vedi PG_SWAP in swap.h — e senza quel bit
  * ogni puntatore sbagliato diventerebbe la lettura di uno slot a caso.
  * ========================================================================== */
-static int pf_torna_da_swap(Process *p, vaddr_t addr)
+static int pf_torna_da_swap_dentro(Process *p, vaddr_t addr)
 {
     vaddr_t  pagina = ALIGN_DOWN(addr, PAGE_SIZE);
     uint32_t pti;
@@ -1897,6 +1908,23 @@ static int pf_torna_da_swap(Process *p, vaddr_t addr)
     klog(LOG_DEBUG, "PF: PID %u, 0x%08x rientrata dallo slot %u",
          p->pid, pagina, SWAP_PTE_SLOT(pte));
     return 1;
+}
+
+/* ! INTERRUPTS ON FOR THE TRIP TO THE SWAP, SAID OUT LOUD (analisi voce 54).
+ * The fault comes in with IF = 0, and it was ata_prendi that switched them on
+ * behind everybody's back; now the locks put back what they found, so the
+ * one place that needs them on (an eviction and a disk read that may sleep
+ * on a ring 3 driver) asks for it here, as the read from the executable
+ * does, and gives the caller its IF back afterwards. */
+static int pf_torna_da_swap(Process *p, vaddr_t addr)
+{
+    uint32_t fl = read_eflags();
+    int      r;
+
+    interrupts_enable();
+    r = pf_torna_da_swap_dentro(p, addr);
+    if (!(fl & 0x200u)) interrupts_disable();
+    return r;
 }
 
 /* =============================================================================
@@ -2461,6 +2489,24 @@ void page_fault_handler(InterruptFrame *frame)
          * sys_exit() per un'uscita volontaria. */
         proc_esci_fatale(-11); /* convenzione stile SIGSEGV */
         /* mai raggiunto */
+    }
+
+    /* ! A BAD POINTER FROM A PROGRAM IS THE PROGRAM'S FAULT (analisi voce
+     * 5): write(1, (char *)0x50000000, 10) passed syscall_verify_ptr (the
+     * range is right, the page is not there), the kernel touched it in ring
+     * 0 and the whole box stopped. Only that process dies; a lock it held
+     * is taken over by the next one who wants it (voce 6, step 1). */
+    {
+        Process *cur = proc_get_current();
+
+        if (fault_addr >= USER_SPACE_BASE && fault_addr < USER_SPACE_END &&
+            cur != NULL && !cur->nel_kernel) {
+            klog(LOG_ERROR, "PF: PID %u '%s' passed a bad pointer 0x%08x to the kernel "
+                 "(EIP 0x%08x, %s): killed", cur->pid, cur->name, (uint32_t)fault_addr,
+                 (uint32_t)FR_IP(frame), reason);
+            proc_esci_fatale(-14);
+            /* never reached */
+        }
     }
 
     /* Fault in ring0: bug reale del kernel, qui ha senso fermare tutto

@@ -227,7 +227,7 @@ IL FATTO DA CUI DISCENDONO LE PRIME VOCI
     Se qualcosa di casa smette di funzionare con EFAULT, NON togliere il
     controllo: trovare quel puntatore e dire all'utente da dove viene. }
 
-! voce 5 { Un puntatore sbagliato passato a una chiamata di sistema ferma la macchina
+# voce 5 { Un puntatore sbagliato passato a una chiamata di sistema ferma la macchina (FATTA, kernel 0.331)
     DOVE: kernel/mm/paging.c, page_fault_handler 2215-2483 (il ramo finale,
     2468-2481: "PAGE FAULT (KERNEL)" e kpanic).
     COSA SUCCEDE: syscall_verify_ptr guarda solo che l'indirizzo stia nello
@@ -342,7 +342,7 @@ IL FATTO DA CUI DISCENDONO LE PRIME VOCI
  @  IMPORTANTI
 ===============================================================================
 
-@ voce 7 { waitpid e pthread_join possono perdere il risveglio e dormire per sempre
+# voce 7 { waitpid e pthread_join possono perdere il risveglio e dormire per sempre (FATTA, kernel 0.331)
     DOVE: kernel/syscall/syscall_impl.c sys_waitpid 1282-1351 e
     sys_thread_attendi 1569-1598.
     COSA SUCCEDE: guardano se c'e' uno zombie a interrupt ACCESI e poi
@@ -373,7 +373,7 @@ IL FATTO DA CUI DISCENDONO LE PRIME VOCI
     PROVA: uno script che lancia 5000 volte "true" in sequenza e 500 volte
     10 comandi in sottofondo con wait: non deve mai restare fermo. }
 
-@ voce 8 { L'immagine TLS dei fili passa per un buffer unico: due programmi se la scambiano
+# voce 8 { L'immagine TLS dei fili passa per un buffer unico: due programmi se la scambiano (FATTA, kernel 0.331)
     DOVE: kernel/sched/sched.c 2168 (g_tls_buf) e proc_thread_crea 2277-2294,
     2399-2413.
     COSA SUCCEDE: il commento dice "uno solo perche' proc_thread_crea gira
@@ -395,7 +395,7 @@ IL FATTO DA CUI DISCENDONO LE PRIME VOCI
     l'ultima copia nel filo nuovo (2399-2413) e su OGNI uscita d'errore in
     mezzo (vedi voce 9: conviene fare le due insieme, con un'uscita unica). }
 
-@ voce 9 { Creare un filo che fallisce perde pagine fisiche per sempre
+# voce 9 { Creare un filo che fallisce perde pagine fisiche per sempre (FATTA, kernel 0.331)
     DOVE: kernel/sched/sched.c proc_thread_crea: 2252-2256 (map fallita), 2290
     (lettura TLS fallita), 2324 (proc_create fallita), 2408/2421/2465.
     COSA SUCCEDE: le pagine dello stack del filo vengono mappate PRIMA, e su
@@ -422,7 +422,7 @@ IL FATTO DA CUI DISCENDONO LE PRIME VOCI
     PROVA: riempire la tabella dei processi e chiamare pthread_create 10000
     volte (deve fallire con EAGAIN): le pagine libere non devono scendere. }
 
-@ voce 10 { Una exec che fallisce rovina il programma che l'ha chiamata
+# voce 10 { Una exec che fallisce rovina il programma che l'ha chiamata (FATTA, kernel 0.331)
     DOVE: kernel/loader/elf.c 197-202: PROC_EXE_PRENDI(proc), vfs_close e
     n_vma = 0 stanno IN CIMA al caricamento, prima di vfs_eseguibile, di
     vfs_open e di elf_verify_header.
@@ -477,7 +477,7 @@ $ voce 11 { Il kernel scrive nelle pagine di sola lettura dei programmi (CORRETT
     al cambio di processo. Poi, con la voce 36, far tornare EFAULT e togliere
     del tutto il "lasciato fare". }
 
-@ voce 12 { Le pagine tolte mentre stanno nello swap perdono il loro posto nello swap
+# voce 12 { Le pagine tolte mentre stanno nello swap perdono il loro posto nello swap (FATTA, kernel 0.331)
     DOVE: kernel/mm/paging.c paging_unmap_page 587-614 (azzera la PTE e
     basta). Chi la chiama: sys_munmap (syscall_impl.c 2166-2176), sbrk
     negativo (3610-3621), mmap MAP_FIXED (2036-2042), lo stack di un filo che
@@ -498,7 +498,7 @@ $ voce 11 { Il kernel scrive nelle pagine di sola lettura dei programmi (CORRETT
     TRAPPOLA: paging_unmap_page e' chiamata anche dai percorsi d'errore di
     chi ha appena mappato (PTE presente): li' il ramo nuovo non scatta. }
 
-@ voce 13 { Chiunque puo' prendersi un IRQ e spegnere una periferica
+# voce 13 { Chiunque puo' prendersi un IRQ e spegnere una periferica (FATTA, kernel 0.331)
     DOVE: kernel/syscall/syscall_impl.c sys_irq_bind 5850-5858: non chiama
     e_un_driver, a differenza di ioport_bind, dma_alloc e mmio_map.
     COSA SUCCEDE: un programma senza privilegi fa irq_bind(1) o l'IRQ della
@@ -572,7 +572,7 @@ $ voce 11 { Il kernel scrive nelle pagine di sola lettura dei programmi (CORRETT
     intervalli che toccano una zona shm, un framebuffer o una finestra MMIO:
     quelle si chiudono con la loro chiamata. }
 
-@ voce 18 { I numeri dei processi: g_next_pid non e' protetto e non guarda se il numero e' in uso
+# voce 18 { I numeri dei processi: g_next_pid non e' protetto e non guarda se il numero e' in uso (FATTA, kernel 0.331)
     DOVE: kernel/sched/sched.c 888 "proc->pid = g_next_pid++".
     COSA SUCCEDE: a interrupt accesi, con due proc_create insieme (make -j2,
     un servente che fa fili) due processi possono ricevere lo stesso PID: da
@@ -820,7 +820,7 @@ $ voce 42 { Le scritture piccole in una pipe non sono atomiche, e la pipe e' cor
     64 KB (allocata quando serve) e togliere il tetto di 1 KB copiando a
     pezzi. }
 
-$ voce 43 { Chiamate senza controllo dei permessi, di poco conto ma da chiudere
+$ voce 43 { Chiamate senza controllo dei permessi, di poco conto ma da chiudere (IN PARTE, kernel 0.331: console_setfg e PTY_CTL_FG)
     sys_console_write (2380) e SPAWN_F_CONSOLE: chiunque scrive su qualunque
     console, anche quella di root (un finto prompt di login).
     sys_modo_testo (6375): chiunque rimette lo schermo in modo testo e butta
@@ -887,7 +887,7 @@ $ voce 45 { Gli avvisi di debug nei percorsi piu' battuti
     file di root 0644 deve ricevere EBADF / EACCES; cp e sh > file devono
     funzionare come prima (prova-sh). }
 
-@ voce 47 { O_EXCL non esiste
+# voce 47 { O_EXCL non esiste (FATTA, kernel 0.331)
     DOVE: nessuna riga del kernel lo nomina (grep O_EXCL kernel = vuoto);
     vfs.c apri_nl 1543-1586.
     COSA SUCCEDE: open(O_CREAT | O_EXCL) su un file che c'e' gia' riesce. I
@@ -925,7 +925,7 @@ $ voce 45 { Gli avvisi di debug nei percorsi piu' battuti
     la destinazione in un nome nascosto (come nascondi_aperto), rinominare,
     e solo a cosa riuscita cancellare il nascosto; se fallisce, rimetterlo. }
 
-@ voce 50 { Un driver puo' scrivere oltre il buffer del disco in ring 3
+# voce 50 { Un driver puo' scrivere oltre il buffer del disco in ring 3 (FATTA, kernel 0.331)
     DOVE: syscall_impl.c sys_blk_risposta 7450-7463: n = u->settori viene dal
     programma; kcopia_byte(dest, dati, n * 512u) in d->dati, che e' di
     BLKR3_BYTE_MAX = 4096 byte (blkr3.h 69-70). Il solo controllo e'
@@ -937,7 +937,7 @@ $ voce 45 { Gli avvisi di debug nei percorsi piu' battuti
     quella; in piu' "if (n > BLKR3_SETTORI_MAX) return ERR(EINVAL);". Lo
     stesso tetto in sys_blk_attendi 7428-7432. }
 
-@ voce 51 { Il disco in ring 3 resta morto se chi lo usava viene chiuso a meta'
+# voce 51 { Il disco in ring 3 resta morto se chi lo usava viene chiuso a meta' (FATTA, kernel 0.331)
     DOVE: blkr3.c un_giro 150-239.
     COSA SUCCEDE: la casella torna LIBERA solo per mano di chi ha fatto la
     richiesta (235) o alla sua scadenza (222). Se quel processo viene chiuso
@@ -950,7 +950,7 @@ $ voce 45 { Gli avvisi di debug nei percorsi piu' battuti
     pid_chiamante == pid. I confronti "g_ticks >= scadenza" (195, 219, 305)
     vanno scritti (int32_t)(g_ticks - scadenza) >= 0 (voce 26). }
 
-@ voce 52 { Con Ctrl+C di un terminale si interrompe qualunque processo
+# voce 52 { Con Ctrl+C di un terminale si interrompe qualunque processo (FATTA, kernel 0.331)
     DOVE: pty.c pty_ctl 723-725 (PTY_CTL_FG: p->pid_fg = arg) e disciplina
     238-242; syscall_impl.c sys_pty_ctl 6488-6490 (sched_set_console_ctrlc).
     COSA SUCCEDE: un utente apre un pty, dichiara "in primo piano" il PID di
@@ -974,7 +974,7 @@ $ voce 45 { Gli avvisi di debug nei percorsi piu' battuti
     svegliata da pty_leggi_slave dopo "prendi"; con O_NONBLOCK rendere
     EAGAIN. Aggiungere il caso a poll_guarda. Portare PTY_DIM a 4096. }
 
-@ voce 54 { ata_prendi, ata_lascia, fs_prendi_n, fs_rilascia e pty riaccendono gli interrupt senza guardare com'erano
+# voce 54 { ata_prendi, ata_lascia, fs_prendi_n, fs_rilascia e pty riaccendono gli interrupt senza guardare com'erano (FATTA, kernel 0.331)
     DOVE: ata.c 1695-1758, vfs.c 391-444, pty.c (ogni interrupts_enable).
     COSA SUCCEDE: chiamate a interrupt spenti - pf_torna_da_swap (paging.c
     1869) sta nel gestore del page fault, che entra con IF = 0 - escono con
@@ -1048,7 +1048,7 @@ $ voce 60 { Cose minori viste nel secondo giro
       pty_azzera a interrupt accesi, in corsa con pty_apri.
     - blk_acquisisci/blk_rilascia (326-347): in_uso++ senza protezione. }
 
-@ voce 61 { A 32 bit un eseguibile malfatto fa mappare pagine sopra il kernel
+# voce 61 { A 32 bit un eseguibile malfatto fa mappare pagine sopra il kernel (FATTA, kernel 0.331)
     DOVE: loader/elf.c 325-338: il controllo "p_memsz > USER_SPACE_END -
     p_vaddr || p_filesz > p_memsz" sta dentro "#if defined(__x86_64__)". A 32
     bit si guarda solo p_vaddr. paging_map_page (paging.c 258) non rifiuta
@@ -1136,7 +1136,7 @@ $ voce 63 { Il disco si aspetta girando a vuoto, col lucchetto del kernel in man
   e il giornale ext4 sono scritti con cura: li' i controlli ci sono, e sono
   il modello da copiare nelle tre voci.
 
-! voce 64 { Una sequenza ANSI scritta sulla console scrive nella memoria del kernel
+# voce 64 { Una sequenza ANSI scritta sulla console scrive nella memoria del kernel (FATTA, kernel 0.331)
     DOVE: arch/x86/vga.c. putchar_su 1083-1088 accumula le cifre di un
     parametro in un int senza tetto ("params = params * 10 + cifra").
     ansi_apply_csi, casi 'B' (872-876) e 'C' (878-882): "n += c->row" e
@@ -1170,7 +1170,7 @@ $ voce 63 { Il disco si aspetta girando a vuoto, col lucchetto del kernel in man
     bit, in testo e in grafica: il cursore va in fondo (o a destra) e basta;
     poi vi, less e top devono disegnare come prima. }
 
-@ voce 65 { Un floppy rovinato fa leggere e scrivere fuori dalla tabella FAT in memoria
+# voce 65 { Un floppy rovinato fa leggere e scrivere fuori dalla tabella FAT in memoria (FATTA, kernel 0.331)
     DOVE: fs/fat12.c. fat12_get_next (1603) e fat12_set_next (1613) usano
     "cluster + cluster / 2" come indice in g_fat[9 * 512 = 4608] senza
     guardare il numero. Il numero viene dal disco: first_cluster della voce
@@ -1199,7 +1199,7 @@ $ voce 63 { Il disco si aspetta girando a vuoto, col lucchetto del kernel in man
     una directory la cui catena punta a se stessa; ls, cat e rm rendono un
     errore e la macchina resta in piedi. Poi la prova normale del floppy. }
 
-@ voce 66 { Un albero degli estesi rovinato fa scrivere fuori dal buffer quando si tronca
+# voce 66 { Un albero degli estesi rovinato fa scrivere fuori dal buffer quando si tronca (FATTA, kernel 0.331)
     DOVE: moduli/ext4/estesi.c, pota_nodo 383-436 (la chiamano est_pota e
     quindi truncate, unlink, rmdir). Controlla solo la firma: "voci =
     le16(h + 2)" viene usato cosi' com'e' in VOCE(h, voci - 1) e poi ci si
@@ -1249,7 +1249,7 @@ $ voce 63 { Il disco si aspetta girando a vuoto, col lucchetto del kernel in man
     di 32 byte di fila non hanno niente in comune; 1 MB letto passa "ent" o
     "rngtest" su Linux. }
 
-@ voce 68 { Se agganciare una libreria fallisce a meta', si liberano le pagine della libreria
+# voce 68 { Se agganciare una libreria fallisce a meta', si liberano le pagine della libreria (FATTA, kernel 0.331)
     DOVE: loader/lib.c, aggancia 390-430, il ramo d'errore: libera
     L->pag[j].fisico per TUTTE le j < i. Per le pagine scrivibili il
     processo ha ricevuto una COPIA privata (copia_pagina): li' si libera la
@@ -1268,7 +1268,7 @@ $ voce 63 { Il disco si aspetta girando a vuoto, col lucchetto del kernel in man
     (un contatore sotto #ifdef), lanciare due programmi che usano la stessa
     .so: il secondo parte e gira. }
 
-@ voce 69 { La copia di una pagina di libreria passa da un buffer unico per tutti
+# voce 69 { La copia di una pagina di libreria passa da un buffer unico per tutti (FATTA, kernel 0.331)
     DOVE: loader/lib.c, copia_pagina 164-180: "static uint8_t
     ponte[PAGE_SIZE]", riempito con una finestra e svuotato con un'altra.
     COSA SUCCEDE: e' la voce 8 un'altra volta. Se fra le due meta' il timer
@@ -1300,7 +1300,7 @@ $ voce 63 { Il disco si aspetta girando a vuoto, col lucchetto del kernel in man
     PROVA: sh -c 'echo aaaa >> /fd/x & echo bbbb >> /fd/x', poi chkdsk del
     floppy senza cluster persi. }
 
-@ voce 71 { Su FAT un file nuovo puo' contenere pezzi di file cancellati
+# voce 71 { Su FAT un file nuovo puo' contenere pezzi di file cancellati (FATTA, kernel 0.331)
     DOVE: fs/fat.c, fat_write 1964-2076. Il primo cluster di un file vuoto
     (1992-1995) non viene azzerato; nel salto verso l'offset (2002-2011) i
     cluster nuovi si azzerano solo "se offset > dim" ma non il primo; una

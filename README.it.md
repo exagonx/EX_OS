@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.330
+**Versione:** 0.331
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -112,6 +112,39 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### Un puntatore cattivo uccide il programma e non la macchina, e altri venti varchi del kernel chiusi (kernel 0.331, analisi_kernel)
+
+- **Un programma che passa al kernel un puntatore a niente muore da solo** (voce 5): il page
+  fault dentro la chiamata di sistema era un panico del kernel; ora "PF: PID n ... passed a bad
+  pointer" e il programma finisce con -14, la macchina va avanti. **testato in QEMU**
+- **`O_EXCL`** (0x80, voce 47): `open(O_CREAT | O_EXCL)` di un file che c'e' da' `EEXIST`, su
+  ext2/ext4 e FAT; lo usano `mkstemp` e `shm_open`. **testato in QEMU**
+- **I buchi di un file FAT sono zeri** (voce 71): scrivere oltre la fine di un file su una
+  chiavetta FAT mostrava cio' che c'era prima sul disco, pezzi di file cancellati. I cluster
+  nuovi si azzerano quando la scrittura non li copre; `tools/prova_fatbuchi.sh` (nuovo).
+  **testato in QEMU**
+- **Solo i driver agganciano gli interrupt, solo i propri processi vanno in primo piano** (voci
+  13, 52, 43 per la console): `irq_bind`/`irq_fronti` da un programma danno `EPERM`,
+  `console_setfg` e il primo piano del pty di un processo altrui `EPERM`. **testato in QEMU**
+- **Il parser della console non prende piu' di 9999 e resta sullo schermo** (voce 64):
+  `ESC[2147483600B` scriveva fuori dal buffer del testo. **testato in QEMU**
+- **Una `exec` fallita lascia il programma intero** (voce 10), **waitpid e thread_attendi non
+  perdono risvegli** (7), **una pagina smontata rende il suo posto nello swap** (12), **niente
+  pagine utente sotto i 64 MB e il controllo delle misure ELF anche a 32 bit** (61), **un driver
+  di disco in ring 3 non puo' rispondere piu' settori di quelli chiesti** (50), **un albero
+  FAT12 o degli extent ext4 rovinato si rifiuta invece di girare a vuoto o leggere fuori** (65,
+  66). **testato in QEMU**
+- **Fili e processi** (voci 8, 9, 18): l'immagine TLS di un filo nuovo ha il suo lucchetto, un
+  filo che non parte rende le pagine del suo stack, due processi non ricevono mai lo stesso PID
+  e il numero dei processi in `sched_dump` non sale piu'. **testato in QEMU**
+- **Librerie, dischi in ring 3 e lucchetti** (voci 69, 68, 51, 54): la copia di una pagina di
+  libreria non si mescola con quella di un altro programma, un aggancio fallito libera la copia
+  del processo e non la pagina della libreria, la casella di un disco USB si libera quando muore
+  il programma che la usava, e i lucchetti del disco, dei file e del pty rimettono il flag degli
+  interrupt com'era. **testato in QEMU**
+- `tools/prove/varchiprova.c` ha i casi nuovi; `tools/prove/tlsprova.c` (nuova): due programmi
+  con immagini `__thread` diverse fanno 300 fili ciascuno nello stesso momento.
 
 ### Un utente qualunque non legge e non scrive piu' il kernel, ne' scrive un file aperto in lettura (kernel 0.330, analisi_kernel voci 1-4 e 46)
 

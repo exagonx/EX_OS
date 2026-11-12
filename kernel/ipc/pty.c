@@ -108,6 +108,7 @@ static void pty_sveglia_tutti_locked(Pty *p)
 /* One more pair at the end of the table; 0 or -1 (no memory). */
 static int pty_in_piu(void)
 {
+    uint32_t fl_if = read_eflags();   /* IF given back as found (voce 54) */
     Pty  *nuova = (Pty *)kmalloc(sizeof(Pty));
     Pty **dir = NULL, **scarto = NULL;
 
@@ -136,7 +137,7 @@ static int pty_in_piu(void)
         g_pty_n++;
         nuova = NULL;
     }
-    interrupts_enable();
+    if (fl_if & 0x200u) interrupts_enable();
     if (scarto) kfree(scarto);
     if (nuova)  kfree(nuova);
     return 0;
@@ -304,6 +305,7 @@ static void disciplina(Pty *p, uint8_t c)
  * --------------------------------------------------------------------------- */
 int32_t pty_apri(int *master, int *slave)
 {
+    uint32_t fl_if = read_eflags();   /* IF given back as found (voce 54) */
     int i;
 
 ancora:
@@ -311,10 +313,10 @@ ancora:
         Pty *q = g_pty_dir[i];
 
         interrupts_disable();
-        if (q->usata) { interrupts_enable(); continue; }
+        if (q->usata) { if (fl_if & 0x200u) interrupts_enable(); continue; }
         pty_azzera(q);
         q->usata = 1;
-        interrupts_enable();
+        if (fl_if & 0x200u) interrupts_enable();
         /* The modes of a fresh terminal on any Unix ("stty sane"). */
         q->t.c_iflag = T_ICRNL;
         q->t.c_oflag = T_OPOST | T_ONLCR;
@@ -351,6 +353,7 @@ ancora:
  * --------------------------------------------------------------------------- */
 int32_t pty_apri_ptmx(int *h)
 {
+    uint32_t fl_if = read_eflags();   /* IF given back as found (voce 54) */
     int s;
     int32_t r = pty_apri(h, &s);
     Pty *p;
@@ -361,7 +364,7 @@ int32_t pty_apri_ptmx(int *h)
     p->slave_aperti = 0;
     p->slave_atteso = 1;
     p->bloccato     = 1;
-    interrupts_enable();
+    if (fl_if & 0x200u) interrupts_enable();
     return 0;
 }
 
@@ -369,15 +372,16 @@ int32_t pty_apri_ptmx(int *h)
  * the name disappears with the master), -EIO (still locked). */
 int32_t pty_apri_slave(uint32_t n)
 {
+    uint32_t fl_if = read_eflags();   /* IF given back as found (voce 54) */
     Pty *p;
 
     interrupts_disable();
     p = ((int)n >= 0) ? pty_da_handle((int)n) : NULL;
-    if (!p || p->master_aperti == 0) { interrupts_enable(); return ERR(ENOENT); }
-    if (p->bloccato)                 { interrupts_enable(); return ERR(EIO); }
+    if (!p || p->master_aperti == 0) { if (fl_if & 0x200u) interrupts_enable(); return ERR(ENOENT); }
+    if (p->bloccato)                 { if (fl_if & 0x200u) interrupts_enable(); return ERR(EIO); }
     p->slave_aperti++;
     p->slave_atteso = 0;
-    interrupts_enable();
+    if (fl_if & 0x200u) interrupts_enable();
     return 0;
 }
 
@@ -436,6 +440,7 @@ void pty_chiudi_locked(int h, int master)
 
 void pty_chiudi(int h, int master)
 {
+    uint32_t fl_if = read_eflags();   /* IF given back as found (voce 54) */
     Pty *p = pty_da_handle(h);
 
     if (!p) return;
@@ -448,7 +453,7 @@ void pty_chiudi(int h, int master)
      * l'altro capo vuol dire fine dei dati, ma se dorme non lo scopre. */
     interrupts_disable();
     pty_sveglia_tutti_locked(p);
-    interrupts_enable();
+    if (fl_if & 0x200u) interrupts_enable();
 
     if (p->master_aperti == 0 && p->slave_aperti == 0) {
         pty_azzera(p);
@@ -460,13 +465,14 @@ void pty_chiudi(int h, int master)
  * --------------------------------------------------------------------------- */
 int32_t pty_scrivi_master(int h, const void *buf, uint32_t n)
 {
+    uint32_t fl_if = read_eflags();   /* IF given back as found (voce 54) */
     const uint8_t *src = (const uint8_t *)buf;
     Pty     *p;
     uint32_t i;
 
     interrupts_disable();
     p = pty_da_handle(h);
-    if (!p) { interrupts_enable(); return ERR(EBADF); }
+    if (!p) { if (fl_if & 0x200u) interrupts_enable(); return ERR(EBADF); }
 
     for (i = 0; i < n; i++) disciplina(p, src[i]);
 
@@ -475,7 +481,7 @@ int32_t pty_scrivi_master(int h, const void *buf, uint32_t n)
     if (p->in_quanti)  attese_sveglia_locked(&p->att_in);
     if (p->out_quanti) attese_sveglia_locked(&p->att_out);
 
-    interrupts_enable();
+    if (fl_if & 0x200u) interrupts_enable();
     return (int32_t)n;
 }
 
@@ -510,6 +516,7 @@ int32_t pty_scrivi_master(int h, const void *buf, uint32_t n)
  * ========================================================================== */
 int32_t pty_scrivi_slave(int h, const void *buf, uint32_t n)
 {
+    uint32_t fl_if = read_eflags();   /* IF given back as found (voce 54) */
     const uint8_t *src = (const uint8_t *)buf;
     Pty     *p;
     uint32_t scritti = 0;
@@ -521,10 +528,10 @@ int32_t pty_scrivi_slave(int h, const void *buf, uint32_t n)
 
         interrupts_disable();
         p = pty_da_handle(h);
-        if (!p) { interrupts_enable(); return ERR(EBADF); }
+        if (!p) { if (fl_if & 0x200u) interrupts_enable(); return ERR(EBADF); }
 
         if (p->master_aperti == 0) {
-            interrupts_enable();
+            if (fl_if & 0x200u) interrupts_enable();
             return scritti ? (int32_t)scritti : ERR(EPIPE);
         }
 
@@ -544,17 +551,17 @@ int32_t pty_scrivi_slave(int h, const void *buf, uint32_t n)
          * che fara' il posto che stiamo per aspettare. */
         attese_sveglia_locked(&p->att_out);
 
-        if (scritti == n) { interrupts_enable(); return (int32_t)scritti; }
+        if (scritti == n) { if (fl_if & 0x200u) interrupts_enable(); return (int32_t)scritti; }
 
         cur = proc_get_current();
-        if (!cur) { interrupts_enable(); return (int32_t)scritti; }
+        if (!cur) { if (fl_if & 0x200u) interrupts_enable(); return (int32_t)scritti; }
 
         /* (0.317) more writers may wait for room: until 0.316 the second
          * one returned at once with what it had written */
         if (!attese_metti(&p->att_spazio, cur->pid)) {
             Attese *a = &p->att_spazio;
 
-            interrupts_enable();
+            if (fl_if & 0x200u) interrupts_enable();
             if (!attese_cresci(a)) return scritti ? (int32_t)scritti : ERR(ENOMEM);
             continue;                           /* and check again, IF off */
         }
@@ -579,6 +586,7 @@ int32_t pty_scrivi_slave(int h, const void *buf, uint32_t n)
  * ========================================================================== */
 int32_t pty_leggi_slave(int h, void *buf, uint32_t n)
 {
+    uint32_t fl_if = read_eflags();   /* IF given back as found (voce 54) */
     uint8_t  appoggio[PTY_DIM];
     uint8_t *dst = (uint8_t *)buf;
     Pty     *p;
@@ -591,14 +599,14 @@ int32_t pty_leggi_slave(int h, void *buf, uint32_t n)
 
     interrupts_disable();
     p = pty_da_handle(h);
-    if (!p) { interrupts_enable(); return ERR(EBADF); }
+    if (!p) { if (fl_if & 0x200u) interrupts_enable(); return ERR(EBADF); }
     canonico = (p->t.c_lflag & T_ICANON) != 0;
     if (!canonico) {
         serve  = p->t.c_cc[T_VMIN];
         decimi = p->t.c_cc[T_VTIME];
         if (serve > n) serve = n;
     }
-    interrupts_enable();
+    if (fl_if & 0x200u) interrupts_enable();
 
     for (;;) {
         Process *cur;
@@ -606,7 +614,7 @@ int32_t pty_leggi_slave(int h, void *buf, uint32_t n)
 
         interrupts_disable();
         p = pty_da_handle(h);
-        if (!p) { interrupts_enable(); return ERR(EBADF); }
+        if (!p) { if (fl_if & 0x200u) interrupts_enable(); return ERR(EBADF); }
 
         if (canonico || (serve > 0 && decimi == 0)) {
             if (p->in_quanti >= (canonico ? 1u : serve)) break;
@@ -629,22 +637,22 @@ int32_t pty_leggi_slave(int h, void *buf, uint32_t n)
         /* Fine dei dati: Ctrl+D, o il master se n'e' andato. */
         if (p->in_quanti == 0 && (p->fine_dati || p->master_aperti == 0)) {
             p->fine_dati = 0;
-            interrupts_enable();
+            if (fl_if & 0x200u) interrupts_enable();
             return 0;
         }
         if (p->in_quanti > 0 && p->master_aperti == 0) break;
 
         cur = proc_get_current();
-        if (!cur) { interrupts_enable(); return ERR(EAGAIN); }
+        if (!cur) { if (fl_if & 0x200u) interrupts_enable(); return ERR(EAGAIN); }
 
         if (a_tempo) {
-            interrupts_enable();
+            if (fl_if & 0x200u) interrupts_enable();
             sched_sleep(10);
         } else {
             if (!attese_metti(&p->att_in, cur->pid)) {
                 Attese *a = &p->att_in;
 
-                interrupts_enable();
+                if (fl_if & 0x200u) interrupts_enable();
                 if (!attese_cresci(a)) return ERR(ENOMEM);
                 continue;                       /* and check again, IF off */
             }
@@ -656,7 +664,7 @@ int32_t pty_leggi_slave(int h, void *buf, uint32_t n)
     }
 
     presi = prendi(p->in, &p->in_testa, &p->in_quanti, appoggio, n);
-    interrupts_enable();
+    if (fl_if & 0x200u) interrupts_enable();
 
     for (i = 0; i < presi; i++) dst[i] = appoggio[i];
     return (int32_t)presi;
@@ -664,6 +672,7 @@ int32_t pty_leggi_slave(int h, void *buf, uint32_t n)
 
 int32_t pty_leggi_master(int h, void *buf, uint32_t n)
 {
+    uint32_t fl_if = read_eflags();   /* IF given back as found (voce 54) */
     uint8_t  appoggio[PTY_DIM];
     uint8_t *dst = (uint8_t *)buf;
     Pty     *p;
@@ -677,19 +686,19 @@ int32_t pty_leggi_master(int h, void *buf, uint32_t n)
 
         interrupts_disable();
         p = pty_da_handle(h);
-        if (!p) { interrupts_enable(); return ERR(EBADF); }
+        if (!p) { if (fl_if & 0x200u) interrupts_enable(); return ERR(EBADF); }
 
         if (p->out_quanti > 0) break;
 
-        if (p->slave_aperti == 0 && !p->slave_atteso) { interrupts_enable(); return 0; }
+        if (p->slave_aperti == 0 && !p->slave_atteso) { if (fl_if & 0x200u) interrupts_enable(); return 0; }
 
         cur = proc_get_current();
-        if (!cur) { interrupts_enable(); return ERR(EAGAIN); }
+        if (!cur) { if (fl_if & 0x200u) interrupts_enable(); return ERR(EAGAIN); }
 
         if (!attese_metti(&p->att_out, cur->pid)) {
             Attese *a = &p->att_out;
 
-            interrupts_enable();
+            if (fl_if & 0x200u) interrupts_enable();
             if (!attese_cresci(a)) return ERR(ENOMEM);
             continue;                           /* and check again, IF off */
         }
@@ -704,7 +713,7 @@ int32_t pty_leggi_master(int h, void *buf, uint32_t n)
      * pty_scrivi_slave dormirebbe per sempre: il posto si libera solo qui. */
     attese_sveglia_locked(&p->att_spazio);
 
-    interrupts_enable();
+    if (fl_if & 0x200u) interrupts_enable();
 
     for (i = 0; i < presi; i++) dst[i] = appoggio[i];
     return (int32_t)presi;
@@ -755,12 +764,13 @@ int32_t pty_ctl(int h, uint32_t cmd, uint32_t arg)
  * --------------------------------------------------------------------------- */
 int32_t pty_ioctl(int h, uint32_t req, uintptr_t arg)
 {
+    uint32_t fl_if = read_eflags();   /* IF given back as found (voce 54) */
     Pty *p;
     int32_t r = 0;
 
     interrupts_disable();
     p = pty_da_handle(h);
-    if (!p) { interrupts_enable(); return ERR(EBADF); }
+    if (!p) { if (fl_if & 0x200u) interrupts_enable(); return ERR(EBADF); }
 
     switch (req) {
     case PTY_TCGETS:
@@ -815,7 +825,7 @@ int32_t pty_ioctl(int h, uint32_t req, uintptr_t arg)
     default:
         r = ERR(ENOTTY);
     }
-    interrupts_enable();
+    if (fl_if & 0x200u) interrupts_enable();
     return r;
 }
 

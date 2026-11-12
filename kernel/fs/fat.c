@@ -1970,6 +1970,7 @@ int fat_write(int mnt, const char *percorso, const void *buf,
     const uint8_t *src = (const uint8_t *)buf;
     uint32_t     primo, dim, clus_byte, clus, salti, i;
     uint32_t     scritti = 0, dentro;
+    int          primo_nuovo = 0;
 
     if (mnt < 0 || mnt >= FAT_MAX_MOUNT || !g_mnt[mnt].usato) return -1;
     if (buf == NULL) return -1;
@@ -1992,6 +1993,11 @@ int fat_write(int mnt, const char *percorso, const void *buf,
     if (primo < 2 || primo >= m->n_cluster + 2) {
         primo = clus_alloca(m);
         if (primo == 0) return -1;
+        primo_nuovo = 1;
+        /* ! A NEW CLUSTER HOLDS WHAT WAS THERE (analisi voce 71): pieces of
+         * deleted files, maybe of another user, showed up in the hole of a
+         * sparse write. Zeroed unless this write covers all of it. */
+        if ((offset != 0 || size < clus_byte) && clus_azzera(m, primo) != 0) goto fallito;
     }
 
     /* Scrivere oltre la fine lascia un buco: i cluster in mezzo esistono
@@ -2002,11 +2008,11 @@ int fat_write(int mnt, const char *percorso, const void *buf,
     for (i = 0; i < salti; i++) {
         uint32_t p = fat_voce(m, clus);
 
-        if (p == FAT_ERR || p == bad_clus(m->tipo)) return -1;
+        if (p == FAT_ERR || p == bad_clus(m->tipo)) goto fallito;
         if (p >= eoc_min(m->tipo)) {
             p = catena_estendi(m, clus);
-            if (p == 0) return -1;
-            if (offset > dim && clus_azzera(m, p) != 0) return -1;
+            if (p == 0) goto fallito;
+            if (clus_azzera(m, p) != 0) goto fallito;  /* a hole: always */
         }
         clus = p;
     }
@@ -2016,7 +2022,7 @@ int fat_write(int mnt, const char *percorso, const void *buf,
     while (scritti < size) {
         uint32_t base, s, primo_s, off_s, quanti;
 
-        if (clus < 2 || clus >= m->n_cluster + 2) return -1;
+        if (clus < 2 || clus >= m->n_cluster + 2) goto fallito;
 
         base    = clus_lba(m, clus);
         primo_s = dentro / m->byts_per_sec;
@@ -2032,7 +2038,7 @@ int fat_write(int mnt, const char *percorso, const void *buf,
              * un giro di I/O per dati che vengono comunque sostituiti. */
             if (quanti == m->byts_per_sec) sd = settore_azzera(m->dev, base + s);
             else                           sd = settore_mut   (m->dev, base + s);
-            if (sd == NULL) return -1;
+            if (sd == NULL) goto fallito;
 
             for (i = 0; i < quanti; i++) sd[off_s + i] = src[scritti + i];
 
@@ -2045,7 +2051,7 @@ int fat_write(int mnt, const char *percorso, const void *buf,
         {
             uint32_t p = fat_voce(m, clus);
 
-            if (p == FAT_ERR || p == bad_clus(m->tipo)) return -1;
+            if (p == FAT_ERR || p == bad_clus(m->tipo)) goto fallito;
             if (p >= eoc_min(m->tipo)) {
                 p = catena_estendi(m, clus);
                 if (p == 0) {
@@ -2054,6 +2060,8 @@ int fat_write(int mnt, const char *percorso, const void *buf,
                      * quelli. Restituire un errore secco li perderebbe. */
                     break;
                 }
+                /* the piece left does not fill it: the rest must be zeros */
+                if (size - scritti < clus_byte && clus_azzera(m, p) != 0) break;
             }
             clus = p;
         }
@@ -2063,7 +2071,7 @@ int fat_write(int mnt, const char *percorso, const void *buf,
     /* --- I DATI SONO SCRITTI: SOLO ORA LA VOCE (punto 10). --- */
     {
         uint8_t *v = voce_mut(m, &pos);
-        if (v == NULL) return -1;
+        if (v == NULL) goto fallito;
 
         scrivi16(v + 20, primo >> 16);
         scrivi16(v + 26, primo & 0xFFFF);
@@ -2074,6 +2082,12 @@ int fat_write(int mnt, const char *percorso, const void *buf,
     }
 
     return (int)scritti;
+
+    /* ! NOT ANYBODY'S UNTIL THE ENTRY SAYS SO: a first cluster taken for an
+     * empty file is given back on the way out with an error (voce 71). */
+fallito:
+    if (primo_nuovo) catena_libera(m, primo);
+    return -1;
 }
 
 /* Porta il file a `nuova_dim`. Solo accorciamento: allungare si fa

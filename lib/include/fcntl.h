@@ -29,17 +29,18 @@
 #define O_BINARY    0
 #define O_TEXT      0
 
-/* Costanti che POSIX mette qui e che EX-OS non ha: O_EXCL e O_SYNC.
- * Valgono zero perche' un programma che le chiede non deve fallire a
- * compilare, ma ! NON FANNO NIENTE — in particolare O_EXCL non protegge
- * da una creazione concorrente.
+/* O_SYNC POSIX lo mette qui e EX-OS non ce l'ha: vale zero perche' un
+ * programma che lo chiede non deve fallire a compilare, ma ! NON FA NIENTE.
+ * O_EXCL e' vero dal kernel 0.330 (0x80, il valore di Linux): con O_CREAT,
+ * un nome che c'e' gia' da' EEXIST, e controllo e creazione sono un passo
+ * solo. Su un kernel piu' vecchio il bit e' ignorato (come prima lo zero).
  *
  * O_NONBLOCK sta in libc.h insieme agli altri flag di open() e vale 0x800,
  * il bit vero: da quando c'e' fcntl(F_GETFL/F_SETFL) il valore torna
  * indietro a chi lo ha messo, e uno zero avrebbe fatto sparire il flag
  * fra l'andata e il ritorno. ! Neanche lui fa qualcosa: nessuna
  * operazione di EX-OS ritorna EAGAIN, il flag si ricorda e basta. */
-#define O_EXCL      0
+#define O_EXCL      0x80
 #define O_SYNC      0
 
 /* I lucchetti di fcntl (F_GETLK, F_SETLK, F_SETLKW) sono veri dal kernel 0.291

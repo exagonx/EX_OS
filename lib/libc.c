@@ -6983,8 +6983,8 @@ senza_memoria:
  *
  * ! mkstemp APRE il file, e questo e' il punto: un tmpnam() seguito da
  * open() ha in mezzo una finestra in cui qualcun altro puo' creare quel
- * nome. Qui la finestra resta (manca O_EXCL nel kernel), ma il nome e' gia'
- * improbabile da indovinare e il file viene creato subito.
+ * nome. Dal kernel 0.330 la finestra non c'e' piu': mkstemps apre con O_EXCL, e
+ * un nome preso nel frattempo da' EEXIST e un altro tentativo.
  *
  * -----------------------------------------------------------------------------
  * ! LA DIRECTORY VIENE DA `TMPDIR`, E SENZA E' LA RADICE
@@ -7103,8 +7103,10 @@ int mkstemps(char *modello, int suffisso)
 
         for (j = 0; j < 6; j++, r >>= 4) x[j] = cifre[r & 0xf];
         if (access(modello, F_OK) == 0) continue;
-        fd = open(modello, O_RDWR | O_CREAT | O_TRUNC);
+        /* 0x80 = O_EXCL (<fcntl.h>, kernel 0.330): the name is ours or EEXIST */
+        fd = open(modello, O_RDWR | O_CREAT | 0x80, 0600);
         if (fd >= 0) return fd;
+        if (errno != EEXIST) return -1;
     }
     errno = EEXIST;
     return -1;
@@ -10499,7 +10501,8 @@ int shm_chiudi(void *p)
  *     gone, in either order, as POSIX wants (a mapping outlives its fd).
  *
  * ! WHAT DOES NOT HOLD, said here and not discovered:
- *   - O_EXCL is 0 on EX-OS (<fcntl.h>): O_CREAT on an existing name attaches;
+ *   - O_EXCL (0x80 since 0.330) with O_CREAT on an existing name: EEXIST;
+ *     the check and the kernel's attach are two steps, not one;
  *   - a zone cannot grow: ftruncate beyond its size is EINVAL;
  *   - MAP_PRIVATE on a zone is still shared, and PROT_* is not applied;
  *   - shm_unlink only answers 0: the zone goes away when its last user
@@ -10641,10 +10644,13 @@ int shm_open(const char *nome, int flag, mode_t modo)
     }
     shmfd_nome(nome, k);
 
-    /* Gia' aperta da questo processo: un altro descrittore sulla stessa. */
+    /* Gia' aperta da questo processo: un altro descrittore sulla stessa
+     * (O_CREAT | O_EXCL: c'e' gia', EEXIST). */
     for (i = 0; i < SHMFD_MAX; i++)
-        if (g_shmzona[i].usato && strcmp(g_shmzona[i].nome, k) == 0)
+        if (g_shmzona[i].usato && strcmp(g_shmzona[i].nome, k) == 0) {
+            if ((flag & (O_CREAT | 0x80)) == (O_CREAT | 0x80)) { errno = EEXIST; return -1; }
             return shmfd_nuovo(i);
+        }
 
     for (i = 0; i < SHMFD_MAX && g_shmzona[i].usato; i++) ;
     if (i == SHMFD_MAX) { shmfd_finite(); errno = EMFILE; return -1; }
@@ -10654,6 +10660,11 @@ int shm_open(const char *nome, int flag, mode_t modo)
     strcpy(q.nome, k);
     r = shm_apri(&q);                 /* attach, if it is there */
     if (r < 0 && (r != -ENOENT || !(flag & O_CREAT))) { errno = -r; return -1; }
+    if (r >= 0 && (flag & (O_CREAT | 0x80)) == (O_CREAT | 0x80)) {
+        if (q.virt) shm_chiudi((void *)(uintptr_t)q.virt);   /* there already: not ours */
+        errno = EEXIST;
+        return -1;
+    }
 
     memset(z, 0, sizeof(*z));
     z->usato = 1;

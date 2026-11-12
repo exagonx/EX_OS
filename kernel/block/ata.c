@@ -1682,6 +1682,7 @@ void ata_sonda_lucchetto(void)
 
 void ata_prendi(void)
 {
+    uint32_t fl_if = read_eflags();   /* IF given back as found (voce 54) */
     Process *p  = proc_get_current();
     uint32_t io = (p != NULL) ? p->pid : DISCO_SENZA_PROCESSO;
 
@@ -1697,7 +1698,7 @@ void ata_prendi(void)
         if (g_disco_detentore == 0 || g_disco_detentore == io) {
             g_disco_detentore = io;
             if (g_disco_livelli++ == 0) disco_ricorda(p);
-            interrupts_enable();
+            if (fl_if & 0x200u) interrupts_enable();
             /* three is normal since 24 October 2026: a page coming back
              * from the swap holds it around blk_read, which takes it around
              * ata_read */
@@ -1710,7 +1711,7 @@ void ata_prendi(void)
             return;
         }
 
-        if (p == NULL) { interrupts_enable(); return; }
+        if (p == NULL) { if (fl_if & 0x200u) interrupts_enable(); return; }
 
         /* a dead holder: taken over, as fs_prendi_n does (analisi voce 6) */
         if (g_disco_detentore != DISCO_SENZA_PROCESSO) {
@@ -1721,7 +1722,7 @@ void ata_prendi(void)
 
                 g_disco_detentore = 0;
                 g_disco_livelli   = 0;
-                interrupts_enable();
+                if (fl_if & 0x200u) interrupts_enable();
                 klog(LOG_ERROR, "ATA: disk lock held by dead pid %u (%u levels): taken over",
                      morto, liv);
                 continue;
@@ -1729,7 +1730,7 @@ void ata_prendi(void)
         }
 
         if (p->priority == PRIO_IDLE) {
-            interrupts_enable();
+            if (fl_if & 0x200u) interrupts_enable();
             sched_yield();
             continue;
         }
@@ -1742,6 +1743,7 @@ void ata_prendi(void)
 
 void ata_lascia(void)
 {
+    uint32_t fl_if = read_eflags();   /* IF given back as found (voce 54) */
     Process *p  = proc_get_current();
     uint32_t io = (p != NULL) ? p->pid : DISCO_SENZA_PROCESSO;
     uint32_t i, n;
@@ -1758,11 +1760,11 @@ void ata_lascia(void)
                            "holds it (%u levels)", io, cpu_n(), g_disco_detentore,
                  g_disco_livelli);
         }
-        interrupts_enable();
+        if (fl_if & 0x200u) interrupts_enable();
         return;
     }
     if (--g_disco_livelli > 0) {
-        interrupts_enable();
+        if (fl_if & 0x200u) interrupts_enable();
         return;
     }
 
@@ -1771,7 +1773,7 @@ void ata_lascia(void)
     g_disco_n_attesa = 0;
     for (i = 0; i < n; i++) sched_unblock_locked(g_disco_attesa[i]);
 
-    interrupts_enable();
+    if (fl_if & 0x200u) interrupts_enable();
 }
 
 void ata_stato_lucchetto(uint32_t *chi, uint32_t *livelli, uint32_t *attesa)

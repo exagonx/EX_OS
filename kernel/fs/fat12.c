@@ -1600,9 +1600,18 @@ static int fat12_write_sector(uint16_t lba, const uint8_t *buf)
  * Operazioni FAT
  * ============================================================================= */
 
+/* ! THE NUMBER COMES FROM THE DISK (analisi voce 65): a first_cluster of
+ * 0xFFFF read g_fat[98302], and freeing a chain with clusters 3072-4079
+ * wrote 1.5 KB past g_fat into the root directory. Out of range = end. */
+#define CLUSTER_FUORI(c)    ((c) < 2 || (c) >= MAX_CLUSTERS + 2)
+/* a chain longer than the disk has clusters goes round in a circle */
+#define PASSI_MAX           (MAX_CLUSTERS + 2)
+
 static uint16_t fat12_get_next(uint16_t cluster)
 {
     uint32_t byte_off = cluster + (cluster / 2);
+
+    if (CLUSTER_FUORI(cluster)) return FAT12_END;
     uint16_t val = (uint16_t)g_fat[byte_off] | ((uint16_t)g_fat[byte_off+1] << 8);
     if (cluster & 1) val >>= 4;
     else             val &= 0x0FFF;
@@ -1612,8 +1621,18 @@ static uint16_t fat12_get_next(uint16_t cluster)
 
 static void fat12_set_next(uint16_t cluster, uint16_t value)
 {
+    static int detto = 0;
     uint32_t byte_off = cluster + (cluster / 2);
-    uint16_t existing = (uint16_t)g_fat[byte_off] | ((uint16_t)g_fat[byte_off+1] << 8);
+    uint16_t existing;
+
+    if (CLUSTER_FUORI(cluster)) {
+        if (!detto) {
+            detto = 1;
+            klog(LOG_ERROR, "FAT12: cluster %u outside the FAT: the floppy is damaged, not written", cluster);
+        }
+        return;
+    }
+    existing = (uint16_t)g_fat[byte_off] | ((uint16_t)g_fat[byte_off+1] << 8);
     if (cluster & 1)
         existing = (existing & 0x000F) | (uint16_t)((value & 0x0FFF) << 4);
     else
@@ -1638,7 +1657,9 @@ static uint16_t fat12_alloc_cluster(void)
 static void fat12_free_chain(uint16_t first)
 {
     uint16_t c = first;
-    while (c != FAT12_END && c >= 2 && c < FAT12_RESERVED_MIN) {
+    uint32_t passi = 0;
+
+    while (c != FAT12_END && c >= 2 && c < FAT12_RESERVED_MIN && passi++ < PASSI_MAX) {
         uint16_t next = fat12_get_next(c);
         fat12_set_next(c, FAT12_FREE);
         c = next;
@@ -1951,9 +1972,10 @@ static Fat12DirEntry *fat12_find_in_dir_cluster(uint16_t cluster,
 {
     static uint8_t  dir_buf[32 * 16];  /* buffer per 16 entry alla volta */
     Fat12DirEntry  *entries = (Fat12DirEntry *)dir_buf;
-    uint32_t        i;
+    uint32_t        i, passi = 0;
 
-    while (cluster != FAT12_END && cluster >= 2 && cluster < FAT12_RESERVED_MIN) {
+    while (cluster != FAT12_END && cluster >= 2 && cluster < FAT12_RESERVED_MIN &&
+           passi++ < PASSI_MAX) {
         uint16_t lba = fat12_cluster_to_lba(cluster);
         if (fat12_read_sector(lba, dir_buf) != 0) return NULL;
 
@@ -2154,9 +2176,9 @@ static int fat12_dir_scan(uint16_t dir_cluster, const char *name83,
     uint8_t         buf[BYTES_PER_SECTOR];
     Fat12DirEntry  *entries = (Fat12DirEntry *)buf;
     uint16_t        cluster = dir_cluster;
-    uint32_t        i;
+    uint32_t        i, passi = 0;
 
-    while (cluster >= 2 && cluster < FAT12_RESERVED_MIN) {
+    while (cluster >= 2 && cluster < FAT12_RESERVED_MIN && passi++ < PASSI_MAX) {
         uint16_t lba = fat12_cluster_to_lba(cluster);
 
         if (fat12_read_sector(lba, buf) != 0) return -1;
@@ -2433,9 +2455,9 @@ static int fat12_dir_vuota(uint16_t cluster)
 {
     uint8_t         buf[BYTES_PER_SECTOR];
     Fat12DirEntry  *entries = (Fat12DirEntry *)buf;
-    uint32_t        i;
+    uint32_t        i, passi = 0;
 
-    while (cluster >= 2 && cluster < FAT12_RESERVED_MIN) {
+    while (cluster >= 2 && cluster < FAT12_RESERVED_MIN && passi++ < PASSI_MAX) {
         if (fat12_read_sector(fat12_cluster_to_lba(cluster), buf) != 0) return -1;
 
         for (i = 0; i < DIR_ENTRIES_PER_SECTOR; i++) {
@@ -2715,7 +2737,7 @@ int fat12_read(int handle, void *buf, uint32_t size, uint32_t offset)
     if (entry->name[0] == 0x00 || (uint8_t)entry->name[0] == 0xE5) return -9;
 
     if (offset >= entry->file_size) return 0;   /* EOF */
-    if (offset + size > entry->file_size)
+    if (size > entry->file_size - offset)       /* offset + size could wrap */
         size = entry->file_size - offset;
 
     cluster = entry->first_cluster;
@@ -3019,8 +3041,10 @@ int fat12_readdir_path(const char *path, Fat12DirEntry *out_buf,
         if (!dir_entry || !(dir_entry->attr & FAT12_ATTR_DIRECTORY)) return -1;
 
         uint16_t cluster = dir_entry->first_cluster;
+        uint32_t passi = 0;
+
         while (cluster != FAT12_END && cluster >= 2 &&
-               cluster < FAT12_RESERVED_MIN && n < max_entries) {
+               cluster < FAT12_RESERVED_MIN && n < max_entries && passi++ < PASSI_MAX) {
             uint8_t        buf[BYTES_PER_SECTOR];
             Fat12DirEntry *entries = (Fat12DirEntry *)buf;
             uint16_t       lba  = fat12_cluster_to_lba(cluster);

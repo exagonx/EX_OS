@@ -383,6 +383,21 @@ riprova:
             /* E LO PRENDE, prima di lasciare andare gli interrupt. */
             (*PROC_POSTO(i)).state = PROC_NASCENTE;
             preso = PROC_POSTO(i);
+
+            /* ! THE PID HERE TOO (analisi voce 18): "g_next_pid++" in
+             * proc_create ran with interrupts on, and two creations at once
+             * could get the same number; after 4 billion it came back to 0
+             * without looking at the live ones. 0 and numbers in use are
+             * skipped; after the wrap it starts again from 2. */
+            {
+                uint32_t pid;
+
+                do {
+                    pid = g_next_pid++;
+                    if (g_next_pid == 0) g_next_pid = 2;
+                } while (pid == 0 || proc_get_by_pid(pid) != NULL);
+                preso->pid = pid;
+            }
             break;
         }
     }
@@ -884,8 +899,7 @@ Process *proc_create(const char *name, vaddr_t entry_point,
         return NULL;
     }
 
-    /* PID */
-    proc->pid  = g_next_pid++;
+    /* PID: given by pcb_alloc, with interrupts off */
     proc->ppid = g_current ? g_current->pid : 0;
 
     /* ! OGNI PROCESSO E' CAPOGRUPPO DI SE STESSO, e i descrittori sono i suoi.
@@ -1638,10 +1652,8 @@ void sched_fine_chiesta(void)
 
     interrupts_disable();
     klog(LOG_INFO, "SCHED: PID %u finisce (chiesto da un altro processore)", io->pid);
-    if (come == 1) {
-        proc_chiudi_fd(io);
-        g_proc_count--;
-    }
+    if (come == 1) proc_chiudi_fd(io);
+    g_proc_count--;                 /* case 2 too (voce 18) */
     ipc_processo_finito(io);
     io->state     = PROC_ZOMBIE;
     io->exit_code = 0;
@@ -2163,16 +2175,45 @@ Process *proc_filo_dello_stack(uint32_t tgid, uint32_t indirizzo)
 }
 
 /* Il buffer dell'immagine TLS. Statico perche' TLS_MAX e' 64 KB e sullo stack
- * del kernel non ci starebbero; uno solo perche' proc_thread_crea gira dentro
- * una chiamata di sistema e finisce prima che un'altra cominci. */
+ * del kernel non ci starebbero.
+ * ! "ONE, BECAUSE IT ENDS BEFORE ANOTHER STARTS" WAS FALSE (analisi voce 8):
+ * vfs_read sleeps and the kernel is preemptible, and the lock in
+ * sys_thread_crea is the GROUP's. Program A read its image, slept on the
+ * disk, B wrote its own over it, and A's new thread started with B's
+ * __thread values. Now the buffer has its own lock, from the read to the
+ * last copy; a dead holder is taken over. */
 static uint8_t g_tls_buf[TLS_MAX];
+static volatile uint32_t g_tls_chi = 0;     /* pid holding g_tls_buf, 0 = free */
+
+static void tls_buf_prendi(void)
+{
+    uint32_t io = g_current ? g_current->pid : 0xFFFFFFFFu;
+
+    for (;;) {
+        uint32_t fl = read_eflags(), chi;
+        Process *d;
+
+        interrupts_disable();
+        chi = g_tls_chi;
+        if (chi == 0 || ((d = proc_get_by_pid(chi)) == NULL || d->state == PROC_ZOMBIE)) {
+            g_tls_chi = io;
+            if (fl & 0x200u) interrupts_enable();
+            return;
+        }
+        if (fl & 0x200u) interrupts_enable();
+        sched_yield();
+    }
+}
+
+static void tls_buf_lascia(void) { g_tls_chi = 0; }
 
 int proc_thread_crea(uint32_t entry, uint32_t arg)
 {
     Process *capo, *filo;
     uint32_t posto, cima, base, pg;
-    uint32_t tls_tot, impegno, prima;
+    uint32_t tls_tot, impegno, prima, mappate = 0;
     uint32_t esp;
+    int      err;
 
     if (g_current == NULL) return ERR(ESRCH);
 
@@ -2240,21 +2281,20 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
 
         if (fis == 0) {
             klog(LOG_ERROR, "SCHED: memoria finita creando lo stack del filo");
-            while (pg--) {
-                uint32_t v = prima + pg * PAGE_SIZE;
-                paddr_t f = paging_get_physical(capo->page_directory, v);
-                paging_unmap_page(capo->page_directory, v);
-                if (f) pmm_free_page(f);
-            }
-            return ERR(ENOMEM);
+            err = ERR(ENOMEM);
+            goto via;
         }
         paging_azzera_fisica(fis);
         if (paging_map_page(capo->page_directory, prima + pg * PAGE_SIZE, fis,
                             PG_PRESENT | PG_WRITABLE | PG_USER) != 0) {
             pmm_free_page(fis);
-            return ERR(ENOMEM);
+            err = ERR(ENOMEM);
+            goto via;
         }
+        mappate = pg + 1;
     }
+
+    tls_buf_prendi();           /* from the read to the last copy: voce 8 */
 
     /* =====================================================================
      * ! L'IMMAGINE TLS SI LEGGE PRIMA DI CREARE IL TASK, e non e' un
@@ -2287,7 +2327,9 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
             if (letti <= 0) {
                 klog(LOG_ERROR, "SCHED: non riesco a leggere l'immagine TLS "
                                 "per il filo");
-                return ERR(EIO);
+                tls_buf_lascia();
+                err = ERR(EIO);
+                goto via;
             }
             fatti += (uint32_t)letti;
         }
@@ -2321,7 +2363,11 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
      * «stack 0x00000000..0x00000000»; con questa riga a zero la stessa
      * sched_yield() non cambia niente. Misurato il 7 settembre 2026. */
     filo = proc_create(capo->name, 0, capo->priority, 0);
-    if (filo == NULL) return ERR(EAGAIN);   /* pool dei PCB esaurito */
+    if (filo == NULL) {                     /* pool dei PCB esaurito */
+        tls_buf_lascia();
+        err = ERR(EAGAIN);
+        goto via;
+    }
 
     /* ! LA PAGE DIRECTORY NUOVA CHE proc_create HA APPENA FATTO SI BUTTA, e
      * non e' uno spreco da correggere: chiedergli di non farla vorrebbe dire
@@ -2405,12 +2451,13 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
                                                    va & ~(PAGE_SIZE - 1));
                 uint8_t *dst;
 
-                if (fis == 0) { proc_kill(filo->pid); return ERR(EFAULT); }
+                if (fis == 0) { tls_buf_lascia(); proc_kill(filo->pid); return ERR(EFAULT); }
                 dst = (uint8_t *)paging_finestra_apri(fis);
                 dst[va % PAGE_SIZE] = g_tls_buf[k];
                 paging_finestra_chiudi();
             }
         }
+        tls_buf_lascia();
 
         /* Il puntatore a se stesso in testa al TCB: %gs:0 legge questo. */
         {
@@ -2428,6 +2475,7 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
         filo->tls_tp   = tp;
         cima           = tbase;     /* lo stack del filo comincia sotto */
     } else {
+        tls_buf_lascia();
         filo->tls_tp   = 0;
         filo->tls_base = 0;
     }
@@ -2484,6 +2532,20 @@ int proc_thread_crea(uint32_t entry, uint32_t arg)
          filo->pid, filo->tgid, posto, base, cima,
          impegno / 1024, (unsigned)(FILO_STACK_SIZE / 1024), filo->tls_tp);
     return (int)filo->pid;
+
+    /* ! ONE WAY OUT BEFORE THE THREAD EXISTS (analisi voce 9): the stack
+     * pages were mapped first and the error returns left them there; the
+     * next try got the same slot and paging_map_page wrote over the PTEs,
+     * and those pages were lost for good - 2-3 per EAGAIN under load. */
+via:
+    for (pg = 0; pg < mappate; pg++) {
+        uint32_t v = prima + pg * PAGE_SIZE;
+        paddr_t  f = paging_get_physical(capo->page_directory, v);
+
+        paging_unmap_page(capo->page_directory, v);
+        if (f) pmm_free_page(f & ~(paddr_t)0xFFFu);
+    }
+    return err;
 }
 
 /* =============================================================================
@@ -2593,6 +2655,7 @@ void proc_gruppo_termina(uint32_t tgid, uint32_t risparmia_pid)
         p->state     = PROC_ZOMBIE;
         p->exit_code = 0;
         runq_remove(p);
+        g_proc_count--;             /* voce 18: sched_dump climbed forever */
         klog(LOG_DEBUG, "SCHED: filo %u terminato col suo gruppo", p->pid);
     }
 }

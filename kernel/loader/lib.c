@@ -167,9 +167,15 @@ static void copia_pagina(uint32_t dst_phys, uint32_t src_phys)
      * stack del kernel. 4 KB su uno stack da 128 KB stanno; aprire due volte
      * la stessa finestra darebbe due puntatori che indicano lo stesso posto. */
     static uint8_t ponte[PAGE_SIZE];        /* static: non sullo stack */
+    uint32_t fl = read_eflags();
     uint8_t *p;
     uint32_t k;
 
+    /* ! ONE BUFFER FOR EVERYBODY (analisi voce 69): the timer between the two
+     * halves and another program hooking a library filled it with ITS page,
+     * and the first one got the other library's .data. Interrupts off from
+     * the first window to the end of the second, like cow_copia_fisica. */
+    interrupts_disable();
     p = (uint8_t *)paging_finestra_apri(src_phys);
     for (k = 0; k < PAGE_SIZE; k++) ponte[k] = p[k];
     paging_finestra_chiudi();
@@ -177,6 +183,7 @@ static void copia_pagina(uint32_t dst_phys, uint32_t src_phys)
     p = (uint8_t *)paging_finestra_apri(dst_phys);
     for (k = 0; k < PAGE_SIZE; k++) p[k] = ponte[k];
     paging_finestra_chiudi();
+    if (fl & 0x200u) interrupts_enable();
 }
 
 /* Butta via una libreria caricata a meta': le pagine originali tornano al PMM. */
@@ -421,9 +428,18 @@ senza_memoria:
      * dopo, e il fault indicherebbe la libreria invece della memoria finita. */
     {
         uint32_t j;
+
+        /* ! THE PROCESS'S FRAME, NOT THE LIBRARY'S (analisi voce 68): for a
+         * private page the process has a copy, and freeing L->pag[j].fisico
+         * gave the library's mother page back to the PMM while the cache
+         * still handed it out. Shared page: pmm_free_page is one owner less. */
         for (j = 0; j < i; j++) {
+            paddr_t f = L->pag[j].privata
+                      ? paging_get_physical(proc->page_directory, L->pag[j].virt)
+                      : L->pag[j].fisico;
+
             paging_unmap_page(proc->page_directory, L->pag[j].virt);
-            pmm_free_page(L->pag[j].fisico);
+            if (f) pmm_free_page(f & ~(paddr_t)0xFFFu);
         }
     }
     return ERR(ENOMEM);

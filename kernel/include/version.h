@@ -911,7 +911,23 @@
  * or between a bitmap test and its set. Voce 6 step 1: the file, disk,
  * shm and address-space locks are taken over from a dead holder (zombie or
  * gone), with an error in the log, instead of waiting forever. */
-#define EXOS_VERSION    "0.330"
+/* 0.330 -> 0.331 (analisi_kernel, more voci): the console parser caps its
+ * numbers and clamps row/col (64); waitpid and thread_attendi look and sleep
+ * with interrupts off (7); a failed exec leaves the program whole (10);
+ * unmapping a swapped page gives its slot back (12); the 32-bit ELF size
+ * check, and no user page below USER_SPACE_BASE (61); blk_risposta trusts
+ * the kernel's sector count (50); irq_bind and irq_fronti only for drivers
+ * (13); setfg and PTY FG only on one's own processes (52, 43 in part);
+ * O_EXCL (47); FAT12 cluster bounds and loop caps (65); ext4 extent tree
+ * checks (66); a bad user pointer kills the program, not the kernel (5);
+ * the TLS buffer has its own lock and a failed thread frees its stack
+ * (8, 9); library page copies with interrupts off and the right frame freed
+ * on error (69, 68); the PID chosen with interrupts off, never one in use,
+ * and the process count right (18); a ring 3 disk box freed when its caller
+ * dies, ticks compared across the wrap (51); the disk, file and pty locks
+ * give IF back as found, the swap-in turns it on itself (54); new FAT
+ * clusters zeroed when a write does not cover them (71). */
+#define EXOS_VERSION    "0.331"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

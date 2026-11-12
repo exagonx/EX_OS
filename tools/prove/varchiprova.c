@@ -14,7 +14,13 @@
  *   - open(O_RDONLY | O_TRUNC) and truncate() of root's file: EACCES;
  *   - open(O_RDWR) of root's 0644 file: EACCES;
  * and what still must work: reading root's file, and its own file opened
- * O_RDWR, written, read back, truncated. Prints "varchiprova: N NO".
+ * O_RDWR, written, read back, truncated. Then (voci 47, 64, 13, 52/43, 10):
+ *   - open(O_CREAT | O_EXCL) of a file that is there: EEXIST; of a new: ok;
+ *   - "ESC[2147483600B" and "ESC[2147483600C" then a character: still alive;
+ *   - irq_bind(1) as a user: EPERM; console_setfg of pid 1: EPERM/ESRCH;
+ *   - five execv of missing files, then code far away still runs;
+ *   - a child doing write(1, 0x50000000, 10) dies, the machine goes on (voce 5).
+ * Prints "varchiprova: N NO".
  * ============================================================================= */
 #include <stdio.h>
 #include <string.h>
@@ -22,6 +28,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <libc.h>
 
 static int no = 0;
 
@@ -43,6 +50,12 @@ int main(int argc, char **argv)
     char root_f[256], mio_f[256], buf[64];
     int  fd;
 
+    /* voce 5: the child that passes the kernel a pointer to nothing */
+    if (argc > 1 && strcmp(argv[1], "-puntatore") == 0) {
+        write(1, (char *)0x50000000, 10);
+        printf("varchiprova: il figlio e' ancora vivo dopo il puntatore cattivo\n");
+        return 0;
+    }
     if (argc < 2 || getuid() != 0) { printf("uso: varchiprova DIR (da root)\n"); return 2; }
     snprintf(root_f, sizeof(root_f), "%s/di-root", argv[1]);
     snprintf(mio_f, sizeof(mio_f), "%s/mio", argv[1]);
@@ -87,6 +100,59 @@ int main(int argc, char **argv)
         struct stat st;
         atteso("il file di root e' ancora intero", (stat(root_f, &st) == 0 && st.st_size == 16) ? 0 : -1, 0);
     }
+    /* voce 47: O_EXCL (0x80) */
+    errno = 0; atteso("O_CREAT|O_EXCL su un file che c'e'", open(mio_f, O_RDWR | O_CREAT | 0x80, 0644), EEXIST);
+    {
+        char nuovo[256];
+
+        snprintf(nuovo, sizeof(nuovo), "%s/nuovo-excl", argv[1]);
+        fd = open(nuovo, O_RDWR | O_CREAT | 0x80, 0644);
+        atteso("O_CREAT|O_EXCL su un nome nuovo", fd, 0);
+        if (fd >= 0) close(fd);
+    }
+
+    /* voce 64: the console parser */
+    printf("\033[2147483600Bx\033[2147483600Cx\033[99999999999999999Ax\033[2147483647Lx\r\n");
+    fflush(stdout);
+    atteso("sequenze ANSI enormi: il kernel e' vivo", 0, 0);
+
+    /* voce 13 and 52/43 */
+    /* these two wrappers hand back the raw -errno, errno stays put */
+    {
+        int r = irq_bind(1);
+
+        if (r == -EPERM) printf("  [OK] irq_bind(1) da utente: %d\n", r);
+        else { printf("  [NO] irq_bind(1) da utente: reso %d, voluto %d\n", r, -EPERM); no++; }
+    }
+    {
+        int r = console_setfg(1);
+        int e = -r;
+
+        if (r < 0 && (e == EPERM || e == ESRCH)) printf("  [OK] console_setfg(1) da utente: errno %d\n", e);
+        else { printf("  [NO] console_setfg(1) da utente: reso %d errno %d\n", r, e); no++; }
+        console_setfg((unsigned)getpid());
+    }
+
+    /* voce 10: failed execs keep the program whole */
+    {
+        int k;
+        char *av[] = { "x", NULL };
+
+        for (k = 0; k < 5; k++) execv("/non/esiste/proprio", av);
+        atteso("5 execv fallite, il programma va avanti", 0, 0);
+    }
+
+    /* voce 5: a bad pointer kills the program, not the machine */
+    {
+        char *av[] = { argv[0], "-puntatore", NULL };
+        int pid = spawn(argv[0], av), st = 0, f;
+
+        if (pid > 0) waitpid(pid, &st, 0);
+        f = open(mio_f, O_RDONLY);
+        atteso("puntatore cattivo al kernel: muore il figlio, i file si aprono", (pid > 0 && st != 0 && f >= 0) ? 0 : -1, 0);
+        if (f >= 0) close(f);
+    }
+
     printf("varchiprova: %d NO\n", no);
     return no ? 1 : 0;
 }

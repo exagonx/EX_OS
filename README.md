@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.330
+**Version:** 0.331
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -110,6 +110,36 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### A bad pointer kills the program, not the machine, and twenty more kernel holes closed (kernel 0.331, analisi_kernel)
+
+- **A program that hands the kernel a pointer to nothing dies alone** (voce 5): the page fault
+  inside the system call was a kernel panic; now "PF: PID n ... passed a bad pointer" and the
+  program ends with -14, the machine goes on. **tested in QEMU**
+- **`O_EXCL`** (0x80, voce 47): `open(O_CREAT | O_EXCL)` of a file that exists gives `EEXIST`, on
+  ext2/ext4 and FAT; `mkstemp` and `shm_open` use it. **tested in QEMU**
+- **The holes of a FAT file are zeros** (voce 71): writing past the end of a file on a FAT
+  stick showed what was on the disk before, pieces of deleted files. New clusters are zeroed
+  when the write does not cover them; `tools/prova_fatbuchi.sh` (new). **tested in QEMU**
+- **Only drivers bind interrupts, only one's own processes go to the foreground** (voci 13,
+  52, 43 for the console): `irq_bind`/`irq_fronti` from a program give `EPERM`, `console_setfg`
+  and the pty foreground of somebody else's process `EPERM`. **tested in QEMU**
+- **The console parser takes no more than 9999 and stays on screen** (voce 64):
+  `ESC[2147483600B` wrote outside the text buffer. **tested in QEMU**
+- **A failed `exec` leaves the program whole** (voce 10), **waitpid and thread_attendi miss no
+  wake-up** (7), **an unmapped page gives back its swap slot** (12), **no user page below
+  64 MB and the ELF size check at 32 bit too** (61), **a ring 3 disk driver cannot answer
+  more sectors than asked** (50), **a damaged FAT12 or ext4 extent tree is refused instead of
+  looping or reading outside** (65, 66). **tested in QEMU**
+- **Threads and processes** (voci 8, 9, 18): the TLS image of a new thread has its own lock,
+  a thread that fails to start gives its stack pages back, two processes never get the same
+  PID and the process count in `sched_dump` no longer climbs. **tested in QEMU**
+- **Libraries, ring 3 disks and locks** (voci 69, 68, 51, 54): a library page copy cannot be
+  mixed with another program's, a failed hook frees the process's copy and not the library's
+  page, a USB disk box is freed when the program using it dies, and the disk, file and pty
+  locks give the interrupt flag back as they found it. **tested in QEMU**
+- `tools/prove/varchiprova.c` grew the new cases; `tools/prove/tlsprova.c` (new): two
+  programs with different `__thread` images make 300 threads each at the same time.
 
 ### An ordinary user can no longer read or write the kernel, nor write a file opened for reading (kernel 0.330, analisi_kernel voci 1-4 and 46)
 

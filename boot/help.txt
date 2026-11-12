@@ -829,6 +829,20 @@ lettura, o passava al kernel un indirizzo sotto i 64 MB. Prima passava, ed era
 un varco: chiunque poteva riscrivere /boot/utenti o la memoria del kernel. Il
 difetto e' del programma: scrivi a chi sviluppa EX-OS quale e' e cosa faceva.
 
+UN PROGRAMMA FINISCE CON -14 E NEL REGISTRO C'E' "PF: PID n ... passed a bad
+pointer", dal kernel 0.331: ha passato al kernel un indirizzo dove non c'e'
+memoria. Fino alla 0.330 era un panico del kernel e la macchina si fermava;
+ora muore solo il programma. Il difetto e' suo: scrivi a chi sviluppa EX-OS.
+
+open DA' "File exists" (EEXIST) a un programma che prima andava, dal kernel
+0.331: ha chiesto O_CREAT|O_EXCL (crea solo se non c'e') e il file c'era. Prima
+O_EXCL non era guardato e il file veniva riaperto. Cancella il file vecchio, o
+scrivi a chi sviluppa EX-OS quale programma era.
+
+irq_bind O console_setfg DANNO "Operation not permitted" (EPERM) dal kernel
+0.331: solo un driver (lanciato come driver) aggancia un interrupt, e solo root
+mette in primo piano un processo di un altro utente.
+
 USCENDO DA ExWin LO SCHERMO RESTA FERMO sull'ultima immagine, con nv50.drv o
 nv40.drv che hanno cambiato il modo (GeForce 210 e simili): il sistema e' vivo
 (telnet risponde), ma fino al kernel 0.328 tornava al modo testo VGA, che quei

@@ -354,7 +354,15 @@ int paging64_spezza(PDE *pd, vaddr_t virt)
  * --------------------------------------------------------------------------- */
 int paging_map_page(PDE *pd, vaddr_t virt, paddr_t phys, uint32_t flags)
 {
-    uint64_t *v2 = voce_pd(pd, virt, 1);
+    uint64_t *v2;
+
+    /* a user page inside the kernel's zone (analisi voce 61): never */
+    if ((flags & PG_USER) && virt < USER_SPACE_BASE) {
+        klog(LOG_ERROR, "PAGING: user page at 0x%08x, inside the kernel's zone: refused",
+             (uint32_t)virt);
+        return -1;
+    }
+    v2 = voce_pd(pd, virt, 1);
 
     if (v2 == NULL) {
         klog(LOG_ERROR, "PAGING: OOM durante map_page virt=0x%08x%08x",
