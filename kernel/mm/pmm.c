@@ -491,7 +491,7 @@ void pmm_init(BootInfo *info)
  * Ritorna: indirizzo fisico della pagina (allineato a 4KB)
  *          0 se non ci sono pagine libere (OUT OF MEMORY)
  * ============================================================================= */
-paddr_t pmm_alloc_page(void)
+static paddr_t pmm_alloc_page_dentro(void)
 {
     uint32_t i;
     uint32_t start;
@@ -574,7 +574,7 @@ static uint32_t pmm_limite_kernel(void)
     return (limite > g_total_pages) ? g_total_pages : limite;
 }
 
-paddr_t pmm_alloc_page_kernel(void)
+static paddr_t pmm_alloc_page_kernel_dentro(void)
 {
     uint32_t limite = pmm_limite_kernel();
     uint32_t i;
@@ -609,7 +609,7 @@ paddr_t pmm_alloc_page_kernel(void)
     return 0;
 }
 
-paddr_t pmm_alloc_pages_kernel(uint32_t count)
+static paddr_t pmm_alloc_pages_kernel_dentro(uint32_t count)
 {
     uint32_t limite = pmm_limite_kernel();
     uint32_t i, j, consecutive;
@@ -692,7 +692,7 @@ static uint32_t pmm_cerca_contigue(uint32_t da, uint32_t a, uint32_t count)
     return a;
 }
 
-paddr_t pmm_alloc_pages(uint32_t count)
+static paddr_t pmm_alloc_pages_dentro(uint32_t count)
 {
     uint32_t i, j;
     uint32_t fascia = pmm_limite_kernel();
@@ -852,7 +852,7 @@ static int alta_dentro(paddr_t a)
     return g_alta && a >= GB4_ && a < GB4_ + (uint64_t)g_alta_pagine * PAGE_SIZE;
 }
 
-paddr_t pmm_alloc_page_utente(void)
+static paddr_t pmm_alloc_page_utente_dentro(void)
 {
     uint32_t n, k;
 
@@ -915,7 +915,7 @@ uint64_t pmm_alta_fine(void)
 uint32_t pmm_alta_totali(void) { return g_alta_ram; }
 #endif
 
-void pmm_free_page(paddr_t addr)
+static void pmm_free_page_dentro(paddr_t addr)
 {
     uint32_t page;
 
@@ -981,7 +981,7 @@ void pmm_free_page(paddr_t addr)
 /* =============================================================================
  * pmm_ref_inc / pmm_ref_count — vedi kernel/include/pmm.h
  * ============================================================================= */
-int pmm_ref_inc(paddr_t addr)
+static int pmm_ref_inc_dentro(paddr_t addr)
 {
     uint32_t page;
 
@@ -1035,7 +1035,7 @@ int pmm_ref_inc(paddr_t addr)
     return oltre_aggiungi(addr);
 }
 
-uint32_t pmm_ref_count(paddr_t addr)
+static uint32_t pmm_ref_count_dentro(paddr_t addr)
 {
     uint32_t page;
 
@@ -1064,7 +1064,7 @@ uint32_t pmm_ref_count(paddr_t addr)
 /* =============================================================================
  * pmm_free_pages — Libera N pagine fisiche contigue
  * ============================================================================= */
-void pmm_free_pages(paddr_t addr, uint32_t count)
+static void pmm_free_pages_dentro(paddr_t addr, uint32_t count)
 {
     uint32_t i;
     for (i = 0; i < count; i++) {
@@ -1082,7 +1082,7 @@ uint32_t pmm_get_total_pages(void) { return g_total_pages; }
 /* =============================================================================
  * pmm_is_page_free — Controlla se una pagina è libera
  * ============================================================================= */
-int pmm_is_page_free(paddr_t addr)
+static int pmm_is_page_free_dentro(paddr_t addr)
 {
     uint32_t page = addr_to_page(addr);
     if (page >= g_total_pages) return 0;
@@ -1162,4 +1162,123 @@ void pmm_dump(void)
             in_run = 0;
         }
     }
+}
+
+
+/* =============================================================================
+ * The public doors: interrupts off around each (analisi_kernel voce 2)
+ *
+ * ! THE SAME PAGE TO TWO OWNERS: the timer could switch process between the
+ * bitmap test and the bit set, and the next one took the same page - the
+ * worst damage there is, and it leaves no trace. IF goes back as it was:
+ * these run at boot, from the page fault and from each other (nesting is
+ * harmless).
+ * ============================================================================= */
+
+paddr_t pmm_alloc_page(void)
+{
+    uint32_t fl = read_eflags();
+    paddr_t r;
+
+    interrupts_disable();
+    r = pmm_alloc_page_dentro();
+    if (fl & 0x200u) interrupts_enable();
+    return r;
+}
+
+paddr_t pmm_alloc_page_kernel(void)
+{
+    uint32_t fl = read_eflags();
+    paddr_t r;
+
+    interrupts_disable();
+    r = pmm_alloc_page_kernel_dentro();
+    if (fl & 0x200u) interrupts_enable();
+    return r;
+}
+
+paddr_t pmm_alloc_pages_kernel(uint32_t count)
+{
+    uint32_t fl = read_eflags();
+    paddr_t r;
+
+    interrupts_disable();
+    r = pmm_alloc_pages_kernel_dentro(count);
+    if (fl & 0x200u) interrupts_enable();
+    return r;
+}
+
+paddr_t pmm_alloc_pages(uint32_t count)
+{
+    uint32_t fl = read_eflags();
+    paddr_t r;
+
+    interrupts_disable();
+    r = pmm_alloc_pages_dentro(count);
+    if (fl & 0x200u) interrupts_enable();
+    return r;
+}
+
+#if defined(__x86_64__)
+paddr_t pmm_alloc_page_utente(void)
+{
+    uint32_t fl = read_eflags();
+    paddr_t r;
+
+    interrupts_disable();
+    r = pmm_alloc_page_utente_dentro();
+    if (fl & 0x200u) interrupts_enable();
+    return r;
+}
+#endif
+
+void pmm_free_page(paddr_t addr)
+{
+    uint32_t fl = read_eflags();
+
+    interrupts_disable();
+    pmm_free_page_dentro(addr);
+    if (fl & 0x200u) interrupts_enable();
+}
+
+int pmm_ref_inc(paddr_t addr)
+{
+    uint32_t fl = read_eflags();
+    int r;
+
+    interrupts_disable();
+    r = pmm_ref_inc_dentro(addr);
+    if (fl & 0x200u) interrupts_enable();
+    return r;
+}
+
+uint32_t pmm_ref_count(paddr_t addr)
+{
+    uint32_t fl = read_eflags();
+    uint32_t r;
+
+    interrupts_disable();
+    r = pmm_ref_count_dentro(addr);
+    if (fl & 0x200u) interrupts_enable();
+    return r;
+}
+
+void pmm_free_pages(paddr_t addr, uint32_t count)
+{
+    uint32_t fl = read_eflags();
+
+    interrupts_disable();
+    pmm_free_pages_dentro(addr, count);
+    if (fl & 0x200u) interrupts_enable();
+}
+
+int pmm_is_page_free(paddr_t addr)
+{
+    uint32_t fl = read_eflags();
+    int r;
+
+    interrupts_disable();
+    r = pmm_is_page_free_dentro(addr);
+    if (fl & 0x200u) interrupts_enable();
+    return r;
 }

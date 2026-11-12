@@ -11,6 +11,11 @@ I SIMBOLI DAVANTI A OGNI VOCE
                     una cosa che manca e che i programmi portati si aspettano
   $   OTTIMIZZABILE / MIGLIORABILE   funziona, ma costa tempo o memoria, o ha
                     un limite che con piu' carico si tocchera'
+  #   FATTO COMPLETO  la voce e' riparata del tutto e provata; prende il posto
+                    del simbolo di prima. Tra parentesi in fondo al titolo il
+                    kernel che la contiene. Le prime fatte (1, 2, 3, 4, 46)
+                    erano tutte !. Una voce fatta solo in parte tiene il suo
+                    simbolo e dice nel titolo quale passo e' fatto.
 
 COME E' STATA FATTA
 
@@ -21,16 +26,47 @@ COME E' STATA FATTA
   di lavoro di oggi (kernel 0.328 in corso): se l'altra sessione sposta del
   codice, si ritrovano col nome della funzione.
 
-  LETTI PER INTERO: sched/sched.c, mm/paging.c, mm/kmalloc.c, ipc/ipc.c,
-  ipc/pipe.c, arch/x86/isr.c, arch/x86/isr_stubs.asm, syscall/syscall.c,
-  include/sched.h, include/smp.h.
-  LETTI IN PARTE: syscall/syscall_impl.c (circa due terzi: file, processi,
-  fili, memoria, spawn/exec, porte, IRQ, poll, IPC), mm/pmm.c, sched/segnali.c,
-  loader/elf.c, fs/vfs.c e block/ata.c (solo i lucchetti).
-  NON GUARDATI, e quindi fuori da questo elenco: i file system (fat12, fat,
-  ext2, ext4), la cache dei blocchi (blk.c), ata/ahci/atapi nel merito, pty,
-  shm e swap nel merito, dynlink/lib/modulo, vga, tutto arch/x86_64, smp.c
-  (bkl e TLB shootdown), cpufreq, acpi, power. Meritano un secondo giro.
+  LETTI PER INTERO (due giri): sched/sched.c, mm/paging.c, mm/kmalloc.c,
+  mm/shm.c, mm/swap.c, ipc/ipc.c, ipc/pipe.c, ipc/pty.c, arch/x86/isr.c,
+  arch/x86/isr_stubs.asm, arch/x86/smp.c, syscall/syscall.c,
+  syscall/syscall_impl.c, fs/vfs.c, fs/ext2.c, block/blk.c, block/blkr3.c,
+  arch/x86_64/paging64.c, arch/x86_64/isr64.asm, include/sched.h, smp.h.
+  LETTI NEL TERZO GIRO (12 novembre): loader/lib.c, dynlink.c, modulo.c,
+  drvmgr.c, fs/fat.c, fs/iso9660.c, fs/procfs.c, fs/cfg.c, block/atapi.c,
+  mbr.c, vol.c, moduli/ext4/estesi.c, giornale.c e il resto di scrittura.c,
+  arch/x86/entropia.c, acpi.c, power.c, kernel_main.c,
+  arch/x86_64/cambio64.asm, gdt64.c, cpu64.c.
+  LETTI IN PARTE: mm/pmm.c, sched/segnali.c (ora anche la seconda meta'),
+  loader/elf.c (il caricamento), block/ata.c e block/ahci.c (lucchetto,
+  attese, lettura e scrittura), arch/x86_64/idt64.c, fs/fat12.c (la parte
+  del file system, non quella del controller del floppy), arch/x86/vga.c
+  (l'interprete delle sequenze ANSI e la scrittura delle celle, non il
+  disegno e il cambio di modo), arch/x86/rtc.c (la lettura).
+  NON GUARDATI, e quindi fuori da questo elenco: moduli/ext4/somme.c e
+  ext4.c, arch/x86_64/main64.c, arch/x86/cpufreq.c, mtrr.c, tsc.c,
+  kbdprova.c, vga_modo3.c, crypto/sha256.c, boot/*.
+
+COME USARE QUESTO FILE (per chi ripara, persona o modello)
+
+  - Una voce per volta, nell'ordine scritto in fondo. Leggere PRIMA le
+    funzioni nominate: i numeri di riga possono essersi spostati, il nome
+    della funzione no. Se il codice non corrisponde piu' a quel che la voce
+    descrive (un'altra sessione lavora sullo stesso albero), NON applicare
+    la correzione alla cieca: rileggere e, nel dubbio, chiedere all'utente.
+  - Dove c'e' "PASSI" la correzione e' descritta fino al codice. Dove c'e'
+    solo "COME RIPARARE" o "MEGLIO" serve un progetto: proporlo all'utente
+    prima di scriverlo. "DA VERIFICARE" = misurare prima di toccare.
+  - Dopo ogni voce: make per 32 e 64 bit (controllare prima con pgrep che
+    non giri repo-update), prova in QEMU a 32 e 64 bit con -smp 2, poi la
+    PROVA della voce. Aggiornare version.h e i manuali come d'uso. Niente
+    commit: solo messaggio-commit.txt.
+  - Proteggere una struttura del kernel = interrupt spenti, con lo stato di
+    prima rimesso (schema nella nota del SECONDO GIRO). Con piu' processori
+    basta, perche' nel kernel ne entra uno per volta (bkl_entra).
+  - A 32 bit int 0x80 e' un trap gate (interrupt ACCESI nella chiamata); a
+    64 bit e' un interrupt gate (0xEE, idt64.c 86): la chiamata parte a
+    interrupt SPENTI e li riaccende la prima funzione che fa
+    interrupts_enable() secco (fs_prendi_n, pipe...). Vedi voce 62.
 
 IL FATTO DA CUI DISCENDONO LE PRIME VOCI
 
@@ -50,7 +86,7 @@ IL FATTO DA CUI DISCENDONO LE PRIME VOCI
  !  URGENTI
 ===============================================================================
 
-! voce 1 { kmalloc e kfree non hanno nessuna protezione
+# voce 1 { kmalloc e kfree non hanno nessuna protezione (FATTA, kernel 0.330)
     DOVE: kernel/mm/kmalloc.c, kmalloc 426-499, kfree 529-677. In tutto il file
     non c'e' un solo interrupts_disable.
     COSA SUCCEDE: il processo A trova un blocco libero adatto e il timer lo
@@ -67,9 +103,36 @@ IL FATTO DA CUI DISCENDONO LE PRIME VOCI
     COME RIPARARE: salvare i flag e spegnere gli interrupt per tutta kmalloc,
     kfree, kmalloc_verifica e kmalloc_stats (pushf/cli ... ripristino), come
     fa gia' per_cpu_leggi. klog va chiamato fuori dalla sezione. Attenzione a
-    heap_expand, che chiama il PMM: vedi la voce 2. }
+    heap_expand, che chiama il PMM: vedi la voce 2.
+    PASSI (per chi ripara):
+    1. In kmalloc.c rinominare i corpi attuali in funzioni static:
+       kmalloc -> kmalloc_dentro, kfree -> kfree_dentro, kmalloc_verifica ->
+       verifica_dentro, kmalloc_stats -> stats_dentro. Niente altro cambia
+       dentro di loro (cosi' non si dimentica nessun "return").
+    2. Scrivere le quattro funzioni pubbliche come involucri:
+         void *kmalloc(size_t size)
+         {
+             uintptr_t fl = read_eflags();
+             void *p;
+             interrupts_disable();
+             p = kmalloc_dentro(size);
+             if (fl & 0x200u) interrupts_enable();
+             return p;
+         }
+       e allo stesso modo kfree, kmalloc_verifica, kmalloc_stats.
+    3. kmalloc_aligned (507) e kfree_aligned (682): leggere e controllare che
+       tocchino l'elenco dei liberi SOLO passando da kmalloc/kfree.
+    TRAPPOLE: kmalloc gira anche all'avvio, a interrupt ancora spenti: per
+    questo si rimette lo stato di prima e non si fa "sti" secco. Non usare un
+    lucchetto che dorme (fs_prendi e simili): kmalloc e' chiamata anche a
+    interrupt spenti e dal gestore del page fault. heap_expand (280) chiama
+    solo il PMM, che non dorme: puo' restare dentro la sezione. I klog di
+    errore dentro la sezione si possono lasciare (sono rari).
+    PROVA: QEMU -smp 2, a 32 e a 64 bit: make -j2 dentro EX-OS oppure
+    tools/stress; nel registro non deve comparire "heap corrotto" ne'
+    "firma rotta". Guardare con "time" che uno spawn non sia rallentato. }
 
-! voce 2 { L'allocatore delle pagine fisiche (PMM) non e' protetto
+# voce 2 { L'allocatore delle pagine fisiche (PMM) non e' protetto (FATTA, kernel 0.330)
     DOVE: kernel/mm/pmm.c: pmm_alloc_page 494-543, pmm_alloc_page_kernel 577,
     pmm_alloc_pages 695, pmm_alloc_page_utente 855-871, pmm_free_page 918-979,
     pmm_ref_inc 984-1036. Nessun interrupts_disable nel file.
@@ -88,9 +151,23 @@ IL FATTO DA CUI DISCENDONO LE PRIME VOCI
     E' raro (la finestra e' di poche istruzioni) ma il danno e' il peggiore
     possibile e non lascia traccia.
     COME RIPARARE: una sezione a interrupt spenti dentro ogni funzione
-    pubblica del PMM (alloc, free, ref_inc, ref_count, free_pages). }
+    pubblica del PMM (alloc, free, ref_inc, ref_count, free_pages).
+    PASSI: lo stesso schema della voce 1 (corpo rinominato *_dentro,
+    involucro che salva i flag, spegne, chiama, rimette) per TUTTE le
+    funzioni pubbliche di pmm.c: pmm_alloc_page (494), pmm_alloc_page_kernel
+    (577), pmm_alloc_pages_kernel (612), pmm_alloc_pages (695),
+    pmm_alloc_page_utente (855), pmm_free_page (918), pmm_ref_inc (984),
+    pmm_ref_count (1038), pmm_free_pages (1067), pmm_is_page_free (1085).
+    TRAPPOLE: queste funzioni si chiamano fra loro (pmm_free_pages chiama
+    pmm_free_page): con "salva e rimetti" l'annidamento e' innocuo, quindi
+    dentro i corpi si possono lasciare le chiamate alle funzioni pubbliche.
+    Non toccare pmm_init. A 64 bit c'e' la parte "alta" (alta_libera,
+    rif_alto, oltre_*): sono static e restano coperte dagli involucri.
+    pmm_get_free_pages e simili leggono un numero solo: lasciarle.
+    PROVA: come la voce 1; in piu' "free"/meminfo prima e dopo una prova di
+    carico: le pagine libere devono tornare al valore di partenza. }
 
-! voce 3 { Manca cld negli ingressi a 32 bit: il kernel puo' copiare al contrario
+# voce 3 { Manca cld negli ingressi a 32 bit: il kernel puo' copiare al contrario (FATTA, kernel 0.330)
     DOVE: kernel/arch/x86/isr_stubs.asm: isr_common_stub (154), irq_common_stub
     (195), syscall_stub (245). smp_irq_comune e smp_irq_tlb ce l'hanno, e ce
     l'ha kernel/arch/x86_64/isr64.asm (82 e 138, col commento "il C vuole DF a
@@ -105,9 +182,17 @@ IL FATTO DA CUI DISCENDONO LE PRIME VOCI
     kernel sovrascritta a caso. Un programma puo' anche farlo apposta
     (std; int 0x80).
     COME RIPARARE: una riga "cld" nei tre stub, subito dopo aver caricato i
-    segmenti del kernel, come in smp_irq_comune. }
+    segmenti del kernel, come in smp_irq_comune.
+    PASSI: in kernel/arch/x86/isr_stubs.asm, nei tre stub, subito dopo la
+    riga "mov fs, ax" e PRIMA di "call bkl_entra" (o di "call irq_prima"
+    nello stub degli IRQ), aggiungere una riga:
+            cld                     ; C wants DF clear, the interrupted code may not
+    Sono tre righe in tutto. Guardare anche lo stub a riga ~300 (quello con
+    "call bkl_entra" a 309): se non ha cld, metterlo. Non toccare isr64.asm.
+    PROVA: objdump -d build/kernel.elf e controllare che "cld" (fc) segua il
+    caricamento dei segmenti nei tre stub; avvio e tools/prova-sh a 32 bit. }
 
-! voce 4 { Un programma qualunque puo' leggere e scrivere la memoria del kernel
+# voce 4 { Un programma qualunque puo' leggere e scrivere la memoria del kernel (FATTA, kernel 0.330)
     DOVE: kernel/syscall/syscall.c 21-30, syscall_verify_ptr.
     COSA SUCCEDE: il controllo accetta ogni indirizzo fra 0x1000 e
     USER_SPACE_END. Ma da 0 a USER_SPACE_BASE (64 MB) c'e' la fascia del
@@ -124,7 +209,23 @@ IL FATTO DA CUI DISCENDONO LE PRIME VOCI
     COME RIPARARE: "if (addr < USER_SPACE_BASE) return 0;" al posto di
     "addr < 0x1000", e lo stesso in syscall_verify_str. Prima controllare se
     qualche programma di casa passa davvero puntatori sotto i 64 MB (non
-    dovrebbe: i programmi si caricano da USER_SPACE_BASE in su). }
+    dovrebbe: i programmi si caricano da USER_SPACE_BASE in su).
+    PASSI:
+    1. Prima cercare chi chiama le sys_* dal kernel con puntatori del kernel:
+         grep -n "syscall_verify" -r kernel
+         grep -n "nel_kernel" kernel/syscall/syscall_impl.c
+       Se un compito del kernel passa da queste verifiche con un suo buffer,
+       va fatto passare in altro modo (chiamando vfs_* direttamente).
+    2. In syscall_verify_ptr sostituire la riga 25 con:
+         if (addr < USER_SPACE_BASE)       return 0;
+       syscall_verify_str chiama syscall_verify_ptr e ne eredita il controllo.
+    3. Controllato in questo giro: gli eseguibili si caricano da
+       USER_SPACE_BASE (0x04000000) in su e le librerie condivise da
+       DL_LIBS_BASE (0x10000000): nessun puntatore legittimo sta sotto.
+    PROVA: avvio completo, shell, exilla, MariaDB a 32 e 64 bit; un programma
+    di prova che fa write(1, (void *)0x100000, 16) deve ricevere EFAULT.
+    Se qualcosa di casa smette di funzionare con EFAULT, NON togliere il
+    controllo: trovare quel puntatore e dire all'utente da dove viene. }
 
 ! voce 5 { Un puntatore sbagliato passato a una chiamata di sistema ferma la macchina
     DOVE: kernel/mm/paging.c, page_fault_handler 2215-2483 (il ramo finale,
@@ -143,9 +244,26 @@ IL FATTO DA CUI DISCENDONO LE PRIME VOCI
     attesa: se il fault viene da ring 0, l'indirizzo e' >= USER_SPACE_BASE e
     c'e' un processo corrente, terminare QUEL processo (proc_esci_fatale) con
     il messaggio di fault, invece di fermare la macchina. Va fatto solo dopo
-    la voce 6, perche' quel processo puo' avere in mano un lucchetto. }
+    la voce 6, perche' quel processo puo' avere in mano un lucchetto.
+    PASSI (rimedio corto; da fare DOPO la voce 6):
+    1. Nel ramo finale di page_fault_handler (paging.c ~2468), prima del
+       kpanic:
+         if (!from_user && fault_addr >= USER_SPACE_BASE &&
+             fault_addr < USER_SPACE_END && proc_get_current() != NULL &&
+             !proc_get_current()->nel_kernel) {
+             klog(LOG_ERROR, "PF: PID %u '%s' passed a bad pointer 0x%08x to "
+                  "the kernel (EIP 0x%08x): killed", ...);
+             proc_esci_fatale(-14);
+         }
+       proc_esci_fatale e' gia' usata cosi' a 2057 e 2462.
+    2. Il kpanic resta per i fault su indirizzi del kernel.
+    TRAPPOLA: il processo puo' avere in mano il lucchetto dei file o del
+    disco (sta in mezzo a vfs_read). Senza la voce 6 questo rimedio cambia
+    un kpanic in un blocco di tutti i file. Per questo l'ordine conta.
+    PROVA: write(1, (char *)0x50000000, 10) da un programma: muore solo lui,
+    la shell torna, "ls" funziona ancora. }
 
-! voce 6 { Un filo ucciso mentre tiene il lucchetto dei file blocca tutto il sistema
+! voce 6 { Un filo ucciso mentre tiene il lucchetto dei file blocca tutto il sistema (PASSO 1 FATTO, kernel 0.330: restano i passi 2-4)
     DOVE: kernel/sched/sched.c proc_gruppo_termina 2579-2598 e proc_kill
     3034-3059; kernel/fs/vfs.c fs_prendi_n 379-426 e fs_rilascia 428-445;
     kernel/block/ata.c ata_prendi 1683-1725.
@@ -174,7 +292,50 @@ IL FATTO DA CUI DISCENDONO LE PRIME VOCI
     chi sta in ring 3 o e' fermo in un'attesa senza lucchetti si puo' chiudere
     subito. In piu', come rete di sicurezza: fs_prendi_n e ata_prendi, quando
     trovano il lucchetto preso, controllino che il detentore sia vivo e lo
-    dicano nel registro se non lo e'. }
+    dicano nel registro se non lo e'.
+    PASSI:
+    1. RETE DI SICUREZZA, per prima (poche righe, non cambia il resto).
+       In fs_prendi_n (vfs.c 390-425), nel ramo "lucchetto preso", prima di
+       mettersi in attesa:
+         if (g_fs_detentore != FS_SENZA_PROCESSO) {
+             Process *d = proc_get_by_pid(g_fs_detentore);
+             if (d == NULL || d->state == PROC_ZOMBIE || d->state == PROC_UNUSED) {
+                 klog(LOG_ERROR, "VFS: lock held by dead pid %u (%s): taken over",
+                      g_fs_detentore, g_fs_chi);
+                 g_fs_detentore = 0;
+                 interrupts_enable();
+                 continue;
+             }
+         }
+       Lo stesso in ata_prendi (ata.c 1694-1724) con g_disco_detentore,
+       azzerando anche g_disco_livelli. Lo stesso in shm_prendi (shm.c 37) e
+       in proc_spazio_prendi (sched.c ~3129), che oggi girano a vuoto.
+       ATTENZIONE: il lucchetto ripreso a un morto puo' lasciare a meta' una
+       scrittura (i buffer statici di ext2/fat): e' un male minore del blocco
+       totale, e il registro lo dice. Il rimedio vero e' il passo 2.
+    2. IL RIMEDIO VERO. In proc_gruppo_termina (sched.c 2579-2598): per ogni
+       filo del gruppo diverso da chi chiama, NON metterlo ZOMBIE se sta
+       dentro il kernel. Come saperlo: il filo e' "in ring 3" solo se e'
+       stato interrotto in ring 3; un filo BLOCKED o READY che non sta
+       girando e' fermo dentro una chiamata di sistema o un interrupt. La
+       strada semplice: segnare p->da_finire = 1 per tutti, svegliare chi e'
+       BLOCKED (sched_unblock_locked), e far uscire ognuno da solo nel punto
+       dove syscall_handler guarda gia' proc_interrotto() (syscall.c 88-94)
+       e in bkl_esci/sched_fine_chiesta, che esiste gia' per i fili che
+       girano su un altro processore. Leggere sched_fine_chiesta e il campo
+       da_finire in sched.h prima di scrivere: il meccanismo c'e', va esteso
+       al caso "filo fermo dentro il kernel".
+    3. Le attese interrompibili (pipe, pty, ipc, poll, waitpid, attesa_dormi)
+       devono tornare quando da_finire e' alzato: controllare che
+       proc_da_interrompere() lo guardi.
+    4. Chi chiama proc_gruppo_termina e poi aspetta che i fili siano finiti
+       (exec, exit del capogruppo) deve aspettarli davvero: leggere
+       proc_gruppo_vivi.
+    PROVA: un programma con 8 fili che leggono file grossi in ciclo e il
+    capogruppo che fa exit() dopo un tempo a caso, lanciato 200 volte da uno
+    script; alla fine "ls /" deve rispondere. Senza la correzione si ferma.
+    SE IL PASSO 2 RISULTA PIU' GROSSO DEL PREVISTO: fermarsi dopo il passo
+    1, dirlo all'utente e chiedere (regola: nel dubbio si chiede). }
 
 
 ===============================================================================
@@ -193,7 +354,24 @@ IL FATTO DA CUI DISCENDONO LE PRIME VOCI
     pthread_join. Raro, ma make e la shell fanno migliaia di waitpid.
     COME RIPARARE: lo schema giusto e' gia' in sys_poll (7170-7198) e in
     pipe_leggi: interrupt spenti PRIMA del controllo e tenuti spenti fino a
-    sched_block. }
+    sched_block.
+    PASSI: in sys_waitpid e sys_thread_attendi il ciclo deve diventare:
+         for (;;) {
+             uintptr_t fl = read_eflags();
+             interrupts_disable();
+             <cerca lo zombie>            (la ricerca che c'e' gia')
+             if (trovato) { if (fl & 0x200u) interrupts_enable(); break; }
+             if (WNOHANG / nessun figlio) { rimetti; return ...; }
+             sched_block(PROC_BLOCKED);   (a interrupt ancora spenti)
+             if (fl & 0x200u) interrupts_enable();
+             if (proc_da_interrompere()) return ERR(EINTR);
+         }
+    sched_block chiamata a interrupt spenti e' lo schema di sys_poll
+    (7170-7198), di pipe_leggi e di ata_prendi: copiarlo da li'.
+    TRAPPOLA: la raccolta dello zombie (liberare il PCB, chiudere
+    l'eseguibile) puo' dormire sul disco: va fatta DOPO aver riacceso.
+    PROVA: uno script che lancia 5000 volte "true" in sequenza e 500 volte
+    10 comandi in sottofondo con wait: non deve mai restare fermo. }
 
 @ voce 8 { L'immagine TLS dei fili passa per un buffer unico: due programmi se la scambiano
     DOVE: kernel/sched/sched.c 2168 (g_tls_buf) e proc_thread_crea 2277-2294,
@@ -209,7 +387,13 @@ IL FATTO DA CUI DISCENDONO LE PRIME VOCI
     (Firefox e MariaDB ne creano decine insieme).
     COME RIPARARE: un lucchetto solo per g_tls_buf tenuto dalla lettura fino
     alla copia, oppure - meglio - niente buffer: leggere il file a pezzi di
-    una pagina direttamente nelle pagine del filo attraverso la finestra. }
+    una pagina direttamente nelle pagine del filo attraverso la finestra.
+    PASSI (strada corta): un lucchetto solo per g_tls_buf. Due variabili
+    static (detentore, e l'attesa fatta come fd_posizione_prendi, che
+    controlla gia' se il detentore e' morto: copiare quella). Prenderlo prima
+    della vfs_read che riempie g_tls_buf (2277-2294) e lasciarlo dopo
+    l'ultima copia nel filo nuovo (2399-2413) e su OGNI uscita d'errore in
+    mezzo (vedi voce 9: conviene fare le due insieme, con un'uscita unica). }
 
 @ voce 9 { Creare un filo che fallisce perde pagine fisiche per sempre
     DOVE: kernel/sched/sched.c proc_thread_crea: 2252-2256 (map fallita), 2290
@@ -223,7 +407,20 @@ IL FATTO DA CUI DISCENDONO LE PRIME VOCI
     a tentativo finche' la RAM finisce.
     COME RIPARARE: un'unica uscita d'errore che smappa e libera cio' che e'
     stato mappato (da "prima" a "cima"), oppure creare il PCB prima di mappare
-    lo stack. }
+    lo stack.
+    PASSI: in proc_thread_crea tenere in due variabili locali "prima" e
+    "cima" l'intervallo gia' mappato (0 se niente). Sostituire ogni "return
+    errore" dopo la prima mappa con "goto via;" e in fondo:
+         via:
+             for (v = prima; v < cima; v += PAGE_SIZE) {
+                 paddr_t f = paging_get_physical(pd, v);
+                 paging_unmap_page(pd, v);
+                 if (f) pmm_free_page(f & ~0xFFFu);
+             }
+             <lasciare il lucchetto della voce 8>
+             return errore;
+    PROVA: riempire la tabella dei processi e chiamare pthread_create 10000
+    volte (deve fallire con EAGAIN): le pagine libere non devono scendere. }
 
 @ voce 10 { Una exec che fallisce rovina il programma che l'ha chiamata
     DOVE: kernel/loader/elf.c 197-202: PROC_EXE_PRENDI(proc), vfs_close e
@@ -241,9 +438,28 @@ IL FATTO DA CUI DISCENDONO LE PRIME VOCI
     COME RIPARARE: spostare quelle righe dopo che l'intestazione ELF del file
     nuovo e' stata letta e verificata (il punto di non ritorno). Guardare
     anche che heap_start/heap_end/stack/tls del PCB non vengano toccati prima
-    di quel punto. }
+    di quel punto.
+    PASSI: in elf_carica (elf.c 183) spostare le righe 197-202 (chiusura
+    dell'eseguibile di prima e n_vma = 0) subito DOPO "if
+    (elf_verify_header(&hdr) != 0) goto cleanup;" (riga 265) e dopo la
+    lettura riuscita delle intestazioni di programma (280-283). Prima di
+    quel punto il processo non deve essere toccato.
+    TRAPPOLA: da quel punto in poi un errore non e' piu' recuperabile (lo
+    spazio di prima e' gia' stato lasciato da exec_con_argv?). Leggere
+    exec_con_argv 2664-2800 per vedere QUANDO cambia la page directory: se
+    la cambia prima di elf_load e la rimette su errore, lo spostamento basta.
+    PROVA: nella shell, un comando che non esiste e uno non eseguibile con
+    un PATH di 5 directory: il messaggio d'errore deve uscire e la shell
+    figlia non deve morire di page fault (guardare il registro). }
 
-@ voce 11 { Dopo una scrittura del kernel su una pagina di sola lettura la copia su scrittura resta spenta
+$ voce 11 { Il kernel scrive nelle pagine di sola lettura dei programmi (CORRETTA NEL SECONDO GIRO: era @)
+    CORREZIONE: paging_wp_rimetti e' chiamata anche da bkl_esci (smp.c 637-645)
+    a OGNI ritorno in ring 3 (isr_stubs.asm 174, 221, 262, 315; isr64.asm 102).
+    Quindi WP resta spento solo fino alla fine della chiamata di sistema in
+    corso, NON fino al cambio di processo: il testo qui sotto esagera. Resta
+    vero il varco (read(fd, pagina_di_sola_lettura, n) scrive dove mprotect
+    lo vieta) e la copia su scrittura saltata DENTRO la stessa chiamata.
+    Riparazione: solo con la voce 36 (rendere EFAULT). Non urgente.
     DOVE: kernel/mm/paging.c pf_copia_su_scrittura 2049-2072; paging_wp_rimetti
     2033-2041, chiamata solo da sched_switch_to (sched.c 1501).
     COSA SUCCEDE: se il kernel scrive in una pagina utente di sola lettura
@@ -273,7 +489,14 @@ IL FATTO DA CUI DISCENDONO LE PRIME VOCI
     (free() che rende memoria, fili che nascono e muoiono) consuma lo swap
     fino a riempirlo.
     COME RIPARARE: in paging_unmap_page, se la PTE e' di swap
-    (SWAP_PTE_E_SWAP) chiamare swap_slot_molla prima di azzerarla. }
+    (SWAP_PTE_E_SWAP) chiamare swap_slot_molla prima di azzerarla.
+    PASSI: in paging_unmap_page (paging.c 587-614), a 32 bit, prima di
+    azzerare la PTE:
+         if (SWAP_PTE_E_SWAP(pte)) swap_slot_molla(SWAP_PTE_SLOT(pte));
+    come fa paging_destroy_directory. A 64 bit lo swap non c'e'
+    (colla64.c 45-46 lo rende vuoto): niente da fare li'.
+    TRAPPOLA: paging_unmap_page e' chiamata anche dai percorsi d'errore di
+    chi ha appena mappato (PTE presente): li' il ramo nuovo non scatta. }
 
 @ voce 13 { Chiunque puo' prendersi un IRQ e spegnere una periferica
     DOVE: kernel/syscall/syscall_impl.c sys_irq_bind 5850-5858: non chiama
@@ -284,7 +507,12 @@ IL FATTO DA CUI DISCENDONO LE PRIME VOCI
     chiamato irq_done (isr.c 294-304): lui non lo fa mai, e tastiera o rete
     restano morte. Riceve anche le notifiche di ogni interrupt.
     COME RIPARARE: "if (!e_un_driver(self, "irq_bind")) return ERR(EPERM);"
-    in sys_irq_bind, e lo stesso controllo in sys_irq_fronti. }
+    in sys_irq_bind, e lo stesso controllo in sys_irq_fronti.
+    PASSI: la riga indicata, come prima istruzione dopo aver preso "self".
+    e_un_driver e' definita piu' in basso (5886): serve il prototipo in cima
+    al file o spostare la funzione. Controllare con grep che nessun
+    programma non-driver di casa chiami irq_bind (grep -rn irq_bind bin
+    drivers libc): se qualcuno lo fa, dirlo all'utente prima di chiudere. }
 
 @ voce 14 { Una notifica di IRQ persa con la cassetta piena lascia la linea chiusa (DA VERIFICARE)
     DOVE: kernel/arch/x86/isr.c irq_handler 940-981; kernel/ipc/ipc.c
@@ -356,7 +584,13 @@ IL FATTO DA CUI DISCENDONO LE PRIME VOCI
     proc_gruppo_termina ne' per sched_fine_chiesta col caso 2, quindi il
     numero mostrato da sched_dump sale col tempo.
     COME RIPARARE: assegnare il PID dentro la sezione a interrupt spenti di
-    pcb_alloc, saltando 0 e i numeri gia' presi. }
+    pcb_alloc, saltando 0 e i numeri gia' presi.
+    PASSI: dentro pcb_alloc, nella sezione a interrupt spenti che sceglie
+    il posto libero:
+         do { pid = g_next_pid++; if (g_next_pid == 0) g_next_pid = 2; }
+         while (pid < 2 || proc_get_by_pid(pid) != NULL);
+    e togliere l'assegnazione a riga 888. proc_get_by_pid e' lineare: va
+    bene finche' non c'e' la tabella hash della voce 22. }
 
 @ voce 19 { proc_kill chiude un processo senza avvisare nessuno
     DOVE: kernel/sched/sched.c 3034-3059.
@@ -613,20 +847,653 @@ $ voce 45 { Gli avvisi di debug nei percorsi piu' battuti
 
 
 ===============================================================================
- L'ORDINE CONSIGLIATO
+ SECONDO GIRO (11-12 novembre)
 ===============================================================================
 
-  1. voci 3 e 4      una riga e tre righe: chiudono due guasti gravi subito
-  2. voci 1 e 2      interrupt spenti negli allocatori: poche righe, e
-                     tolgono la fonte piu' probabile dei guasti "a caso"
-  3. voce 6          il filo ucciso col lucchetto in mano (i blocchi)
-  4. voci 7, 10, 12  risveglio perso, exec fallita, swap: correzioni corte
-  5. voci 5, 11, 36  il confine con la memoria dei programmi, fatto una volta
-  6. voci 8, 9, 13   fili e IRQ
-  7. il resto delle @, poi le $ secondo il carico che si vuole reggere
-     (21, 22, 24 e 27 sono quelle che piu' pesano su MariaDB)
+  NOTA PER CHI RIPARA (vale per tutte le voci): con piu' processori nel
+  kernel ne entra UNO per volta (bkl_entra negli stub, smp.c 576-604), e chi
+  viene fermato dal timer si porta dietro il lucchetto. Percio' "interrupt
+  spenti" basta a proteggere una struttura anche con l'SMP: non servono
+  spinlock. Lo schema da usare sempre, MAI interrupts_enable() secco:
+      uintptr_t fl = read_eflags(); interrupts_disable();
+      ... sezione corta, niente klog, niente kmalloc, niente disco ...
+      if (fl & 0x200u) interrupts_enable();
+  Una correzione per volta, make a 32 e 64 bit, prova in QEMU; niente commit.
 
-  Ogni correzione va provata in QEMU a 32 e 64 bit e poi sul portatile, come
-  sempre; le voci 1, 2 e 7 si possono far saltare fuori a comando mettendo
+# voce 46 { Un file aperto in sola lettura si puo' scrivere e troncare: chiunque diventa root (FATTA, kernel 0.330)
+    DOVE: syscall_impl.c sys_write 740-781 e sys_read (ramo FD_FILE): nessun
+    controllo su FDV(proc, fd).flags & 3. sys_ftruncate 3869-3879 idem.
+    vfs.c vfs_truncate_nl 2309-2342: NESSUN controllo dei permessi.
+    vfs.c apri_nl 1472-1481: "voluto" vale P_LEGGI se mancano O_WRONLY/O_RDWR,
+    anche con O_TRUNC o O_APPEND; con O_RDWR chiede solo P_SCRIVI.
+    COSA SUCCEDE: open("/boot/utenti", O_RDONLY) chiede solo il permesso di
+    lettura; poi write(fd, ...) passa. Oppure truncate("/qualunque", 0), o
+    open(file, O_RDONLY | O_TRUNC). Un utente senza privilegi riscrive
+    /boot/utenti, /boot/ombra, /boot/amministratori.
+    COME RIPARARE, in quest'ordine:
+    1. sys_write, ramo FD_FILE, prima di vm_precarica_utente:
+         if ((FDV(proc, fd).flags & 3u) == O_RDONLY) return ERR(EBADF);
+    2. sys_read, ramo FD_FILE: if ((flags & 3u) == O_WRONLY) return ERR(EBADF);
+       lo stesso in a_posizione (3962) secondo "scrivi", e in sys_ftruncate.
+    3. apri_nl: voluto = 0; se (flags & 3) != O_WRONLY aggiungi P_LEGGI; se
+       flags & (O_WRONLY | O_RDWR | O_TRUNC | O_APPEND) aggiungi P_SCRIVI.
+    4. vfs_truncate_nl: dopo vfs_stat_nl,
+         if (!vfs_permesso(&st, P_SCRIVI)) return ERR(EACCES);
+    ATTENZIONE: O_RDONLY vale 0, quindi il confronto va fatto su (flags & 3),
+    non con "flags & O_RDONLY". I pty hanno flags O_RDWR (852): non toccarli.
+    Il kernel apre i suoi file con vfs_open_autorita/vfs_read direttamente:
+    non passano da sys_write, non si rompono.
+    PROVA: da utente normale, un programma che fa le tre cose sopra su un
+    file di root 0644 deve ricevere EBADF / EACCES; cp e sh > file devono
+    funzionare come prima (prova-sh). }
+
+@ voce 47 { O_EXCL non esiste
+    DOVE: nessuna riga del kernel lo nomina (grep O_EXCL kernel = vuoto);
+    vfs.c apri_nl 1543-1586.
+    COSA SUCCEDE: open(O_CREAT | O_EXCL) su un file che c'e' gia' riesce. I
+    file di lucchetto (mysqld.pid, mkstemp, i lock di make e di Firefox) non
+    proteggono: due programmi credono entrambi di averlo creato.
+    COME RIPARARE: definire O_EXCL in syscall.h col valore della libc
+    (controllare libc/include/fcntl.h: devono coincidere); in apri_nl, nei
+    rami EXT2 e FAT, quando *_stat trova il file e (flags & O_CREAT) &&
+    (flags & O_EXCL): return apri_fallito(slot, ERR(EEXIST)). Il lucchetto
+    dei file e' gia' preso, quindi controllo e creazione sono atomici. }
+
+@ voce 48 { I permessi guardano solo l'ultimo nome del percorso
+    DOVE: vfs.c permesso_su 1384-1390 e apri_nl 1472-1481.
+    COSA SUCCEDE: non si controlla il permesso di attraversamento (x) delle
+    directory in mezzo: un file 0644 dentro una /home/tizio 0700 lo legge
+    chiunque. vfs_readdir_nl non controlla la lettura della directory. E
+    permesso_su rende 1 se la stat fallisce.
+    COME RIPARARE: una funzione percorso_attraversabile(abs) che, per ogni
+    prefisso che finisce su '/', fa vfs_stat_nl e vuole P_ESEGUI; chiamarla
+    in apri_nl, modifica, vfs_rename_nl, vfs_truncate_nl, vfs_stat_nl (solo
+    quando !autorita) e P_LEGGI sulla directory in vfs_readdir_nl. root e i
+    volumi FAT (modo == 0) passano gia' in vfs_permesso. Costa una stat per
+    componente: farla dopo la voce 56, che le rende economiche. }
+
+@ voce 49 { rename sopra un file esistente non e' atomica
+    DOVE: vfs.c vfs_rename_nl 2255-2270: prima cancella la destinazione
+    (modifica), poi rinomina.
+    COSA SUCCEDE: se la rinomina fallisce, o la corrente manca fra i due
+    passi, la destinazione e' persa. "Scrivo file.tmp e lo rinomino sopra
+    file" e' il modo in cui MariaDB, gli editor e netupdate salvano senza
+    rischio: qui il rischio c'e'.
+    COME RIPARARE: dare a ext2_rename/fat_rename il compito di sostituire la
+    voce di directory (stessa voce, inode nuovo) e liberare il vecchio inode
+    DOPO, dentro la stessa transazione del giornale. In attesa: rinominare
+    la destinazione in un nome nascosto (come nascondi_aperto), rinominare,
+    e solo a cosa riuscita cancellare il nascosto; se fallisce, rimetterlo. }
+
+@ voce 50 { Un driver puo' scrivere oltre il buffer del disco in ring 3
+    DOVE: syscall_impl.c sys_blk_risposta 7450-7463: n = u->settori viene dal
+    programma; kcopia_byte(dest, dati, n * 512u) in d->dati, che e' di
+    BLKR3_BYTE_MAX = 4096 byte (blkr3.h 69-70). Il solo controllo e'
+    "n * 512u > max", e anche max viene dal programma.
+    COSA SUCCEDE: un driver con un difetto (usb, il lettore di schede) che
+    risponde con settori > 8 sovrascrive g_r3[] e cio' che segue nel kernel.
+    COME RIPARARE: non fidarsi di u->settori. Aggiungere a blkr3.c una
+    blkr3_n_in_corso(pid) che rende d->n della richiesta IN_CORSO e usare
+    quella; in piu' "if (n > BLKR3_SETTORI_MAX) return ERR(EINVAL);". Lo
+    stesso tetto in sys_blk_attendi 7428-7432. }
+
+@ voce 51 { Il disco in ring 3 resta morto se chi lo usava viene chiuso a meta'
+    DOVE: blkr3.c un_giro 150-239.
+    COSA SUCCEDE: la casella torna LIBERA solo per mano di chi ha fatto la
+    richiesta (235) o alla sua scadenza (222). Se quel processo viene chiuso
+    mentre aspetta (voce 6), la casella resta PRONTA/IN_CORSO/SERVITA per
+    sempre: tutti gli altri aspettano 5 secondi e ricevono EIO, a ogni
+    lettura, finche' non si stacca la chiavetta.
+    COME RIPARARE: nel primo ciclo (194), se d->stato != LIBERA e
+    proc_get_by_pid(d->pid_chiamante) e' NULL o ZOMBIE, mettere LIBERA e
+    proseguire. In blkr3_processo_morto aggiungere lo stesso per
+    pid_chiamante == pid. I confronti "g_ticks >= scadenza" (195, 219, 305)
+    vanno scritti (int32_t)(g_ticks - scadenza) >= 0 (voce 26). }
+
+@ voce 52 { Con Ctrl+C di un terminale si interrompe qualunque processo
+    DOVE: pty.c pty_ctl 723-725 (PTY_CTL_FG: p->pid_fg = arg) e disciplina
+    238-242; syscall_impl.c sys_pty_ctl 6488-6490 (sched_set_console_ctrlc).
+    COSA SUCCEDE: un utente apre un pty, dichiara "in primo piano" il PID di
+    un altro (un demone di root, ip.drv) e scrive il byte 3 nel master:
+    proc_interrompi_locked lo colpisce. sys_interrompi (6543) controlla
+    l'utente; questa strada no.
+    COME RIPARARE: in sys_pty_ctl, per PTY_CTL_FG con arg != 0:
+    q = proc_get_by_pid(arg); rifiutare con ESRCH se manca, con EPERM se
+    q->nel_kernel, o se self->uid != 0 && q->uid != self->uid. Poi chiudere
+    insieme la voce 43 (sys_console_setfg), che ha lo stesso difetto. }
+
+@ voce 53 { Cio' che si incolla in un terminale oltre 1 KB si perde in silenzio
+    DOVE: pty.c metti 171 (scarta se pieno), pty_scrivi_master 461-480 (rende
+    sempre n); PTY_DIM 1024 (pty.h 48).
+    COSA SUCCEDE: telnetd o il terminale grafico scrivono nel master piu' in
+    fretta di quanto la shell legga: i byte oltre 1024 spariscono e chi
+    scrive crede di averli consegnati.
+    COME RIPARARE: fare pty_scrivi_master come pty_scrivi_slave: fermarsi
+    quando in_quanti (o riga_n in modo canonico) e' pieno, rendere i byte
+    presi davvero, e se sono 0 dormire su una Attese nuova (att_in_spazio)
+    svegliata da pty_leggi_slave dopo "prendi"; con O_NONBLOCK rendere
+    EAGAIN. Aggiungere il caso a poll_guarda. Portare PTY_DIM a 4096. }
+
+@ voce 54 { ata_prendi, ata_lascia, fs_prendi_n, fs_rilascia e pty riaccendono gli interrupt senza guardare com'erano
+    DOVE: ata.c 1695-1758, vfs.c 391-444, pty.c (ogni interrupts_enable).
+    COSA SUCCEDE: chiamate a interrupt spenti - pf_torna_da_swap (paging.c
+    1869) sta nel gestore del page fault, che entra con IF = 0 - escono con
+    gli interrupt ACCESI: il resto del gestore diventa prelazionabile dove
+    chi l'ha scritto contava di no (e la voce 2 dice che il page fault non
+    corre il rischio del PMM: con lo swap acceso lo corre).
+    COME RIPARARE: lo schema salva/rimetti della nota in cima a questa
+    sezione, in tutte quelle funzioni. DA VERIFICARE prima: leggere
+    page_fault_handler e vedere se riaccende gia' lui gli interrupt. }
+
+@ voce 55 { Altre copie da/verso il programma fatte a interrupt spenti (stessa famiglia della voce 15)
+    DOVE: pty.c pty_scrivi_master 471 e pty_scrivi_slave 534-540 (leggono
+    src[i]), pty_ioctl 767, 776, 791-812 (leggono e scrivono arg).
+    COME RIPARARE: come fanno gia' pty_leggi_slave e pty_leggi_master con
+    "appoggio": copiare in un buffer del kernel PRIMA di spegnere gli
+    interrupt (a pezzi di 256 byte), e per ioctl copiare la struttura in una
+    variabile locale fuori dalla sezione. }
+
+$ voce 56 { ext2 ricerca il percorso dalla radice a ogni lettura e scrittura
+    DOVE: ext2.c ext2_read 1063 (risolvi), le scritture del modulo ext4 allo
+    stesso modo; la cache g_ris (574-618) ha 16 posti e si svuota TUTTA a
+    ogni blocco scritto (g_ris_gen++ in scrivi_blocco 235 e ind_riversa 277).
+    Un programma che scrive (MariaDB) costringe ogni read e ogni write a
+    rifare il cammino: per ogni nome del percorso due blocchi letti e la
+    directory scorsa voce per voce. E' con ogni probabilita' il pezzo piu'
+    grosso della lentezza di MariaDB rispetto a Linux (voce 34 di
+    in_lavorazione). Lo stesso vale per fat.c (da guardare).
+    MEGLIO: tenere in VfsFile il numero di inode preso all'apertura e dare a
+    ext2 le varianti per inode (ext2_read_ino, write_ino, stat_ino), con una
+    cache degli inode aperti invalidata solo quando QUELL'inode cambia.
+    Primo passo, piccolo: non alzare g_ris_gen per i blocchi di dati
+    (scrivi_corsa non lo fa gia'), ma solo quando cambiano directory o inode.
+    MISURA prima e dopo con tools/stress, senza cancellarne i risultati. }
+
+$ voce 57 { Elencare una directory grande costa il quadrato delle voci
+    DOVE: sys_readdir 4013 (16 voci per chiamata), vfs_readdir_nl 1993-2019
+    (4 per giro), ext2_readdir 965 che ogni volta riparte dall'inizio e
+    salta "start" voci. 10 000 file = milioni di voci rilette.
+    MEGLIO: passare come "start" la posizione in byte nella directory (un
+    cookie) invece del numero d'ordine, e leggere 16 voci per giro. }
+
+$ voce 58 { La cache dei blocchi scrive sempre subito, e ha una sola finestra di lettura anticipata
+    DOVE: blk.c blk_write 1512-1544 (ogni scrittura va al disco prima di
+    tornare), g_av 615-622 (una finestra per tutto il sistema: due letture
+    sequenziali insieme se la rubano), cache_slot 742-752 (scorre 2048 voci
+    per trovare la piu' vecchia), blkr3 8 settori e una richiesta per volta.
+    MEGLIO: pagine sporche nella cache delle pagine, riversate dal compito
+    della voce 29 e da fsync; una finestra per disco o per file aperto; un
+    elenco LRU al posto della scansione. }
+
+$ voce 59 { (DA IMPLEMENTARE) file oltre i 4 GB
+    DOVE: vfs_read/vfs_write prendono "uint32_t offset", lseek_dentro
+    3881-3929 lavora a 32 bit con segno (oltre 2 GB SEEK_SET rende EINVAL),
+    ext2 legge solo i 32 bit bassi della misura (1072-1073).
+    Serve per le immagini DVD e per le basi di dati grandi: posizione a 64
+    bit in VfsPosizione, una chiamata lseek64/pread64, e i file system che
+    portano l'offset a 64 bit. }
+
+$ voce 60 { Cose minori viste nel secondo giro
+    - sys_su (4832-4892): i buffer "static char testo" sono unici, due su
+      insieme se li scambiano (fallisce chiuso, EPERM); nessuna attesa dopo
+      una password sbagliata: si possono provare migliaia di password al
+      secondo. Aggiungere sched_sleep(1000) sul ramo d'errore e un lucchetto.
+    - sys_fb_map (6577): chiunque mappa lo schermo. shm.c: le zone non hanno
+      proprietario, chiunque apre per nome la zona di un altro utente.
+    - shm_prendi (37-40) gira con sched_yield e non guarda se chi lo tiene
+      e' morto (voce 6); aggancia (196-208) perde un riferimento se fallisce
+      la mappa della pagina i.
+    - pty: mancano VQUIT, VSUSP, SIGWINCH su TIOCSWINSZ e SIGHUP alla
+      chiusura del master; pty_chiudi (437-456) tocca i contatori e chiama
+      pty_azzera a interrupt accesi, in corsa con pty_apri.
+    - blk_acquisisci/blk_rilascia (326-347): in_uso++ senza protezione. }
+
+@ voce 61 { A 32 bit un eseguibile malfatto fa mappare pagine sopra il kernel
+    DOVE: loader/elf.c 325-338: il controllo "p_memsz > USER_SPACE_END -
+    p_vaddr || p_filesz > p_memsz" sta dentro "#if defined(__x86_64__)". A 32
+    bit si guarda solo p_vaddr. paging_map_page (paging.c 258) non rifiuta
+    gli indirizzi sotto USER_SPACE_BASE.
+    COSA SUCCEDE: un ELF con piu' di PROC_MAX_VMA (4) segmenti viene caricato
+    "residente" (304-312); con p_memsz enorme vaddr + memsz fa il giro dei 32
+    bit, "pages" diventa un numero enorme e il ciclo 371-391 mappa pagine
+    nuove oltre USER_SPACE_END e poi da 0 in su, sopra la fascia del kernel
+    che tutte le page directory hanno in comune. Chiunque possa eseguire un
+    suo file ferma la macchina.
+    PASSI: togliere "#if defined(__x86_64__)" / "#endif" attorno a quel
+    controllo (a 32 bit p_offset e' a 32 bit: scrivere la terza condizione
+    come "ph->p_offset + ph->p_filesz < ph->p_offset"). In piu', in
+    paging_map_page a 32 e 64 bit: se (flags & PG_USER) e virt <
+    USER_SPACE_BASE, klog d'errore e return -1.
+    PROVA: gli eseguibili di casa partono tutti (hanno misure giuste); un
+    ELF di prova con p_memsz = 0xFC001000 riceve ENOEXEC. }
+
+$ voce 62 { A 64 bit le chiamate di sistema entrano a interrupt spenti, a 32 accesi
+    DOVE: arch/x86_64/idt64.c 86 "porta(0x80, 0xEE, 0)" (interrupt gate);
+    arch/x86/idt.c 255-261 (trap gate 0xEF, col commento che spiega perche').
+    COSA SUCCEDE: a 64 bit una chiamata resta a interrupt spenti finche' non
+    incontra un interrupts_enable() secco (fs_prendi_n, ata_prendi, pipe,
+    pty), poi prosegue accesa. Quindi: le chiamate che non passano di li'
+    (calcolo, copie lunghe, sys_random) tengono fermo il timer; i cicli che
+    aspettano g_ticks (ata_attesa_ms 666-670, ata_attendi_* 701-781) a
+    interrupt spenti non finirebbero mai; e i due kernel si comportano in
+    modo diverso davanti alle stesse corse (le voci 1 e 2 a 64 bit si vedono
+    meno).
+    MEGLIO: DOPO le voci 1, 2, 7 e 54, mettere anche a 64 bit un trap gate
+    (0xEF), cosi' i due kernel sono uguali. Non prima: oggi quell'interrupt
+    gate nasconde a 64 bit una parte delle corse. }
+
+$ voce 63 { Il disco si aspetta girando a vuoto, col lucchetto del kernel in mano
+    DOVE: block/ahci.c comando 263-296 (ciclo con "pause" finche' P_CI non
+    torna a zero), ahci_rw 770-773 (copia byte per byte in g_rimbalzo e
+    ritorno); block/ata.c ata_attendi_drq_muto 748-781 e ata_attendi_non_bsy
+    721-741 (PIO, senza cedere), ata_rw 1589-1608.
+    COSA SUCCEDE: per tutta la durata di ogni comando (da 0,1 ms su SSD a
+    10 ms su disco a piatti) il processore gira a vuoto dentro il kernel. Con
+    piu' processori tiene anche il lucchetto del kernel: nessun altro
+    programma puo' fare una chiamata di sistema finche' il disco non ha
+    risposto. Insieme alla voce 56 e' la differenza piu' grande con Linux
+    sotto MariaDB: li' chi aspetta il disco dorme e gli altri lavorano.
+    MEGLIO, per gradi:
+    1. subito: nel ciclo di attesa di ahci "comando", se proc_get_current()
+       != NULL e gli interrupt erano accesi, cedere con bkl_fai_passare() /
+       sched_yield() ogni N giri, come fa gia' ata_cedi (693-697);
+    2. poi: l'interrupt di AHCI (PxIE, IS) e di IDE: chi ha dato il comando
+       fa sched_block e l'interrupt lo sveglia (tenere il ciclo di attesa
+       come ripiego a tempo, per le schede che l'interrupt non lo danno);
+    3. poi: DMA diretto nelle pagine della cache (senza g_rimbalzo), copie
+       con rep movs, e NCQ.
+    Ogni passo va provato sul ferro (portatile e PC .247), non solo in QEMU:
+    i tempi dei dischi veri sono il punto. I confronti "g_ticks >= scad" di
+    ata.c vanno scritti come nella voce 26. }
+
+  NOTE AGGIUNTE AD ALTRE VOCI NEL SECONDO GIRO
+  - voce 12: a 64 bit lo swap non esiste (colla64.c 45-46: swap_sfratta
+    rende 0). (DA IMPLEMENTARE) portarlo a 64 bit, o dirlo nei manuali.
+  - voce 26: stessi confronti non protetti dal giro in blkr3.c 195, 219,
+    305 e ata.c 669, 712, 735, 768, 779.
+  - voce 31: prima di accorciare la pila del kernel togliere i buffer da
+    BLOCCO_MAX (4096 byte) dalle funzioni ricorsive del modulo ext4:
+    libera_catena (scrittura.c 868, tre livelli), pota_indiretto (1024, tre
+    livelli), libera_attributi (902). Insieme fanno gia' oltre 24 KB.
+  - voce 36: i file system copiano DIRETTAMENTE nel buffer del programma
+    tenendo il lucchetto dei file e quello del disco (ext2_read 1093-1110,
+    ahci_rw 773). Funziona solo perche' vm_precarica_utente porta dentro le
+    pagine prima e lo sfratto verso lo swap chiede lo stesso lucchetto del
+    disco. E' un equilibrio delicato: chi scrive copia_a_utente non deve
+    romperlo (le pagine vanno portate dentro PRIMA di prendere i lucchetti).
+  - voce 43: aggiungere sys_fb_map e le zone shm (voce 60) e chiuderla
+    insieme alla voce 52.
+
+
+===============================================================================
+ TERZO GIRO (12 novembre): i file che mancavano
+===============================================================================
+
+  Stesse regole del secondo giro. I numeri di riga sono quelli dell'albero
+  del 12 novembre. Tre voci (64, 65, 66) sono dello stesso tipo: un numero
+  che arriva da fuori (dal programma o dal disco) usato come indice senza
+  controllarlo. modulo.c, iso9660.c, mbr.c, vol.c, atapi.c, procfs.c, cfg.c
+  e il giornale ext4 sono scritti con cura: li' i controlli ci sono, e sono
+  il modello da copiare nelle tre voci.
+
+! voce 64 { Una sequenza ANSI scritta sulla console scrive nella memoria del kernel
+    DOVE: arch/x86/vga.c. putchar_su 1083-1088 accumula le cifre di un
+    parametro in un int senza tetto ("params = params * 10 + cifra").
+    ansi_apply_csi, casi 'B' (872-876) e 'C' (878-882): "n += c->row" e
+    "n += c->col" senza guardare se n e' gia' enorme; la somma fa il giro,
+    diventa negativa, il confronto "n >= RIGHE_C" non scatta e in c->row
+    (uint8_t) finisce un numero fino a 255. Poi il carattere successivo
+    (putchar_su 1147-1152 e il '\b' 1140-1141) fa "c->cella[row * g_cols +
+    col] = ..." SENZA controllo: il controllo "c->row >= RIGHE_C" arriva
+    dopo, a 1164.
+    COSA SUCCEDE: cella[] ha VGA_MAX_TOTAL = 170 * 48 = 8160 posti. Con row
+    = 255 si scrive al posto 43000 e oltre: dentro "alt", dentro le console
+    seguenti e, dall'ultima console, nelle variabili del kernel che vengono
+    dopo g_console. Basta un programma qualunque che stampi "ESC [ 2147483600
+    B" e un carattere, o un "cat" di un file che lo contiene. I due byte
+    scritti (carattere e colore) li sceglie chi scrive.
+    PASSI:
+      1. 1084-1087: accumulare solo se params[...] < 10000 (oltre resta
+         fermo): if (c->params[c->param_count] < 10000) ... * 10 + cifra.
+      2. casi 'B' e 'C': prima della somma "if (n > (int)RIGHE_C) n =
+         (int)RIGHE_C;" (per 'C': g_cols). Lo stesso tetto nei casi 'A',
+         'D', 'E', 'F' per uniformita'.
+      3. rete di sicurezza: in testa al ramo "testo:" di putchar_su
+         if (c->row >= RIGHE_C) c->row = RIGHE_C - 1;
+         if (c->col >= g_cols)  c->col = g_cols - 1;
+         e nelle due scritture dirette (1141, 1151) usare metti_cella(), che
+         il controllo "i >= TOTALE_C" lo ha gia' (610-614). Guardare anche
+         vga_puts_at e ogni altro "c->cella[i] =" con i calcolato.
+    TRAPPOLA: row e col sono uint8_t: non allargare VGA_MAX_COLS oltre 255
+    senza cambiarne il tipo.
+    PROVA: printf '\033[2147483600Bx' e printf '\033[2147483600Cx' a 32 e 64
+    bit, in testo e in grafica: il cursore va in fondo (o a destra) e basta;
+    poi vi, less e top devono disegnare come prima. }
+
+@ voce 65 { Un floppy rovinato fa leggere e scrivere fuori dalla tabella FAT in memoria
+    DOVE: fs/fat12.c. fat12_get_next (1603) e fat12_set_next (1613) usano
+    "cluster + cluster / 2" come indice in g_fat[9 * 512 = 4608] senza
+    guardare il numero. Il numero viene dal disco: first_cluster della voce
+    di directory (16 bit) e i valori stessi della FAT (fino a 0xFEF = 4079,
+    che da' il byte 6118). Chi li usa controlla solo "cluster >= 2" (
+    fat12_read 2732) o "< FAT12_RESERVED_MIN" (fat12_free_chain 1641,
+    fat12_find_in_dir_cluster 1956, fat12_dir_scan 2159).
+    COSA SUCCEDE: con first_cluster = 0xFFFF fat12_read legge g_fat[98302];
+    cancellare o troncare un file con un cluster fra 3072 e 4079 SCRIVE
+    fino a 1,5 KB dopo g_fat, cioe' in g_root_dir e nelle variabili vicine.
+    In piu': le catene di una directory non hanno un contatore di passi
+    (1956-1977, 2159-2195): una catena che torna su se stessa ferma il
+    kernel per sempre col lucchetto dei file in mano.
+    PASSI:
+      1. in fat12_get_next: if (cluster < 2 || cluster >= MAX_CLUSTERS + 2)
+         return FAT12_END; in fat12_set_next: stessa condizione, return
+         senza scrivere (con un klog la prima volta).
+      2. nei cicli sulle catene (find_in_dir_cluster, dir_scan, free_chain,
+         il salto in fat12_read 2726 e in fat12_write 2835) un contatore:
+         oltre MAX_CLUSTERS passi si esce con errore. Il modello e' fs/fat.c
+         (catena_libera 588-617, dir_prossimo_settore 923-947).
+      3. fat12_read 2718: "offset + size" puo' fare il giro; scrivere
+         if (size > entry->file_size - offset) size = file_size - offset;
+         (offset < file_size e' gia' controllato sopra).
+    PROVA: un'immagine di floppy con first_cluster = 0xFFFF in un file e
+    una directory la cui catena punta a se stessa; ls, cat e rm rendono un
+    errore e la macchina resta in piedi. Poi la prova normale del floppy. }
+
+@ voce 66 { Un albero degli estesi rovinato fa scrivere fuori dal buffer quando si tronca
+    DOVE: moduli/ext4/estesi.c, pota_nodo 383-436 (la chiamano est_pota e
+    quindi truncate, unlink, rmdir). Controlla solo la firma: "voci =
+    le16(h + 2)" viene usato cosi' com'e' in VOCE(h, voci - 1) e poi ci si
+    scrive (memset(e, 0, 12), p16). cammina (114) e carica (91-92) invece i
+    controlli li fanno: voci <= max, max <= 4 nell'inode e <= (blocco -
+    12) / 12 in un nodo, profondita' giusta.
+    COSA SUCCEDE: un nodo con "voci" = 65535 su un disco rovinato (o fatto
+    apposta, una chiavetta) porta la scrittura 786 KB oltre g_nodo[liv], o
+    oltre i 128 byte dell'inode sulla pila del kernel.
+    PASSI: in pota_nodo, subito dopo il controllo della firma, gli stessi
+    controlli di carica/cammina:
+        max = liv ? max_blocco(m) : 4u;
+        if (le16(h + 4) > max || voci > le16(h + 4)) return -1;
+    e, per i nodi interni, che le16(h + 6) del figlio sia quello del padre
+    meno uno (passare la profondita' attesa come fa carica). Meglio ancora:
+    una funzione sola "nodo_valido(m, h, liv, prof)" usata nei tre posti.
+    PROVA: le prove ext4 di casa (creare, allungare, troncare, cancellare
+    file grandi e frammentati) con e2fsck pulito alla fine; un'immagine con
+    eh_entries alterato in un nodo: truncate rende errore. }
+
+@ voce 67 { Senza RDRAND i numeri casuali sono il serbatoio nudo
+    DOVE: arch/x86/entropia.c, entropia_preleva 328-380. Se il processore
+    non ha RDRAND (il Q9650 del .247 e ogni macchina prima del 2012) rende
+    i byte di g_pool cosi' come sono (369-376) e poi li ritocca con un solo
+    byte del TSC. assorbi (162-172) e' una rotazione piu' uno XOR: non
+    mescola.
+    COSA SUCCEDE: chi legge 32 byte conosce tutto il serbatoio, e la
+    lettura dopo differisce di poco. Su quei numeri si appoggiano le chiavi
+    di TLS e ssh dei programmi portati (Exilla/Firefox, OpenSSL), la
+    disposizione casuale di chi la usa, i numeri di sequenza di TCP se
+    ip.drv li chiede al kernel. Con RDRAND il guasto non si vede, ma ci si
+    fida di RDRAND da solo.
+    COME RIPARARE (progetto corto, da mostrare all'utente): un generatore
+    vero sopra il serbatoio, con lo SHA-256 che il kernel ha gia'
+    (crypto/sha256.c): stato K di 32 byte; a ogni prelievo
+        uscita = SHA256(K || contatore || "u"),
+        K      = SHA256(K || contatore || "k"), contatore++
+    e a ogni risemina K = SHA256(K || g_pool || RDRAND se c'e' || TSC). Il
+    serbatoio e gli eventi restano come sono, servono solo a riseminare;
+    RDRAND entra nella mescola invece di uscire nudo. Togliere il tetto di
+    32 byte a chiamata (oggi "n > POOL_BYTE" taglia in silenzio a 32:
+    controllare che la libc faccia il giro).
+    TRAPPOLA: entropia_evento gira negli interrupt e tocca g_pool mentre
+    entropia_preleva lo legge: nel prelievo spegnere gli interrupt per il
+    tempo della copia del serbatoio (non per lo SHA).
+    PROVA: su una macchina senza RDRAND (QEMU -cpu core2duo) due letture
+    di 32 byte di fila non hanno niente in comune; 1 MB letto passa "ent" o
+    "rngtest" su Linux. }
+
+@ voce 68 { Se agganciare una libreria fallisce a meta', si liberano le pagine della libreria
+    DOVE: loader/lib.c, aggancia 390-430, il ramo d'errore: libera
+    L->pag[j].fisico per TUTTE le j < i. Per le pagine scrivibili il
+    processo ha ricevuto una COPIA privata (copia_pagina): li' si libera la
+    pagina madre della libreria invece della copia.
+    COSA SUCCEDE: la copia resta persa e la pagina madre torna al PMM
+    mentre la tabella delle librerie la usa ancora: il prossimo programma
+    che aggancia la libreria riceve dati che qualcun altro sta gia'
+    riscrivendo. Scatta solo a memoria finita, cioe' proprio nelle prove di
+    carico.
+    PASSI: nel ciclo tenere il frame realmente mappato nel processo (un
+    piccolo vettore, o rileggerlo con paging_get_phys prima di smappare);
+    nel ramo d'errore, per ogni j < i: smappare la pagina dal processo;
+    liberare il frame SOLO se e' una copia privata; per le pagine in comune
+    togliere il riferimento preso (pmm rif --) e niente altro.
+    PROVA: far fallire per prova pmm_alloc_page alla terza pagina privata
+    (un contatore sotto #ifdef), lanciare due programmi che usano la stessa
+    .so: il secondo parte e gira. }
+
+@ voce 69 { La copia di una pagina di libreria passa da un buffer unico per tutti
+    DOVE: loader/lib.c, copia_pagina 164-180: "static uint8_t
+    ponte[PAGE_SIZE]", riempito con una finestra e svuotato con un'altra.
+    COSA SUCCEDE: e' la voce 8 un'altra volta. Se fra le due meta' il timer
+    passa a un altro processo che aggancia una libreria, il primo riceve
+    nella sua pagina privata i dati dell'altra libreria.
+    PASSI: interrupt spenti (stato salvato e rimesso) dalla prima apertura
+    della finestra alla chiusura della seconda; sono 4 KB, il tempo e'
+    trascurabile. Oppure una seconda finestra e copia diretta, senza ponte.
+    PROVA: con una sched_yield() di prova fra le due meta', due programmi
+    che partono insieme con librerie diverse devono partire tutti e due;
+    senza la correzione uno dei due muore all'avvio. }
+
+@ voce 70 { Sul floppy due descrittori dello stesso file si rovinano a vicenda
+    DOVE: fs/fat12.c. Ogni OpenFile tiene una COPIA della voce di
+    directory (fat12_open 2610, 2636, 2652) e fat12_writeback_entry (2208)
+    la riscrive intera a ogni scrittura.
+    COSA SUCCEDE: A e B aprono lo stesso file; A scrive e lo allunga (nuovi
+    cluster, dimensione nuova); B scrive un byte e riscrive la SUA copia,
+    con la dimensione e il primo cluster vecchi: i cluster di A restano
+    presi nella FAT e non sono piu' di nessuno. Lo stesso se un file aperto
+    viene cancellato o rinominato (la copia punta a una voce che ora e' di
+    un altro).
+    COME RIPARARE: una sola copia per file. In fat12_open, se un altro
+    slot ha lo stesso posto (is_root_entry + root_index, oppure dir_lba +
+    dir_slot), puntare a quello (contatore di usi) invece di copiarsi la
+    voce; fat12_delete e fat12_rename rifiutano con EBUSY un file che ha
+    usi > 0, o aggiornano lo slot. Da verificare prima se il VFS sopra
+    apre davvero due volte lo stesso file del floppy o ne tiene uno solo.
+    PROVA: sh -c 'echo aaaa >> /fd/x & echo bbbb >> /fd/x', poi chkdsk del
+    floppy senza cluster persi. }
+
+@ voce 71 { Su FAT un file nuovo puo' contenere pezzi di file cancellati
+    DOVE: fs/fat.c, fat_write 1964-2076. Il primo cluster di un file vuoto
+    (1992-1995) non viene azzerato; nel salto verso l'offset (2002-2011) i
+    cluster nuovi si azzerano solo "se offset > dim" ma non il primo; una
+    scrittura parziale in un cluster nuovo passa da settore_mut (2034), che
+    LEGGE dal disco il contenuto vecchio.
+    COSA SUCCEDE: scrivendo a un offset oltre la fine (lseek + write, un
+    file sparso) i byte del buco non sono zeri ma quel che c'era sul disco:
+    pezzi di file cancellati da altri utenti. Su una chiavetta condivisa e'
+    una fuga di dati.
+    PASSI: azzerare ogni cluster appena preso prima di usarlo
+    (clus_azzera, 577) quando la scrittura non lo copre tutto: dopo
+    clus_alloca a 1993, e nei due catena_estendi (2007 sempre, 2050 se il
+    pezzo che resta e' meno di un cluster). Costa una scrittura in piu'
+    solo per i cluster parziali.
+    In piu': se fat_write esce con errore dopo clus_alloca a 1993 il
+    cluster resta preso e non e' di nessuno: liberarlo sui ritorni
+    d'errore finche' la voce di directory non e' stata riscritta.
+    PROVA: riempire una chiavetta FAT con un file di 'X', cancellarlo;
+    creare un file, lseek a 3000, scrivere un byte: i primi 3000 byte
+    devono essere zeri. }
+
+$ voce 72 { Le librerie condivise non si scaricano mai e la tabella ha 64 posti
+    DOVE: loader/lib.c, lib_apri 485-577. LIB_MAX 64 fisso; una libreria
+    caricata resta fino al riavvio; nessun confronto con il file sul disco.
+    COSA SUCCEDE: (a) dopo un netupdate che cambia una .so i programmi
+    continuano a ricevere quella vecchia finche' non si riavvia; (b)
+    chiunque puo' riempire la tabella aprendo 64 file suoi fatti a
+    libreria, e da quel momento nessun programma parte piu'; (c) chi
+    aspetta una libreria "in carico" (LIB_IN_CARICO) gira con sched_yield
+    per sempre se chi la stava caricando viene ucciso (famiglia della voce
+    6); (d) due librerie con gli stessi indirizzi, o due fili dello stesso
+    processo che agganciano la stessa libreria insieme, non sono
+    controllati.
+    COME RIPARARE: tabella che cresce (regola "nessun tetto fisso");
+    contatore di usi e scarico quando arriva a zero (o a memoria scarsa);
+    ricordare inode, dimensione e mtime del file e ricaricare se sono
+    cambiati; chi muore mentre carica libera il posto (lo stesso gancio del
+    passo 2 della voce 6); solo root, o solo i file sotto le directory di
+    sistema, entrano nella tabella comune. E' un progetto: proporlo. }
+
+$ voce 73 { Due caricatori compilati nel kernel che nessuno chiama
+    DOVE: loader/dynlink.c (512 righe) e loader/drvmgr.c (440). Stanno nel
+    Makefile (5984-5985) ma dynlink_init, dynlink_load_lib, drvmgr_init,
+    drvmgr_get non hanno un solo chiamante fuori dal loro file (grep). I
+    driver veri partono da kernel_main.c con elf_load_residente, le
+    librerie da lib.c.
+    PERCHE' CONTA: nessuno dei due controlla una sola misura del file
+    (p_vaddr + p_memsz, r_offset, l'indice dei simboli, st_name: tutto
+    usato come arriva). Oggi e' innocuo perche' e' codice morto; il giorno
+    che qualcuno lo richiama e' un varco aperto dentro il kernel. drvmgr
+    in piu' e' solo a 32 bit (e_machine 3, indirizzi fisici usati come
+    puntatori).
+    PASSI: toglierli dal Makefile e spostarli fuori da kernel/ (o
+    cancellarli, e' in git), con i due .h; make a 32 e 64 bit deve passare
+    senza altro. Chiedere prima all'utente se li tiene per un motivo. }
+
+$ voce 74 { Il giornale ext4: tre svuotamenti del disco per ogni chiusura, e una chiusura a ogni cancellazione
+    DOVE: moduli/ext4/giornale.c. commit (646-747) fa blk_flush dopo le
+    copie (717), dopo il blocco di commit (723) e dopo aver messo i blocchi
+    al loro posto (729), e riscrive due volte il superblocco del giornale.
+    giornale_fine (775-791) chiude subito la transazione ogni volta che e'
+    stato liberato un blocco (g->liberati), cioe' a ogni unlink, truncate
+    e rmdir. giornale_dati (868) chiude quando una scrittura di dati tocca
+    un blocco che e' nel giornale.
+    PERCHE' CONTA: e' corretto (l'ordine delle scritture regge a uno
+    spegnimento in ogni punto, le somme sono quelle di jbd2) ma caro: ogni
+    fsync e ogni cancellazione costano tre FLUSH CACHE e almeno cinque
+    scritture. E' il terzo candidato per la lentezza di MariaDB, dopo le
+    voci 56 e 63; "rm -r" di un albero grande e' il caso peggiore.
+    MEGLIO, a passi, ognuno misurato (commit_fatti e i conti[] ci sono
+    gia', si leggono allo smontaggio e ogni 1000 commit):
+      1. non chiudere a ogni liberazione: tenere l'elenco dei blocchi
+         liberati nella transazione aperta e non ridarli all'allocatore
+         finche' non e' chiusa (e' quel che fa Linux); cosi' "liberati" non
+         forza piu' il commit.
+      2. giornale circolare invece di ripartire sempre da g->primo: i
+         blocchi vanno al loro posto piu' tardi e il terzo flush sparisce
+         dal percorso di fsync.
+      3. piu' fsync vicini nello stesso commit (commit di gruppo).
+    ALTRO, stesso file: GIO_REVOCHE 512 e GIO_CORSE 32 sono tetti fissi.
+    Un disco scritto da Linux e spento male dopo un "rm -r" ha migliaia di
+    revoche: qui il montaggio viene rifiutato ("g_rev_pieno"). Un giornale
+    in piu' di 32 pezzi lo stesso. Farli crescere con kmalloc; la ricerca
+    lineare in revoca_segna/revocato diventa una tabella hash.
+    TRAPPOLA: ogni passo cambia quel che resta sul disco dopo uno
+    spegnimento: provarlo con lo spegnimento di QEMU a meta' scrittura e
+    e2fsck -fn dopo, non solo con le prove di velocita'. }
+
+$ voce 75 { FAT e ISO: il percorso si risolve a ogni lettura e la catena si ripercorre da capo
+    DOVE: fs/fat.c fat_read 1364-1451 e fat_write 1964 (fat_stat/risolvi
+    a ogni chiamata, poi "salti" cluster dall'inizio del file: leggere un
+    file di N cluster a pezzi costa N * N / 2 letture della FAT); la cache
+    e' di 24 settori da 512 byte con ricerca lineare (cache_slot 173) e un
+    blk_read per settore. fs/iso9660.c iso_read 572-604: risolvi a ogni
+    lettura, un blocco per volta passando da b_dati.
+    PERCHE' CONTA: e' la voce 56 per gli altri due file system. Si vede
+    copiando file grandi da chiavetta o da CD (l'installazione).
+    MEGLIO: lo stesso rimedio della 56 (un descrittore aperto ricorda
+    dov'e' il file: primo cluster / extent e dimensione), piu' per la FAT
+    l'ultimo (cluster logico, cluster fisico) raggiunto, cosi' la lettura
+    in sequenza non riparte dall'inizio; letture di piu' settori contigui
+    in un colpo (fat_estensione 2190 sa gia' dire se il file e' contiguo);
+    per l'ISO leggere direttamente nel buffer di chi chiede quando il
+    pezzo e' di blocchi interi. }
+
+$ voce 76 { Cancellare o rinominare un file aperto (DA VERIFICARE)
+    DOVE: ext2_unlink (moduli/ext4/scrittura.c 1688-1731) libera blocchi e
+    inode appena i link vanno a zero; fat rimuovi (fat.c 1915) lo stesso.
+    I file system lavorano per PERCORSO (voce 56), non per inode.
+    COSA DOVREBBE SUCCEDERE (POSIX): un file cancellato resta leggibile e
+    scrivibile da chi lo ha aperto, e sparisce alla chiusura. MariaDB,
+    Firefox e ogni programma che usa file temporanei "apri e cancella" ci
+    contano.
+    DA VERIFICARE in vfs.c: se vfs_unlink_nl rifiuta o rimanda quando il
+    file e' aperto. Se non lo fa, chi ha il file aperto dopo l'unlink
+    riceve errori, e se il nome viene ricreato legge il file di un altro.
+    PROVA: un programma che apre, cancella, scrive 1 MB, rilegge e
+    confronta. Se fallisce, la riparazione va insieme alla 56: descrittori
+    che tengono l'inode, e la liberazione rimandata all'ultima chiusura. }
+
+$ voce 77 { Cose minori viste nel terzo giro
+    - fs/fat.c: i nomi lunghi si leggono ma non si scrivono (voce_nuova
+      1697 accetta solo 8.3: "mkdir Documenti" su una chiavetta fallisce);
+      rimuovi e fat_rename lasciano sul disco le voci LFN del nome vecchio;
+      le date sono sempre FAT_DATA_IGNOTA (1486): usare l'RTC come fa
+      fat12.c (fat12_ora_corrente). (DA IMPLEMENTARE)
+    - fs/fat.c rimuovi 1915: DA VERIFICARE che il VFS tolga "." e ".." dal
+      percorso prima; altrimenti "rmdir /a/." libera la catena di /a
+      lasciando la voce nel padre.
+    - fs/fat12.c: una sola directory di profondita' (fat12_find_path 2027,
+      fat12_split_path 2125) e geometria fissa da 1,44 MB (23-38): niente
+      720 KB. MAX_OPEN_FILES 64 fisso. (DA IMPLEMENTARE)
+    - fs/iso9660.c: niente Rock Ridge (senza Joliet i nomi sono 8.3
+      minuscoli, niente permessi ne' collegamenti) e niente file in piu'
+      estensioni (oltre 4 GB, 317). (DA IMPLEMENTARE)
+    - block/mbr.c 399-404: GPT riconosciuta e rifiutata. (DA IMPLEMENTARE)
+    - arch/x86/rtc.c 143-147: con l'orologio a 12 ore le 12 di notte
+      restano 12 invece di 0. Aggiungere: se non e' pomeriggio e ore == 12,
+      ore = 0. Le due porte del CMOS (indice, dato) non sono protette dal
+      cambio di processo: interrupt spenti attorno alla coppia.
+    - sched/segnali.c sys_allarme 710: g_allarmi_armati++ anche se
+      l'allarme c'era gia' (si rimette a posto al tick, innocuo). Mancano
+      i segnali ai gruppi (pid negativo) e SIGSTOP/SIGCONT (con la voce
+      60, i segnali del terminale).
+    - arch/x86_64/cambio64.asm proc_entry_stub_user e
+      sched_enter_usermode: al primo ingresso in ring 3 i registri
+      generali tengono valori del kernel (rbx, rsi, rbp, r8-r15):
+      azzerarli prima di iretq. Lo stesso controllo va fatto nel gemello
+      a 32 bit (sched/context_switch.asm).
+    - kernel_main.c avvia_shell 491-506: se /bin/login non parte, la
+      console riceve la shell senza chiedere la parola d'ordine. E' una
+      scelta (macchina che non si avvia = console di soccorso): scriverla
+      nei manuali, o chiedere la parola d'ordine di root anche li'.
+    - loader/modulo.c: MODULO_MAX fisso e nessuno scarico; fs/cfg.c:
+      kernel.cfg letto in 8192 byte fissi, CFG_MAX_MODULES / MOUNT / ENV
+      fissi (regola "nessun tetto fisso").
+    - power.c 136: "g_ticks < target" e' un altro confronto della voce
+      26. }
+
+  NOTE AGGIUNTE AD ALTRE VOCI NEL TERZO GIRO
+  - voce 5: segnali_riavvia (segnali.c 594-596) legge due byte del
+    programma dopo syscall_verify_ptr: va fra i posti da passare a
+    copia_da_utente.
+  - voce 36: procfs_read scrive direttamente nel buffer del programma
+    (Usc.buf), come ext2_read.
+  - voce 61: i driver di [modules] partono con elf_load_residente
+    (kernel_main.c 265): la prova della voce va fatta anche su un driver.
+  - voce 63: anche atapi_comando_nl (atapi.c 129-240) aspetta girando a
+    vuoto col lucchetto del disco, fino a 10 secondi per comando: un CD
+    graffiato ferma tutta la macchina. Stesso rimedio.
+
+
+===============================================================================
+ L'ORDINE CONSIGLIATO (unico, dopo i tre giri)
+===============================================================================
+
+  1. voci 3, 4, 46, 64 poche righe ciascuna: un guasto di memoria e tre
+                       varchi da cui un utente qualunque arriva al kernel
+                       o diventa root
+  2. voci 1, 2         interrupt spenti negli allocatori
+  3. voce 6            passo 1 subito (rete di sicurezza), passo 2 con calma
+  4. voci 7, 10, 12    risveglio perso, exec fallita, swap: correzioni corte
+  5. voci 61, 50, 52, 13, 47, 65, 66   controlli che mancano, poche righe
+                       l'una
+  6. voce 5            solo dopo la 6
+  7. voci 8, 69, 68, 9, 18, 51, 53, 54, 55, 71, 70, poi la 67 (progetto
+     corto)
+  8. PRESTAZIONI (MariaDB): misurare, poi 56 e 63 (passo 1), poi 74
+     (passo 1), 21, 22, 24, 27, 75; ogni passo con un numero prima e uno dopo in tools/stress
+  9. voci 48, 49, 76, 16, 17, 14, 15, 19, 73, 72, 77 e le "DA
+     IMPLEMENTARE"
+ 10. voce 62 per ultima fra quelle strutturali
+
+  Le voci 1, 2 e 7 si possono far saltare fuori a comando mettendo per prova
   una sched_yield() nel punto della finestra, come e' stato fatto il 7
   settembre per la corsa dei fili.

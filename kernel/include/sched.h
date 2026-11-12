@@ -922,6 +922,7 @@ typedef struct Process {
      * Conta solo quello del CAPOGRUPPO: vedi proc_spazio_prendi in sched.c.
      * In fondo alla struttura apposta, per non spostare nessun campo che
      * qualcuno legga per scostamento.
+     * 0 = free, otherwise the pid of who is inside (0xFFFFFFFF: no process).
      * ========================================================================= */
     volatile uint32_t spazio_occupato;
 

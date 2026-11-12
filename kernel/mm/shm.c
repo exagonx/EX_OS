@@ -14,6 +14,7 @@
  * ============================================================================= */
 
 #include "shm.h"
+#include "sched.h"
 #include "pmm.h"
 #include "paging.h"
 #include "kmalloc.h"
@@ -34,9 +35,25 @@ static uint32_t  g_zone_posti = 0;
  * ============================================================================= */
 static volatile uint32_t g_shm_occupato = 0;
 
+/* the holder's pid (0xFFFFFFFF outside a process), so a dead one can be
+ * told from a busy one (analisi_kernel voce 6, step 1) */
 static void shm_prendi(void)
 {
-    while (!__sync_bool_compare_and_swap(&g_shm_occupato, 0u, 1u)) sched_yield();
+    Process *p  = proc_get_current();
+    uint32_t io = p ? p->pid : 0xFFFFFFFFu;
+
+    while (!__sync_bool_compare_and_swap(&g_shm_occupato, 0u, io)) {
+        uint32_t chi = g_shm_occupato;
+        Process *d;
+
+        if (chi != 0 && chi != 0xFFFFFFFFu &&
+            ((d = proc_get_by_pid(chi)) == NULL || d->state == PROC_ZOMBIE) &&
+            __sync_bool_compare_and_swap(&g_shm_occupato, chi, io)) {
+            klog(LOG_ERROR, "SHM: lock held by dead pid %u: taken over", chi);
+            return;
+        }
+        sched_yield();
+    }
 }
 
 static void shm_lascia(void)

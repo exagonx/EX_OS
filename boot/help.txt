@@ -823,6 +823,12 @@ sezione [kernel] di /boot/kernel.cfg la riga  smp = 1  (accesi ma fermi) o
 smp = 0  (solo contati). Poi `hwinfo` dice cosa ha trovato: scrivilo a chi
 sviluppa EX-OS.
 
+UN PROGRAMMA CHE ANDAVA SMETTE DI SCRIVERE con "Bad file descriptor" (EBADF)
+o "Bad address" (EFAULT), dal kernel 0.330: scriveva in un file aperto in sola
+lettura, o passava al kernel un indirizzo sotto i 64 MB. Prima passava, ed era
+un varco: chiunque poteva riscrivere /boot/utenti o la memoria del kernel. Il
+difetto e' del programma: scrivi a chi sviluppa EX-OS quale e' e cosa faceva.
+
 USCENDO DA ExWin LO SCHERMO RESTA FERMO sull'ultima immagine, con nv50.drv o
 nv40.drv che hanno cambiato il modo (GeForce 210 e simili): il sistema e' vivo
 (telnet risponde), ma fino al kernel 0.328 tornava al modo testo VGA, che quei

@@ -54,7 +54,7 @@ giro() {    # $1 = 32|64
         "lpt.drv@3" > "$log" 2>&1
     L=$(tr -d '\r' < "$log")
     echo "$L" | grep -a "fronti:\|onda:\|^lpt0:" | sed 's/^/      /'
-    echo "$L" | grep -aq "EX-OS .* 0.32[4-9]" && si "$bit: kernel 0.324 o dopo" || no "$bit: il kernel e' prima della 0.324 (vedi $log)"
+    echo "$L" | grep -aqE "EX-OS .* 0\.(32[4-9]|3[3-9][0-9]|[4-9][0-9][0-9])" && si "$bit: kernel 0.324 o dopo" || no "$bit: il kernel e' prima della 0.324 (vedi $log)"
     echo "$L" | grep -aq "lpt.drv 0.002" && si "$bit: lpt.drv 0.002" || no "$bit: -version"
     echo "$L" | grep -aq "nessun servizio acceso" && si "$bit: senza servizio lo dice" || no "$bit: lo stato senza servizio"
     echo "$L" | grep -aq "lpt0: 0x378 irq 7, SPP" && si "$bit: -avvia trova 0x378, irq 7" || no "$bit: -avvia non trova la porta"

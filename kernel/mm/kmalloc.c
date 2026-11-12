@@ -423,7 +423,7 @@ void kmalloc_init(void)
  *
  * Ritorna: puntatore al payload, NULL se OOM
  * ============================================================================= */
-void *kmalloc(size_t size)
+static void *kmalloc_dentro(size_t size)
 {
     KHeapBlock *block;
     uint32_t    aligned_size;
@@ -526,7 +526,7 @@ void *kmalloc_aligned(size_t size, size_t alignment)
 /* =============================================================================
  * kfree — Libera un blocco allocato con kmalloc
  * ============================================================================= */
-void kfree(void *ptr)
+static void kfree_dentro(void *ptr)
 {
     KHeapBlock  *block;
     KHeapBlock  *next_phys;
@@ -702,7 +702,7 @@ void kfree_aligned(void *ptr)
  * Costa una scansione di qualche decina di blocchi: si puo' chiamare a mano
  * nei momenti in cui si sospetta qualcosa, e la chiama kmalloc_stats.
  * ============================================================================= */
-uint32_t kmalloc_verifica(void)
+static uint32_t verifica_dentro(void)
 {
     KHeapRegion *r;
     uint32_t     guai = 0, visti = 0;
@@ -740,7 +740,7 @@ uint32_t kmalloc_verifica(void)
     return guai;
 }
 
-void kmalloc_stats(void)
+static void stats_dentro(void)
 {
     KHeapBlock *b;
     uint32_t free_bytes  = 0;
@@ -791,4 +791,52 @@ void kmalloc_stats(void)
 
     /* E la passata completa: le statistiche dicono quanto, questa dice se. */
     kmalloc_verifica();
+}
+
+/* =============================================================================
+ * The public doors: interrupts off for the whole walk (analisi_kernel voci 1)
+ *
+ * ! THE KERNEL IS PREEMPTIBLE (int 0x80 is a trap gate, the timer switches
+ * process inside the kernel too): two processes could be halfway through the
+ * free list at once, and the heap broke with no trace. The state of IF is
+ * put back as it was, not "sti": kmalloc runs at boot with interrupts still
+ * off, and from the page fault handler.
+ * ============================================================================= */
+void *kmalloc(size_t size)
+{
+    uint32_t fl = read_eflags();
+    void    *p;
+
+    interrupts_disable();
+    p = kmalloc_dentro(size);
+    if (fl & 0x200u) interrupts_enable();
+    return p;
+}
+
+void kfree(void *ptr)
+{
+    uint32_t fl = read_eflags();
+
+    interrupts_disable();
+    kfree_dentro(ptr);
+    if (fl & 0x200u) interrupts_enable();
+}
+
+uint32_t kmalloc_verifica(void)
+{
+    uint32_t fl = read_eflags(), r;
+
+    interrupts_disable();
+    r = verifica_dentro();
+    if (fl & 0x200u) interrupts_enable();
+    return r;
+}
+
+void kmalloc_stats(void)
+{
+    uint32_t fl = read_eflags();
+
+    interrupts_disable();
+    stats_dentro();
+    if (fl & 0x200u) interrupts_enable();
 }

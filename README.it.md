@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.329
+**Versione:** 0.330
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -112,6 +112,26 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### Un utente qualunque non legge e non scrive piu' il kernel, ne' scrive un file aperto in lettura (kernel 0.330, analisi_kernel voci 1-4 e 46)
+
+- **I puntatori sotto i 64 MB nelle chiamate di sistema sono rifiutati** (`EFAULT`): li' c'e' il
+  kernel, mappato in ogni spazio, e `write(1, (void *)0x100000, n)` ne stampava il codice mentre
+  `read()` lo sovrascriveva. **testato**
+- **Il modo d'accesso dell'apertura conta**: `write`/`pwrite`/`ftruncate` su `O_RDONLY` danno
+  `EBADF`/`EINVAL`, `read`/`pread` su `O_WRONLY` `EBADF`; `open` chiede la scrittura per
+  `O_TRUNC`, `O_APPEND` e `O_RDWR` (lettura e scrittura), `truncate` il permesso di scrittura.
+  Prima aprire `/boot/utenti` in lettura e scriverci funzionava. **testato**
+- **`cld` negli ingressi a 32 bit**: un programma interrotto col flag di direzione alzato faceva
+  copiare all'indietro ogni `rep movs` del kernel. **testato**
+- **kmalloc, kfree e l'allocatore delle pagine a interrupt spenti**: il kernel e' prelazionabile,
+  e due processi potevano trovarsi a meta' dell'elenco dei liberi, o prendere la stessa pagina.
+  **testato in QEMU**
+- **Un lucchetto tenuto da un filo morto si riprende** (file, disco, shm, spazio degli
+  indirizzi), con un errore nel registro: un filo fatto zombie dentro una lettura teneva il
+  lucchetto dei file, e nessun file si apriva piu'. **testato in QEMU**
+- `tools/prove/varchiprova.c` (nuova): i varchi provati da uid 1000, 0 NO a 32 e 64 bit;
+  `tools/prove/filimorti.c` (nuova): 200 figli chiusi mentre 8 fili leggono, 200 su 200.
 
 ### La GeForce 210 col suo motore 2D, un driver per le NV4x, e `shutdown -r` che riavvia (kernel 0.327-0.329, nv50.drv 0.011, nv40.drv 0.005, sh 0.012, voce 99)
 

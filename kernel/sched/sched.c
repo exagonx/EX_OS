@@ -3126,14 +3126,30 @@ Process *proc_spazio_capo(Process *p)
     return capo ? capo : p;
 }
 
+/* spazio_occupato holds the pid of the thread inside (0xFFFFFFFF with no
+ * current process): a thread made zombie in there no longer spins its
+ * brothers forever (analisi_kernel voce 6, step 1). */
 void proc_spazio_prendi(Process *capo)
 {
+    Process *me = proc_get_current();
+    uint32_t io = me ? me->pid : 0xFFFFFFFFu;
+
     for (;;) {
-        uint32_t flag = read_eflags();
+        uint32_t flag = read_eflags(), chi;
+        Process *d;
+
         interrupts_disable();
-        if (!capo->spazio_occupato) {
-            capo->spazio_occupato = 1;
+        chi = capo->spazio_occupato;
+        if (!chi) {
+            capo->spazio_occupato = io;
             if (flag & 0x200u) interrupts_enable();
+            return;
+        }
+        if (chi != 0xFFFFFFFFu && ((d = proc_get_by_pid(chi)) == NULL || d->state == PROC_ZOMBIE)) {
+            capo->spazio_occupato = io;
+            if (flag & 0x200u) interrupts_enable();
+            klog(LOG_ERROR, "SCHED: address space lock of pid %u held by dead pid %u: taken over",
+                 capo->pid, chi);
             return;
         }
         if (flag & 0x200u) interrupts_enable();

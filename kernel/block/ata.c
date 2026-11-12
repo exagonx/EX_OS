@@ -1712,6 +1712,22 @@ void ata_prendi(void)
 
         if (p == NULL) { interrupts_enable(); return; }
 
+        /* a dead holder: taken over, as fs_prendi_n does (analisi voce 6) */
+        if (g_disco_detentore != DISCO_SENZA_PROCESSO) {
+            Process *d = proc_get_by_pid(g_disco_detentore);
+
+            if (d == NULL || d->state == PROC_ZOMBIE) {
+                uint32_t morto = g_disco_detentore, liv = g_disco_livelli;
+
+                g_disco_detentore = 0;
+                g_disco_livelli   = 0;
+                interrupts_enable();
+                klog(LOG_ERROR, "ATA: disk lock held by dead pid %u (%u levels): taken over",
+                     morto, liv);
+                continue;
+            }
+        }
+
         if (p->priority == PRIO_IDLE) {
             interrupts_enable();
             sched_yield();

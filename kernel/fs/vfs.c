@@ -402,6 +402,25 @@ static void fs_prendi_n(const char *chi)
          * prima che lo scheduler parta. */
         if (p == NULL) { interrupts_enable(); return; }
 
+        /* ! A DEAD HOLDER NEVER GIVES IT BACK (analisi_kernel voce 6, step
+         * 1): a thread made zombie where it slept, inside a read, kept the
+         * lock and no file opened any more. Taken over and said: a write
+         * may be left halfway, which beats the whole box stuck. */
+        if (g_fs_detentore != FS_SENZA_PROCESSO) {
+            Process *d = proc_get_by_pid(g_fs_detentore);
+
+            if (d == NULL || d->state == PROC_ZOMBIE) {
+                uint32_t morto = g_fs_detentore;
+                const char *cosa = g_fs_chi;
+
+                g_fs_detentore = 0;
+                interrupts_enable();
+                klog(LOG_ERROR, "VFS: file lock held by dead pid %u (%s): taken over",
+                     morto, cosa);
+                continue;
+            }
+        }
+
         /* Il task idle non si blocca MAI: lo scheduler lo vuole sempre
          * eseguibile. Non e' un caso teorico — kernel_main gira proprio
          * li' dentro — ma quando l'idle vuole il lucchetto nessun altro
@@ -1470,7 +1489,13 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
      * file dentro la directory di un altro.
      * ===================================================================== */
     {
-        uint32_t voluto = (flags & (O_WRONLY | O_RDWR)) ? P_SCRIVI : P_LEGGI;
+        /* ! O_RDONLY | O_TRUNC ASKED ONLY TO READ, and emptied the file
+         * (0.330, analisi voce 46); O_RDWR asked only to write. Reading
+         * unless write-only, writing whenever the file can change. */
+        uint32_t voluto = 0;
+
+        if ((flags & 3u) != O_WRONLY) voluto |= P_LEGGI;
+        if (flags & (O_WRONLY | O_RDWR | O_TRUNC | O_APPEND)) voluto |= P_SCRIVI;
 
         if (!autorita) {
             if ((flags & O_CREAT) && !permesso_sul_padre(abs, P_SCRIVI | P_ESEGUI))
@@ -2325,6 +2350,8 @@ static int vfs_truncate_nl(const char *abs, uint32_t nuova_dim)
      * irraggiungibili i file che ci stanno dentro senza cancellarli. */
     if (vfs_stat_nl(abs, &st) != 0) return ERR(ENOENT);
     if (st.is_dir)               return ERR(EISDIR);
+    /* (0.330, analisi voce 46) truncate("/boot/ombra", 0) by anybody */
+    if (!vfs_permesso(&st, P_SCRIVI)) return ERR(EACCES);
 
     if (g_mnt[im].tipo == VFS_FS_FAT12FD) {
         /* fat12.c non ha un troncamento, e non gliene si aggiunge uno per

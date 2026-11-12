@@ -22,7 +22,11 @@ int syscall_verify_ptr(const void *ptr, uint32_t size)
 {
     uintptr_t addr = (uintptr_t)ptr;
     if (ptr == NULL)                  return 0;
-    if (addr < 0x1000)                return 0;
+    /* ! BELOW 64 MB IS THE KERNEL (analisi_kernel voce 4): identity-mapped
+     * in every directory, and the old "< 0x1000" let write(1, 0x100000, n)
+     * dump the kernel and read() overwrite it. Nothing of a program lives
+     * there: executables from USER_SPACE_BASE, libraries from DL_LIBS_BASE. */
+    if (addr < USER_SPACE_BASE)       return 0;
     if (addr >= USER_SPACE_END)       return 0;
     if (addr + size < addr)           return 0;
     if (addr + size > USER_SPACE_END) return 0;

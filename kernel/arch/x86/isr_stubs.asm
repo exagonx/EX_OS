@@ -162,6 +162,7 @@ isr_common_stub:
     mov ds, ax
     mov es, ax
     mov fs, ax
+    cld                     ; C wants DF clear, the interrupted code may not (std; int 0x80)
 
     ; Chiama handler C: isr_handler(InterruptFrame *frame)
     ; ESP punta alla struttura InterruptFrame
@@ -201,6 +202,7 @@ irq_common_stub:
     mov ds, ax
     mov es, ax
     mov fs, ax
+    cld                     ; C wants DF clear, the interrupted code may not (std; int 0x80)
 
     ; ! WHAT DOES NOT WAIT, FIRST (0.324): the instant, the end of interrupt
     ; and an edge into its ring, before the lock that may make this
@@ -251,6 +253,7 @@ syscall_stub:
     mov ds, ax
     mov es, ax
     mov fs, ax
+    cld                     ; C wants DF clear, the interrupted code may not (std; int 0x80)
 
     ; Chiama handler C syscall
     call bkl_entra

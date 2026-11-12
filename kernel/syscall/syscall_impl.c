@@ -500,6 +500,8 @@ int32_t sys_read(InterruptFrame *frame)
 
     /* file FAT12 */
     if (FDV(proc, fd).type == FD_FILE) {
+        /* (0.330, analisi voce 46) opened for writing only: no reading */
+        if ((FDV(proc, fd).flags & 3u) == O_WRONLY) return ERR(EBADF);
         /* Il driver scrivera' dentro `buf`: le sue pagine devono essere
          * gia' in RAM, o il fault avverrebbe con il lucchetto del VFS in
          * mano. Vedi vm_precarica_utente(). */
@@ -757,6 +759,10 @@ int32_t sys_write(InterruptFrame *frame)
          * quando i due capitano insieme, cioe' di rado e senza un motivo
          * visibile.
          * ===================================================================== */
+        /* ! OPENED READ-ONLY WAS WRITABLE (0.330, analisi voce 46): open
+         * /boot/utenti with O_RDONLY, then write() went through, and anyone
+         * was root. O_RDONLY is 0: compare the access bits, not the flag. */
+        if ((FDV(proc, fd).flags & 3u) == O_RDONLY) return ERR(EBADF);
         /* Stessa ragione di sys_read, dall'altro verso: il driver LEGGE
          * da `buf`, e una pagina assente farebbe faultare lui. */
         vm_precarica_utente(IN_NUMERO(buf), count);
@@ -3875,6 +3881,7 @@ int32_t sys_ftruncate(InterruptFrame *frame)
     if (fd < 0 || fd >= FD_N(proc))             return ERR(EBADF);
     if (FDV(proc, fd).type == FD_UNUSED)        return ERR(EBADF);
     if (FDV(proc, fd).type != FD_FILE)          return ERR(EINVAL);
+    if ((FDV(proc, fd).flags & 3u) == O_RDONLY) return ERR(EINVAL);   /* POSIX: EINVAL or EBADF */
     return (int32_t)vfs_ftruncate((int)FDV(proc, fd).inode, dim);
 }
 
@@ -3971,6 +3978,7 @@ static int32_t a_posizione(InterruptFrame *frame, int scrivi)
     if (!syscall_verify_ptr(buf, count))      return ERR(EFAULT);
     if (FDV(proc, fd).type == FD_UNUSED)     return ERR(EBADF);
     if (FDV(proc, fd).type != FD_FILE)       return ERR(ESPIPE);
+    if ((FDV(proc, fd).flags & 3u) == (scrivi ? O_RDONLY : O_WRONLY)) return ERR(EBADF);
 
     vm_precarica_utente(IN_NUMERO(buf), count);
     return scrivi ? vfs_write((int)FDV(proc, fd).inode, buf, count, pos)

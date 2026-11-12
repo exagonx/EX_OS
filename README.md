@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.329
+**Version:** 0.330
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -110,6 +110,25 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### An ordinary user can no longer read or write the kernel, nor write a file opened for reading (kernel 0.330, analisi_kernel voci 1-4 and 46)
+
+- **System call pointers below 64 MB are refused** (`EFAULT`): that is the kernel, mapped in
+  every address space, and `write(1, (void *)0x100000, n)` printed its code while `read()`
+  overwrote it. **tested**
+- **The access mode of an open counts**: `write`/`pwrite`/`ftruncate` on `O_RDONLY` give
+  `EBADF`/`EINVAL`, `read`/`pread` on `O_WRONLY` `EBADF`; `open` asks write permission for
+  `O_TRUNC`, `O_APPEND` and `O_RDWR` (read and write), `truncate` asks write permission. Before,
+  opening `/boot/utenti` read-only and writing to it worked. **tested**
+- **`cld` in the 32-bit entries**: a program interrupted with the direction flag set made every
+  `rep movs` of the kernel copy backwards. **tested**
+- **kmalloc, kfree and the page allocator with interrupts off**: the kernel is preemptible, and
+  two processes could be halfway through the free list, or take the same page. **tested in QEMU**
+- **A lock held by a dead thread is taken over** (file, disk, shm, address space), with an
+  error in the log: a thread made zombie inside a read kept the file lock, and no file opened
+  any more. **tested in QEMU**
+- `tools/prove/varchiprova.c` (new): the holes tried as uid 1000, 0 NO at 32 and 64 bit;
+  `tools/prove/filimorti.c` (new): 200 children killed while 8 threads read, 200 out of 200.
 
 ### The GeForce 210 with its 2D engine, a driver for the NV4x, and `shutdown -r` that reboots (kernel 0.327-0.329, nv50.drv 0.011, nv40.drv 0.005, sh 0.012, voce 99)
 

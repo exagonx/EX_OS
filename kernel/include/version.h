@@ -900,7 +900,18 @@
  * wiped and the consoles redrawn in it. Power off through ACPI as ACPICA
  * does it: GPEs off, wake status cleared, PM1 control read-modify-write,
  * SLP_TYP then SLP_EN (the MCP73 stayed on). */
-#define EXOS_VERSION    "0.329"
+/* 0.329 -> 0.330 (analisi_kernel voci 3, 4, 46): cld in the three 32-bit
+ * entries (a program with DF=1 made every rep movs of the kernel copy
+ * backwards); syscall pointers below USER_SPACE_BASE refused (they reached
+ * the kernel itself); read/write/pread/pwrite/ftruncate honour the access
+ * mode of the open, open asks read AND write where both are meant, O_TRUNC
+ * asks write, truncate checks write permission. Voci 1 and 2: kmalloc,
+ * kfree and the public PMM functions run with interrupts off (IF put back
+ * as it was): the timer could switch process halfway through the free list
+ * or between a bitmap test and its set. Voce 6 step 1: the file, disk,
+ * shm and address-space locks are taken over from a dead holder (zombie or
+ * gone), with an error in the log, instead of waiting forever. */
+#define EXOS_VERSION    "0.330"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"
