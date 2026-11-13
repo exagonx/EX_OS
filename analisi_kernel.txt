@@ -998,7 +998,20 @@ $ voce 45 { Gli avvisi di debug nei percorsi piu' battuti
     interrupt (a pezzi di 256 byte), e per ioctl copiare la struttura in una
     variabile locale fuori dalla sezione. }
 
-$ voce 56 { ext2 ricerca il percorso dalla radice a ogni lettura e scrittura
+$ voce 56 { ext2 ricerca il percorso dalla radice a ogni lettura e scrittura (PASSO 1 FATTO, kernel 0.333)
+    PASSO 1 FATTO COSI' (0.333): il passo scritto sotto ("non alzare
+    g_ris_gen per i dati") c'era gia' - i dati vanno per scrivi_corsa - e
+    non bastava: a ogni write() il modulo riscrive l'inode, la bitmap e il
+    descrittore, e ognuno svuotava la cache. Ora due contatori: g_ris_gen
+    (nome -> inode) si muove solo dentro create, mkdir, rmdir, unlink,
+    rename (VIA_NOMI in ext2.c, a ogni blocco scritto come prima, e prima e
+    dopo) e al montaggio, compreso il monta() del modulo che puo' riapplicare
+    un giornale; g_ino_gen a ogni blocco di metadati scritto: un colpo con
+    g_ino_gen vecchio tiene il numero e rilegge l'inode (due blocchi dalla
+    cache dei settori). Prova: tools/prova_nomi.sh (nomiprova.c, nomi
+    cambiati e guardati subito dal vecchio e dal nuovo, misure dopo coda e
+    truncate) 0 NO su ext2, ext4 e FAT32 a 32 e 64 bit, e2fsck pulito.
+    Restano i passi veri (inode nel VfsFile, varianti per inode).
     DOVE: ext2.c ext2_read 1063 (risolvi), le scritture del modulo ext4 allo
     stesso modo; la cache g_ris (574-618) ha 16 posti e si svuota TUTTA a
     ogni blocco scritto (g_ris_gen++ in scrivi_blocco 235 e ind_riversa 277).
@@ -1087,7 +1100,16 @@ $ voce 62 { A 64 bit le chiamate di sistema entrano a interrupt spenti, a 32 acc
     (0xEF), cosi' i due kernel sono uguali. Non prima: oggi quell'interrupt
     gate nasconde a 64 bit una parte delle corse. }
 
-$ voce 63 { Il disco si aspetta girando a vuoto, col lucchetto del kernel in mano
+$ voce 63 { Il disco si aspetta girando a vuoto, col lucchetto del kernel in mano (PASSO 1 FATTO per AHCI, kernel 0.333)
+    PASSO 1 FATTO COSI' (0.333): in ahci.c comando(), dopo 128 sguardi a
+    P_CI, sched_yield() - solo se c'e' un processo, gli interrupt sono accesi
+    e il chiamante tiene il lucchetto del disco (puo_cedere: ata_prova_ahci,
+    da `ahci -t`, arriva qui senza). La scadenza e' quella del cronometro,
+    che conta solo i passi corti fra due sguardi: il tempo passato altrove
+    non fa scadere niente. IDE aveva gia' ata_cedi per il DMA (0.285); le
+    attese PIO (ata_attendi_drq_muto, ata_attendi_non_bsy) no. Provato in
+    QEMU con tools/prova_ahci_smp.sh a 2 e 4 processori; ! da provare sul
+    portatile e sul .247, come chiede la voce.
     DOVE: block/ahci.c comando 263-296 (ciclo con "pause" finche' P_CI non
     torna a zero), ahci_rw 770-773 (copia byte per byte in g_rimbalzo e
     ritorno); block/ata.c ata_attendi_drq_muto 748-781 e ata_attendi_non_bsy
@@ -1346,7 +1368,12 @@ $ voce 72 { Le librerie condivise non si scaricano mai e la tabella ha 64 posti
     passo 2 della voce 6); solo root, o solo i file sotto le directory di
     sistema, entrano nella tabella comune. E' un progetto: proporlo. }
 
-$ voce 73 { Due caricatori compilati nel kernel che nessuno chiama
+# voce 73 { Due caricatori compilati nel kernel che nessuno chiama (FATTA, kernel 0.333)
+    FATTA COSI' (0.333, scelta dell'utente: spostarli, non cancellarli):
+    loader/dynlink.c, loader/drvmgr.c, include/dynlink.h e drvmgr.h sono in
+    fuori_uso/loader/ con un LEGGIMI.txt che dice perche' non vanno rimessi
+    come sono; tolti dal Makefile e i due #include da kernel_main.c. make a
+    32 e 64 bit passa senza altro.
     DOVE: loader/dynlink.c (512 righe) e loader/drvmgr.c (440). Stanno nel
     Makefile (5984-5985) ma dynlink_init, dynlink_load_lib, drvmgr_init,
     drvmgr_get non hanno un solo chiamante fuori dal loro file (grep). I
@@ -1362,7 +1389,24 @@ $ voce 73 { Due caricatori compilati nel kernel che nessuno chiama
     cancellarli, e' in git), con i due .h; make a 32 e 64 bit deve passare
     senza altro. Chiedere prima all'utente se li tiene per un motivo. }
 
-$ voce 74 { Il giornale ext4: tre svuotamenti del disco per ogni chiusura, e una chiusura a ogni cancellazione
+$ voce 74 { Il giornale ext4: tre svuotamenti del disco per ogni chiusura, e una chiusura a ogni cancellazione (PASSO 1 FATTO, ext4.mod 0.006, kernel 0.333)
+    PASSO 1 FATTO COSI' (ext4.mod 0.006): giornale_liberato(m, n) segna il
+    blocco liberato in una bitmap per gruppo ("trattenuti", giornale.c), e
+    l'allocatore (primo_libero, prenota, alloca_blocco in scrittura.c) li
+    salta come se fossero occupati; il commit li rende a tutti. Come
+    b_committed_data di jbd2. Unlink, rmdir e truncate non chiudono piu' la
+    transazione: va a disco a una chiusura, a un fsync, a meta' piena o dopo
+    5 s, come le altre. Senza memoria per i trattenuti si chiude subito come
+    prima (g->liberati). giornale_inizio chiude prima di un'operazione se i
+    liberi non trattenuti scendono sotto GIO_MARGINE (4096 blocchi): mai a
+    meta'. Prova della TRAPPOLA: tools/prova_giornale_tempo.sh caso D
+    (tools/prove/riuso.c 2): un file con fsync cancellato, uno nuovo scritto
+    e lasciato aperto, QEMU fermato col monitor prima del commit. Con la
+    0.006 il cancellato torna con i suoi 262144 byte e e2fsck e' pulito; con
+    i trattenuti spenti apposta torna con 262144 byte del file nuovo. Passano
+    anche prova_ext3, prova_ext4, prova_extfs, prova_mappa_giornale,
+    prova-letture (caso 3, ext4) a 32 e 64 bit. Restano i passi 2 e 3 e i
+    tetti GIO_REVOCHE / GIO_CORSE.
     DOVE: moduli/ext4/giornale.c. commit (646-747) fa blk_flush dopo le
     copie (717), dopo il blocco di commit (723) e dopo aver messo i blocchi
     al loro posto (729), e riscrive due volte il superblocco del giornale.
@@ -1394,7 +1438,15 @@ $ voce 74 { Il giornale ext4: tre svuotamenti del disco per ogni chiusura, e una
     spegnimento: provarlo con lo spegnimento di QEMU a meta' scrittura e
     e2fsck -fn dopo, non solo con le prove di velocita'. }
 
-$ voce 75 { FAT e ISO: il percorso si risolve a ogni lettura e la catena si ripercorre da capo
+$ voce 75 { FAT e ISO: il percorso si risolve a ogni lettura e la catena si ripercorre da capo (FAT: CATENA FATTA, kernel 0.333)
+    FATTO PER LA CATENA DELLA FAT (0.333): fat.c tiene l'ultimo punto
+    raggiunto (montaggio, primo cluster, indice nella catena, cluster); una
+    fat_read o fat_write piu' avanti nello stesso file riparte da li'.
+    fat_voce_scrivi, il montaggio e lo smontaggio lo dimenticano (g_fat_gen):
+    la catena cambia solo da li'. Prova: nomiprova su FAT32, 3 MB a pezzi da
+    4 KB riletti in avanti, all'indietro e a salti, fsck.fat pulito.
+    Restano: il percorso risolto a ogni chiamata, le letture di piu' settori
+    in un colpo, la cache da 24 settori, e tutta la parte ISO.
     DOVE: fs/fat.c fat_read 1364-1451 e fat_write 1964 (fat_stat/risolvi
     a ogni chiamata, poi "salti" cluster dall'inizio del file: leggere un
     file di N cluster a pezzi costa N * N / 2 letture della FAT); la cache

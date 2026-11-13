@@ -849,6 +849,13 @@ programma dall'altra parte non legge e l'ingresso (4 KB) e' pieno. Prima i byte
 in piu' sparivano in silenzio. Chi scrive deve tenere il resto e riprovare
 quando poll() dice POLLOUT, come fanno telnetd 0.014 e sshd 0.002.
 
+UN FILE CANCELLATO RICOMPARE DOPO UNO SPEGNIMENTO BRUSCO, su ext3 o ext4, dal
+kernel 0.333 (ext4.mod 0.006): la cancellazione va sul disco come le altre
+operazioni: alla chiusura di un file, con fsync(), o entro 5 secondi. Il
+file torna intero e con i suoi dati: i blocchi liberati non si danno a
+nessuno finche' la cancellazione non e' sul disco. Prima di staccare la
+corrente basta aspettare 5 secondi dopo l'ultima cancellazione.
+
 USCENDO DA ExWin LO SCHERMO RESTA FERMO sull'ultima immagine, con nv50.drv o
 nv40.drv che hanno cambiato il modo (GeForce 210 e simili): il sistema e' vivo
 (telnet risponde), ma fino al kernel 0.328 tornava al modo testo VGA, che quei

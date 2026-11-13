@@ -365,15 +365,24 @@ static int super_aggiorna(Ext2Mount *m)
 
 /* Primo bit a zero in b_bmp fra 0 e `limite`. `limite` e' esclusivo.
  * Ritorna l'indice, o `limite` se non ce ne sono. */
-static uint32_t primo_libero(uint32_t limite)
+/* `tr`: the blocks held by the journal in this group (giornale_trattenuti:
+ * freed by a transaction not yet committed), skipped as if in use; NULL =
+ * none, and for inodes. */
+#define LIBERO(i, tr) ((b_bmp[(i) / 8u] & (1u << ((i) % 8u))) == 0 && \
+                       ((tr) == NULL || ((tr)[(i) / 8u] & (1u << ((i) % 8u))) == 0))
+
+static uint32_t primo_libero(uint32_t limite, const uint8_t *tr)
 {
     uint32_t i;
 
     for (i = 0; i < limite; i++) {
         /* Un byte pieno si salta in blocco: su una bitmap da 8192 bit quasi
          * tutta occupata la differenza e' fra 8192 controlli e 1024. */
-        if ((i % 8u) == 0 && b_bmp[i / 8u] == 0xFF) { i += 7u; continue; }
-        if ((b_bmp[i / 8u] & (1u << (i % 8u))) == 0) return i;
+        if ((i % 8u) == 0 && (b_bmp[i / 8u] | (tr ? tr[i / 8u] : 0u)) == 0xFF) {
+            i += 7u;
+            continue;
+        }
+        if (LIBERO(i, tr)) return i;
     }
     return limite;
 }
@@ -391,6 +400,7 @@ static uint32_t primo_libero(uint32_t limite)
 static void prenota(Ext2Mount *m, uint32_t pref, uint32_t quanti)
 {
     uint32_t giro, g, off, dblk, bmp, lim, i, k;
+    const uint8_t *tr;
 
     g_pre_n = 0;
     if (quanti < 2u) return;
@@ -403,12 +413,12 @@ static void prenota(Ext2Mount *m, uint32_t pref, uint32_t quanti)
         if (desc_campo(m, b_desc + off, 12u, 0x2Cu) == 0) continue;
         if (bitmap_blocchi(m, g, b_bmp, &bmp) != 0) return;
 
+        tr  = giornale_trattenuti(m, g);
         lim = blocchi_nel_gruppo(m, g);
-        i   = primo_libero(lim);
+        i   = primo_libero(lim, tr);
         if (i >= lim) continue;
 
-        for (k = 0; k < quanti && i + k < lim &&
-                    (b_bmp[(i + k) / 8u] & (1u << ((i + k) % 8u))) == 0; k++)
+        for (k = 0; k < quanti && i + k < lim && LIBERO(i + k, tr); k++)
             b_bmp[(i + k) / 8u] |= (uint8_t)(1u << ((i + k) % 8u));
 
         if (scrivi_blocco(m, bmp, b_bmp) != 0) return;
@@ -476,6 +486,7 @@ void prenotazione_chiudi(void)
 static uint32_t alloca_blocco(Ext2Mount *m, uint32_t pref)
 {
     uint32_t giro, g, off, dblk, bmp, lim, i, n;
+    const uint8_t *tr;
 
     /* Uno dei prenotati: e' gia' segnato nella bitmap e contato. */
     if (g_pre_n > 0) {
@@ -498,13 +509,17 @@ static uint32_t alloca_blocco(Ext2Mount *m, uint32_t pref)
         if (desc_campo(m, b_desc + off, 12u, 0x2Cu) == 0) continue;     /* gruppo pieno */
         if (bitmap_blocchi(m, g, b_bmp, &bmp) != 0) return 0;
 
+        tr  = giornale_trattenuti(m, g);
         lim = blocchi_nel_gruppo(m, g);
-        i   = primo_libero(lim);
+        i   = primo_libero(lim, tr);
 
         /* Il descrittore diceva che c'era posto e la bitmap dice di no:
          * i due si contraddicono. Si crede alla BITMAP, che e' la verita'
          * — il contatore e' un riassunto — e si va avanti col gruppo dopo
-         * invece di consegnare un blocco che risulta gia' occupato. */
+         * invece di consegnare un blocco che risulta gia' occupato.
+         * Con dei blocchi trattenuti dal giornale non e' una contraddizione:
+         * i liberi del gruppo sono quelli, e aspettano il commit. */
+        if (i >= lim && tr != NULL) continue;
         if (i >= lim) {
             klog(LOG_WARN, "EXT2: gruppo %u: il contatore dice liberi, la "
                            "bitmap no. Ignorato.", g);
@@ -573,7 +588,7 @@ int libera_blocco(Ext2Mount *m, uint32_t n)
 
     if (n < m->primo_dato || n >= m->n_blocchi) return -1;
     est_dimentica_blocco(n);
-    giornale_liberato(m);
+    giornale_liberato(m, n);
 
     g = (n - m->primo_dato) / m->blocchi_per_gruppo;
     i = (n - m->primo_dato) % m->blocchi_per_gruppo;
@@ -628,7 +643,7 @@ static uint32_t alloca_inode(Ext2Mount *m, uint32_t pref, int is_dir)
         if (desc_campo(m, b_desc + off, 14u, 0x2Eu) == 0) continue;
         if (bitmap_inode(m, g, b_bmp, &bmp) != 0) return 0;
 
-        i = primo_libero(m->inode_per_gruppo);
+        i = primo_libero(m->inode_per_gruppo, NULL);
         if (i >= m->inode_per_gruppo) continue;
 
         n = g * m->inode_per_gruppo + i + 1u;    /* gli inode partono da 1 */

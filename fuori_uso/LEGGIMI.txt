@@ -1,0 +1,13 @@
+fuori_uso/ - codice tolto dal sistema ma tenuto da parte
+
+loader/dynlink.c, drvmgr.c, dynlink.h, drvmgr.h (tolti dal kernel il 13/11/2026,
+analisi_kernel voce 73). Erano il primo modo di caricare driver e librerie
+dentro il kernel (ET_DYN mappati in ring 0). Da luglio 2026 i driver partono
+con elf_load_residente e le librerie da kernel/loader/lib.c: questi due file
+si compilavano ancora ma nessuno li chiamava.
+
+NON RIMETTERLI NEL KERNEL COSI' COME SONO: non controllano nessuna misura del
+file ELF (p_vaddr + p_memsz, r_offset, indice dei simboli, st_name), e un
+file malfatto scriverebbe dove vuole nel kernel. drvmgr.c e' solo a 32 bit
+(e_machine 3, indirizzi fisici usati come puntatori). Non si compilano: il
+Makefile non li conosce piu'.

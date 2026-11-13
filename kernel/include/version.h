@@ -934,7 +934,15 @@
  * SHA-256 generator over the pool, RDRAND only reseeds it, no 32-byte cap
  * (67); a full pty input makes the master write short or EAGAIN instead of
  * eating the bytes, PTY_DIM 4096, POLLOUT only with room (53). */
-#define EXOS_VERSION    "0.332"
+/* 0.332 -> 0.333 (analisi_kernel voci 73, 56, 63, 74, 75, each step 1):
+ * dynlink.c and drvmgr.c, never called, out of the kernel (73); the ext2
+ * path cache is forgotten only by operations on names and mounts, an inode
+ * written makes a hit read the inode again instead of walking the path (56);
+ * the AHCI command wait yields to the other threads, with the disk lock held
+ * (63); ext4.mod 0.006 holds the blocks an unlink frees until the commit
+ * instead of committing at once (74); a FAT file read or written in pieces
+ * goes on from the last cluster reached (75). */
+#define EXOS_VERSION    "0.333"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

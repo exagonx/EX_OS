@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.332
+**Version:** 0.333
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -110,6 +110,27 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### Less useless disk work: ext2, the ext4 journal, AHCI and FAT (kernel 0.333, ext4.mod 0.006, analisi_kernel voci 56, 63, 73, 74, 75)
+
+- **ext2 no longer walks the path again at every read after a write** (voce 56): the path cache is
+  forgotten only when a name changes (create, mkdir, rmdir, unlink, rename, mount); when only an
+  inode changes, that inode is read again. **tested in QEMU**
+- **Deleting a file on ext3/ext4 no longer commits the journal at once** (voce 74, ext4.mod 0.006):
+  the freed blocks are held until the commit, so no new data can land in them first. A delete
+  reaches the disk like any other operation: at a file's close, with fsync, or within 5 seconds;
+  after a hard power-off the deleted file may come back, whole and with its own bytes. **tested
+  in QEMU** (stopped half-way)
+- **Waiting for an AHCI command lets the other programs run** (voce 63). **tested in QEMU, to be
+  tested on the laptop and the .247**
+- **A FAT file read or written in pieces goes on from the last cluster reached** (voce 75) instead
+  of walking its chain from the start: big copies from a USB key. **tested in QEMU**
+- `kernel/loader/dynlink.c` and `drvmgr.c`, never called, are in `fuori_uso/loader/` (voce 73).
+- MariaDB under load (QEMU with KVM, 1 processor, IDE disk, ext2): from 1952/1662/1624 to
+  1972/1811/1701 statements/s with 8/32/64 clients, but p95 with 32 and 64 clients went up (from
+  40 and 78 to 64 and 131 ms); one run only, `tools/stress/risultati/20261113-*`.
+- New tests: `tools/prova_nomi.sh` (`tools/prove/nomiprova.c`), case D of
+  `tools/prova_giornale_tempo.sh`.
 
 ### A paste into telnet or ssh is no longer cut, floppy files opened twice, a real random generator (kernel 0.332, telnetd 0.014, sshd 0.002, analisi_kernel voci 53, 55, 67, 70)
 

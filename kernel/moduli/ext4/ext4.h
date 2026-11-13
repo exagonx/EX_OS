@@ -75,7 +75,8 @@ void prenotazione_chiudi(void);
 int  giornale_monta  (int mnt);
 void giornale_smonta (int mnt);
 void giornale_tempo(int mnt);
-void giornale_liberato(Ext2Mount *m);
+void giornale_liberato(Ext2Mount *m, uint32_t n);
+const uint8_t *giornale_trattenuti(const Ext2Mount *m, uint32_t gr);
 int  giornale_commit (int mnt, int perche);   /* perche: 1 = sync, 0 = close */
 int  giornale_inizio (int mnt);
 int  giornale_fine   (int mnt, int subito);

@@ -5981,8 +5981,6 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/crypto/sha256.c \
                   $(KERNEL_DIR)/loader/elf.c \
                   $(KERNEL_DIR)/loader/lib.c \
-                  $(KERNEL_DIR)/loader/dynlink.c \
-                  $(KERNEL_DIR)/loader/drvmgr.c \
                   $(KERNEL_DIR)/loader/modulo.c \
                   $(KERNEL_DIR)/arch/x86/power.c \
                   $(KERNEL_DIR)/arch/x86/acpi.c \

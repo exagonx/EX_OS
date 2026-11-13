@@ -36,8 +36,6 @@
 #include "smp.h"
 #include "cfg.h"
 #include "elf.h"
-#include "drvmgr.h"
-#include "dynlink.h"
 #include "tty.h"
 #include "kbd_proto.h"
 #include "version.h"

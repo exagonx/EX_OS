@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.332
+**Versione:** 0.333
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -112,6 +112,27 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### Il disco con meno lavoro inutile: ext2, il giornale di ext4, AHCI e FAT (kernel 0.333, ext4.mod 0.006, analisi_kernel voci 56, 63, 73, 74, 75)
+
+- **ext2 non ripercorre piu' il percorso a ogni lettura dopo una scrittura** (voce 56): la cache
+  dei percorsi si svuota solo quando cambia un nome (create, mkdir, rmdir, unlink, rename,
+  montaggio); quando cambia solo un inode si rilegge quell'inode. **testato in QEMU**
+- **Cancellare un file su ext3/ext4 non chiude piu' subito la transazione** (voce 74, ext4.mod
+  0.006): i blocchi liberati restano trattenuti fino al commit, cosi' nessun dato nuovo ci finisce
+  dentro prima. Una cancellazione arriva al disco come le altre operazioni: alla chiusura di un
+  file, con fsync, o entro 5 secondi; dopo uno spegnimento brusco il file cancellato puo' tornare,
+  intero e con i suoi byte. **testato in QEMU** (spegnimento a meta')
+- **L'attesa di un comando AHCI lascia girare gli altri programmi** (voce 63). **testato in QEMU,
+  da testare sul portatile e sul .247**
+- **Un file FAT letto o scritto a pezzi riparte dall'ultimo cluster raggiunto** (voce 75), invece
+  di ripercorrere la catena dall'inizio: le copie grandi da una chiavetta. **testato in QEMU**
+- `kernel/loader/dynlink.c` e `drvmgr.c`, mai chiamati, sono in `fuori_uso/loader/` (voce 73).
+- MariaDB sotto carico (QEMU con KVM, 1 processore, disco IDE ext2): da 1952/1662/1624 a
+  1972/1811/1701 istruzioni/s con 8/32/64 client, ma il p95 con 32 e 64 client e' salito (da 40 e
+  78 a 64 e 131 ms); una corsa sola, `tools/stress/risultati/20261113-*`.
+- Prove nuove: `tools/prova_nomi.sh` (`tools/prove/nomiprova.c`), il caso D di
+  `tools/prova_giornale_tempo.sh`.
 
 ### Un incolla in telnet o ssh non si tronca piu', i file del floppy aperti due volte, un vero generatore di numeri casuali (kernel 0.332, telnetd 0.014, sshd 0.002, analisi_kernel voci 53, 55, 67, 70)
 

@@ -2,6 +2,39 @@
 
 QUEL CHE E' APERTO — 15 settembre 2026
 
+!!! IL 13 NOVEMBRE: LE PROVE DI CARICO DI MARIADB CON IL DISCO SU /home SI
+    FERMANO AL BOOTSTRAP: "ATA: timeout BSY sul canale 0 (stato=0xc0)" e
+    "ATA: DMA fermo a lba=2056 dopo 8000 ms", mariadbd non parte. Visto due
+    volte su due con la 0.332 e una con la 0.280 (tools/stress/risultati/
+    20261113-prova-0280-home), che a ottobre faceva le stesse prove senza
+    guasti: NON E' IL KERNEL. Con l'immagine su tmpfs (/tmp) tutto bene.
+    /home e' un RAID di dischi a piatti (MR SAS): QEMU resta in attesa
+    dell'host per piu' di 8 s su un'immagine da 2,1 GB appena fatta da
+    mke2fs. Per ora le misure si fanno con la cartella dei risultati in /tmp
+    e poi si copiano in tools/stress/risultati (senza lavoro/). ! Da capire
+    perche' l'host si ferma tanto: non misurato.
+
+!!! IL 13 NOVEMBRE: stat() DELLA LIBC SI INVENTA MODO E PADRONE. lib/libc.c
+    (la stat dopo stat_interno, riga ~11875): st_mode = S_IFREG|0644 (o
+    0755 per le directory, 0555 per i file in sola lettura), st_uid = st_gid
+    = 0, st_nlink = 1, qualunque cosa dica l'inode. Il kernel i permessi li
+    tiene (vfs_chmod guarda st.uid, ext2 li scrive): chmod 600 riesce e
+    stat dice ancora 644. Trovato da tools/prove/nomiprova.c, uguale con la
+    0.332. DA FARE: il kernel deve dare modo, uid, gid e link nella sua
+    stat, e la libc copiarli (ls -l, cp -p, tar, i server che controllano i
+    permessi dei loro file). Da chiedere all'utente prima: tocca l'ABI.
+
+!!! IL 13 NOVEMBRE: IL SYSROOT DELLA TOOLCHAIN INCROCIATA E' DEL 30 OTTOBRE.
+    cross_build/nasi5deb/exos-cross{,64}/*-exos/include/fcntl.h ha ancora
+    "#define O_EXCL 0": O_EXCL c'e' dal kernel 0.330 (voce 47, 0x80 in
+    lib/include/fcntl.h), ma SQLite, MariaDB, Firefox e tutto cio' che si
+    compila col cross-gcc non lo chiedono. tools/prova_sqlite_io.sh lo dice
+    ("[NO] O_EXCL: file esistente aperto lo stesso", uguale con 0.332 e
+    0.333). Rimedio: rifare header e libc.a/libc.so del sysroot a 32 e 64
+    bit (tools/gcc-exos/prepara-cross.sh fa la parte a 32: cp -rp
+    lib/include, libc.a) e poi ricollegare chi li usa. DA CHIEDERE
+    all'utente: cambia la toolchain di Firefox e di MariaDB.
+
 !!! IL 31 OTTOBRE: voci 51 e 52 FATTE. Il disco del portatile in sola lettura
     era ext4.mod 0.280 con kernel 0.291: stessi 40920 byte, il registro si
     fidava della dimensione (kernel 0.293, netupdate 0.038, install 0.011,

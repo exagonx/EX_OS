@@ -445,10 +445,47 @@ static uint32_t clus_lba(const FatMount *m, uint32_t clus)
  * informazione che non si e' in grado di interpretare, e non costa nulla
  * conservarli perche' per modificare la voce il settore va letto comunque.
  * ============================================================================= */
+/* =============================================================================
+ * ! A FILE READ IN PIECES WALKED ITS CHAIN FROM THE START EACH TIME (analisi
+ * voce 75, kernel 0.333): reading a file of N clusters 4 KB at a time cost
+ * N * N / 2 lookups in the FAT - the installation copying big files from a
+ * USB key. The last place reached is kept: the file (mount and first
+ * cluster), the index of the cluster in the chain and the cluster itself. A
+ * read or write further on starts from there. Any FAT entry written
+ * (fat_voce_scrivi), a mount or an unmount forgets it (g_fat_gen): a chain
+ * can only change through there, and two files never share a first cluster
+ * while both exist.
+ * ============================================================================= */
+static uint32_t g_fat_gen = 1;
+static struct { int mnt; uint32_t primo, indice, clus, gen; } g_fat_pos = { -1, 0, 0, 0, 0 };
+
+/* Where to start for cluster number `salti` of the chain from `primo`: the
+ * index returned, the cluster in *clus. */
+static uint32_t pos_parti(int mnt, uint32_t primo, uint32_t salti, uint32_t *clus)
+{
+    if (g_fat_pos.gen == g_fat_gen && g_fat_pos.mnt == mnt &&
+        g_fat_pos.primo == primo && g_fat_pos.indice <= salti) {
+        *clus = g_fat_pos.clus;
+        return g_fat_pos.indice;
+    }
+    *clus = primo;
+    return 0;
+}
+
+static void pos_ricorda(int mnt, uint32_t primo, uint32_t indice, uint32_t clus)
+{
+    g_fat_pos.mnt    = mnt;
+    g_fat_pos.primo  = primo;
+    g_fat_pos.indice = indice;
+    g_fat_pos.clus   = clus;
+    g_fat_pos.gen    = g_fat_gen;
+}
+
 static int fat_voce_scrivi(const FatMount *m, uint32_t clus, uint32_t val)
 {
     uint32_t off, copia;
 
+    g_fat_gen++;        /* see pos_parti */
     if (clus < 2 || clus >= m->n_cluster + 2) return -1;
 
     if (m->tipo == 12)      off = clus + (clus / 2);
@@ -700,6 +737,7 @@ int fat_mount(int blkdev)
     else if (m.n_cluster < 65525) m.tipo = 16;
     else                          m.tipo = 32;
 
+    g_fat_gen++;        /* a mount number used again: see pos_parti */
     m.usato        = 1;
     m.dev          = blkdev;
     m.byts_per_sec = bps;
@@ -778,6 +816,7 @@ int fat_umount(int mnt)
     if (mnt < 0 || mnt >= FAT_MAX_MOUNT || !g_mnt[mnt].usato) return -1;
     cache_invalida(g_mnt[mnt].dev);
     g_mnt[mnt].usato = 0;
+    g_fat_gen++;
     return 0;
 }
 
@@ -1383,11 +1422,11 @@ int fat_read(int mnt, const char *percorso, void *buf,
     if (size == 0) return 0;
 
     clus_byte = m->sec_per_clus * m->byts_per_sec;
-    clus      = e.primo_cluster;
     salti     = offset / clus_byte;
 
-    /* Salto fino al cluster che contiene l'offset richiesto. */
-    for (i = 0; i < salti; i++) {
+    /* Salto fino al cluster che contiene l'offset richiesto (da dove si era
+     * arrivati, se e' lo stesso file: pos_parti). */
+    for (i = pos_parti(mnt, e.primo_cluster, salti, &clus); i < salti; i++) {
         uint32_t p;
 
         if (clus < 2 || clus >= m->n_cluster + 2) return -1;
@@ -1443,11 +1482,13 @@ int fat_read(int mnt, const char *percorso, void *buf,
                     return -1;
                 }
                 clus = p;
+                salti++;
             }
             dentro = 0;
         }
     }
 
+    pos_ricorda(mnt, e.primo_cluster, salti, clus);
     return (int)letti;
 }
 
@@ -2003,9 +2044,8 @@ int fat_write(int mnt, const char *percorso, const void *buf,
     /* Scrivere oltre la fine lascia un buco: i cluster in mezzo esistono
      * ma contengono il loro contenuto precedente, cioe' dati di qualcun
      * altro. Vanno azzerati, non solo allocati. */
-    clus  = primo;
     salti = offset / clus_byte;
-    for (i = 0; i < salti; i++) {
+    for (i = pos_parti(mnt, primo, salti, &clus); i < salti; i++) {
         uint32_t p = fat_voce(m, clus);
 
         if (p == FAT_ERR || p == bad_clus(m->tipo)) goto fallito;
@@ -2064,6 +2104,7 @@ int fat_write(int mnt, const char *percorso, const void *buf,
                 if (size - scritti < clus_byte && clus_azzera(m, p) != 0) break;
             }
             clus = p;
+            salti++;
         }
         dentro = 0;
     }
@@ -2081,6 +2122,7 @@ int fat_write(int mnt, const char *percorso, const void *buf,
         v[11] |= FAT_ATTR_ARCHIVE;
     }
 
+    pos_ricorda(mnt, primo, salti, clus);
     return (int)scritti;
 
     /* ! NOT ANYBODY'S UNTIL THE ENTRY SAYS SO: a first cluster taken for an

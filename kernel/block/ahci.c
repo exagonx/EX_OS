@@ -45,6 +45,7 @@
 #include "ahci.h"
 #include "smp.h"
 #include "sched.h"      /* g_ticks: the second clock in the log */
+#include "ata.h"        /* ata_stato_lucchetto: see puo_cedere */
 
 /* Due pagine: 0x100 di registri generali piu' 0x80 per porta, fino a 32. */
 #define AHCI_VIRT           0x000DD000u
@@ -207,6 +208,32 @@ static int aspetta(volatile uint8_t *b, uint32_t off, uint32_t maschera,
     }
 }
 
+/* ! THE WAIT FOR A COMMAND SPUN WITH THE KERNEL IN HAND (analisi_kernel voce
+ * 63, kernel 0.333). From 0,1 ms on an SSD to 10 ms on a platter disk, and up
+ * to seconds for a FLUSH, the waiting thread read P_CI in a loop: nobody
+ * else ran on this processor, and with two the big kernel lock stayed held,
+ * so no other program could make a system call until the disk answered.
+ * Now after AHCI_GIRI_PRIMA_DI_CEDERE looks the thread yields, as ata_cedi
+ * does for IDE: the disk lock stays held, whoever wants the disk queues on
+ * it, sched_yield lets the lock go when there is no one else here. The
+ * deadline is the stopwatch's, which counts only the short steps between two
+ * looks (CRONO_PASSO_MAX), so time spent away does not make a timeout.
+ * ! Only with a process and IF on: at boot, or under a caller that turned
+ * the interrupts off, sched_yield (which turns them on) would be a bug. */
+#define AHCI_GIRI_PRIMA_DI_CEDERE 128u
+
+/* ! AND ONLY WITH THE DISK LOCK IN HAND: g_rimbalzo and slot 0 are one, and
+ * ata_prova_ahci (SYS ahci -t) comes here without it. */
+static int puo_cedere(void)
+{
+    Process *p = proc_get_current();
+    uint32_t chi, liv, att;
+
+    if (p == NULL || !(read_eflags() & 0x200u)) return 0;
+    ata_stato_lucchetto(&chi, &liv, &att);
+    return chi == p->pid && liv > 0;
+}
+
 /* -----------------------------------------------------------------------------
  * Un comando, sullo slot 0. Rende 0, o -1.
  * --------------------------------------------------------------------------- */
@@ -262,7 +289,9 @@ static int comando(AhciDisco *d, uint8_t cmd, uint64_t lba, uint32_t n,
 
     {
         Cronometro c;
-        uint32_t   t0 = g_ticks, cpu0 = cpu_n(), ms;
+        uint32_t   t0 = g_ticks, cpu0 = cpu_n(), ms, giri = 0;
+        /* see AHCI_GIRI_PRIMA_DI_CEDERE: a process holding the disk lock, IF on */
+        int        cede = puo_cedere();
 
         crono_via(&c);
         for (;;) {
@@ -293,6 +322,7 @@ static int comando(AhciDisco *d, uint8_t cmd, uint64_t lba, uint32_t n,
                 return -1;
             }
             __asm__ volatile ("pause");
+            if (cede && ++giri >= AHCI_GIRI_PRIMA_DI_CEDERE) sched_yield();
         }
         /* Voce 58: how long the disk really takes, under load, on the real
          * machine. The tick count tells a slow disk from a busy processor. */

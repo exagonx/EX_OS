@@ -216,7 +216,12 @@ static int leggi_corsa(Ext2Mount *m, uint32_t n, uint32_t quanti, void *dst)
     return 0;
 }
 
-static uint32_t g_ris_gen = 0;      /* see risolvi: any change of metadata */
+/* See risolvi: g_ris_gen moves when a name may have changed (inside a
+ * create/mkdir/rmdir/unlink/rename, a mount), g_ino_gen at every metadata
+ * block written (an inode's size, times, pointers). */
+static uint32_t g_ris_gen = 0;
+static uint32_t g_ino_gen = 0;
+static int      g_nomi    = 0;      /* >0: inside an operation on names */
 
 static int scrivi_blocco(Ext2Mount *m, uint32_t n, const void *src)
 {
@@ -232,7 +237,8 @@ static int scrivi_blocco(Ext2Mount *m, uint32_t n, const void *src)
      * il file finisce a puntare ai blocchi che aveva prima. */
     if (g_ind_num == n && !g_ind_sporco) g_ind_mnt = -1;
 
-    g_ris_gen++;        /* see risolvi */
+    g_ino_gen++;        /* see risolvi */
+    if (g_nomi > 0) g_ris_gen++;
 
     /* ext3: a metadata block goes into the open transaction, and reaches
      * its place on the disk only after the commit (see Ext2Ops). */
@@ -274,7 +280,8 @@ static int ind_riversa(Ext2Mount *m)
 {
     if (!g_ind_sporco) return 0;
     g_ind_sporco = 0;
-    g_ris_gen++;
+    g_ino_gen++;
+    if (g_nomi > 0) g_ris_gen++;
     if (g_ind_mnt < 0) return -1;       /* non deve succedere: lo sporco e' sempre in cache */
     if (g_ops != NULL && g_ops->giornale_scrivi != NULL) {
         int r = g_ops->giornale_scrivi(m, g_ind_num, b_ind);
@@ -565,18 +572,29 @@ static uint32_t risolvi_dal_disco(Ext2Mount *m, int mnt, const char *percorso,
  * out of the sector cache, 512 KB for each 4 KB of file, and came to 9 MB/s
  * with not one command to the disk.
  *
- * So the last paths found are kept with their inode, and any change of
- * metadata on any volume forgets them all: every such change goes through
- * scrivi_blocco or ind_riversa, and a mount through ext2_mount_come
- * (g_ris_gen). Failures are not kept. Under the VFS lock, like b_desc and the
- * other buffers of this file.
+ * So the last paths found are kept with their inode. Failures are not kept.
+ * Under the VFS lock, like b_desc and the other buffers of this file.
+ *
+ * ! UNTIL 0.333 ANY METADATA BLOCK WRITTEN FORGOT THEM ALL (analisi_kernel
+ * voce 56): MariaDB writing a table rewrote the inode (size, mtime) and the
+ * bitmaps at every write(), so every read() and write() after walked the
+ * path from the root again. Now two counters:
+ *   g_ris_gen  the NAME -> inode number: moves only inside an operation on
+ *              names (VIA_NOMI: create, mkdir, rmdir, unlink, rename - at
+ *              every block they write, as before, and before and after) and
+ *              at a mount. Nothing else changes a directory: write() and
+ *              truncate() of a directory are refused by the VFS.
+ *   g_ino_gen  the inode's 128 bytes: moves at every metadata block written
+ *              (scrivi_blocco, ind_riversa). A hit with an old g_ino_gen keeps
+ *              the number and reads the inode again: two blocks from the
+ *              sector cache instead of the whole path.
  * ============================================================================= */
 #define RIS_VOCI  16u
 #define RIS_NOME  116u
 
 typedef struct {
     int      mnt;
-    uint32_t gen, ino;
+    uint32_t gen, igen, ino;
     uint8_t  inode[128];
     char     nome[RIS_NOME];
 } VoceRisolvi;
@@ -599,6 +617,10 @@ static uint32_t risolvi(Ext2Mount *m, int mnt, const char *percorso, uint8_t *ou
         if (v->ino == 0 || v->gen != g_ris_gen || v->mnt != mnt) continue;
         for (k = 0; k <= lung && v->nome[k] == percorso[k]; k++) {}
         if (k <= lung) continue;
+        if (v->igen != g_ino_gen) {
+            if (leggi_inode(m, v->ino, v->inode) != 0) { v->ino = 0; break; }
+            v->igen = g_ino_gen;
+        }
         for (k = 0; k < 128u; k++) out[k] = v->inode[k];
         return v->ino;
     }
@@ -610,6 +632,7 @@ static uint32_t risolvi(Ext2Mount *m, int mnt, const char *percorso, uint8_t *ou
         g_ris_prossima = (g_ris_prossima + 1u) % RIS_VOCI;
         v->mnt = mnt;
         v->gen = g_ris_gen;
+        v->igen = g_ino_gen;
         v->ino = ino;
         for (k = 0; k < 128u; k++) v->inode[k] = out[k];
         for (k = 0; k <= lung; k++) v->nome[k] = percorso[k];
@@ -629,6 +652,21 @@ static uint32_t risolvi(Ext2Mount *m, int mnt, const char *percorso, uint8_t *ou
  *   the module's monta() says no  EXT2_RO_GIORNALE - a journal it could not
  *                                 replay, a check that failed
  * ============================================================================= */
+/* The module's monta() may replay a journal over directories already
+ * resolved (valuta runs again when the module registers): an operation on
+ * names for risolvi. */
+static int monta_modulo(int mnt)
+{
+    int r;
+
+    g_nomi++;
+    g_ris_gen++;
+    r = g_ops->monta(mnt);
+    g_ris_gen++;
+    g_nomi--;
+    return r;
+}
+
 static void valuta(int mnt)
 {
     Ext2Mount *m  = &g_mnt[mnt];
@@ -645,7 +683,7 @@ static void valuta(int mnt)
                        "ro_compat 0x%x): READ-ONLY", g_ops->nome,
              m->compat & ~g_ops->compat, m->incompat & ~g_ops->incompat,
              m->ro_compat & ~g_ops->ro_compat);
-    } else if (g_ops->monta != NULL && g_ops->monta(mnt) != 0) {
+    } else if (g_ops->monta != NULL && monta_modulo(mnt) != 0) {
         ro = EXT2_RO_GIORNALE;
         klog(LOG_WARN, "EXT2: %s refused to write volume '%s': READ-ONLY",
              g_ops->nome, m->etichetta);
@@ -701,6 +739,7 @@ int ext2_mount(int blkdev)
 int ext2_mount_come(int blkdev, int ro_chiesto)
 {
     g_ris_gen++;        /* a mount number is used again: see risolvi */
+    g_ino_gen++;
 
     Ext2Mount *m = NULL;
     uint8_t    sb[1024];
@@ -1182,8 +1221,19 @@ static uint32_t unix_ora_corrente(void)
 #define VIA_MODULO(chiamata) \
     do { if (prendi_scrivibile(mnt) == NULL) return -1; return g_ops->chiamata; } while (0)
 
+/* An operation on names: see risolvi (g_ris_gen). */
+static int nomi_fine(int r)
+{
+    g_ris_gen++;
+    g_nomi--;
+    return r;
+}
+#define VIA_NOMI(chiamata) \
+    do { if (prendi_scrivibile(mnt) == NULL) return -1; \
+         g_nomi++; g_ris_gen++; return nomi_fine(g_ops->chiamata); } while (0)
+
 int ext2_create(int mnt, const char *p, uint32_t uid, uint32_t gid)
-{ VIA_MODULO(create(mnt, p, uid, gid)); }
+{ VIA_NOMI(create(mnt, p, uid, gid)); }
 
 int ext2_chown(int mnt, const char *p, uint32_t uid, uint32_t gid)
 { VIA_MODULO(chown(mnt, p, uid, gid)); }
@@ -1192,16 +1242,16 @@ int ext2_chmod(int mnt, const char *p, uint32_t modo)
 { VIA_MODULO(chmod(mnt, p, modo)); }
 
 int ext2_mkdir(int mnt, const char *p, uint32_t uid, uint32_t gid)
-{ VIA_MODULO(mkdir(mnt, p, uid, gid)); }
+{ VIA_NOMI(mkdir(mnt, p, uid, gid)); }
 
 int ext2_rmdir(int mnt, const char *p)
-{ VIA_MODULO(rmdir(mnt, p)); }
+{ VIA_NOMI(rmdir(mnt, p)); }
 
 int ext2_unlink(int mnt, const char *p)
-{ VIA_MODULO(unlink(mnt, p)); }
+{ VIA_NOMI(unlink(mnt, p)); }
 
 int ext2_rename(int mnt, const char *da, const char *a)
-{ VIA_MODULO(rename(mnt, da, a)); }
+{ VIA_NOMI(rename(mnt, da, a)); }
 
 int ext2_write(int mnt, const char *p, const void *buf, uint32_t size, uint32_t offset)
 { VIA_MODULO(write(mnt, p, buf, size, offset)); }
@@ -1210,6 +1260,7 @@ int ext2_truncate(int mnt, const char *p, uint32_t nuova_dim)
 { VIA_MODULO(truncate(mnt, p, nuova_dim)); }
 
 #undef VIA_MODULO
+#undef VIA_NOMI
 
 int ext2_sync(int mnt)
 {

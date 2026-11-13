@@ -13,6 +13,9 @@
  * the kernel is the one it was built for, and what it can write.
  *
  *     EXT4MOD_VERSIONE 0.004 (+0.001 a ogni modifica)
+ *     0.006: unlink, rmdir and truncate no longer commit the journal: the
+ *            blocks they free are held until the commit (giornale.c,
+ *            TRATTENUTI; analisi_kernel voce 74 step 1).
  *     0.004: ext4 - extents (estesi.c), metadata_csum and uninit_bg
  *            (somme.c), 64-byte descriptors, flex_bg, groups never
  *            initialised, extra_isize, dir_nlink, the journal's CSUM_V3;
@@ -27,7 +30,7 @@
 
 #include "ext4.h"
 
-#define EXT4MOD_VERSIONE "0.005"
+#define EXT4MOD_VERSIONE "0.006"
 
 const ModuloKernel    *MK = NULL;
 const Ext2Interfaccia *K  = NULL;
@@ -111,9 +114,9 @@ static void chiudi(int mnt)
 /* Every operation but write() starts by giving back the blocks set aside
  * for an append: alloca_blocco would hand them to a directory, or truncate
  * would cut a file whose next blocks are still marked as its own.
- * ! ON ext3 EACH ONE IS A TRANSACTION, committed before it returns: an
- * operation that frees blocks must be on the disk before anything can
- * write data into them (see giornale.c). write() alone leaves it open. */
+ * On ext3 the transaction stays open (committed at a close, an fsync, when
+ * half full, after 5 seconds); the blocks an operation frees are held until
+ * then, so no data can be written into them first (see giornale.c). */
 #define OPERAZIONE(mnt, chiamata)                                   \
     do {                                                            \
         int r_;                                                     \

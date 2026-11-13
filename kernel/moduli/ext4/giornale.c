@@ -50,11 +50,17 @@
  * disk. A crash now loses up to 5 seconds of operations nobody fsynced, as on
  * Linux, and the volume stays consistent.
  *
- * ! EXCEPT WHAT FREES BLOCKS, which still commits at once (g->liberati, set by
- * libera_blocco). File data go straight to the disk: a block freed in a
- * transaction still open could take a new file's data, and after a crash the
- * old file would be back, unlinked by nobody, with the new file's data inside.
- * Blocks given back from a reservation held no data and do not count.
+ * ! WHAT FREES BLOCKS COMMITTED AT ONCE until ext4.mod 0.005 (analisi_kernel voce 74).
+ * File data go straight to the disk: a block freed in a transaction still
+ * open could take a new file's data, and after a crash the old file would be
+ * back, unlinked by nobody, with the new file's data inside. So every unlink,
+ * rmdir and truncate cost a commit, three FLUSH CACHE. Now such a block is
+ * HELD (TRATTENUTI below): free in the bitmap, counted among the free, but
+ * the allocator does not hand it out until the transaction that freed it is
+ * committed - what jbd2 does with b_committed_data. Only if the memory for
+ * the held blocks cannot be had does the operation commit at once, as
+ * before (g->liberati). Blocks given back from a reservation held no data
+ * and do not count.
  *
  * ! EVERY TRANSACTION STARTS AT s_first. The journal is emptied at every
  * checkpoint, so only the LAST committed transaction can ever be replayed
@@ -98,6 +104,7 @@
 #define GIO_RISERVA         32u         /* free slots an operation starts with */
 #define GIO_SECONDI         5u          /* an open transaction commits after this */
 #define GIO_REVOCHE         512u        /* revoke records a replay can hold */
+#define GIO_MARGINE         4096u       /* free blocks not held: below, commit first */
 
 #define SB_JOURNAL_INUM     0xE0u
 #define SB_JOURNAL_DEV      0xE4u
@@ -129,7 +136,13 @@ typedef struct {
     uint32_t  conti[4];                 /* commits: see CONTO_* */
     uint32_t  blocchi;                  /* metadata blocks committed */
     uint32_t  commit_fatti;
-    int       liberati;                 /* the open transaction freed blocks */
+    int       liberati;                 /* freed blocks not held: commit at once */
+
+    /* TRATTENUTI: the blocks freed by the open transaction, one bitmap per
+     * group touched (bit set = held). Emptied by a commit. */
+    uint32_t  n_tr, max_tr, tot_tr;
+    uint32_t *tr_gruppo;                /* [max_tr] which group... */
+    uint8_t **tr_bit;                   /* [max_tr] ...and its bitmap of held */
 } Giornale;
 
 /* Why a transaction was committed, said in the log at unmount: the first
@@ -476,9 +489,23 @@ static void contatori_rileggi(Ext2Mount *m)
     m->inode_liberi   = le32(sb + 16);
 }
 
+/* The held blocks become free for everyone: their transaction is on the
+ * disk (or the journal goes away). */
+static void trattenuti_via(Giornale *g)
+{
+    uint32_t i;
+
+    for (i = 0; i < g->n_tr; i++) MK->kfree(g->tr_bit[i]);
+    g->n_tr   = 0;
+    g->tot_tr = 0;
+}
+
 static void libera(Giornale *g)
 {
     if (g == NULL) return;
+    trattenuti_via(g);
+    if (g->tr_gruppo) MK->kfree(g->tr_gruppo);
+    if (g->tr_bit)    MK->kfree(g->tr_bit);
     if (g->slot_blk)  MK->kfree(g->slot_blk);
     if (g->slot_dati) MK->kfree(g->slot_dati);
     if (g->jsb)       MK->kfree(g->jsb);
@@ -728,8 +755,10 @@ static int commit(Ext2Mount *m, Giornale *g)
             goto guasto;
     if (blk_flush(m->blkdev) != 0) goto guasto;
 
-    /* 6. the journal is empty again (carried to the disk by the next flush) */
+    /* 6. the journal is empty again (carried to the disk by the next flush),
+     * and what it freed can be handed out */
     g->liberati = 0;
+    trattenuti_via(g);
     g->seq = S + 1u;
     pbe32(g->jsb + 0x18, g->seq);
     pbe32(g->jsb + 0x1C, 0);
@@ -767,11 +796,18 @@ int giornale_inizio(int mnt)
         g->conti[CONTO_PIENA]++;
         return commit(&K->mnt[mnt], g);
     }
+    /* the space a write may need is held: give it back before, not in the
+     * middle of the operation (a commit there would split it) */
+    if (g->tot_tr > 0 && K->mnt[mnt].blocchi_liberi < g->tot_tr + GIO_MARGINE) {
+        g->conti[CONTO_PIENA]++;
+        return commit(&K->mnt[mnt], g);
+    }
     return 0;
 }
 
-/* After an operation: `subito` for everything but write(), which commits at
- * once only if the operation freed blocks. */
+/* After an operation: commits when the transaction is half full or 5 seconds
+ * old, or at once if the operation freed blocks it could not hold (no
+ * memory: see TRATTENUTI). `subito` is no longer used. */
 int giornale_fine(int mnt, int subito)
 {
     Giornale *g = (mnt >= 0 && mnt < EXT2_MAX_MOUNT) ? g_gio[mnt] : NULL;
@@ -797,12 +833,82 @@ void giornale_tempo(int mnt)
     giornale_fine(mnt, 0);
 }
 
-/* Blocks were freed: see OGNI OPERAZIONE at the head of the file. */
-void giornale_liberato(Ext2Mount *m)
+/* The bitmap of held blocks of group `gr`, or NULL: none (or no journal). */
+static uint8_t *tr_di(const Giornale *g, uint32_t gr)
+{
+    uint32_t i;
+
+    for (i = 0; i < g->n_tr; i++)
+        if (g->tr_gruppo[i] == gr) return g->tr_bit[i];
+    return NULL;
+}
+
+/* A group's bitmap of held blocks, made if missing. NULL: no memory. */
+static uint8_t *tr_nuovo(Ext2Mount *m, Giornale *g, uint32_t gr)
+{
+    uint8_t *b = tr_di(g, gr);
+
+    if (b != NULL) return b;
+    if (g->n_tr == g->max_tr) {
+        uint32_t  nuovo = g->max_tr ? g->max_tr * 2u : 8u, i;
+        uint32_t *ng = (uint32_t *)MK->kmalloc(nuovo * sizeof(uint32_t));
+        uint8_t **nb = (uint8_t **)MK->kmalloc(nuovo * sizeof(uint8_t *));
+
+        if (ng == NULL || nb == NULL) {
+            if (ng) MK->kfree(ng);
+            if (nb) MK->kfree(nb);
+            return NULL;
+        }
+        for (i = 0; i < g->n_tr; i++) { ng[i] = g->tr_gruppo[i]; nb[i] = g->tr_bit[i]; }
+        if (g->tr_gruppo) MK->kfree(g->tr_gruppo);
+        if (g->tr_bit)    MK->kfree(g->tr_bit);
+        g->tr_gruppo = ng;
+        g->tr_bit    = nb;
+        g->max_tr    = nuovo;
+    }
+    /* blocchi_per_gruppo <= 8 * dim_blocco: one block of bits is enough */
+    b = (uint8_t *)MK->kmalloc(m->dim_blocco);
+    if (b == NULL) return NULL;
+    memset(b, 0, m->dim_blocco);
+    g->tr_gruppo[g->n_tr] = gr;
+    g->tr_bit[g->n_tr]    = b;
+    g->n_tr++;
+    return b;
+}
+
+/* Block n was freed: held until the commit, see OGNI OPERAZIONE at the head
+ * of the file. Without memory for it, the operation commits at once. */
+void giornale_liberato(Ext2Mount *m, uint32_t n)
 {
     Giornale *g = di(m);
+    uint32_t  gr, i;
+    uint8_t  *b;
 
-    if (g != NULL) g->liberati = 1;
+    if (g == NULL) return;
+    if (n < m->primo_dato || m->blocchi_per_gruppo == 0) { g->liberati = 1; return; }
+    gr = (n - m->primo_dato) / m->blocchi_per_gruppo;
+    i  = (n - m->primo_dato) % m->blocchi_per_gruppo;
+    b  = tr_nuovo(m, g, gr);
+    if (b == NULL) {
+        if (!g->liberati)
+            klog(LOG_WARN, "ext3: '%s': no memory to hold the freed blocks: "
+                           "committing at once", m->etichetta);
+        g->liberati = 1;
+        return;
+    }
+    if (!(b[i / 8u] & (1u << (i % 8u)))) {
+        b[i / 8u] |= (uint8_t)(1u << (i % 8u));
+        g->tot_tr++;
+    }
+}
+
+/* For the allocator: the blocks of group gr it must not hand out yet (bit
+ * set), or NULL. */
+const uint8_t *giornale_trattenuti(const Ext2Mount *m, uint32_t gr)
+{
+    const Giornale *g = di(m);
+
+    return (g != NULL) ? tr_di(g, gr) : NULL;
 }
 
 /* Unmount: the last transaction, then needs_recovery off. */
