@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.333
+**Version:** 0.338
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -110,6 +110,38 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### Sleeps that last what they ask, a timer that looks only when needed, processes found by PID at once, CDs read three times faster, a program that exits while its threads read no longer stops the files (kernel 0.334-0.338, analisi_kernel voci 6, 21, 22, 24, 27, 28, 75)
+
+- **A process is found by its PID without scanning the table, and a thread waiting on a mutex is
+  woken without scanning it either** (voce 22, kernel 0.334): a PID -> slot table and a hash of
+  the waits by (process, address), both as wide as the process table. MariaDB under load (KVM,
+  1 processor): from 1854/1743/1651 to 1935/1813/1665 statements/s with 8/32/64 clients.
+  **tested in QEMU**
+- **The timer scans the process table only when the nearest deadline has come** (voce 21, kernel
+  0.335) instead of at every tick. With MariaDB (few processes) it changes nothing: 0.334
+  1992/1825/1703, 0.335 1974/1784/1695 statements/s, run one after the other. **tested in QEMU**
+- **sleep, usleep and nanosleep last at least the time asked** (voce 27, kernel 0.336): a 10 ms
+  sleep asked just before the beat came back almost at once, and `sleep(1)` could last 990 ms.
+  Waits shorter than 10 ms still last 10-20 ms (the 100 Hz beat). **tested in QEMU**
+- **Files on a CD are read three times faster** (voce 75, the ISO part, kernel 0.337): a path is
+  resolved once until the next mount, and whole blocks go straight into the program's buffer, up
+  to 128 KB in one command. An 8 MB file in 64 KB pieces: from 4.4 to 13.3 MB/s (QEMU with KVM).
+  **tested in QEMU** (also gcc from the tools CD)
+- **A program that exits while its threads are inside the kernel no longer leaves the files
+  stuck** (voce 6, kernel 0.338): the threads are no longer stopped where they are, holding a lock;
+  each one ends by itself on its way out of the kernel, and the main thread waits for them (2
+  seconds at most). And the file lock goes to the first in line instead of a race (voce 28): with
+  one processor the thread that let it go always took it back, and the others waited for minutes.
+  **tested in QEMU** (`tools/prova_filimorti.sh`, 200 times, 1 and 2 processors)
+- Tried and taken out: a message to an idle processor when a thread becomes ready (voce 24). A
+  woken thread was taken in microseconds instead of 10 ms (`tools/prova_palla.sh`: from 117 to
+  47729 rounds a second), but MariaDB with 2 processors went worse (1641 -> 1349 statements/s with
+  64 clients) because both processors fight over the single kernel lock. It waits in
+  `fuori_uso/voce24-ipi.patch` for voce 30.
+- New tests: `tools/prova_sonno.sh` (`tools/prove/sonnoprova.c`), `tools/prova_iso_letture.sh`
+  (`tools/prove/isoletture.c`), `tools/prova_filimorti.sh` (`tools/prove/filimorti.c`), `tools/prova_palla.sh`
+  (`tools/prove/pallaprova.c`, fails on purpose without the voce 24 patch).
 
 ### Less useless disk work: ext2, the ext4 journal, AHCI and FAT (kernel 0.333, ext4.mod 0.006, analisi_kernel voci 56, 63, 73, 74, 75)
 

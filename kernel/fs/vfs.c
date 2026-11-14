@@ -374,6 +374,16 @@ static const char *g_fs_chi = "?";
 static uint32_t *g_fs_attesa;
 static uint32_t g_fs_n_attesa = 0;
 
+/* ! THE LOCK IS HANDED TO THE FIRST IN LINE (analisi_kernel voce 28, 0.338),
+ * not raced for. With "wake all, the first to arrive takes it" the one who
+ * let it go was always first: back from read() it called read() again
+ * before any of the woken ones ran. Eight threads reading one file, with one
+ * processor: one did all the work, the seven others and the main thread ran
+ * microseconds each, found it taken, slept again, and the main thread never
+ * managed to exit (tools/prova_filimorti.sh). g_fs_passato is the pid the
+ * lock was handed to; g_fs_detentore says it is his already. */
+static uint32_t g_fs_passato = 0;
+
 uint32_t vfs_stato_lucchetto(void) { return g_fs_detentore; }
 
 static void fs_prendi_n(const char *chi)
@@ -391,8 +401,16 @@ static void fs_prendi_n(const char *chi)
     for (;;) {
         interrupts_disable();
 
-        if (g_fs_detentore == 0) {
+        if (g_fs_detentore == 0 ||
+            (g_fs_passato == io && g_fs_detentore == io && p != NULL)) {
+            uint32_t k, j = 0;
+
+            /* out of the line, if it was in (woken by something else) */
+            for (k = 0; g_fs_attesa != NULL && k < g_fs_n_attesa; k++)
+                if (g_fs_attesa[k] != io) g_fs_attesa[j++] = g_fs_attesa[k];
+            if (g_fs_attesa != NULL) g_fs_n_attesa = j;
             g_fs_detentore = io;
+            g_fs_passato   = 0;
             g_fs_chi       = chi;
             if (fl_if & 0x200u) interrupts_enable();
             return;
@@ -415,6 +433,7 @@ static void fs_prendi_n(const char *chi)
                 const char *cosa = g_fs_chi;
 
                 g_fs_detentore = 0;
+                g_fs_passato   = 0;
                 if (fl_if & 0x200u) interrupts_enable();
                 klog(LOG_ERROR, "VFS: file lock held by dead pid %u (%s): taken over",
                      morto, cosa);
@@ -438,8 +457,13 @@ static void fs_prendi_n(const char *chi)
          * risveglio: e' la stessa precauzione contro il "lost wakeup"
          * documentata in drivers/tty/tty.c — registrarsi e bloccarsi
          * devono essere indivisibili rispetto a chi rilascia. */
+        /* once: a spurious wake (Ctrl+C, voce 6) must not put it in line
+         * twice, or the lock would later be handed to one not asking */
         if (g_fs_attesa != NULL && g_fs_n_attesa < g_proc_max) {
-            g_fs_attesa[g_fs_n_attesa++] = io;
+            uint32_t k;
+
+            for (k = 0; k < g_fs_n_attesa && g_fs_attesa[k] != io; k++) { }
+            if (k == g_fs_n_attesa) g_fs_attesa[g_fs_n_attesa++] = io;
         }
         sched_block(PROC_BLOCKED);
     }
@@ -453,14 +477,29 @@ static void fs_rilascia(void)
     interrupts_disable();
 
     g_fs_detentore = 0;
+    g_fs_passato   = 0;
     g_fs_chi       = "?";
 
-    /* Si sveglia chi aspetta e si rifa' la gara: chi arriva primo prende.
-     * Nessuna coda di precedenza — le operazioni durano quanto un accesso
-     * al disco e nessuno resta indietro a lungo. */
+    /* To the first in line who is still alive, and only him (see
+     * g_fs_passato). One that died waiting is skipped. */
     n = g_fs_n_attesa;
-    g_fs_n_attesa = 0;
-    for (i = 0; i < n; i++) sched_unblock_locked(g_fs_attesa[i]);
+    for (i = 0; i < n; i++) {
+        Process *w = proc_get_by_pid(g_fs_attesa[i]);
+
+        if (w != NULL && w->state != PROC_ZOMBIE) break;
+    }
+    if (i < n) {
+        uint32_t chi_e = g_fs_attesa[i], k;
+
+        for (k = i + 1; k < n; k++) g_fs_attesa[k - i - 1] = g_fs_attesa[k];
+        g_fs_n_attesa  = n - i - 1;
+        g_fs_detentore = chi_e;
+        g_fs_passato   = chi_e;
+        g_fs_chi       = "(passato)";
+        sched_unblock_locked(chi_e);
+    } else {
+        g_fs_n_attesa = 0;
+    }
 
     if (fl_if & 0x200u) interrupts_enable();
 }

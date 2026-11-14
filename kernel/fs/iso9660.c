@@ -64,6 +64,7 @@
 
 #define ISO_BLOCCO          2048u
 #define ISO_SETT_PER_BLOCCO (ISO_BLOCCO / 512u)
+#define ISO_CORSA_MAX       64u     /* blocks in one read: 128 KB */
 
 /* Il primo descrittore di volume sta al blocco 16: i primi 16 (32 KB)
  * sono l'area di sistema, che ISO 9660 non guarda affatto — e' li' che i
@@ -388,6 +389,63 @@ static int risolvi(IsoMount *m, const char *percorso, IsoDirEntry *out)
     return 1;
 }
 
+/* The resolved paths (analisi_kernel voce 75): an ISO never changes while
+ * mounted, so a path seen once is the same entry until the next mount or
+ * umount (g_iso_gen). Without this every read() walked the directories from
+ * the root again. Few entries, round robin: the files being read now. */
+#define ISO_RICORDA      16u
+#define ISO_RICORDA_LUNG 192u
+
+typedef struct {
+    uint32_t    gen;            /* 0 = empty */
+    int         mnt;
+    char        percorso[ISO_RICORDA_LUNG];
+    IsoDirEntry voce;
+} IsoRicordo;
+
+static IsoRicordo g_ricordi[ISO_RICORDA];
+static uint32_t   g_ricordo_prossimo;
+static uint32_t   g_iso_gen = 1;
+
+static int stessa_stringa(const char *a, const char *b)
+{
+    while (*a && *a == *b) { a++; b++; }
+    return *a == *b;
+}
+
+static int risolvi_ricordando(IsoMount *m, const char *percorso, IsoDirEntry *out)
+{
+    int      mnt = (int)(m - g_mnt);
+    uint32_t i, n = 0;
+    int      r;
+
+    if (percorso == NULL) return 0;
+    while (percorso[n] != '\0' && n < ISO_RICORDA_LUNG) n++;
+
+    if (n < ISO_RICORDA_LUNG) {
+        for (i = 0; i < ISO_RICORDA; i++) {
+            IsoRicordo *c = &g_ricordi[i];
+
+            if (c->gen == g_iso_gen && c->mnt == mnt &&
+                stessa_stringa(c->percorso, percorso)) {
+                *out = c->voce;
+                return 1;
+            }
+        }
+    }
+
+    r = risolvi(m, percorso, out);
+    if (r == 1 && n < ISO_RICORDA_LUNG) {
+        IsoRicordo *c = &g_ricordi[g_ricordo_prossimo++ % ISO_RICORDA];
+
+        for (i = 0; i <= n; i++) c->percorso[i] = percorso[i];
+        c->mnt  = mnt;
+        c->voce = *out;
+        c->gen  = g_iso_gen;
+    }
+    return r;
+}
+
 /* =============================================================================
  * Montaggio
  * ============================================================================= */
@@ -510,6 +568,7 @@ int iso_mount(int blkdev)
     }
 
     m->usato = 1;
+    g_iso_gen++;                /* the remembered paths of the old volume */
 
     klog(LOG_INFO, "ISO: volume '%s' montato (%u blocchi, nomi %s)",
          m->etichetta, m->volume_blocchi, m->joliet ? "Joliet" : "ISO 9660");
@@ -523,6 +582,7 @@ int iso_umount(int mnt)
 
     if (m == NULL) return -1;
     m->usato = 0;
+    g_iso_gen++;
     return 0;
 }
 
@@ -552,7 +612,7 @@ int iso_stat(int mnt, const char *percorso, IsoDirEntry *out)
     IsoMount *m = prendi(mnt);
 
     if (m == NULL || out == NULL) return -1;
-    return (risolvi(m, percorso, out) == 1) ? 0 : -1;
+    return (risolvi_ricordando(m, percorso, out) == 1) ? 0 : -1;
 }
 
 int iso_readdir(int mnt, const char *percorso, IsoDirEntry *out,
@@ -563,7 +623,7 @@ int iso_readdir(int mnt, const char *percorso, IsoDirEntry *out,
 
     if (m == NULL || out == NULL || max == 0) return -1;
 
-    if (risolvi(m, percorso, &voce) != 1) return -1;
+    if (risolvi_ricordando(m, percorso, &voce) != 1) return -1;
     if (!voce.is_dir) return -1;
 
     return dir_scorri(m, voce.extent, voce.dimensione, NULL, out, max, start);
@@ -578,7 +638,7 @@ int iso_read(int mnt, const char *percorso, void *buf,
     uint32_t    fatti = 0;
 
     if (m == NULL || buf == NULL) return -1;
-    if (risolvi(m, percorso, &voce) != 1) return -1;
+    if (risolvi_ricordando(m, percorso, &voce) != 1) return -1;
     if (voce.is_dir) return -1;
 
     if (offset >= voce.dimensione) return 0;
@@ -593,6 +653,24 @@ int iso_read(int mnt, const char *percorso, void *buf,
         uint32_t k;
 
         if (quanti > size - fatti) quanti = size - fatti;
+
+        /* Whole blocks (voce 75): as many as fit, one read straight into
+         * the caller's buffer, like the runs of ext2 (leggi_corsa). */
+        if (dentro == 0 && size - fatti >= ISO_BLOCCO) {
+            uint32_t n = (size - fatti) / ISO_BLOCCO;
+
+            if (n > ISO_CORSA_MAX) n = ISO_CORSA_MAX;
+            if (m->volume_blocchi != 0 && (blocco >= m->volume_blocchi ||
+                                           n > m->volume_blocchi - blocco)) {
+                klog(LOG_ERROR, "ISO: corsa %u+%u fuori dal volume (%u)",
+                     blocco, n, m->volume_blocchi);
+                return -1;
+            }
+            if (blk_read_diretto(m->blkdev, (uint64_t)blocco * ISO_SETT_PER_BLOCCO,
+                                 n * ISO_SETT_PER_BLOCCO, p + fatti) != 0) return -1;
+            fatti += n * ISO_BLOCCO;
+            continue;
+        }
 
         if (leggi_blocco(m, blocco, b_dati) != 0) return -1;
 

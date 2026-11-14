@@ -263,7 +263,23 @@ IL FATTO DA CUI DISCENDONO LE PRIME VOCI
     PROVA: write(1, (char *)0x50000000, 10) da un programma: muore solo lui,
     la shell torna, "ls" funziona ancora. }
 
-! voce 6 { Un filo ucciso mentre tiene il lucchetto dei file blocca tutto il sistema (PASSO 1 FATTO, kernel 0.330: restano i passi 2-4)
+# voce 6 { Un filo ucciso mentre tiene il lucchetto dei file blocca tutto il sistema (FATTA, kernel 0.330 e 0.338)
+    PASSI 2-4 FATTI COSI' (0.338, sched.c): proc_gruppo_termina non mette
+    piu' ZOMBIE nessuno: da_finire = 2 a ogni filo del gruppo, chi e'
+    BLOCKED si sveglia come per Ctrl+C (proc_attesa_togli, attesa_dove e
+    block_until a zero). Ognuno finisce da se' in sched_fine_chiesta al
+    ritorno in ring 3, ora anche con un processore (bkl_esci la chiama prima
+    di guardare g_smp_lavora; syscall_handler esce subito se da_finire e'
+    alzato, senza Ctrl+C ne' segnali). proc_da_interrompere guarda
+    da_finire (passo 3). proc_esci (capogruppo o guasto) e sys_exec
+    aspettano gli altri con proc_gruppo_aspetta, al piu' 2 s, poi
+    proc_gruppo_forza (il modo di prima, con un WARN); chi ha gia'
+    da_finire e intanto esce finisce subito, senza aspettare chi aspetta
+    lui. Prova: tools/prova_filimorti.sh (tools/prove/filimorti.c), 200
+    volte, 1 e 2 processori: nessun lucchetto ripreso a un morto, nessun
+    gruppo fermato a forza. Con un processore la prova si fermava anche con
+    la 0.337 (e dopo 50 giri, pile del kernel finite): il lucchetto dei
+    file lo riprendeva sempre chi l'aveva lasciato, vedi voce 28.
     DOVE: kernel/sched/sched.c proc_gruppo_termina 2579-2598 e proc_kill
     3034-3059; kernel/fs/vfs.c fs_prendi_n 379-426 e fs_rilascia 428-445;
     kernel/block/ata.c ata_prendi 1683-1725.
@@ -620,7 +636,20 @@ $ voce 20 { Un segnale a un compito del kernel lascia il flag "interrotto" alzat
     MEGLIO: rifiutare con EPERM ogni bersaglio con nel_kernel, in
     sys_seg_manda e in sys_interrompi. }
 
-$ voce 21 { Il timer scorre tutta la tabella dei processi cento volte al secondo
+$ voce 21 { Il timer scorre tutta la tabella dei processi cento volte al secondo (PASSO 1 FATTO, kernel 0.335)
+    PASSO 1 FATTO COSI' (0.335): ogni attesa con scadenza (sched_sleep e
+    tutte le sched_block con block_until: attesa dei fili, ipc, poll,
+    sigtimedwait, blkr3) passa da sched_block, che ricorda la scadenza piu'
+    vicina (scadenza_nota, g_scadenza in sched.c, confronto con la
+    differenza come vuole la voce 26). L'IRQ0 scorre la tabella solo quando
+    e' arrivata, e scorrendo ricorda la prossima fra chi aspetta ancora. Chi
+    viene svegliato prima lascia una scadenza gia' passata: una scansione a
+    vuoto, mai un dormiente dimenticato. Con molti fili e attese corte (le
+    basi di dati) la scansione resta frequente: il passo vero e' sempre
+    l'elenco ordinato scritto sotto. MariaDB (tools/stress, 1 processore,
+    14/11 una corsa dopo l'altra): 0.334 1992/1825/1703, 0.335
+    1974/1784/1695 istruzioni/s con 8/32/64 client, cioe' uguale: con pochi
+    processi la scansione non pesava (risultati/20261114-notte-*).
     DOVE: kernel/sched/sched.c sched_irq0_handler 1777-1802.
     Per svegliare chi dorme guarda ogni posto a ogni tick, a interrupt spenti.
     Con 64 processi non si nota; con migliaia di fili (l'obiettivo dei 32 mila
@@ -628,7 +657,26 @@ $ voce 21 { Il timer scorre tutta la tabella dei processi cento volte al secondo
     MEGLIO: un elenco ordinato per scadenza di chi dorme (o una ruota del
     tempo): a ogni tick si guarda solo la testa. }
 
-$ voce 22 { Cercare un processo per PID e svegliare un'attesa sono ricerche lineari
+$ voce 22 { Cercare un processo per PID e svegliare un'attesa sono ricerche lineari (IN PARTE, kernel 0.334)
+    FATTO COSI' (0.334), in sched.c: g_pid_posto, PID -> posto + 1, e' solo
+    un suggerimento: si guarda il PCB (pid uguale, non UNUSED) e se non
+    torna si scorre come prima, quindi un posto vecchio costa una scansione
+    e basta. Lo scrivono pcb_alloc e la scansione stessa. proc_get_by_pid,
+    sched_unblock_locked e padre_vivo passano di li' (i PID sono unici fra
+    i posti in uso, pcb_alloc lo controlla). Le attese dei fili: g_attesa,
+    una lista FIFO per secchio di (tgid, indirizzo), con attesa_succ,
+    attesa_prec, attesa_secchio nel PCB (in fondo). proc_attesa_metti in
+    sys_attesa_dormi prima di sched_block, proc_attesa_togli a ogni
+    risveglio (sveglia, proc_filo_ferma, scadenza o segnale al ritorno di
+    sched_block) e in proc_reap_zombie prima che il posto torni UNUSED; uno
+    zombie o un filo svegliato dalla scadenza che e' ancora nel secchio non
+    e' BLOCKED e si salta. Le due tabelle sono larghe da g_proc_max
+    (potenza di due, almeno 64); senza memoria restano le scansioni.
+    Prove: prova_fili, prova_moltifili (1974 fili a 64 bit), prova_sigwait,
+    prova_lucchetti, prova-fork, prova-fili-core, prova_smp a 32 e 64 bit.
+    RESTANO lineari filo_posto_libero, sveglia_chi_aspetta_figli,
+    proc_gruppo_vivi, proc_spazio_vivi (nascite e morti, non i lucchetti) e
+    la ricerca di un PID che non c'e' (il PID nuovo in pcb_alloc).
     DOVE: proc_get_by_pid 3087, sched_unblock_locked 1892, proc_attesa_sveglia
     2502 (ogni sblocco di un mutex scorre TUTTA la tabella), filo_posto_libero
     2093 (due cicli annidati), padre_vivo 698, sveglia_chi_aspetta_figli 2640,
@@ -643,7 +691,27 @@ $ voce 23 { Il raccoglitore degli zombie gira a tempo invece che a evento
     MEGLIO: farlo dormire e svegliarlo quando un processo diventa zombie
     senza padre; la verifica dello heap a richiesta o molto piu' di rado. }
 
-$ voce 24 { Un processo svegliato aspetta fino a 10 ms se l'altro processore dorme
+$ voce 24 { Un processo svegliato aspetta fino a 10 ms se l'altro processore dorme (PROVATA E TOLTA: aspetta la voce 30)
+    PROVATO COSI' (14/11/2026, ora in fuori_uso/voce24-ipi.patch): runq_add (tutte le vie verso READY passano di
+    li') chiama sched_chiama_ozio, che cerca il primo altro processore in
+    ozio (g_corrente[c] == g_ozio[c]) su cui il processo puo' girare
+    (sched_va_su: cpu_fissa, compiti del kernel sul primo, riserve,
+    affinita') e gli manda VETTORE_MESSAGGIO con smp_chiama (smp.c, il
+    processore per numero come per il TLB). Li' smp_ap_irq, col lucchetto
+    del kernel, chiama sched_messaggio_cpu: se gira l'ozio sceglie subito.
+    Con un processore solo non fa niente. Prova: tools/prova_palla.sh
+    (pallaprova.c: un filo gira senza mai dormire e sveglia l'altro con una
+    condition variable, poi aspetta la risposta girando), 2 processori con
+    KVM: senza 117 giri al secondo (il battito), con la patch 47729 a 64
+    bit e 131808 a 32. MA MARIADB VA PEGGIO: con 2 processori, 64 client,
+    1349 e 1355 istruzioni/s contro 1641 senza la patch (e 1494, 1652 con la
+    0.333), p99 a 8 client da 16 a 55 ms; meglio solo il tratto lungo a 20
+    client (1851 contro 1693). Senza la patch il secondo processore quasi
+    non lavora (a 2 processori gli stessi numeri che a 1); con la patch
+    prende davvero i fili e i due si contendono il lucchetto unico del
+    kernel. Risultati in tools/stress/risultati/20261113-sera-*,
+    20261114-*. Si rimette dopo la voce 30 (un lucchetto per struttura), e
+    si rimisura con tools/prova_palla.sh e tools/stress.
     DOVE: sched.c proc_set_ready / sched_unblock_locked; smp.c
     smp_chiama_tutti (901) non viene usata dallo scheduler.
     Un processore in hlt riguarda la coda solo al suo prossimo battito. Su un
@@ -667,9 +735,19 @@ $ voce 26 { g_ticks e' a 32 bit e i confronti non reggono il giro
     syscall_impl.c 7176 (poll). Dopo 497 giorni accesa il contatore torna a
     zero: chi ha una scadenza calcolata prima del giro dorme altri 497
     giorni. segnali_allarmi_tick lo fa gia' bene: (int32_t)(ora - quando) >= 0.
-    MEGLIO: usare dappertutto quel confronto con la differenza. }
+    MEGLIO: usare dappertutto quel confronto con la differenza.
+    IN PARTE (0.335-0.336): il timer (g_scadenza, sleep_until, block_until in
+    sched_irq0_handler) e sys_sleep confrontano gia' con la differenza;
+    restano ipc.c, poll, fat12.c, power.c, kbdprova.c. }
 
-$ voce 27 { sleep puo' tornare prima del tempo chiesto, e il tempo ha passi da 10 ms
+$ voce 27 { sleep puo' tornare prima del tempo chiesto, e il tempo ha passi da 10 ms (PASSO 1 FATTO, kernel 0.336)
+    PASSO 1 FATTO COSI' (0.336): sched_sleep conta (ms + 9) / 10 + 1 tick
+    e passa da sched_dormi_fino (dorme fino a un tick). sys_sleep (sleep,
+    usleep, nanosleep) calcola una scadenza sola per tutta la dormita e la
+    insegue a fette di 10 tick, cosi' un kill arriva lo stesso e il +1 non
+    si somma a ogni fetta. sys_attesa_dormi arrotondava per difetto
+    (ms / 10 + 1): ora (ms + 9) / 10 + 1 anche li'. RESTA il timer a
+    scadenza singola: le attese sotto i 10 ms sono ancora 10-20 ms.
     DOVE: sched.c sched_sleep 2011-2028: ticks = (ms + 9) / 10 senza il "+1".
     Una sleep di 10 ms chiesta poco prima del battito torna quasi subito;
     POSIX vuole ALMENO il tempo chiesto (sys_attesa_dormi il +1 lo mette).
@@ -679,7 +757,15 @@ $ voce 27 { sleep puo' tornare prima del tempo chiesto, e il tempo ha passi da 1
     MEGLIO: +1 al conto; poi un timer a scadenza singola (il timer dell'APIC,
     o il PIT riprogrammato) per le attese corte. }
 
-$ voce 28 { Lucchetti fatti girando a vuoto
+$ voce 28 { Lucchetti fatti girando a vuoto (IN PARTE, kernel 0.338: il lucchetto dei file)
+    FATTO PER IL LUCCHETTO DEI FILE (0.338, vfs.c): fs_rilascia lo passa al
+    primo in coda ancora vivo (g_fs_passato) e sveglia solo lui; chi lo
+    prende per un'altra via esce dalla coda, e in coda si entra una volta
+    sola. Trovato con tools/prova_filimorti.sh: 8 fili che leggono lo stesso
+    file con un processore, uno faceva tutto il lavoro e gli altri sette e
+    il capogruppo restavano a 0 tick per minuti. RESTANO: ata_prendi (gira
+    dentro il lucchetto dei file, quindi conteso di rado), fd_posizione_prendi,
+    proc_spazio_prendi, F_SETLKW.
     DOVE: fd_posizione_prendi (syscall_impl.c 396-424) e proc_spazio_prendi
     (sched.c 3129-3142) riprovano con sched_yield; fcntl F_SETLKW (1205-1210)
     riprova ogni 10 ms; fs_prendi_n e ata_prendi svegliano TUTTI quelli in
@@ -1438,15 +1524,21 @@ $ voce 74 { Il giornale ext4: tre svuotamenti del disco per ogni chiusura, e una
     spegnimento: provarlo con lo spegnimento di QEMU a meta' scrittura e
     e2fsck -fn dopo, non solo con le prove di velocita'. }
 
-$ voce 75 { FAT e ISO: il percorso si risolve a ogni lettura e la catena si ripercorre da capo (FAT: CATENA FATTA, kernel 0.333)
+$ voce 75 { FAT e ISO: il percorso si risolve a ogni lettura e la catena si ripercorre da capo (FAT: CATENA FATTA, kernel 0.333; ISO FATTA, kernel 0.337)
+    FATTO PER L'ISO (0.337): iso9660.c ricorda gli ultimi 16 percorsi
+    risolti (risolvi_ricordando, g_ricordi): un CD non cambia mentre e'
+    montato, e g_iso_gen si muove a ogni montaggio e smontaggio. I blocchi
+    interi di un file vanno dritti nel buffer di chi chiede, fino a 64 per
+    lettura (ISO_CORSA_MAX, blk_read_diretto, come leggi_corsa di ext2).
+    Prova: tools/prova_iso_letture.sh (tools/prove/isoletture.c).
     FATTO PER LA CATENA DELLA FAT (0.333): fat.c tiene l'ultimo punto
     raggiunto (montaggio, primo cluster, indice nella catena, cluster); una
     fat_read o fat_write piu' avanti nello stesso file riparte da li'.
     fat_voce_scrivi, il montaggio e lo smontaggio lo dimenticano (g_fat_gen):
     la catena cambia solo da li'. Prova: nomiprova su FAT32, 3 MB a pezzi da
     4 KB riletti in avanti, all'indietro e a salti, fsck.fat pulito.
-    Restano: il percorso risolto a ogni chiamata, le letture di piu' settori
-    in un colpo, la cache da 24 settori, e tutta la parte ISO.
+    Restano per la FAT: il percorso risolto a ogni chiamata, le letture di
+    piu' settori in un colpo, la cache da 24 settori.
     DOVE: fs/fat.c fat_read 1364-1451 e fat_write 1964 (fat_stat/risolvi
     a ogni chiamata, poi "salti" cluster dall'inizio del file: leggere un
     file di N cluster a pezzi costa N * N / 2 letture della FAT); la cache

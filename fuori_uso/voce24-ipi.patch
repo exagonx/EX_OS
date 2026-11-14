@@ -1,0 +1,142 @@
+--- a/kernel/sched/sched.c
++++ b/kernel/sched/sched.c
+@@ -449,6 +449,7 @@
+     return preso;
+ }
+ 
++static void sched_chiama_ozio(const Process *p);
+ /* =============================================================================
+  * VOCE 21 (kernel 0.336): THE NEAREST DEADLINE
+  *
+@@ -478,6 +479,7 @@
+ {
+     uint32_t prio = proc->priority;
+ 
++    sched_chiama_ozio(proc);    /* voce 24; it only reads proc */
+ 
+     if (g_run_queue[prio] == NULL) {
+         /* Lista vuota: processo punta a se stesso */
+@@ -1487,12 +1489,10 @@
+            g_corrente[p->cpu] == p;
+ }
+ 
+-static int sched_puo_qui(const Process *p)
++/* May p run on processor `me`? sched_puo_qui asks it for this one. */
++static int sched_va_su(const Process *p, uint32_t me)
+ {
+-    uint32_t me;
+-
+     if (!g_smp_lavora) return 1;
+-    me = cpu_n();
+     if (p->cpu_fissa) return (uint32_t)(p->cpu_fissa - 1) == me;
+     if (p->nel_kernel) return me == 0;
+     /* 0.319, voce 92: a processor reserved to a process runs only its
+@@ -1508,6 +1508,49 @@
+     return 1;
+ }
+ 
++static int sched_puo_qui(const Process *p)
++{
++    return sched_va_su(p, cpu_n());
++}
++
++/* =============================================================================
++ * VOCE 24 (kernel 0.334): A PROCESS MADE READY CALLS AN IDLE PROCESSOR
++ *
++ * A processor in hlt looked at the queue again only at its next tick: up to
++ * 10 ms lost by every answer of a server whose threads sleep and wake. Now
++ * runq_add sends a message to the first other processor that is idle and may
++ * run p; smp_ap_irq calls sched_messaggio_cpu there, which chooses. Its
++ * g_corrente stays the idle task until it has the kernel's lock again, so
++ * reading it here, with the lock, is safe. Nothing with one processor.
++ * ============================================================================= */
++static Process *sched_pick_next(void);
++static void     sched_switch_to(Process *next);
++
++static void sched_chiama_ozio(const Process *p)
++{
++    uint32_t n, c, me;
++
++    if (!g_smp_lavora || g_sched_stopped) return;
++    n  = smp_al_lavoro();
++    me = cpu_n();
++    for (c = 0; c < n && c < g_cpu_posti; c++) {
++        if (c == me || g_ozio[c] == NULL || g_corrente[c] != g_ozio[c]) continue;
++        if (!sched_va_su(p, c)) continue;
++        smp_chiama(c);
++        return;
++    }
++}
++
++void sched_messaggio_cpu(void)
++{
++    Process *next;
++
++    if (g_sched_stopped || !g_smp_lavora || g_current == NULL) return;
++    if (g_current != g_idle_task) return;
++    next = sched_pick_next();
++    if (next != g_current) sched_switch_to(next);
++}
++
+ int sched_spazio_su(uint32_t c, const void *pd)
+ {
+     const Process *q;
+--- a/kernel/arch/x86/smp.c
++++ b/kernel/arch/x86/smp.c
+@@ -815,6 +815,8 @@
+             io->stato  = SMP_CPU_LAVORA;
+             smp_ap_salta(g_ordine_pila[i], (uintptr_t)sched_cpu_entra);
+         }
++        /* voce 24: somebody became ready for this processor */
++        if (g_smp_lavora && g_bkl_tiene[cpu_n()]) sched_messaggio_cpu();
+     }
+ }
+ 
+@@ -918,6 +920,26 @@
+     }
+ }
+ 
++/* VOCE 24 (kernel 0.334). With the kernel's lock: only the scheduler calls
++ * it, from runq_add. The two ICR writes with interrupts off, as above. */
++void smp_chiama(uint32_t c)
++{
++    int       apic;
++    uintptr_t flag;
++    uint32_t  giri = 100000;
++
++    if (!g_smp_lavora || g_apic == 0) return;
++    apic = apic_del_numero(c);
++    if (apic < 0) return;
++    flag = read_eflags();
++    interrupts_disable();
++    apic_scrivi(APIC_ICR_ALTO, (uint32_t)apic << 24);
++    apic_scrivi(APIC_ICR_BASSO, VETTORE_MESSAGGIO);
++    while ((apic_leggi(APIC_ICR_BASSO) & ICR_IN_VOLO) && --giri)
++        __asm__ volatile ("pause");
++    if (flag & 0x200u) interrupts_enable();
++}
++
+ /* Sveglia il processore `c`. 1 se ha risposto. */
+ static int sveglia(SmpCpu *c, uint32_t pila)
+ {
+--- a/kernel/include/smp.h
++++ b/kernel/include/smp.h
+@@ -216,5 +216,8 @@
+ /* Manda un messaggio (IPI) a ogni processore in attesa: ciascuno lo conta in
+  * `messaggi`. Da qualunque contesto di processo; non aspetta la risposta. */
+ void           smp_chiama_tutti(void);
++/* VOCE 24 (0.334): "there is work" to the processor numbered `c` (cpu_n),
++ * from the scheduler; it chooses at once instead of at its next tick. */
++void           smp_chiama(uint32_t c);
+ 
+ #endif /* SMP_H */
+--- a/kernel/include/sched.h
++++ b/kernel/include/sched.h
+@@ -999,6 +999,7 @@
+ 
+ /* Piu' processori (tappa 3 dell'SMP, sched.c). */
+ void     sched_battito_cpu(void);           /* il timer di un processore in piu' */
++void     sched_messaggio_cpu(void);         /* smp_chiama arrived: idle chooses (voce 24) */
+ void     sched_fine_chiesta(void);          /* «da_finire», all'uscita dal kernel */
+ uint32_t sched_cpu_prepara(uint32_t n);     /* l'ozio del processore n: rende la sua pila */
+ void     sched_cpu_entra(void);             /* il processore n comincia a lavorare */

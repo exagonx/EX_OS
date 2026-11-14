@@ -89,6 +89,10 @@ void syscall_handler(InterruptFrame *frame)
      * cioe' terminare un processo da dentro un IRQ — proc_exit() fa vfs_sync(),
      * che aspetta il disco: la strada per farlo esiste ma e' un lavoro suo.
      * ========================================================================= */
+    /* voce 6: a thread whose group is ending finishes in bkl_esci, a few
+     * instructions from here; not as a fault, and with no signal. */
+    if (proc_get_current() != NULL && proc_get_current()->da_finire) return;
+
     if (proc_interrotto()) {
         Process *p = proc_get_current();
 

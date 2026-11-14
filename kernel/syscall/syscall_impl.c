@@ -1675,14 +1675,18 @@ int32_t sys_attesa_dormi(InterruptFrame *frame)
         return ERR(EINTR);
     }
 
-    self->attesa_dove = dove;
-    self->block_until = ms ? (g_ticks + (ms / 10) + 1) : 0;
+    proc_attesa_metti(self, (uint32_t)dove);   /* voce 22: into its bucket */
+    self->block_until = ms ? (g_ticks + (ms + 9) / 10 + 1) : 0;
 
     sched_block(PROC_BLOCKED);              /* riaccende lui le interruzioni */
 
-    /* Svegliati: o da proc_attesa_sveglia, o dalla scadenza, o da un segnale. */
+    /* Svegliati: o da proc_attesa_sveglia, o dalla scadenza, o da un segnale.
+     * The last two leave it in the bucket. */
+    interrupts_disable();
+    proc_attesa_togli(self);
     self->attesa_dove = 0;
     self->block_until = 0;
+    interrupts_enable();
     return 0;
 }
 
@@ -2790,7 +2794,10 @@ static int32_t exec_con_argv(const char *kpath, char **uargv, char **uenvp)
         if (proc_spazio_vivi(old_pd, proc) > 0) {
             klog(LOG_INFO, "SYSCALL exec: PID %u, gli altri fili del gruppo %u finiscono",
                  proc->pid, proc->tgid);
+            interrupts_disable();
             proc_gruppo_termina(proc->tgid, proc->pid);
+            proc_gruppo_aspetta(proc->tgid);    /* voce 6: they end by themselves */
+            interrupts_enable();
         }
         if (proc_spazio_vivi(old_pd, proc) == 0) {
             proc_spazio_scorda(old_pd);     /* zombies of the group not reaped yet */
@@ -3533,11 +3540,16 @@ int32_t sys_sleep(InterruptFrame *frame)
      * PROC_SLEEPING, so kill -9 on a program in sleep(100) had no effect until
      * it woke. Waking the sleeper itself would also cut short the hardware
      * delays of the kernel, which use the same sched_sleep. */
-    while (ms > 0) {
-        uint32_t fetta = ms < 100u ? ms : 100u;
+    /* One deadline for the whole sleep (voce 27): with a +1 per slice a
+     * sleep(1000) would last 100 ms more. Slices of 10 ticks at most. */
+    uint32_t fino = g_ticks + (ms + 9u) / 10u + 1u;
 
-        sched_sleep(fetta);
-        ms -= fetta;
+    for (;;) {
+        uint32_t ora   = g_ticks;
+        int32_t  resto = (int32_t)(fino - ora);
+
+        if (resto <= 0) break;
+        sched_dormi_fino(ora + (resto < 10 ? (uint32_t)resto : 10u));
         if (proc_da_interrompere()) return ERR(EINTR);
     }
     return 0;

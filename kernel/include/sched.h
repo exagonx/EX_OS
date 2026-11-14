@@ -966,6 +966,13 @@ typedef struct Process {
     uint32_t *aff;
     uint32_t  aff_parole;
 
+    /* VOCE 22 (0.334): a thread asleep in SYS_ATTESA_DORMI sits in one list
+     * of sched.c's hash on (tgid, attesa_dove); attesa_secchio is the bucket
+     * + 1, 0 = in no list. Taken out when woken, when the wait ends some
+     * other way, and when the PCB is reaped. In fondo, as above. */
+    struct Process *attesa_succ, *attesa_prec;
+    uint32_t        attesa_secchio;
+
 } Process;
 
 /* The TSS I/O bitmap of this processor for p (syscall_impl.c, 0.324). */
@@ -1065,6 +1072,11 @@ void     proc_reap_zombie(Process *p); /* Libera risorse zombie, segna UNUSED */
 int      proc_thread_crea(uint32_t entry, uint32_t arg);
 /* L'attesa che dorme: rende quanti fili sono stati svegliati. */
 int      proc_attesa_sveglia(uint32_t dove, int quanti);
+/* Before sched_block, with interrupts off: the thread waits on `dove` and
+ * goes into its bucket (voce 22). proc_attesa_togli takes it out; nothing
+ * happens if it is in none. */
+void     proc_attesa_metti(Process *p, uint32_t dove);
+void     proc_attesa_togli(Process *p);
 /* Quanti membri VIVI ha il gruppo di `tgid` (zombie esclusi). */
 int      proc_gruppo_vivi(uint32_t tgid);
 /* Quale filo vivo del gruppo ha `indirizzo` nella riserva del proprio stack,
@@ -1074,6 +1086,7 @@ int      proc_gruppo_vivi(uint32_t tgid);
 Process *proc_filo_dello_stack(uint32_t tgid, uint32_t indirizzo);
 /* Termina tutti gli altri membri del gruppo: lo chiama chi esce dal processo. */
 void     proc_gruppo_termina(uint32_t tgid, uint32_t risparmia_pid);
+void     proc_gruppo_aspetta(uint32_t tgid);  /* voce 6: up to 2 s, returns with cli */
 int      proc_spazio_vivi(const void *pd, const Process *tranne);  /* 0.321 */
 void     proc_spazio_scorda(const void *pd);                       /* 0.321 */
 /* CHIEDE a un filo del proprio gruppo di fermarsi: 0, oppure -ESRCH.
@@ -1151,6 +1164,7 @@ uint32_t sched_console_ctrlc(uint32_t console);
 void     sched_set_console_ctrlc(uint32_t console, uint32_t pid);
 void     sched_unblock_locked(uint32_t pid); /* Come sopra, ma il chiamante deve già avere cli attivo (uso da contesto IRQ, es. ipc.c) */
 void     sched_sleep(uint32_t ms);      /* Dorme per ms millisecondi */
+void     sched_dormi_fino(uint32_t fino); /* Dorme fino al tick fino */
 
 /* Statistiche */
 void     sched_dump(void);

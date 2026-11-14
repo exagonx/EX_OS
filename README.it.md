@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.333
+**Versione:** 0.338
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -112,6 +112,39 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### Dormite lunghe quanto chiesto, un timer che guarda solo quando serve, i processi trovati per PID subito, i CD letti tre volte piu' in fretta, un programma che esce mentre i fili leggono non ferma piu' i file (kernel 0.334-0.338, analisi_kernel voci 6, 21, 22, 24, 27, 28, 75)
+
+- **Un processo si trova dal suo PID senza scorrere la tabella, e un filo che aspetta un mutex si
+  sveglia senza scorrerla** (voce 22, kernel 0.334): una tabella PID -> posto e una hash delle
+  attese per (processo, indirizzo), larghe quanto la tabella dei processi. MariaDB sotto carico
+  (KVM, 1 processore): da 1854/1743/1651 a 1935/1813/1665 istruzioni/s con 8/32/64 client.
+  **testato in QEMU**
+- **Il timer scorre la tabella dei processi solo quando e' arrivata la scadenza piu' vicina**
+  (voce 21, kernel 0.335) invece che a ogni battito. Con MariaDB (pochi processi) non cambia
+  niente: 0.334 1992/1825/1703, 0.335 1974/1784/1695 istruzioni/s, una corsa dopo l'altra.
+  **testato in QEMU**
+- **sleep, usleep e nanosleep durano almeno il tempo chiesto** (voce 27, kernel 0.336): una dormita
+  di 10 ms chiesta poco prima del battito tornava quasi subito, e `sleep(1)` poteva durare 990 ms.
+  Le attese sotto i 10 ms durano ancora 10-20 ms (il battito a 100 Hz). **testato in QEMU**
+- **I file di un CD si leggono tre volte piu' in fretta** (voce 75, la parte ISO, kernel 0.337):
+  un percorso si risolve una volta fino al montaggio dopo, e i blocchi interi vanno dritti nel
+  buffer del programma, fino a 128 KB per comando. Un file di 8 MB a pezzi da 64 KB: da 4,4 a
+  13,3 MB/s (QEMU con KVM). **testato in QEMU** (anche il gcc del CD degli strumenti)
+- **Un programma che esce mentre i suoi fili sono dentro il kernel non lascia piu' fermi i
+  file** (voce 6, kernel 0.338): i fili non si fermano piu' dove sono, con un lucchetto in mano;
+  ognuno finisce da se' uscendo dal kernel, e il filo principale li aspetta (al piu' 2 secondi).
+  E il lucchetto dei file passa al primo in coda invece che a una gara (voce 28): con un
+  processore chi lo lasciava lo riprendeva sempre, e gli altri aspettavano minuti. **testato in
+  QEMU** (`tools/prova_filimorti.sh`, 200 volte, 1 e 2 processori)
+- Provato e tolto: un messaggio a un processore in ozio quando un filo diventa pronto (voce 24).
+  Un filo svegliato partiva in microsecondi invece che in 10 ms (`tools/prova_palla.sh`: da 117 a
+  47729 giri al secondo), ma MariaDB con 2 processori andava peggio (1641 -> 1349 istruzioni/s con
+  64 client) perche' i due processori si contendono il lucchetto unico del kernel. Aspetta la
+  voce 30 in `fuori_uso/voce24-ipi.patch`.
+- Prove nuove: `tools/prova_sonno.sh` (`tools/prove/sonnoprova.c`), `tools/prova_iso_letture.sh`
+  (`tools/prove/isoletture.c`), `tools/prova_filimorti.sh` (`tools/prove/filimorti.c`), `tools/prova_palla.sh`
+  (`tools/prove/pallaprova.c`, fallisce apposta senza la patch della voce 24).
 
 ### Il disco con meno lavoro inutile: ext2, il giornale di ext4, AHCI e FAT (kernel 0.333, ext4.mod 0.006, analisi_kernel voci 56, 63, 73, 74, 75)
 

@@ -942,7 +942,32 @@
  * (63); ext4.mod 0.006 holds the blocks an unlink frees until the commit
  * instead of committing at once (74); a FAT file read or written in pieces
  * goes on from the last cluster reached (75). */
-#define EXOS_VERSION    "0.333"
+/* 0.333 -> 0.334 (analisi_kernel voce 22): a pid finds its PCB through a
+ * hint table instead of a scan, and SYS_ATTESA_SVEGLIA looks only at the
+ * threads asleep on that address (a hash of FIFO lists) instead of every
+ * slot; sched_unblock_locked and padre_vivo go through proc_get_by_pid. */
+/* 0.334 -> 0.335 (analisi_kernel voce 21): sched_block notes the nearest
+ * deadline of the sleepers and timed waits, and the timer scans the table
+ * only once it has come instead of at every tick. Voce 24 (a message to an
+ * idle processor) was tried and measured worse under the single kernel
+ * lock: it waits in fuori_uso/voce24-ipi.patch. */
+/* 0.335 -> 0.336 (analisi_kernel voce 27): sleep, usleep and nanosleep
+ * last at least the time asked (+1 tick, one deadline for the whole sleep
+ * in sys_sleep), the same rounding for the timed thread waits; the timer
+ * compares the deadlines by difference (voce 26). */
+/* 0.336 -> 0.337 (analisi_kernel voce 75, the ISO part): iso9660.c
+ * remembers the resolved paths until the next mount or umount, and reads
+ * whole blocks of a file straight into the caller's buffer, up to 64 in one
+ * command. */
+/* 0.337 -> 0.338 (analisi_kernel voce 6, steps 2-4): proc_gruppo_termina
+ * no longer makes the threads of the group zombies where they are: each one
+ * gets da_finire, a waiting one is woken, and it ends itself at its next
+ * return to ring 3 (sched_fine_chiesta, now with one processor too). exit
+ * of the leader, a fatal fault and exec wait for them (proc_gruppo_aspetta,
+ * 2 s, then the old way). The file lock is handed to the first in line
+ * instead of raced for (voce 28, vfs.c g_fs_passato): with one processor
+ * the thread that let it go always took it back. */
+#define EXOS_VERSION    "0.338"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

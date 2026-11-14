@@ -96,6 +96,41 @@ struct Process **g_proc_blocchi;
 uint32_t         g_proc_posti;
 uint32_t         g_proc_max;
 
+/* =============================================================================
+ * VOCE 22 (kernel 0.334): TWO HASHES INSTEAD OF A SCAN OF EVERY SLOT
+ *
+ * g_pid_posto: pid -> slot + 1. Only a hint: checked against the PCB, and a
+ * miss falls back to the scan, so an entry gone stale or overwritten by
+ * another pid costs one scan and nothing else.
+ * g_attesa / g_attesa_coda: the threads asleep in SYS_ATTESA_DORMI, one FIFO
+ * list per bucket of (tgid, address). Every unlock of a contended mutex used
+ * to look at every PCB, each one on its own cache line.
+ * Both sized from g_proc_max in sched_init; without memory the old scans
+ * stay. Touched with interrupts off and the kernel lock, like the table.
+ * ============================================================================= */
+static uint32_t *g_pid_posto;
+static uint32_t  g_pid_maschera;
+static Process **g_attesa, **g_attesa_coda;
+static uint32_t  g_attesa_maschera;
+
+static uint32_t potenza_di_due(uint32_t n)
+{
+    uint32_t p = 64;
+
+    while (p < n && p < 0x10000000u) p <<= 1;
+    return p;
+}
+
+static uint32_t attesa_secchio_di(uint32_t tgid, uint32_t dove)
+{
+    uint32_t h = (dove >> 2) ^ (tgid * 0x9E3779B1u);
+
+    h ^= h >> 15;
+    h *= 0x2C1B3C6Du;
+    h ^= h >> 12;
+    return h & g_attesa_maschera;
+}
+
 /* the deepest kernel stack of the processes that ended (sched.h) */
 static uint32_t g_pila_max, g_pila_max_pid;
 static char     g_pila_max_nome[PROCESS_NAME_LEN];
@@ -397,6 +432,7 @@ riprova:
                     if (g_next_pid == 0) g_next_pid = 2;
                 } while (pid == 0 || proc_get_by_pid(pid) != NULL);
                 preso->pid = pid;
+                if (g_pid_posto != NULL) g_pid_posto[pid & g_pid_maschera] = i + 1u;
             }
             break;
         }
@@ -413,10 +449,35 @@ riprova:
     return preso;
 }
 
+/* =============================================================================
+ * VOCE 21 (kernel 0.335): THE NEAREST DEADLINE
+ *
+ * The timer looked at every slot at every tick for the sleepers and the
+ * timed waits. Every one of them goes through sched_block, which notes its
+ * deadline here; the timer scans only once the nearest has come, and the
+ * scan notes the next. A wait that ends earlier leaves a deadline already
+ * passed: one scan for nothing, never a sleeper left behind. Kernel lock
+ * and interrupts off, as the table.
+ * ============================================================================= */
+static uint32_t g_scadenza;
+static int      g_scadenza_c_e;
+
+static void scadenza_nota(uint32_t t)
+{
+    if (!g_scadenza_c_e || (int32_t)(t - g_scadenza) < 0) {
+        g_scadenza     = t;
+        g_scadenza_c_e = 1;
+    }
+}
+/* Impostato da sched_stop(): il tick continua a contare ma non si
+ * cambia più processo. Vedi sched_stop() per il perché. */
+static volatile int g_sched_stopped = 0;
+
 /* Aggiunge un processo alla run queue del suo livello di priorità */
 static void runq_add(Process *proc)
 {
     uint32_t prio = proc->priority;
+
 
     if (g_run_queue[prio] == NULL) {
         /* Lista vuota: processo punta a se stesso */
@@ -712,13 +773,9 @@ static void idle_task_fn(void)
 /* 1 if a process with this pid exists and has not exited */
 static int padre_vivo(uint32_t pid)
 {
-    uint32_t j;
+    Process *p = proc_get_by_pid(pid);     /* pids are unique (pcb_alloc) */
 
-    for (j = 0; j < g_proc_posti; j++)
-        if ((*PROC_POSTO(j)).pid == pid && (*PROC_POSTO(j)).state != PROC_UNUSED &&
-            (*PROC_POSTO(j)).state != PROC_ZOMBIE)
-            return 1;
-    return 0;
+    return p != NULL && p->state != PROC_ZOMBIE;
 }
 
 static void init_reaper_task(void)
@@ -1570,9 +1627,7 @@ static void sched_switch_to(Process *next)
  *
  * Registrato come handler per IRQ0 in sched_init().
  * ============================================================================= */
-/* Impostato da sched_stop(): il tick continua a contare ma non si
- * cambia più processo. Vedi sched_stop() per il perché. */
-static volatile int g_sched_stopped = 0;
+/* g_sched_stopped: above, next to g_scadenza */
 
 /* La parte del battito che vale per ogni processore: chi viene dopo. Sul
  * processore d'avvio la chiama l'IRQ0 qui sotto, sugli altri il loro timer
@@ -1646,12 +1701,16 @@ void sched_fine_chiesta(void)
     Process *io = g_current;
     uint8_t  come;
 
-    if (!g_smp_lavora || io == NULL || !io->da_finire) return;
+    /* ! WITH ONE PROCESSOR TOO (voce 6, 0.338): proc_gruppo_termina leaves
+     * da_finire to every thread of the group, not only to those running
+     * elsewhere. */
+    if (io == NULL || !io->da_finire) return;
     come = io->da_finire;
     io->da_finire = 0;
 
     interrupts_disable();
-    klog(LOG_INFO, "SCHED: PID %u finisce (chiesto da un altro processore)", io->pid);
+    klog(LOG_DEBUG, "SCHED: PID %u finisce (da_finire %u)", io->pid, (unsigned)come);
+    proc_attesa_togli(io);
     if (come == 1) proc_chiudi_fd(io);
     g_proc_count--;                 /* case 2 too (voce 18) */
     ipc_processo_finito(io);
@@ -1786,11 +1845,17 @@ static void sched_irq0_handler(InterruptFrame *frame)
      * (proc_create, proc_set_ready, sched_unblock_locked) chiamano già
      * runq_add: questa era l'unica a non farlo.
      * ===================================================================== */
-    {
+    /* voce 21 (0.335): the table is looked at only when the nearest
+     * deadline has come (g_scadenza, from sched_block); the scan then notes
+     * the next one among those still waiting. */
+    if (g_scadenza_c_e && (int32_t)(g_ticks - g_scadenza) >= 0) {
         uint32_t i;
+
+        g_scadenza_c_e = 0;
         for (i = 0; i < g_proc_posti; i++) {
             Process *p = PROC_POSTO(i);
-            if (p->state == PROC_SLEEPING && g_ticks >= p->sleep_until) {
+            if (p->state == PROC_SLEEPING &&
+                (int32_t)(g_ticks - p->sleep_until) >= 0) {   /* voce 26 */
                 p->state = PROC_READY;
                 runq_add(p);
                 klog(LOG_DEBUG, "SCHED: PID %u svegliato dal sleep", p->pid);
@@ -1804,12 +1869,15 @@ static void sched_irq0_handler(InterruptFrame *frame)
              * block_until, quindi una scadenza rimasta indietro non può
              * far scattare un risveglio spurio su un'attesa successiva. */
             if (p->state == PROC_BLOCKED && p->block_until != 0 &&
-                g_ticks >= p->block_until) {
+                (int32_t)(g_ticks - p->block_until) >= 0) {
                 p->block_until = 0;
                 p->state       = PROC_READY;
                 runq_add(p);
                 klog(LOG_DEBUG, "SCHED: PID %u svegliato per scadenza", p->pid);
             }
+            if (p->state == PROC_SLEEPING) scadenza_nota(p->sleep_until);
+            else if (p->state == PROC_BLOCKED && p->block_until != 0)
+                scadenza_nota(p->block_until);
         }
     }
 
@@ -1883,6 +1951,9 @@ void sched_block(ProcState reason)
     if (reason == PROC_BLOCKED || reason == PROC_SLEEPING) {
         g_current->state = reason;
         runq_remove(g_current);
+        /* voce 21: every timed wait comes this way */
+        if (reason == PROC_SLEEPING)          scadenza_nota(g_current->sleep_until);
+        else if (g_current->block_until != 0) scadenza_nota(g_current->block_until);
     }
 
     Process *next = sched_pick_next();
@@ -1903,35 +1974,31 @@ void sched_block(ProcState reason)
  * proc_exit(). */
 void sched_unblock_locked(uint32_t pid)
 {
-    uint32_t i;
+    /* voce 22: one lookup instead of the scan; pids are unique among the
+     * slots in use (pcb_alloc), so it is the same slot the scan found */
+    Process *p = proc_get_by_pid(pid);
 
-    for (i = 0; i < g_proc_posti; i++) {
-        /* ! IL TESTIMONE DI UN RISVEGLIO SBAGLIATO, ed e' l'unico posto dove
-         * metterlo: qui passano IPC, il VFS e i pty, tutti a svegliare PER
-         * PID. Un PID appena riciclato puo' appartenere a un processo che sta
-         * ancora nascendo — e farlo partire vorrebbe dire ring 3 con EIP=0 e
-         * senza stack. Non si sveglia, e si dice a chi legge il log che
-         * qualcuno tiene in mano un PID che non e' piu' quello di prima. */
-        if ((*PROC_POSTO(i)).pid   == pid &&
-            (*PROC_POSTO(i)).state == PROC_NASCENTE) {
-            klog(LOG_WARN, "SCHED: risveglio del PID %u '%s' ignorato: sta "
-                 "ancora nascendo (PID riciclato?)",
-                 pid, (*PROC_POSTO(i)).name);
-            return;
-        }
-
-        if ((*PROC_POSTO(i)).pid   == pid &&
-            (*PROC_POSTO(i)).state == PROC_BLOCKED) {
-            /* L'evento è arrivato: la scadenza non serve più. Lasciarla
-             * armata farebbe scattare il risveglio per timeout sulla
-             * PROSSIMA attesa di questo processo, che scadrebbe subito
-             * per un ritardo appartenuto a quella precedente. */
-            (*PROC_POSTO(i)).block_until = 0;
-            (*PROC_POSTO(i)).state = PROC_READY;
-            runq_add(PROC_POSTO(i));
-            klog(LOG_DEBUG, "SCHED: PID %u sbloccato", pid);
-            break;
-        }
+    if (p == NULL) return;
+    /* ! IL TESTIMONE DI UN RISVEGLIO SBAGLIATO, ed e' l'unico posto dove
+     * metterlo: qui passano IPC, il VFS e i pty, tutti a svegliare PER
+     * PID. Un PID appena riciclato puo' appartenere a un processo che sta
+     * ancora nascendo — e farlo partire vorrebbe dire ring 3 con EIP=0 e
+     * senza stack. Non si sveglia, e si dice a chi legge il log che
+     * qualcuno tiene in mano un PID che non e' piu' quello di prima. */
+    if (p->state == PROC_NASCENTE) {
+        klog(LOG_WARN, "SCHED: risveglio del PID %u '%s' ignorato: sta "
+             "ancora nascendo (PID riciclato?)", pid, p->name);
+        return;
+    }
+    if (p->state == PROC_BLOCKED) {
+        /* L'evento è arrivato: la scadenza non serve più. Lasciarla
+         * armata farebbe scattare il risveglio per timeout sulla
+         * PROSSIMA attesa di questo processo, che scadrebbe subito
+         * per un ritardo appartenuto a quella precedente. */
+        p->block_until = 0;
+        p->state = PROC_READY;
+        runq_add(p);
+        klog(LOG_DEBUG, "SCHED: PID %u sbloccato", pid);
     }
 }
 
@@ -2017,26 +2084,25 @@ int proc_da_interrompere(void)
 {
     Process *p = proc_get_current();
 
-    return (p && (p->interrotto || segnali_interrompono(p))) ? 1 : 0;
+    /* da_finire (voce 6 step 3): the waits that can be cut end now */
+    return (p && (p->interrotto || p->da_finire || segnali_interrompono(p))) ? 1 : 0;
+}
+
+/* Sleep until tick `fino` (signed comparison, voce 26). */
+void sched_dormi_fino(uint32_t fino)
+{
+    /* No cli/sti here: sched_block does it, and sleep_until belongs to
+     * g_current alone. */
+    g_current->sleep_until = fino;
+    sched_block(PROC_SLEEPING);
 }
 
 void sched_sleep(uint32_t ms)
 {
-    /* Converti ms in tick (100Hz → 1 tick = 10ms) */
-    uint32_t ticks = (ms + 9) / 10;
-    if (ticks == 0) ticks = 1;
-
-    /* FIX BUG #2: rimossi interrupts_disable()/interrupts_enable() da qui.
-     * sched_block() chiama già interrupts_disable() al suo interno e
-     * interrupts_enable() prima di ritornare. Avere un secondo cli/sti
-     * esterno causava: (a) doppio cli inutile, (b) sti finale su interrupt
-     * già attive al ritorno di sched_block — sbagliato se in futuro si
-     * aggiunge un contatore di annidamento cli/sti.
-     * La scrittura di sleep_until non necessita di protezione: è un campo
-     * del PCB di g_current, modificato solo da questo task. */
-    g_current->sleep_until = g_ticks + ticks;
-    sched_block(PROC_SLEEPING);
-    /* Ritorna dopo sleep_until tick */
+    /* ! +1 (voce 27): the current tick is already partly gone, so
+     * (ms + 9) / 10 ticks alone could end almost at once when asked just
+     * before the beat. POSIX wants AT LEAST the time asked. */
+    sched_dormi_fino(g_ticks + (ms + 9) / 10 + 1);
 }
 
 /* =============================================================================
@@ -2561,10 +2627,59 @@ via:
  * E' cio' che permette a un lucchetto di essere un intero e basta, senza
  * doversi ricordare chi c'e' in coda.
  * ============================================================================= */
+void proc_attesa_metti(Process *p, uint32_t dove)
+{
+    uint32_t s;
+
+    p->attesa_dove = dove;
+    if (g_attesa == NULL) return;
+    proc_attesa_togli(p);
+    s = attesa_secchio_di(p->tgid, dove);
+    p->attesa_succ = NULL;
+    p->attesa_prec = g_attesa_coda[s];
+    if (p->attesa_prec != NULL) p->attesa_prec->attesa_succ = p;
+    else                        g_attesa[s] = p;
+    g_attesa_coda[s]  = p;
+    p->attesa_secchio = s + 1u;
+}
+
+void proc_attesa_togli(Process *p)
+{
+    uint32_t s;
+
+    if (p->attesa_secchio == 0) return;
+    s = p->attesa_secchio - 1u;
+    if (p->attesa_prec != NULL) p->attesa_prec->attesa_succ = p->attesa_succ;
+    else                        g_attesa[s] = p->attesa_succ;
+    if (p->attesa_succ != NULL) p->attesa_succ->attesa_prec = p->attesa_prec;
+    else                        g_attesa_coda[s] = p->attesa_prec;
+    p->attesa_succ = p->attesa_prec = NULL;
+    p->attesa_secchio = 0;
+}
+
 int proc_attesa_sveglia(uint32_t dove, int quanti)
 {
     uint32_t i, tgid = g_current ? g_current->tgid : 0;
     int      svegliati = 0;
+
+    /* voce 22: only the bucket, oldest sleeper first. A zombie or a thread
+     * woken by its deadline may still sit there: not BLOCKED, skipped. */
+    if (g_attesa != NULL) {
+        Process *p = g_attesa[attesa_secchio_di(tgid, dove)], *dopo;
+
+        for (; p != NULL; p = dopo) {
+            dopo = p->attesa_succ;
+            if (quanti > 0 && svegliati >= quanti) break;
+            if (p->attesa_dove != dove || p->tgid != tgid) continue;
+            if (p->state != PROC_BLOCKED) continue;
+            proc_attesa_togli(p);
+            p->attesa_dove = 0;
+            p->block_until = 0;
+            sched_unblock_locked(p->pid);
+            svegliati++;
+        }
+        return svegliati;
+    }
 
     for (i = 0; i < g_proc_posti; i++) {
         Process *p = PROC_POSTO(i);
@@ -2622,6 +2737,7 @@ int proc_filo_ferma(uint32_t tid)
             /* Dorme su un'attesa: lo si sveglia adesso, e la scrollata e'
              * questa. Al risveglio ricontrollera' la sua condizione — e chi
              * vuole potersi fermare guarda `ferma` nella stessa occhiata. */
+            proc_attesa_togli(p);
             p->attesa_dove = 0;
             p->block_until = 0;
             sched_unblock_locked(p->pid);
@@ -2638,6 +2754,41 @@ int proc_filo_ferma(uint32_t tid)
     return ERR(ESRCH);
 }
 
+/* The old way, now only the last resort of proc_gruppo_aspetta: the threads
+ * become zombies where they are. One asleep inside the kernel with a lock in
+ * hand keeps it (the takeover in fs_prendi_n and ata_prendi, voce 6 step 1,
+ * is what is left). */
+static void proc_gruppo_forza(uint32_t tgid, uint32_t risparmia_pid)
+{
+    uint32_t i;
+
+    for (i = 0; i < g_proc_posti; i++) {
+        Process *p = PROC_POSTO(i);
+
+        if (p->state == PROC_UNUSED || p->state == PROC_ZOMBIE) continue;
+        if (p->tgid != tgid || p->pid == risparmia_pid) continue;
+
+        if (sched_gira_altrove(p)) { p->da_finire = 2; continue; }
+        klog(LOG_WARN, "SCHED: filo %u fermato dove si trovava (stato %u)",
+             p->pid, (unsigned)p->state);
+        proc_attesa_togli(p);
+        ipc_processo_finito(p);
+        p->state     = PROC_ZOMBIE;
+        p->exit_code = 0;
+        p->da_finire = 0;
+        runq_remove(p);
+        g_proc_count--;             /* voce 18: sched_dump climbed forever */
+    }
+}
+
+/* ! NOBODY DIES WHERE HE IS (voce 6, 0.338). A thread of the group may be
+ * asleep inside the kernel holding the file or disk lock: made a zombie
+ * there, it never gives it back and every file of every process stops. So
+ * each one gets da_finire = 2, a thread asleep on a wait is woken as Ctrl+C
+ * does (every wait already takes a spurious wake: it looks again), and it
+ * ends itself in sched_fine_chiesta at its next return to ring 3, when its
+ * locks are back. Interrupts off. Those who call this then wait for them:
+ * proc_gruppo_aspetta. */
 void proc_gruppo_termina(uint32_t tgid, uint32_t risparmia_pid)
 {
     uint32_t i;
@@ -2648,15 +2799,49 @@ void proc_gruppo_termina(uint32_t tgid, uint32_t risparmia_pid)
         if (p->state == PROC_UNUSED || p->state == PROC_ZOMBIE) continue;
         if (p->tgid != tgid || p->pid == risparmia_pid) continue;
 
-        /* ! NON SI CHIUDONO I SUOI DESCRITTORI: sono quelli del gruppo, e chi
-         * resta li sta ancora usando. Li chiude il capogruppo uscendo. */
-        if (sched_gira_altrove(p)) { p->da_finire = 2; continue; }
-        ipc_processo_finito(p);
-        p->state     = PROC_ZOMBIE;
-        p->exit_code = 0;
-        runq_remove(p);
-        g_proc_count--;             /* voce 18: sched_dump climbed forever */
-        klog(LOG_DEBUG, "SCHED: filo %u terminato col suo gruppo", p->pid);
+        /* ! NOT ITS DESCRIPTORS: they are the group's. The leader closes them. */
+        p->da_finire = 2;
+        if (p->state == PROC_BLOCKED) {
+            proc_attesa_togli(p);
+            p->attesa_dove = 0;
+            p->block_until = 0;
+            sched_unblock_locked(p->pid);
+        }
+        klog(LOG_DEBUG, "SCHED: filo %u finisce col suo gruppo", p->pid);
+    }
+}
+
+static int proc_gruppo_altri_vivi(uint32_t tgid, const Process *io)
+{
+    uint32_t i;
+    int      n = 0;
+
+    for (i = 0; i < g_proc_posti; i++) {
+        const Process *q = PROC_POSTO(i);
+
+        if (q != io && q->tgid == tgid && q->state != PROC_UNUSED &&
+            q->state != PROC_ZOMBIE)
+            n++;
+    }
+    return n;
+}
+
+/* Waits for the others of the group to end by themselves (step 4 of voce
+ * 6), 2 s at most, then the old way. Sleeps, so it turns interrupts on; it
+ * returns with them OFF, as proc_esci wants. */
+void proc_gruppo_aspetta(uint32_t tgid)
+{
+    uint32_t fino = g_ticks + 200u;
+
+    interrupts_disable();
+    while (proc_gruppo_altri_vivi(tgid, g_current) > 0) {
+        if ((int32_t)(g_ticks - fino) >= 0) {
+            klog(LOG_WARN, "SCHED: il gruppo %u non finisce da solo in 2 s", tgid);
+            proc_gruppo_forza(tgid, g_current->pid);
+            break;
+        }
+        sched_dormi_fino(g_ticks + 1u);     /* turns interrupts on */
+        interrupts_disable();
     }
 }
 
@@ -2721,6 +2906,17 @@ static void proc_esci(int32_t exit_code, int fatale)
     uint32_t ppid_erede = 0;    /* chi aspetta il gruppo, se a morire e' un filo */
 
     interrupts_disable();
+    /* ! ALREADY ASKED TO END (voce 6): somebody else is ending the group and
+     * waits for this one; waiting for him in turn would hold both for 2 s.
+     * It ends as asked, and does not come back. */
+    if (g_current->da_finire) sched_fine_chiesta();
+
+    /* voce 6: the others end by themselves first, with their locks given
+     * back; the proc_gruppo_termina calls below then find nobody left. */
+    if (g_current->pid == g_current->tgid || fatale) {
+        proc_gruppo_termina(g_current->tgid, g_current->pid);
+        proc_gruppo_aspetta(g_current->tgid);
+    }
 
     klog(LOG_INFO, "SCHED: PID %u '%s' terminato con codice %d",
          g_current->pid, g_current->name, exit_code);
@@ -3081,6 +3277,13 @@ void proc_reap_zombie(Process *p)
     aff_togli(p);
     if (p->pid == p->tgid) riserve_del_gruppo_finito(p->tgid);
 
+    {   /* voce 22: out of its bucket before the slot is free */
+        uintptr_t fl = read_eflags();
+
+        interrupts_disable();
+        proc_attesa_togli(p);
+        if (fl & (1u << 9)) interrupts_enable();
+    }
     p->state             = PROC_UNUSED;
     p->pid               = 0;
     p->ppid              = 0;
@@ -3150,9 +3353,20 @@ int proc_filo_stacca(uint32_t tid)
 Process *proc_get_by_pid(uint32_t pid)
 {
     uint32_t i;
+
+    if (g_pid_posto != NULL) {          /* voce 22: the hint first */
+        uint32_t s = g_pid_posto[pid & g_pid_maschera];
+
+        if (s != 0 && s - 1u < g_proc_posti) {
+            Process *p = PROC_POSTO(s - 1u);
+
+            if (p->pid == pid && p->state != PROC_UNUSED) return p;
+        }
+    }
     for (i = 0; i < g_proc_posti; i++) {
         if ((*PROC_POSTO(i)).pid == pid &&
             (*PROC_POSTO(i)).state != PROC_UNUSED) {
+            if (g_pid_posto != NULL) g_pid_posto[pid & g_pid_maschera] = i + 1u;
             return PROC_POSTO(i);
         }
     }
@@ -3286,6 +3500,27 @@ klog(LOG_INFO, "SCHED: inizializzazione scheduler preemptive...");
         if (g_proc_blocchi == NULL) kpanic("SCHED: niente memoria per la tabella dei processi");
         for (i = 0; i < voci; i++) g_proc_blocchi[i] = NULL;
         g_proc_posti = 0;
+        {   /* voce 22: the two hashes; without them, the scans */
+            uint32_t np = potenza_di_due(g_proc_max), na = potenza_di_due(g_proc_max / 4u);
+
+            g_pid_posto = (uint32_t *)kmalloc(np * sizeof(uint32_t));
+            g_attesa      = (Process **)kmalloc(na * sizeof(Process *));
+            g_attesa_coda = (Process **)kmalloc(na * sizeof(Process *));
+            if (g_pid_posto != NULL) {
+                for (i = 0; i < np; i++) g_pid_posto[i] = 0;
+                g_pid_maschera = np - 1u;
+            }
+            if (g_attesa == NULL || g_attesa_coda == NULL) {
+                if (g_attesa)      kfree(g_attesa);
+                if (g_attesa_coda) kfree(g_attesa_coda);
+                g_attesa = g_attesa_coda = NULL;
+            } else {
+                for (i = 0; i < na; i++) g_attesa[i] = g_attesa_coda[i] = NULL;
+                g_attesa_maschera = na - 1u;
+            }
+            klog(LOG_INFO, "SCHED: tabelle dei PID %u e delle attese %u%s", (unsigned)np,
+                 (unsigned)na, (g_pid_posto && g_attesa) ? "" : " (in parte senza memoria)");
+        }
         /* the first blocks now: the boot starts a few dozen tasks */
         for (i = 0; i < 64 / PROC_BLOCCO; i++)
             if (proc_blocco_in_piu() != 0) kpanic("SCHED: niente memoria per il pool dei processi");

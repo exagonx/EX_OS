@@ -11,3 +11,15 @@ file ELF (p_vaddr + p_memsz, r_offset, indice dei simboli, st_name), e un
 file malfatto scriverebbe dove vuole nel kernel. drvmgr.c e' solo a 32 bit
 (e_machine 3, indirizzi fisici usati come puntatori). Non si compilano: il
 Makefile non li conosce piu'.
+
+voce24-ipi.patch (tolto il 14/11/2026, analisi_kernel voce 24). Un processo
+che diventa pronto manda un messaggio (IPI) a un processore in ozio che lo puo'
+eseguire, e quello sceglie subito invece che al suo battito (fino a 10 ms
+dopo). tools/prova_palla.sh: da 117 a 47729 giri al secondo con 2 processori.
+Ma con il lucchetto unico del kernel (voce 30) MariaDB sotto carico con 2
+processori va peggio: 64 client 1349 e 1355 istruzioni/s contro 1641 senza,
+p99 a 8 client da 16 a 55 ms (tools/stress/risultati/20261113-sera-0335ipi-*,
+20261114-ripetuta-0335ipi-cpu2 e 20261114-0334-cpu2).
+Si rimette quando il kernel avra' un lucchetto per struttura:
+    patch -p1 < fuori_uso/voce24-ipi.patch
+dalla radice del progetto, sul kernel 0.335 (va adattato se sched.c cambia).
