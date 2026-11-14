@@ -6,7 +6,7 @@
 #[cfg(target_pointer_width = "32")]
 const _: () = {
     use core::mem::{align_of, size_of};
-    assert!(size_of::<stat>() == 60, "stat: size differs from C");
+    assert!(size_of::<stat>() == 64, "stat: size differs from C");
     assert!(align_of::<stat>() == 4, "stat: alignment differs from C");
     assert!(core::mem::offset_of!(stat, st_dev) == 0, "stat.st_dev: offset differs from C");
     assert!(core::mem::offset_of!(stat, st_ino) == 4, "stat.st_ino: offset differs from C");
@@ -43,7 +43,7 @@ const _: () = {
     assert!(core::mem::offset_of!(pollfd, fd) == 0, "pollfd.fd: offset differs from C");
     assert!(core::mem::offset_of!(pollfd, events) == 4, "pollfd.events: offset differs from C");
     assert!(core::mem::offset_of!(pollfd, revents) == 6, "pollfd.revents: offset differs from C");
-    assert!(size_of::<fd_set>() == 4, "fd_set: size differs from C");
+    assert!(size_of::<fd_set>() == 256, "fd_set: size differs from C");
     assert!(align_of::<fd_set>() == 4, "fd_set: alignment differs from C");
     assert!(size_of::<pthread_attr_t>() == 16, "pthread_attr_t: size differs from C");
     assert!(align_of::<pthread_attr_t>() == 4, "pthread_attr_t: alignment differs from C");
@@ -179,7 +179,7 @@ const _: () = {
 #[cfg(target_pointer_width = "64")]
 const _: () = {
     use core::mem::{align_of, size_of};
-    assert!(size_of::<stat>() == 64, "stat: size differs from C");
+    assert!(size_of::<stat>() == 72, "stat: size differs from C");
     assert!(align_of::<stat>() == 8, "stat: alignment differs from C");
     assert!(core::mem::offset_of!(stat, st_dev) == 0, "stat.st_dev: offset differs from C");
     assert!(core::mem::offset_of!(stat, st_ino) == 4, "stat.st_ino: offset differs from C");
@@ -216,7 +216,7 @@ const _: () = {
     assert!(core::mem::offset_of!(pollfd, fd) == 0, "pollfd.fd: offset differs from C");
     assert!(core::mem::offset_of!(pollfd, events) == 4, "pollfd.events: offset differs from C");
     assert!(core::mem::offset_of!(pollfd, revents) == 6, "pollfd.revents: offset differs from C");
-    assert!(size_of::<fd_set>() == 4, "fd_set: size differs from C");
+    assert!(size_of::<fd_set>() == 256, "fd_set: size differs from C");
     assert!(align_of::<fd_set>() == 4, "fd_set: alignment differs from C");
     assert!(size_of::<pthread_attr_t>() == 32, "pthread_attr_t: size differs from C");
     assert!(align_of::<pthread_attr_t>() == 8, "pthread_attr_t: alignment differs from C");

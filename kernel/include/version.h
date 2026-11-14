@@ -967,7 +967,12 @@
  * 2 s, then the old way). The file lock is handed to the first in line
  * instead of raced for (voce 28, vfs.c g_fs_passato): with one processor
  * the thread that let it go always took it back. */
-#define EXOS_VERSION    "0.338"
+/* 0.338 -> 0.339: Stat carries mode, owner, link count and Unix times
+ * (56 bytes, SYS_STAT 268 and SYS_FSTAT 269); the libc no longer makes up
+ * st_mode, st_uid, st_gid, st_nlink. 106 and 108 answer ENOSYS with a
+ * WARN: a program linked to the old libc must be relinked. fat.c dates
+ * what it creates, writes and truncates from the RTC (was 1 Jan 2026). */
+#define EXOS_VERSION    "0.339"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

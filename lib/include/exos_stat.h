@@ -18,16 +18,16 @@
 struct stat {
     dev_t           st_dev;     /* sempre 0: EX-OS non numera i volumi */
     ino_t           st_ino;     /* primo cluster/inode, 0 dove non si applica */
-    mode_t          st_mode;    /* tipo | permessi ricostruiti */
-    nlink_t         st_nlink;   /* sempre 1 */
-    uid_t           st_uid;     /* sempre 0: non ci sono utenti */
-    gid_t           st_gid;     /* sempre 0 */
+    mode_t          st_mode;    /* tipo | permessi del volume (0.339) */
+    nlink_t         st_nlink;   /* ext2/ext4 i_links_count, 1 altrove */
+    uid_t           st_uid;     /* ext2/ext4 e /proc, 0 su FAT e ISO */
+    gid_t           st_gid;
     off_t           st_size;
     blksize_t       st_blksize; /* 512: il settore, l'unita' vera dei nostri fs */
     blkcnt_t        st_blocks;  /* settori da 512 occupati, arrotondati per eccesso */
-    time_t          st_atime;   /* = st_mtime: non si tiene l'ultimo accesso */
+    time_t          st_atime;   /* ext2/ext4 i_atime, = st_mtime altrove */
     time_t          st_mtime;
-    time_t          st_ctime;   /* = st_mtime */
+    time_t          st_ctime;   /* ext2/ext4 i_ctime, = st_mtime altrove */
     /* (7/11/2026, Mesa) at the end, so the fields before keep their place:
      * the identity of a character device (st_ino), 0 for every other file */
     dev_t           st_rdev;

@@ -151,6 +151,8 @@ static int fnm_da(const char *p, const char *s, const char *inizio, int flags)
     }
 }
 
+/* weak: libiberty and gnulib bring their own (see lib/libc_getopt.c) */
+__attribute__((weak))
 int fnmatch(const char *modello, const char *nome, int flags)
 {
     if (!modello || !nome) return FNM_NOMATCH;
@@ -285,6 +287,7 @@ static int glob_confronta(const void *a, const void *b)
     return strcmp(*(char * const *)a, *(char * const *)b);
 }
 
+__attribute__((weak))   /* GNU make brings its own glob, see fnmatch */
 void globfree(glob_t *g)
 {
     size_t i;
@@ -296,6 +299,7 @@ void globfree(glob_t *g)
     g->gl_pathc = 0;
 }
 
+__attribute__((weak))   /* GNU make brings its own glob, see fnmatch */
 int glob(const char *modello, int flags, int (*errfunc)(const char *, int), glob_t *g)
 {
     GlobLista l = { NULL, 0, 0 };

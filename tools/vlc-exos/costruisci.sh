@@ -27,6 +27,9 @@ collega() {
         || { grep -a -E " error:" "$B/costruisci.log" | sort -u | head -30; exit 1; }
     # --- one program: every plugin, listed by its entry point -------------
     local P=$B/obj/modules/.libs nomi
+    # Mesa installs GL/gl.h, so configure says HAVE_GL; but EX-OS has only
+    # EGL and GLES2, no libGL: glspectrum (glPushMatrix...) cannot link
+    rm -f "$P"/libglspectrum_plugin.a
     # the outputs of EX-OS: sound on the "audio" service, pictures in ExWin
     local m propri=""
     for m in aout_exos vout_exos; do

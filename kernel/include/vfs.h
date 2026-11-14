@@ -124,6 +124,14 @@ typedef struct {
     uint16_t modo;
     uint16_t uid;
     uint16_t gid;
+
+    /* (0.339) Unix seconds, 0 = unknown, and the link count, for the Stat
+     * of the syscall. ext2 gives its three times and i_links_count; FAT and
+     * ISO 9660 only the date above (unix_da_fat in vfs.c) and nlink 1. */
+    uint16_t nlink;
+    int64_t  mtime;
+    int64_t  atime;
+    int64_t  ctime;
 } VfsStat;
 
 typedef struct {

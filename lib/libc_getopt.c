@@ -28,8 +28,13 @@ struct option {
 };
 #endif
 
-char *optarg;
-int   optind = 1, opterr = 1, optopt;
+/* weak, all of it: GNU programs bring their own getopt (libiberty, gnulib),
+ * and libc.a is one object, so a strong copy here means "multiple
+ * definition" the moment anything else of libc is linked. Theirs wins. */
+__attribute__((weak)) char *optarg;
+__attribute__((weak)) int   optind = 1;
+__attribute__((weak)) int   opterr = 1;
+__attribute__((weak)) int   optopt;
 static int g_optpos;            /* inside a group of short options: -abc */
 
 static void getopt_dice(const char *argv0, const char *cosa, const char *opt, int lun)
@@ -40,6 +45,7 @@ static void getopt_dice(const char *argv0, const char *cosa, const char *opt, in
     fputc('\n', stderr);
 }
 
+__attribute__((weak))
 int getopt(int argc, char *const argv[], const char *optstring)
 {
     const char *p, *a;
@@ -142,12 +148,14 @@ static int getopt_lunga(int argc, char *const argv[], const char *optstring,
     return lo[trovata].val;
 }
 
+__attribute__((weak))
 int getopt_long(int argc, char *const argv[], const char *optstring,
                 const struct option *lo, int *indice)
 {
     return getopt_lunga(argc, argv, optstring, lo, indice, 0);
 }
 
+__attribute__((weak))
 int getopt_long_only(int argc, char *const argv[], const char *optstring,
                      const struct option *lo, int *indice)
 {

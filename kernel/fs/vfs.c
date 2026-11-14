@@ -1836,7 +1836,43 @@ static int vfs_dup_nl(int h)
 #define VFS_IDENT(im, n)   ((((uint32_t)(im) & 0xFu) << 28) | \
                             ((uint32_t)(n) & 0x0FFFFFFFu))
 
+/* (0.339) A FAT date and time (VfsStat.data/ora) as Unix seconds, read as
+ * UTC like the libc did until 0.338; 0 stays 0, "not known". */
+static int64_t unix_da_fat(uint16_t data, uint16_t ora)
+{
+    int32_t a = 1980 + ((data >> 9) & 0x7F), m = (data >> 5) & 0x0F, g = data & 0x1F;
+    int32_t era, yoe, doy, doe;
+
+    if (data == 0) return 0;
+    if (m < 1 || m > 12) m = 1;
+    if (g < 1 || g > 31) g = 1;
+    a  -= m <= 2;
+    era = a / 400;                              /* a >= 1979: never negative */
+    yoe = a - era * 400;
+    doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + g - 1;
+    doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return (int64_t)(era * 146097 + doe - 719468) * 86400
+         + ((ora >> 11) & 0x1F) * 3600 + ((ora >> 5) & 0x3F) * 60 + (ora & 0x1F) * 2;
+}
+
+static int stat_interno_fs(int im, const char *interno, VfsStat *st);
+
+/* What every branch below leaves to the default: one link, and the Unix
+ * times from the FAT date where the volume keeps only that. */
 static int stat_interno(int im, const char *interno, VfsStat *st)
+{
+    int r = stat_interno_fs(im, interno, st);
+
+    if (r == 0) {
+        if (st->nlink == 0) st->nlink = 1;
+        if (st->mtime == 0) st->mtime = unix_da_fat(st->data, st->ora);
+        if (st->atime == 0) st->atime = st->mtime;
+        if (st->ctime == 0) st->ctime = st->mtime;
+    }
+    return r;
+}
+
+static int stat_interno_fs(int im, const char *interno, VfsStat *st)
 {
     /* =========================================================================
      * ! SI AZZERA TUTTO PRIMA, E NON E' PRUDENZA GENERICA.
@@ -1920,6 +1956,10 @@ static int stat_interno(int im, const char *interno, VfsStat *st)
         st->modo         = e.modo;
         st->uid          = e.uid;
         st->gid          = e.gid;
+        st->nlink        = e.nlink;
+        st->mtime        = e.mtime;
+        st->atime        = e.atime;
+        st->ctime        = e.ctime;
     } else {
         FatDirEntry e;
         if (fat_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(ENOENT);

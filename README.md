@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.338
+**Version:** 0.339
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -110,6 +110,23 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### stat() tells the real permissions, owner, links and times, and files written on FAT have their date (kernel 0.339)
+
+- **`stat()` and `fstat()` report what the volume keeps** (kernel 0.339): on ext2 and ext4 the
+  inode's mode, owner, group, link count and three times; on /proc those of the processes. Before,
+  the libc made up `st_mode` (0644, 0755 or 0555), `st_uid` and `st_gid` 0 and `st_nlink` 1,
+  whatever the disk said: `chmod 600` succeeded and `stat` still said 644. FAT and ISO 9660 have
+  no owners: there uid 0, one link and the usual permissions stay. The structure the kernel hands
+  the libc changed (56 bytes, new calls 268 and 269); programs' `struct stat` did not. **tested in
+  QEMU** (tools/prova_stat.sh, 32 and 64 bit)
+- **Files created or written by EX-OS on FAT16 and FAT32 get the clock's date** instead of a fixed
+  1 January 2026. **tested in QEMU**
+- ! **A program linked to the old libc no longer finds any file with `stat`**: the old calls
+  (106 and 108) answer "function not implemented", and the kernel log says
+  `SYSCALL: '<name>' (PID n) usa lo stat di prima della 0.339: va ricollegato alla libc nuova`.
+  EX-OS's own programs are rebuilt with the system; ported ones (gcc, MariaDB, Apache, Valkey, PHP,
+  Firefox...) must be relinked to the new `libc.a`, and come with the update.
 
 ### Sleeps that last what they ask, a timer that looks only when needed, processes found by PID at once, CDs read three times faster, a program that exits while its threads read no longer stops the files (kernel 0.334-0.338, analisi_kernel voci 6, 21, 22, 24, 27, 28, 75)
 

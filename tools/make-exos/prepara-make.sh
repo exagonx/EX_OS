@@ -131,19 +131,15 @@ cd "$USCITA"
     CPPFLAGS="-DNO_OUTPUT_SYNC" \
     > configure.log 2>&1 || { tail -20 configure.log >&2; exit 1; }
 
-# ! SI CONTROLLA CHE fork() SIA DICHIARATO ASSENTE, e si controlla QUI.
-# Se un giorno il configure lo trovasse presente — per un cambio nella libc,
-# o per una variabile di cache lasciata in giro — job.c prenderebbe il ramo
-# POSIX con vfork() dentro, e il fallimento arriverebbe al PRIMO COMANDO che
-# make prova a lanciare: «Segmentation fault» dentro EX-OS, che manda a
-# cercare il guasto nel kernel. Meglio dirlo adesso.
-if grep -q '^#define HAVE_FORK' config.h; then
-    echo "prepara-make: il configure crede che EX-OS abbia fork()." >&2
-    echo "  job.c prenderebbe il ramo con vfork() e make morirebbe al primo" >&2
-    echo "  comando lanciato. Controllare config.log." >&2
+# job.c takes the spawn_ex branch under #ifdef __EXOS__, whatever config.h
+# says about fork (the libc has had fork since 0.313, so HAVE_FORK is now
+# right). Without __EXOS__ it would take vfork, and die at the first command.
+if ! echo | i386-exos-gcc -dM -E - | grep -q '^#define __EXOS__ '; then
+    echo "prepara-make: i386-exos-gcc non definisce __EXOS__:" >&2
+    echo "  job.c prenderebbe il ramo con vfork() invece di spawn_ex." >&2
     exit 1
 fi
-echo "  fork() dichiarato assente: si usa il ramo con spawn_ex"
+echo "  __EXOS__ definito: si usa il ramo con spawn_ex"
 
 # --- 3. costruzione -----------------------------------------------------------
 echo

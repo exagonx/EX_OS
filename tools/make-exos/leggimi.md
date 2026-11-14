@@ -53,7 +53,6 @@ Le applica `tools/make-exos/applica.py`, con lo stesso marcatore per file di
 | `main.c` | `--output-sync` si rifiuta invece di essere ignorata |
 | `commands.c` | `kill()`: a se stessi è `raise()`, agli altri ENOSYS |
 | `arscan.c` | `<ar.h>` non c'è: si usa il ramo che upstream ha già per Android/BeOS |
-| `read.c`, `glob/glob.c` | `<pwd.h>` non c'è: `getpwnam` rende NULL |
 
 ### Perché `spawn_ex` e non il ramo `__MSDOS__`
 
@@ -86,8 +85,13 @@ ignora**. Chi scrive `make -j4 --output-sync=target` in uno script lo fa
 proprio perché l'output mescolato non gli serve, e si ritroverebbe esattamente
 ciò che voleva evitare senza un avviso. La modifica a `main.c` serve a questo.
 
-`~utente` non si espande (non c'è un registro degli utenti); `~` da solo sì,
-viene da `HOME`.
+`~utente` passa dal `<pwd.h>` della libc, come su un sistema qualunque; `~`
+da solo viene da `HOME`. Fino a novembre 2026 `read.c` e `glob/glob.c`
+avevano una `getpwnam` che rendeva NULL e una `getlogin` loro: con quelle
+della libc non si compilavano più, e sono state tolte.
+
+Il configure trova `fork()` (la libc ce l'ha dalla 0.313): non conta, `job.c`
+prende `spawn_ex` per `__EXOS__`, ed è quello che `prepara-make.sh` controlla.
 
 ---
 

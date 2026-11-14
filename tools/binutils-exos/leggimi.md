@@ -123,6 +123,14 @@ link fallisce con `multiple definition`. Non basterebbe nemmeno un ordine
 diverso delle librerie, perché **`libc.a` è un solo oggetto**: quando il
 linker lo tira dentro per una `printf`, si porta dietro tutto.
 
+! `getopt`, `getopt_long`, `fnmatch` (e `optarg`, `optind`…) libiberty li
+compila **sempre**, qualunque cosa dica il configure: su glibc il codice
+si spegne da solo (`ELIDE_CODE`), qui no. Per questo nella libc sono
+`weak` (lib/libc_getopt.c, lib/libc_glob.c, 14 novembre 2026; anche `glob`
+e `globfree`, che GNU make compila sempre in glob/): vince la
+copia del programma. Una funzione nuova della libc che i pacchetti GNU si
+portano dietro va marcata allo stesso modo.
+
 ### pex-exos.c
 
 `libiberty` compila sempre un `pex-*.c` — «lancia un programma e

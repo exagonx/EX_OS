@@ -256,79 +256,10 @@ MODIFICHE = [
         "     && !defined (__EXOS__)\n",
     ),
 
-    # --- <pwd.h>: non c'e' un registro degli utenti ------------------------
-    #
-    # Due file espandono `~utente` e per farlo includono <pwd.h> e chiamano
-    # getpwnam: glob/glob.c (i caratteri jolly) e read.c (i percorsi dentro
-    # un makefile). EX-OS non ha ne' l'header ne' la funzione, e non e' una
-    # mancanza da colmare: non c'e' /etc/passwd, non ci sono utenti con una
-    # directory personale, e inventarne uno vorrebbe dire far espandere
-    # `~tizio` in un percorso che non esiste.
-    #
-    # ! SI DA' UNA getpwnam CHE RENDE NULL, invece di togliere il codice che
-    # la chiama. E' la stessa risposta che darebbe un sistema vero per un
-    # utente che non c'e', e tutti e due i file la gestiscono gia': lasciano
-    # `~tizio` com'e' scritto. Togliendo i rami si sarebbe ottenuta la stessa
-    # cosa in piu' righe di modifica, e con due pezzi di codice di terzi in
-    # meno da poter confrontare con l'originale.
-    #
-    # ! LO STESSO PEZZO DI CODICE DUE VOLTE, ed e' voluto. Metterlo in un
-    # header condiviso vorrebbe dire aggiungere un file all'albero di make e
-    # una directory al percorso di ricerca di glob/, che si costruisce per
-    # conto suo con un Makefile suo. Quattro righe ripetute costano meno di
-    # una dipendenza fra due sottoprogetti che upstream tiene separati.
-    #
-    # `~` da solo continua a funzionare: viene da getenv("HOME"), che la
-    # shell imposta.
-    (
-        "read.c",
-        "EX-OS: nessun registro degli utenti",
-        "#ifndef _AMIGA\n"
-        "#ifndef VMS\n"
-        "#include <pwd.h>\n"
-        "#else\n"
-        "struct passwd *getpwnam (char *name);\n"
-        "#endif\n"
-        "#endif\n",
-        "#ifndef _AMIGA\n"
-        "#if defined (__EXOS__)\n"
-        "/* EX-OS: nessun registro degli utenti. Vedi la nota gemella in\n"
-        "   glob/glob.c — la stessa risposta di un sistema vero per un utente\n"
-        "   che non c'e', cioe' `~tizio' resta com'e' scritto.  */\n"
-        "struct passwd { char *pw_name; char *pw_dir; };\n"
-        "static struct passwd *getpwnam (const char *nome)\n"
-        "{ (void) nome; return (struct passwd *) 0; }\n"
-        "static char *getlogin (void) { return (char *) 0; }\n"
-        "#elif !defined (VMS)\n"
-        "#include <pwd.h>\n"
-        "#else\n"
-        "struct passwd *getpwnam (char *name);\n"
-        "#endif\n"
-        "#endif\n",
-    ),
-    (
-        "glob/glob.c",
-        "EX-OS: nessun registro degli utenti",
-        "#if !defined _AMIGA && !defined VMS && !defined WINDOWS32\n"
-        "# include <pwd.h>\n"
-        "#endif\n",
-        "#if !defined _AMIGA && !defined VMS && !defined WINDOWS32 \\\n"
-        "    && !defined __EXOS__\n"
-        "# include <pwd.h>\n"
-        "#endif\n"
-        "\n"
-        "#ifdef __EXOS__\n"
-        "/* EX-OS: nessun registro degli utenti, quindi nessuna directory\n"
-        "   personale da cercare. Rendere NULL e' la risposta giusta — e' cio'\n"
-        "   che un sistema vero risponde per un utente che non esiste — e glob.c\n"
-        "   la sa gia' leggere: lascia `~tizio' com'e' scritto. `~' da solo\n"
-        "   passa da getenv(\"HOME\") e continua a funzionare.  */\n"
-        "struct passwd { char *pw_name; char *pw_dir; };\n"
-        "static struct passwd *getpwnam (const char *nome)\n"
-        "{ (void) nome; return (struct passwd *) 0; }\n"
-        "char *getlogin (void) { return (char *) 0; }\n"
-        "#endif\n",
-    ),
+    # <pwd.h>: until November 2026 read.c and glob/glob.c got a getpwnam
+    # that answered NULL and a getlogin of their own, because EX-OS had no
+    # user database. The libc has pwd.h, getpwnam and getlogin now: the
+    # stubs clashed with them ("static declaration of getlogin") and went.
 ]
 
 # File nostri da copiare nell'albero. Per ora nessuno: il porting di make sta

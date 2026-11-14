@@ -99,7 +99,7 @@ typedef __INTPTR_TYPE__  intptr_t;
 #define EXOS_RB_RESTART   1
 #define EXOS_RB_HALT      2
 #define SYS_CHDIR       12
-#define SYS_STAT        106
+#define SYS_STAT        268     /* the 56-byte Stat, kernel 0.339 */
 #define SYS_CONSOLE_SETFG 232   /* dichiara il processo in primo piano */
 #define SYS_PTY_CTL       252   /* lo stesso, ma per uno pseudo-terminale */
 #define PTY_CTL_FG          1   /* arg = chi Ctrl+C deve interrompere */
@@ -2520,7 +2520,13 @@ static int esegui_script_nominato(const char *nome)
  * (there are no users to ask about: root can do both).
  * ============================================================================= */
 static int nome_var_car(char c, int primo);     /* with the variables, further down */
-typedef struct { uint32_t dim, ident; uint16_t attr, data, ora; } ShStat;
+/* kernel/include/syscall.h Stat (0.339): 56 bytes on 32 and 64 bit */
+typedef struct {
+    unsigned long long dim;
+    long long mtime, atime, ctime;
+    uint32_t ident, nlink, modo, uid, gid;
+    uint16_t attr, riserva;
+} ShStat;
 typedef struct { uint16_t modo, uid, gid; } ShStatPerm;
 #define SYS_STATPERM_SH 253
 

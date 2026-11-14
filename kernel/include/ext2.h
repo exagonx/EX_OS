@@ -68,6 +68,11 @@ typedef struct {
     uint16_t modo;      /* i_mode: tipo nei 4 bit alti, permessi nei 9 bassi */
     uint16_t uid;
     uint16_t gid;
+
+    /* (0.339) filled by ext2_stat only: i_links_count and the inode's
+     * Unix times (i_atime, i_ctime, i_mtime at offsets 8, 12, 16) */
+    uint16_t nlink;
+    uint32_t atime, ctime, mtime;
 } Ext2DirEntry;
 
 /* Monta il volume sul dispositivo a blocchi `blkdev`.

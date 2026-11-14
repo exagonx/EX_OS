@@ -149,6 +149,8 @@ CFLAGS="-m32 -march=pentium-mmx -mtune=pentium-mmx -ffreestanding -fno-builtin -
 
 $CC -m32 -c lib/start.S -o "$PREFISSO/i386-exos/lib/crt0.o"
 $CC $CFLAGS -c lib/libc.c -o "$PREFISSO/i386-exos/lib/libc.o"
+# from scratch, as cross64.sh: ar r on top keeps the members of before
+rm -f "$PREFISSO/i386-exos/lib/libc.a"
 ar rcs "$PREFISSO/i386-exos/lib/libc.a" "$PREFISSO/i386-exos/lib/libc.o"
 rm -f "$PREFISSO/i386-exos/lib/libc.o"
 

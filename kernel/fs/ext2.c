@@ -998,6 +998,11 @@ int ext2_stat(int mnt, const char *percorso, Ext2DirEntry *out)
     out->modo = le16(inode + 0);
     out->uid  = le16(inode + 2);
     out->gid  = le16(inode + 24);
+
+    out->nlink = le16(inode + 26);
+    out->atime = le32(inode + 8);
+    out->ctime = le32(inode + 12);
+    out->mtime = le32(inode + 16);
     return 0;
 }
 

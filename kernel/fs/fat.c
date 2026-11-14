@@ -118,6 +118,7 @@
 #include "kernel.h"
 #include "fat.h"
 #include "blk.h"
+#include "rtc.h"
 
 /* =============================================================================
  * Cache dei settori
@@ -1515,17 +1516,27 @@ int fat_read(int mnt, const char *percorso, void *buf,
  * -----------------------------------------------------------------------
  * 11. DATA E ORA: NON SI INVENTANO.
  *
- * Il sistema non ha ancora un orologio hardware (nessun driver RTC). Le
- * alternative erano scrivere una data finta plausibile o una costante
- * riconoscibile. Una data finta plausibile e' peggio: renderebbe
- * indistinguibile "non lo sappiamo" da "e' stato scritto allora", e
- * qualunque strumento che ordini per data darebbe un risultato
- * inventato. Si scrive una costante, e quando ci sara' l'RTC bastera'
- * cambiare queste due funzioni.
+ * Dall'RTC (rtc_read), come fanno gia' FAT12 e ext2. Se l'orologio non
+ * risponde si scrive zero, che vuol dire «non la so». Fino alla 0.338 qui
+ * c'era una costante, il 1 gennaio 2026, scritta quando il kernel non
+ * leggeva l'orologio: ogni file creato o scritto su FAT16/FAT32 da EX-OS
+ * aveva quella data, e make non poteva confrontarli. Visto con
+ * tools/prova_stat.sh.
  * ============================================================================= */
 
-#define FAT_DATA_IGNOTA   0x5C21u   /* 2026-01-01 in formato FAT */
-#define FAT_ORA_IGNOTA    0x0000u   /* 00:00:00 */
+typedef struct { uint16_t data, ora; } FatIstante;
+
+static FatIstante fat_adesso(void)
+{
+    FatIstante r = { 0, 0 };
+    RtcTime    t;
+
+    if (rtc_read(&t) != 0) return r;
+    if (t.anno < 1980u || t.anno > 2107u) return r;
+    r.data = (uint16_t)(((t.anno - 1980u) << 9) | (t.mese << 5) | t.giorno);
+    r.ora  = (uint16_t)((t.ora << 11) | (t.minuto << 5) | (t.secondo / 2u));
+    return r;
+}
 
 /* Puntatore modificabile a una voce di directory di cui si conosce la
  * posizione. Vale finche' non si chiede un altro settore. */
@@ -1769,12 +1780,16 @@ static int voce_nuova(FatMount *m, const char *percorso, uint8_t attr,
         for (i = 0; i < 11; i++) v[i] = n83[i];
     }
     v[11] = attr;
-    scrivi16(v + 14, FAT_ORA_IGNOTA);      /* creazione */
-    scrivi16(v + 16, FAT_DATA_IGNOTA);
-    scrivi16(v + 18, FAT_DATA_IGNOTA);     /* ultimo accesso */
+    {
+        FatIstante t = fat_adesso();
+
+        scrivi16(v + 14, t.ora);           /* creazione */
+        scrivi16(v + 16, t.data);
+        scrivi16(v + 18, t.data);          /* ultimo accesso */
+        scrivi16(v + 22, t.ora);           /* modifica */
+        scrivi16(v + 24, t.data);
+    }
     scrivi16(v + 20, primo_clus >> 16);    /* alto: solo FAT32 */
-    scrivi16(v + 22, FAT_ORA_IGNOTA);      /* modifica */
-    scrivi16(v + 24, FAT_DATA_IGNOTA);
     scrivi16(v + 26, primo_clus & 0xFFFF);
     scrivi32(v + 28, 0);
 
@@ -1835,10 +1850,14 @@ int fat_mkdir(int mnt, const char *percorso)
         scrivi16(v + 26,      nuovo & 0xFFFF);
         scrivi16(v + 32 + 20, padre_clus >> 16);
         scrivi16(v + 32 + 26, padre_clus & 0xFFFF);
-        scrivi16(v + 22,      FAT_ORA_IGNOTA);
-        scrivi16(v + 24,      FAT_DATA_IGNOTA);
-        scrivi16(v + 32 + 22, FAT_ORA_IGNOTA);
-        scrivi16(v + 32 + 24, FAT_DATA_IGNOTA);
+        {
+            FatIstante t = fat_adesso();
+
+            scrivi16(v + 22,      t.ora);
+            scrivi16(v + 24,      t.data);
+            scrivi16(v + 32 + 22, t.ora);
+            scrivi16(v + 32 + 24, t.data);
+        }
     }
 
     {
@@ -2117,8 +2136,12 @@ int fat_write(int mnt, const char *percorso, const void *buf,
         scrivi16(v + 20, primo >> 16);
         scrivi16(v + 26, primo & 0xFFFF);
         if (offset + scritti > dim) scrivi32(v + 28, offset + scritti);
-        scrivi16(v + 22, FAT_ORA_IGNOTA);
-        scrivi16(v + 24, FAT_DATA_IGNOTA);
+        {
+            FatIstante t = fat_adesso();
+
+            scrivi16(v + 22, t.ora);
+            scrivi16(v + 24, t.data);
+        }
         v[11] |= FAT_ATTR_ARCHIVE;
     }
 
@@ -2187,9 +2210,13 @@ int fat_truncate(int mnt, const char *percorso, uint32_t nuova_dim)
     {
         uint8_t *v = voce_mut(m, &pos);
         if (v == NULL) return -1;
+        FatIstante t = fat_adesso();
+
         scrivi32(v + 28, nuova_dim);
         scrivi16(v + 20, primo >> 16);
         scrivi16(v + 26, primo & 0xFFFF);
+        scrivi16(v + 22, t.ora);              /* truncate changes the file */
+        scrivi16(v + 24, t.data);
     }
 
     return 0;

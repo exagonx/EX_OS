@@ -12,8 +12,9 @@
 //! file viene accodato a questo, e una misura sbagliata ferma la compilazione.
 //!
 //! ! LE COSE CHE EX-OS NON HA sono dichiarate col valore che la libc da' davvero
-//! e non con uno inventato: O_EXCL e O_CLOEXEC valgono 0 (la libc li ignora,
-//! quindi `File::create_new` non e' atomico). I socket sono solo IPv4 (vedi
+//! e non con uno inventato. O_EXCL (0x80, kernel 0.330), O_NOCTTY, O_CLOEXEC e
+//! O_NOFOLLOW hanno i valori di lib/include (fino al 14/11/2026 qui valevano 0,
+//! e `File::create_new` non era atomico). I socket sono solo IPv4 (vedi
 //! lib/include/libc.h): le strutture IPv6 servono perche' il crate le nomina.
 use crate::prelude::*;
 use crate::{in6_addr, in_addr_t, timespec, DIR};
@@ -61,6 +62,7 @@ s! {
         pub st_atime: time_t,
         pub st_mtime: time_t,
         pub st_ctime: time_t,
+        pub st_rdev: dev_t,     // lib/include/exos_stat.h, since 7/11/2026
     }
 
     pub struct dirent {
@@ -90,7 +92,7 @@ s! {
     }
 
     pub struct fd_set {
-        bit: c_uint,
+        bit: [c_uint; 64],      // FD_SETSIZE 2048 (lib/include/libc.h)
     }
 
     // lib/include/pthread.h: le forme vere stanno la', qui solo la misura.
@@ -399,16 +401,16 @@ pub const O_WRONLY: c_int = 1;
 pub const O_RDWR: c_int = 2;
 pub const O_ACCMODE: c_int = 3;
 pub const O_CREAT: c_int = 0x40;
-pub const O_EXCL: c_int = 0;
-pub const O_NOCTTY: c_int = 0;
+pub const O_EXCL: c_int = 0x80;
+pub const O_NOCTTY: c_int = 0x100;
 pub const O_TRUNC: c_int = 0x200;
 pub const O_APPEND: c_int = 0x400;
 pub const O_NONBLOCK: c_int = 0x800;
 pub const O_SYNC: c_int = 0;
 pub const O_DSYNC: c_int = 0;
-pub const O_CLOEXEC: c_int = 0;
+pub const O_CLOEXEC: c_int = 0x80000;
 pub const O_DIRECTORY: c_int = 0;
-pub const O_NOFOLLOW: c_int = 0;
+pub const O_NOFOLLOW: c_int = 0x20000;
 pub const F_DUPFD: c_int = 0;
 pub const F_DUPFD_CLOEXEC: c_int = 1030;
 pub const F_GETFD: c_int = 1;

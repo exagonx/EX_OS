@@ -23,6 +23,18 @@ QUEL CHE E' APERTO — 15 settembre 2026
     0.332. DA FARE: il kernel deve dare modo, uid, gid e link nella sua
     stat, e la libc copiarli (ls -l, cp -p, tar, i server che controllano i
     permessi dei loro file). Da chiedere all'utente prima: tocca l'ABI.
+    -> 14/11 FATTO NEL KERNEL 0.339 (l'utente: "ripara in via definitiva,
+    non importa la compatibilita' con i vecchi programmi"). Stat da 56 byte
+    con modo, uid, gid, nlink e tre tempi Unix, SYS_STAT 268 e SYS_FSTAT
+    269; 106 e 108 rispondono ENOSYS con un WARN che nomina il programma.
+    Anche il driver FAT scriveva una data fissa (1/1/2026): ora l'RTC.
+    Prova: tools/prova_stat.sh. libc.a e header rifatti nei quattro sysroot
+    (cross_build/exos-cross, exos-cross64 e le copie in nasi5deb). ! RESTA:
+    RICOLLEGARE ogni programma di terzi collegato alla libc.a (MariaDB,
+    Apache, Valkey, PHP, gcc/cc1/as/ld, make, nasm, openssl, ffmpeg, vlc,
+    ncurses, xz, zstd, Firefox...): senza, ogni loro stat() fallisce con
+    ENOSYS. struct stat non e' cambiata, quindi basta ricollegare; per
+    O_EXCL (nota sotto) invece serve ricompilare.
 
 !!! IL 13 NOVEMBRE: IL SYSROOT DELLA TOOLCHAIN INCROCIATA E' DEL 30 OTTOBRE.
     cross_build/nasi5deb/exos-cross{,64}/*-exos/include/fcntl.h ha ancora
@@ -34,6 +46,9 @@ QUEL CHE E' APERTO — 15 settembre 2026
     bit (tools/gcc-exos/prepara-cross.sh fa la parte a 32: cp -rp
     lib/include, libc.a) e poi ricollegare chi li usa. DA CHIEDERE
     all'utente: cambia la toolchain di Firefox e di MariaDB.
+    -> 14/11: gli header dei sysroot sono rifatti con la 0.339 (fcntl.h ha
+    O_EXCL 0x80). I programmi gia' compilati hanno ancora lo 0 dentro: vanno
+    RICOMPILATI, non solo ricollegati.
 
 !!! IL 31 OTTOBRE: voci 51 e 52 FATTE. Il disco del portatile in sola lettura
     era ext4.mod 0.280 con kernel 0.291: stessi 40920 byte, il registro si

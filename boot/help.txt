@@ -834,6 +834,13 @@ pointer", dal kernel 0.331: ha passato al kernel un indirizzo dove non c'e'
 memoria. Fino alla 0.330 era un panico del kernel e la macchina si fermava;
 ora muore solo il programma. Il difetto e' suo: scrivi a chi sviluppa EX-OS.
 
+UN PROGRAMMA CHE ANDAVA NON TROVA PIU' I FILE (stat dice "Function not
+implemented", ENOSYS) dal kernel 0.339, e nel registro c'e' "SYSCALL: 'nome'
+(PID n) usa lo stat di prima della 0.339": il programma ha dentro la libc di
+prima, che passava al kernel una struttura piu' piccola. `netupdate` porta i
+programmi ricollegati; uno compilato da te va ricompilato o ricollegato alla
+libc.a nuova. Dalla 0.339 stat() da' i permessi e il proprietario veri.
+
 open DA' "File exists" (EEXIST) a un programma che prima andava, dal kernel
 0.331: ha chiesto O_CREAT|O_EXCL (crea solo se non c'e') e il file c'era. Prima
 O_EXCL non era guardato e il file veniva riaperto. Cancella il file vecchio, o

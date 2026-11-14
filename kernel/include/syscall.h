@@ -62,8 +62,13 @@
 #define SYS_SBRK        45
 #define SYS_GETCWD      183
 #define SYS_CHDIR       12
-#define SYS_STAT        106
-#define SYS_FSTAT       108    /* stat di un descrittore aperto (vedi sys_fstat) */
+/* 106 and 108 were stat and fstat with the old 14-byte Stat; since 0.339
+ * they answer ENOSYS (sys_stat_vecchia), so a program still linked to the
+ * old libc fails instead of getting 56 bytes written into 14. */
+#define SYS_STAT_VECCHIA   106
+#define SYS_FSTAT_VECCHIA  108
+#define SYS_STAT        268    /* ebx = percorso, ecx = Stat* (0.339) */
+#define SYS_FSTAT       269    /* ebx = fd, ecx = Stat* (0.339, vedi sys_fstat) */
 #define SYS_FTRUNCATE   109    /* ftruncate: misura di un file aperto (0.233) */
 #define SYS_LSEEK       19
 #define SYS_READDIR     141    /* elenca una directory (vedi sys_readdir) */
@@ -266,7 +271,7 @@ typedef struct {
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   268     /* la piu' alta e' SYS_IOPORT_DIRETTO = 267 */
+#define SYSCALL_COUNT   270     /* la piu' alta e' SYS_FSTAT = 269 */
 
 /* =============================================================================
  * Codici errno
@@ -1451,17 +1456,25 @@ typedef struct {
 /* =============================================================================
  * Struttura stat (per sys_stat)
  * ============================================================================= */
+/* Since 0.339 (SYS_STAT 268, SYS_FSTAT 269) it carries what the volume
+ * really knows: mode, owner, links and Unix times. Until 0.338 it had only
+ * size, identity, FAT attributes and a FAT date, and the libc made up
+ * st_mode, st_uid, st_gid and st_nlink. Same layout and size (56 bytes) on
+ * 32 and 64 bit; copied by hand in lib/include/libc.h. */
 typedef struct {
-    uint32_t    st_size;        /* Dimensione file */
-    /* Identita' del file: due percorsi danno lo STESSO numero se e solo se
-     * sono lo stesso oggetto. Si chiamava st_first_clus e valeva sempre 0
-     * fuori da FAT12; e' diventato st_ident ad agosto 2026 — la stessa
-     * parola nella stessa posizione, quindi nessuna ABI cambia. Il perche'
-     * sta in stat_interno(), kernel/fs/vfs.c. */
+    uint64_t    st_size;
+    int64_t     st_mtime;       /* Unix seconds; 0 = the volume does not keep it */
+    int64_t     st_atime;       /* = st_mtime where the volume has only one */
+    int64_t     st_ctime;
+    /* Identity: two paths give the SAME number if and only if they are the
+     * same object. Why it is built this way: stat_interno(), kernel/fs/vfs.c. */
     uint32_t    st_ident;
-    uint16_t    st_attr;        /* Attributi FAT12 */
-    uint16_t    st_date;        /* Data modifica */
-    uint16_t    st_time;        /* Ora modifica */
+    uint32_t    st_nlink;       /* ext2 i_links_count, 1 elsewhere */
+    uint32_t    st_mode;        /* POSIX type and permission bits */
+    uint32_t    st_uid;
+    uint32_t    st_gid;
+    uint16_t    st_attr;        /* FAT attributes: 0x10 dir, 0x01 read-only, 0x40 device */
+    uint16_t    st_riserva;
 } Stat;
 
 /* =============================================================================
@@ -1920,6 +1933,7 @@ int32_t sys_getcwd(InterruptFrame *f);
 int32_t sys_chdir(InterruptFrame *f);
 int32_t sys_stat(InterruptFrame *f);
 int32_t sys_fstat(InterruptFrame *f);
+int32_t sys_stat_vecchia(InterruptFrame *f);
 int32_t sys_ftruncate(InterruptFrame *f);
 int32_t sys_lseek(InterruptFrame *f);
 int32_t sys_pread(InterruptFrame *f);

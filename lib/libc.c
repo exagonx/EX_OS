@@ -64,7 +64,7 @@ typedef __UINTPTR_TYPE__    uintptr_t;
  * funzioni definite in questo file; gli altri stanno solo nell'header. */
 typedef int                 pid_t;
 typedef long                off_t;
-typedef long long           off64_t;   /* the *64 functions (see libc.h, off_t) */
+typedef __INT64_TYPE__      off64_t;   /* the *64 functions (see libc.h, off_t) */
 typedef unsigned int        mode_t;
 /* ! Gli altri tipi di POSIX che compaiono in `struct stat`. Duplicati da
  * lib/include/libc.h e devono restare identici: quella struttura la
@@ -189,14 +189,22 @@ static void (*g_distruttori_prog)(void) = 0;
 /* Informazioni su un file (SYS_STAT). Duplicata da
  * kernel/include/syscall.h, come le altre strutture che attraversano
  * l'ABI. st_attr usa le convenzioni FAT anche sugli altri filesystem:
- * 0x10 = directory, 0x01 = sola lettura. */
+ * 0x10 = directory, 0x01 = sola lettura. Dalla 0.339 porta anche modo,
+ * proprietario, collegamenti e tempi Unix: 56 byte a 32 e a 64 bit. */
 typedef struct {
-    uint32_t    st_size;
+    unsigned long long st_size;
+    long long   st_mtime;       /* secondi Unix, 0 = il volume non la tiene */
+    long long   st_atime;
+    long long   st_ctime;
     uint32_t    st_ident;
+    uint32_t    st_nlink;
+    uint32_t    st_mode;        /* tipo e permessi POSIX, quelli del volume */
+    uint32_t    st_uid;
+    uint32_t    st_gid;
     uint16_t    st_attr;
-    uint16_t    st_date;
-    uint16_t    st_time;
+    uint16_t    st_riserva;
 } Stat;
+typedef char stat_56_byte[sizeof(Stat) == 56 ? 1 : -1];
 
 /* ! QUI C'ERANO DUE MACRO CON IL NOME SBAGLIATO (tolte nel 0.150):
  *
@@ -314,8 +322,8 @@ typedef struct {
 #define SYS_TRUNCATE     92
 #define SYS_CHDIR       12
 #define SYS_LSEEK        19
-#define SYS_STAT        106
-#define SYS_FSTAT       108
+#define SYS_STAT        268     /* la Stat da 56 byte, kernel 0.339 */
+#define SYS_FSTAT       269
 #define SYS_FTRUNCATE   109
 #define SYS_READDIR     141
 #define SYS_IPC_SEND     220
@@ -11833,63 +11841,31 @@ int statraw(const char *path, Stat *st)
 /* =============================================================================
  * stat / fstat nella forma POSIX
  *
- * Il filesystem risponde con gli attributi di FAT; questa conversione li
- * mette nella forma che si aspetta il codice di terzi. Vedi struct stat in
- * lib/include/libc.h per il perche' i due tipi convivono invece di
- * sostituirsi.
- *
- * LA DATA. FAT impacchetta data e ora in due parole a 16 bit, con l'anno
- * contato dal 1980 e i secondi divisi per due (un bit non bastava per 60
- * valori, e cosi' ne bastano cinque). E' il formato del 1980 e si decodifica
- * con degli spostamenti; l'unica cosa da non dimenticare e' il fattore due
- * sui secondi, che altrimenti fa un orario plausibile e sbagliato.
+ * Dalla 0.339 il kernel da' gia' modo, proprietario, collegamenti e tempi
+ * Unix (la data FAT la converte il VFS, unix_da_fat in kernel/fs/vfs.c):
+ * qui si copiano i campi nella forma che si aspetta il codice di terzi.
  * ============================================================================= */
 static void stat_da_grezzo(const Stat *g, struct stat *st)
 {
-    unsigned anno   = 1980u + ((unsigned)(g->st_date >> 9) & 0x7Fu);
-    unsigned mese   = ((unsigned)(g->st_date >> 5) & 0x0Fu);
-    unsigned giorno = ((unsigned)g->st_date & 0x1Fu);
-    unsigned ora    = ((unsigned)(g->st_time >> 11) & 0x1Fu);
-    unsigned minuto = ((unsigned)(g->st_time >> 5) & 0x3Fu);
-    unsigned sec    = ((unsigned)g->st_time & 0x1Fu) * 2u;
-
-    /* ! st_dev RESTA 0, ED E' CORRETTO QUI: l'identita' del volume e'
-     * gia' dentro st_ident (il VFS ci mette il montaggio nei bit alti —
-     * vedi stat_interno in kernel/fs/vfs.c). Due st_ino uguali con
-     * st_dev uguale significano «lo stesso file», ed e' esattamente cio'
-     * che chiede chi confronta due percorsi. */
-    st->st_dev   = 0;
-    st->st_ino   = g->st_ident;
-    st->st_nlink = 1;
-    st->st_uid   = 0;
-    st->st_gid   = 0;
-    st->st_size  = (off_t)g->st_size;
-    /* ! 512 e non 4096: e' il SETTORE, che e' l'unita' vera di tutti i
-     * filesystem di EX-OS. Chi dimensiona un buffer su st_blksize deve
-     * ricevere un numero che corrisponde a come si legge davvero. */
+    /* (0.339) tutto dal kernel: fino alla 0.338 la Stat aveva solo misura,
+     * identita', attributi FAT e una data FAT, e qui si inventavano
+     * st_mode, st_nlink, st_uid e st_gid. */
+    memset(st, 0, sizeof(*st));
+    /* st_dev resta 0: il volume e' gia' dentro st_ident (stat_interno in
+     * kernel/fs/vfs.c), quindi st_ino da solo distingue due file. */
+    st->st_ino     = g->st_ident;
+    st->st_mode    = (mode_t)g->st_mode;
+    st->st_nlink   = (nlink_t)g->st_nlink;
+    st->st_uid     = (uid_t)g->st_uid;
+    st->st_gid     = (gid_t)g->st_gid;
+    st->st_size    = (off_t)g->st_size;
+    /* 512: il settore, l'unita' vera di tutti i filesystem di EX-OS */
     st->st_blksize = 512;
     st->st_blocks  = (blkcnt_t)((g->st_size + 511u) / 512u);
-
-    /* (kernel 0.318) attribute 0x40: a character device - /dev/null,
-     * /dev/ptmx, /dev/pts/N (stat_dispositivo in syscall_impl.c) */
-    if (g->st_attr & 0x40)                  st->st_mode = S_IFCHR | 0620u;
-    else if (EXOS_ATTR_DIR(g->st_attr))     st->st_mode = S_IFDIR | 0755u;
-    else if (EXOS_ATTR_RDONLY(g->st_attr))  st->st_mode = S_IFREG | 0555u;
-    else                                    st->st_mode = S_IFREG | 0644u;
-
-    /* Una data a zero significa "il filesystem non la tiene" (ISO 9660 e i
-     * montaggi che non la riportano): meglio zero che il 1980. */
-    if (g->st_date == 0) {
-        st->st_mtime = 0;
-    } else {
-        if (mese   < 1u || mese   > 12u) mese   = 1u;
-        if (giorno < 1u || giorno > 31u) giorno = 1u;
-        st->st_mtime = (time_t)(giorni_da_civile((long)anno, mese, giorno) * 86400L
-                                + (long)ora * 3600L + (long)minuto * 60L + (long)sec);
-    }
-    st->st_atime = st->st_mtime;
-    st->st_ctime = st->st_mtime;
-    st->st_rdev  = (g->st_attr & 0x40) ? (dev_t)g->st_ident : 0;
+    st->st_mtime   = (time_t)g->st_mtime;
+    st->st_atime   = (time_t)g->st_atime;
+    st->st_ctime   = (time_t)g->st_ctime;
+    st->st_rdev    = (g->st_attr & 0x40) ? (dev_t)g->st_ident : 0;
 }
 
 int stat(const char *path, struct stat *st)

@@ -3792,13 +3792,38 @@ static void stat_da_vfs(const VfsStat *vs, Stat *st);
  * 0x100 + (N << 1) the slave of pair N, 0x101 + (N << 1) its master. The
  * libc makes it S_IFCHR, with st_rdev = st_ino = that identity. */
 #define STAT_ATTR_DISPOSITIVO  0x40
+#define STAT_S_IFCHR  0020000u
+#define STAT_S_IFDIR  0040000u
+#define STAT_S_IFREG  0100000u
+#define STAT_S_IFMT   0170000u
+
 static void stat_dispositivo(Stat *st, uint32_t ident)
 {
-    st->st_size  = 0;
+    uint8_t *p = (uint8_t *)st;
+    uint32_t i;
+
+    for (i = 0; i < sizeof(Stat); i++) p[i] = 0;
     st->st_ident = 0xFFF00000u | ident;
     st->st_attr  = STAT_ATTR_DISPOSITIVO;
-    st->st_date  = 0;
-    st->st_time  = 0;
+    st->st_mode  = STAT_S_IFCHR | 0620u;
+    st->st_nlink = 1;
+}
+
+/* SYS_STAT_VECCHIA, SYS_FSTAT_VECCHIA (106, 108): the 14-byte Stat of
+ * 0.338 and before. A program that still calls them was linked to the old
+ * libc: it gets ENOSYS and the log says who, once per program. */
+int32_t sys_stat_vecchia(InterruptFrame *frame)
+{
+    static uint32_t ultimo_pid;
+    Process        *p = proc_get_current();
+
+    (void)frame;
+    if (p != NULL && p->tgid != ultimo_pid) {
+        ultimo_pid = p->tgid;
+        klog(LOG_WARN, "SYSCALL: '%s' (PID %u) usa lo stat di prima della 0.339: va ricollegato alla libc nuova",
+             p->name, p->tgid);
+    }
+    return ERR(ENOSYS);
 }
 
 /* =============================================================================
@@ -3860,15 +3885,32 @@ static void stat_da_vfs(const VfsStat *vs, Stat *st)
      *
      * Gli attributi usano le convenzioni FAT (0x10 directory, 0x01 sola
      * lettura) perche' sono quelle che i programmi gia' interpretano. */
+    uint8_t *p = (uint8_t *)st;
+    uint32_t i, tipo;
+
+    for (i = 0; i < sizeof(Stat); i++) p[i] = 0;
     st->st_size       = vs->dimensione;
     st->st_ident      = vs->ident;
     st->st_attr       = (uint16_t)((vs->is_dir       ? 0x10 : 0x00) |
                                    (vs->sola_lettura ? 0x01 : 0x00));
-    /* Dal 0.168 la data arriva davvero dal filesystem. Zero continua a
-     * significare «questo volume non la tiene» — la libc lo sa e stampa
-     * dei trattini invece di inventare il 1980. */
-    st->st_date       = vs->data;
-    st->st_time       = vs->ora;
+    /* Zero still means «this volume does not keep it». */
+    st->st_mtime      = vs->mtime;
+    st->st_atime      = vs->atime;
+    st->st_ctime      = vs->ctime;
+    st->st_nlink      = vs->nlink ? vs->nlink : 1u;
+    st->st_uid        = vs->uid;
+    st->st_gid        = vs->gid;
+
+    /* (0.339) The mode the volume keeps (ext2 i_mode with its type, procfs
+     * without), else the one EX-OS has always shown for volumes without
+     * owners (FAT, ISO 9660, roots): 0755 a directory, 0555 read-only,
+     * 0644 the rest - the libc built it from the attributes until 0.338. */
+    tipo = vs->is_dir ? STAT_S_IFDIR : STAT_S_IFREG;
+    if (vs->modo & STAT_S_IFMT) st->st_mode = vs->modo;
+    else if (vs->modo != 0)     st->st_mode = tipo | (vs->modo & 07777u);
+    else if (vs->is_dir)        st->st_mode = tipo | 0755u;
+    else if (vs->sola_lettura)  st->st_mode = tipo | 0555u;
+    else                        st->st_mode = tipo | 0644u;
 }
 
 /* =============================================================================

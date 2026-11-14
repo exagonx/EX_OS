@@ -89,7 +89,9 @@ typedef long                off_t;
 #else
 #define EXOS_STAT2(nome)    __asm__("__exos_" #nome "2")
 #endif
-typedef long long           off64_t;
+/* the type of int64_t, as glibc: long at 64 bit, long long at 32 (libgit2
+ * says typedef int64_t off64_t, and two names of one size are not one type) */
+typedef __INT64_TYPE__      off64_t;
 typedef unsigned int        mode_t;
 typedef unsigned int        dev_t;
 typedef unsigned int        ino_t;
@@ -1877,12 +1879,21 @@ int fcntl(int fd, int cmd, ...) EXOS_LFS(fcntl);
 #define SEEK_CUR    1
 #define SEEK_END    2
 
+/* Dalla 0.339 (SYS_STAT 268) porta anche modo, proprietario, collegamenti
+ * e tempi Unix: 56 byte a 32 e a 64 bit. Copia di kernel/include/syscall.h.
+ * Fino alla 0.338 erano cinque campi, con la data in formato FAT. */
 typedef struct {
-    unsigned int    st_size;
-    unsigned int    st_ident;
-    unsigned short  st_attr;
-    unsigned short  st_date;
-    unsigned short  st_time;
+    unsigned long long st_size;
+    long long          st_mtime;    /* secondi Unix, 0 = il volume non la tiene */
+    long long          st_atime;
+    long long          st_ctime;
+    unsigned int       st_ident;
+    unsigned int       st_nlink;
+    unsigned int       st_mode;     /* tipo e permessi POSIX, quelli del volume */
+    unsigned int       st_uid;
+    unsigned int       st_gid;
+    unsigned short     st_attr;
+    unsigned short     st_riserva;
 } Stat;
 
 /* Attributi FAT, da usare su Stat.st_attr. Si chiamavano S_ISDIR e
@@ -1898,19 +1909,19 @@ typedef struct {
 /* =============================================================================
  * struct stat — la forma POSIX della stessa informazione
  *
- * Stat (sopra) e' l'ABI della syscall: quello che il filesystem sa, con i
- * nomi di FAT. struct stat e' quello che si aspetta il codice scritto per
- * un sistema POSIX, ed e' cio' che stat() riempie oggi.
+ * Stat (sopra) e' l'ABI della syscall: quello che il filesystem sa.
+ * struct stat e' quello che si aspetta il codice scritto per un sistema
+ * POSIX, ed e' cio' che stat() riempie.
  *
  * Non e' una duplicazione: la prima attraversa il confine col kernel e
- * cambiarla vuol dire cambiare il kernel; la seconda e' una comodita' di
- * libreria, e i campi che EX-OS non ha (proprietario, gruppo, numero di
- * collegamenti) valgono zero o uno invece di essere inventati.
+ * cambiarla vuol dire cambiare il kernel (e ricollegare ogni programma,
+ * come alla 0.339); la seconda e' la forma della libreria.
  *
- * I permessi in st_mode sono ricostruiti dall'attributo di sola lettura:
- * 0555 se il file e' in sola lettura, 0755 per una directory, 0644
- * altrimenti. EX-OS non ha permessi veri — sono li' perche' un programma
- * che stampa "rw-r--r--" non abbia da lamentarsi.
+ * Dalla 0.339 st_mode, st_uid, st_gid, st_nlink e i tre tempi sono quelli
+ * del volume: su ext2 e ext4 l'inode, su /proc quelli dei processi. FAT e
+ * ISO 9660 non hanno proprietari: li' uid e gid valgono 0, i collegamenti
+ * 1, e i permessi sono quelli che EX-OS ha sempre mostrato, dall'attributo
+ * di sola lettura: 0555 in sola lettura, 0755 una directory, 0644 il resto.
  * ============================================================================= */
 #define S_IFMT      0170000
 #define S_IFDIR     0040000
@@ -1921,9 +1932,11 @@ typedef struct {
 /* =============================================================================
  * ! I TIPI DI FILE CHE EX-OS NON HA
  *
- * FIFO, dispositivi a caratteri e a blocchi, collegamenti simbolici,
- * socket. stat() non metterà mai uno di questi in st_mode, e le macro
- * S_IS*() corrispondenti ritorneranno sempre 0.
+ * FIFO, dispositivi a blocchi, collegamenti simbolici. EX-OS non ne crea;
+ * stat() mette S_IFCHR solo su /dev/null, /dev/ptmx e /dev/pts/N e
+ * S_IFSOCK solo su un socket. Dalla 0.339 su un ext2 fatto altrove (con
+ * Linux) stat() riporta il tipo scritto nell'inode, anche un collegamento:
+ * EX-OS non lo segue, e dirlo e' meglio che chiamarlo file normale.
  *
  * Ci sono per lo stesso motivo dei codici errno della rete e delle
  * costanti DT_*: **servono a essere nominati**. La <filesystem> del C++17
@@ -1950,10 +1963,9 @@ typedef struct {
 #define S_ISLNK(m)  (((m) & S_IFMT) == S_IFLNK)
 #define S_ISSOCK(m) (((m) & S_IFMT) == S_IFSOCK)
 
-/* I bit dei permessi. ! EX-OS NON HA PERMESSI VERI: st_mode li ricostruisce
- * dall'attributo di sola lettura di FAT (vedi sopra), e chmod() è inerte.
- * Questi nomi servono a leggere quei bit e a scrivere codice portabile —
- * `if (st.st_mode & S_IWUSR)` risponde davvero «è scrivibile?». */
+/* I bit dei permessi. Dalla 0.339 su ext2 e ext4 st_mode porta quelli
+ * dell'inode, che chmod() cambia; su FAT e ISO 9660 vengono dall'attributo
+ * di sola lettura (vedi sopra). */
 #define S_IRWXU     0000700
 #define S_IRUSR     0000400
 #define S_IWUSR     0000200

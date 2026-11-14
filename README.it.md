@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.338
+**Versione:** 0.339
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -112,6 +112,23 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### stat() dice i permessi, il proprietario, i collegamenti e le date veri, e i file scritti su FAT hanno la loro data (kernel 0.339)
+
+- **`stat()` e `fstat()` riportano cio' che il volume tiene** (kernel 0.339): su ext2 e ext4
+  modo, proprietario, gruppo, numero di collegamenti e i tre tempi dell'inode; su /proc quelli dei
+  processi. Prima la libc si inventava `st_mode` (0644, 0755 o 0555), `st_uid` e `st_gid` a 0 e
+  `st_nlink` a 1, qualunque cosa dicesse il disco: `chmod 600` riusciva e `stat` diceva ancora
+  644. FAT e ISO 9660 non hanno proprietari: li' restano uid 0, un collegamento e i permessi di
+  sempre. La struttura che il kernel passa alla libc e' cambiata (56 byte, chiamate nuove 268 e
+  269); `struct stat` dei programmi no. **testato in QEMU** (tools/prova_stat.sh, 32 e 64 bit)
+- **I file creati o scritti da EX-OS su FAT16 e FAT32 hanno la data dell'orologio** invece del 1
+  gennaio 2026 fisso. **testato in QEMU**
+- ! **Un programma collegato alla libc di prima non trova piu' nessun file con `stat`**: le
+  chiamate vecchie (106 e 108) rispondono «funzione non implementata», e nel log del kernel c'e'
+  `SYSCALL: '<nome>' (PID n) usa lo stat di prima della 0.339: va ricollegato alla libc nuova`.
+  I programmi di EX-OS si ricompilano col sistema; quelli portati (gcc, MariaDB, Apache, Valkey,
+  PHP, Firefox...) vanno ricollegati alla `libc.a` nuova, e arrivano con l'aggiornamento.
 
 ### Dormite lunghe quanto chiesto, un timer che guarda solo quando serve, i processi trovati per PID subito, i CD letti tre volte piu' in fretta, un programma che esce mentre i fili leggono non ferma piu' i file (kernel 0.334-0.338, analisi_kernel voci 6, 21, 22, 24, 27, 28, 75)
 

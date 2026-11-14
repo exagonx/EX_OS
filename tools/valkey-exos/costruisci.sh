@@ -57,7 +57,9 @@ costruisci() {
     case $BIT in 64) M=x86_64 ;; 32) M=i386 ;; esac
     V="$DEST/valkey"
     # shellcheck disable=SC2086
-    make -C "$SRC" -j3 MALLOC=libc CC="$CC -D__unix__ -DEXOS_SOLO_POSIX $MARCH" \
+    # ! src/, not the top Makefile: that one runs "cd src && make $@" once per
+    # goal, three makes at once, and each one cleans deps/ under the others
+    make -C "$SRC/src" -j3 MALLOC=libc CC="$CC -D__unix__ -DEXOS_SOLO_POSIX $MARCH" \
         AR=$AR RANLIB=$RANLIB uname_S=EXOS uname_M=$M BUILD_TLS=no USE_SYSTEMD=no \
         OPTIMIZATION=-O2 valkey-server valkey-cli valkey-benchmark \
         > "$B/costruisci.log" 2>&1 || { grep -a -m10 -B2 -A5 ' error\|Error ' "$B/costruisci.log"; exit 1; }
