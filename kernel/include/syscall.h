@@ -271,7 +271,7 @@ typedef struct {
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   270     /* la piu' alta e' SYS_FSTAT = 269 */
+#define SYSCALL_COUNT   272     /* la piu' alta e' SYS_FUSO_SET = 271 */
 
 /* =============================================================================
  * Codici errno
@@ -374,6 +374,20 @@ typedef struct {
  * se l'orologio non risponde.
  * ============================================================================= */
 #define SYS_TIME_SET      213   /* ebx = const RtcTime* */
+
+/* =============================================================================
+ * SYS_FUSO (270), SYS_FUSO_SET (271) -- the time zone (kernel 0.340)
+ *
+ * The CMOS clock (SYS_TIME, SYS_TIME_SET) keeps LOCAL time; Unix seconds -
+ * time(), file times - are UTC. The zone is the difference: minutes east of
+ * UTC, plus the European summer time rule or none. Loaded at boot from
+ * /boot/fuso.cfg (rtc_fuso_carica), changed by `date -fuso:`.
+ *
+ *   SYS_FUSO      ebx = int32_t[2] out: minutes, summer (1 = European rule)
+ *   SYS_FUSO_SET  ebx = minutes (-840..840), ecx = summer 0/1; root only
+ * ============================================================================= */
+#define SYS_FUSO          270   /* ebx = int32_t[2] */
+#define SYS_FUSO_SET      271   /* ebx = minutes east of UTC, ecx = 0/1 */
 
 /* =============================================================================
  * Console virtuali (vedi kernel/arch/x86/vga.c)
@@ -1933,6 +1947,8 @@ int32_t sys_getcwd(InterruptFrame *f);
 int32_t sys_chdir(InterruptFrame *f);
 int32_t sys_stat(InterruptFrame *f);
 int32_t sys_fstat(InterruptFrame *f);
+int32_t sys_fuso(InterruptFrame *f);
+int32_t sys_fuso_set(InterruptFrame *f);
 int32_t sys_stat_vecchia(InterruptFrame *f);
 int32_t sys_ftruncate(InterruptFrame *f);
 int32_t sys_lseek(InterruptFrame *f);

@@ -50,6 +50,23 @@ QUEL CHE E' APERTO — 15 settembre 2026
     O_EXCL 0x80). I programmi gia' compilati hanno ancora lo 0 dentro: vanno
     RICOMPILATI, non solo ricollegati.
 
+!!! IL 15 NOVEMBRE: time() NON ERA UTC. prova_openssl: il certificato fatto
+    in EX-OS nasceva un'ora nel futuro per Linux. L'orologio CMOS e' ora
+    locale e la libc lo contava come UTC; si vedeva da quando date -auto
+    (30/10) rimette l'ora italiana dopo dhcp. L'utente: "UTC vero in
+    time()". -> FATTO NEL KERNEL 0.340: il fuso sta nel kernel (rtc.c,
+    /boot/fuso.cfg all'avvio, SYS_FUSO 270 e SYS_FUSO_SET 271), le date di
+    ext2 in UTC, FAT in ora locale convertita, il CD col suo fuso; la libc
+    converte in time(), localtime, mktime, strftime %z %Z, tzset,
+    gettimeofday; date 0.005: -fuso: vale subito. Prova nuova
+    tools/prova_fuso.sh. SYS_TIME e SYS_TIME_SET restano l'orologio locale:
+    i programmi non ricollegati non si rompono, contano ancora l'ora locale
+    come UTC. ! RESTA: ricollegarli (MariaDB, Apache...): OpenSSL gia'
+    ricollegato, prova_openssl a posto a 32 e 64 bit col certificato.
+    ! prova_date a 32 bit con 32 MB: il secondo exbrowser (ExJs) finisce la
+    RAM (PMM: OUT OF MEMORY); con EXOS_RAM=64M a posto. Da capire se
+    succedeva gia' prima della 0.340.
+
 !!! IL 31 OTTOBRE: voci 51 e 52 FATTE. Il disco del portatile in sola lettura
     era ext4.mod 0.280 con kernel 0.291: stessi 40920 byte, il registro si
     fidava della dimensione (kernel 0.293, netupdate 0.038, install 0.011,

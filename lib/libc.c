@@ -451,6 +451,8 @@ typedef struct { unsigned int bit[FD_SETSIZE / 32]; } fd_set;
 #define SYS_IPC_RECV_TMO  228
 #define SYS_TIME           13
 #define SYS_TIME_SET      213
+#define SYS_FUSO          270   /* (0.340) the zone: int32_t[2] minutes, summer */
+#define SYS_FUSO_SET      271
 #define SYS_CONSOLE_SWITCH 229
 #define SYS_CONSOLE_WRITE  230
 #define SYS_CONSOLE_INFO   231
@@ -9318,14 +9320,11 @@ int time_set(const RtcTime *t)
  * codice scritto per un sistema POSIX — un conteggio di secondi da
  * un'origine, e la struttura che lo rimette in pezzi.
  *
- * ! NON C'E' UN FUSO ORARIO. L'orologio CMOS di EX-OS e' ora locale, e il
- * sistema non sa in quale fuso si trova: percio' localtime() e gmtime()
- * fanno esattamente la stessa cosa, e i secondi ritornati da time() sono
- * "secondi dal 1970 letti su un orologio locale". Vanno benissimo per
- * misurare intervalli e per la data di un file; NON sono un istante
- * confrontabile con quello di un'altra macchina. Il giorno che EX-OS
- * imparera' i fusi, questo e' il punto in cui la differenza smettera' di
- * essere finta.
+ * (0.340) THE ZONE EXISTS. The CMOS clock of EX-OS is local time; time()
+ * gives UTC seconds, comparable with any other machine, through the zone of
+ * the kernel (fuso_utc_da_locale below); localtime() moves them back. Until
+ * 0.339 time() counted the local clock as UTC, and a certificate made here
+ * started an hour in the future for everyone else.
  *
  * L'algoritmo delle date e' quello dei "giorni civili" di Hinnant: niente
  * tabelle dei mesi, niente casi speciali per gli anni bisestili, e va
@@ -9367,14 +9366,127 @@ static void civile_da_giorni(long g, long *anno, unsigned *mese, unsigned *giorn
     *giorno = d;
 }
 
-/* I secondi dall'epoca letti dall'orologio CMOS, o -1 se non risponde. */
+/* =============================================================================
+ * (0.340) THE ZONE. The CMOS clock keeps local time; time() is UTC. The
+ * kernel knows the zone (SYS_FUSO, from /boot/fuso.cfg): minutes east of UTC
+ * and the European summer rule, the same code as kernel/arch/x86/rtc.c. Asked
+ * again once a minute, so `date -fuso:` reaches a program that is running.
+ * A kernel before 0.340 says ENOSYS: UTC+1 with summer time, as `date`.
+ * ============================================================================= */
+static int32_t      g_fuso[2]     = { 60, 1 };
+static int          g_fuso_letto  = 0;
+static unsigned int g_fuso_ms     = 0;
+
+static const char *fuso_nome(int legale);
+#ifndef EXOS_LIBC_SO       /* the three globals are not in libc.so, see tzset */
+extern long  timezone;
+extern int   daylight;
+extern char *tzname[2];
+#endif
+
+static void fuso_aggiorna(void)
+{
+    unsigned int ora = uptime_ms();
+    int32_t      f[2];
+
+    if (g_fuso_letto && ora - g_fuso_ms < 60000u) return;
+    if ((int)_syscall1(SYS_FUSO, (uintptr_t)f) == 0) { g_fuso[0] = f[0]; g_fuso[1] = f[1]; }
+    g_fuso_letto = 1;
+    g_fuso_ms    = ora;
+#ifndef EXOS_LIBC_SO
+    timezone  = -(long)g_fuso[0] * 60L;          /* POSIX: seconds WEST */
+    daylight  = g_fuso[1];
+    tzname[0] = (char *)fuso_nome(0);
+    tzname[1] = (char *)fuso_nome(g_fuso[1]);
+#endif
+}
+
+/* The zone of the kernel, for `date -fuso` (see libc.h). */
+int fuso_get(int *minuti, int *ue)
+{
+    int32_t f[2];
+    int     r = (int)_syscall1(SYS_FUSO, (uintptr_t)f);
+
+    if (r < 0) return r;
+    if (minuti) *minuti = f[0];
+    if (ue)     *ue     = f[1];
+    return 0;
+}
+
+int fuso_set(int minuti, int ue)
+{
+    int r = (int)_syscall2(SYS_FUSO_SET, (uintptr_t)minuti, (uintptr_t)ue);
+
+    if (r == 0) g_fuso_letto = 0;      /* this process sees it at once */
+    return r;
+}
+
+/* The last Sunday of the month, 01:00 UTC. */
+static long ultima_domenica_ue(long anno, unsigned mese)
+{
+    long g = giorni_da_civile(anno, mese, 31u), w = (g + 4) % 7;
+
+    if (w < 0) w += 7;
+    return (g - w) * 86400L + 3600L;
+}
+
+static int fuso_legale(long utc)
+{
+    long     g = utc / 86400L, anno;
+    unsigned m, d;
+
+    if (!g_fuso[1]) return 0;
+    if (utc % 86400L < 0) g--;
+    civile_da_giorni(g, &anno, &m, &d);
+    return utc >= ultima_domenica_ue(anno, 3u) && utc < ultima_domenica_ue(anno, 10u);
+}
+
+/* The European names where they exist, otherwise "+0530" as POSIX allows. */
+static const char *fuso_nome(int legale)
+{
+    static char altro[2][8];
+    long        m = g_fuso[0] + (legale ? 60 : 0), a = m < 0 ? -m : m;
+
+    if (g_fuso[1] && g_fuso[0] == 0)   return legale ? "WEST" : "WET";
+    if (g_fuso[1] && g_fuso[0] == 60)  return legale ? "CEST" : "CET";
+    if (g_fuso[1] && g_fuso[0] == 120) return legale ? "EEST" : "EET";
+    if (m == 0) return "UTC";
+    if (a % 60) snprintf(altro[legale], sizeof(altro[0]), "%c%02ld%02ld", m < 0 ? '-' : '+', a / 60, a % 60);
+    else        snprintf(altro[legale], sizeof(altro[0]), "%c%02ld", m < 0 ? '-' : '+', a / 60);
+    return altro[legale];
+}
+
+/* Seconds east of UTC at that instant. */
+static long fuso_scarto(long utc, int *legale)
+{
+    int l;
+
+    fuso_aggiorna();
+    l = fuso_legale(utc);
+    if (legale) *legale = l;
+    return (long)g_fuso[0] * 60L + (l ? 3600L : 0L);
+}
+
+/* ! The October hour that repeats is taken the first time; the March hour
+ * that does not exist comes out an hour later. As the kernel does. */
+static long fuso_utc_da_locale(long locale)
+{
+    long u;
+
+    fuso_aggiorna();
+    u = locale - (long)g_fuso[0] * 60L;
+    return fuso_legale(u - 3600L) ? u - 3600L : u;
+}
+
+/* The seconds from the epoch of the CMOS clock, as UTC, or -1 if it does
+ * not answer. */
 static long ora_cmos(void)
 {
     RtcTime r;
 
     if (time_now(&r) < 0) return -1;
-    return giorni_da_civile((long)r.anno, r.mese, r.giorno) * 86400L
-           + (long)r.ora * 3600L + (long)r.minuto * 60L + (long)r.secondo;
+    return fuso_utc_da_locale(giorni_da_civile((long)r.anno, r.mese, r.giorno) * 86400L
+           + (long)r.ora * 3600L + (long)r.minuto * 60L + (long)r.secondo);
 }
 
 /* =============================================================================
@@ -9474,14 +9586,28 @@ struct tm *gmtime(const time_t *t)
     tm_statica.tm_wday  = (int)((giorni + 4) % 7);
     if (tm_statica.tm_wday < 0) tm_statica.tm_wday += 7;
     tm_statica.tm_yday  = (int)(giorni - giorni_da_civile(anno, 1, 1));
-    tm_statica.tm_isdst = 0;                      /* nessun'ora legale: vedi sopra */
+    tm_statica.tm_isdst = 0;
+    tm_statica.tm_gmtoff = 0;
+    tm_statica.tm_zone   = "UTC";
 
     return &tm_statica;
 }
 
+/* (0.340) UTC moved by the zone of that instant, see fuso_scarto. */
 struct tm *localtime(const time_t *t)
 {
-    return gmtime(t);   /* nessun fuso orario: vedi il commento in testa */
+    time_t x;
+    long   sc;
+    int    legale;
+
+    if (t == NULL) return NULL;
+    sc = fuso_scarto((long)*t, &legale);
+    x  = *t + (time_t)sc;
+    gmtime(&x);
+    tm_statica.tm_isdst  = legale;
+    tm_statica.tm_gmtoff = sc;
+    tm_statica.tm_zone   = fuso_nome(legale);
+    return &tm_statica;
 }
 
 /* =============================================================================
@@ -9509,14 +9635,25 @@ struct tm *gmtime_r(const time_t *t, struct tm *out)
     if (s == NULL) return NULL;
 
     *out = *s;
-    out->tm_gmtoff = 0;         /* EX-OS non sa in che fuso si trova */
+    out->tm_gmtoff = 0;
     out->tm_zone   = "UTC";
     return out;
 }
 
 struct tm *localtime_r(const time_t *t, struct tm *out)
 {
-    return gmtime_r(t, out);    /* nessun fuso orario: vedi il commento in testa */
+    time_t x;
+    long   sc;
+    int    legale;
+
+    if (t == NULL || out == NULL) return NULL;
+    sc = fuso_scarto((long)*t, &legale);
+    x  = *t + (time_t)sc;
+    if (gmtime_r(&x, out) == NULL) return NULL;
+    out->tm_isdst  = legale;
+    out->tm_gmtoff = sc;
+    out->tm_zone   = fuso_nome(legale);
+    return out;
 }
 
 /* =============================================================================
@@ -9529,14 +9666,11 @@ struct tm *localtime_r(const time_t *t, struct tm *out)
  * const: i campi tornano indietro corretti, tm_wday e tm_yday compresi —
  * quelli in ingresso vengono IGNORATI, come dice lo standard.
  *
- * ! NESSUN FUSO ORARIO: mktime interpreta i campi come UTC, perche' su
- * EX-OS localtime e gmtime sono la stessa funzione (il sistema non sa in
- * che fuso si trova). Su un sistema con i fusi questa e' la differenza fra
- * mktime e timegm, e qui non c'e'.
+ * (0.340) timegm reads the fields as UTC, mktime as local time (the zone
+ * of fuso_scarto). ! tm_isdst in input is ignored, as if it were -1: the
+ * rule decides, so a struct zeroed by memset gives the hour it says.
  * ============================================================================= */
-time_t timegm(struct tm *tm);       /* sotto */
-
-time_t mktime(struct tm *tm)
+time_t timegm(struct tm *tm)
 {
     long anno, mese, giorni, secondi;
 
@@ -9599,8 +9733,22 @@ time_t mktime(struct tm *tm)
     }
 }
 
-/* Vedi la dichiarazione in lib/include/libc.h. */
-time_t timegm(struct tm *tm) { return mktime(tm); }
+time_t mktime(struct tm *tm)
+{
+    time_t     u;
+    struct tm *r;
+
+    if (tm == NULL) return (time_t)-1;
+    u = (time_t)fuso_utc_da_locale((long)timegm(tm));
+    /* field by field, as timegm above: the struct has the caller's shape */
+    r = localtime(&u);
+    if (r != NULL && r != tm) {
+        tm->tm_sec  = r->tm_sec;  tm->tm_min  = r->tm_min;  tm->tm_hour  = r->tm_hour;
+        tm->tm_mday = r->tm_mday; tm->tm_mon  = r->tm_mon;  tm->tm_year  = r->tm_year;
+        tm->tm_wday = r->tm_wday; tm->tm_yday = r->tm_yday; tm->tm_isdst = r->tm_isdst;
+    }
+    return u;
+}
 
 /* asctime e ctime — la data in venticinque caratteri e una riga a capo.
  *
@@ -9843,9 +9991,15 @@ size_t strftime(char *buf, size_t max, const char *fmt, const struct tm *tm)
                 sf_num(buf, max, &n, tm->tm_year + 1900, 4, '0');
                 break;
 
-            /* Vedi il ! in testa: non c'e' nessun fuso da riportare. */
-            case 'z': sf_str(buf, max, &n, "+0000"); break;
-            case 'Z': sf_str(buf, max, &n, "UTC");   break;
+            /* (0.340) the zone that localtime put in the struct */
+            case 'z': {
+                long z = tm->tm_gmtoff, a = (z < 0 ? -z : z) / 60;
+                sf_str(buf, max, &n, z < 0 ? "-" : "+");
+                sf_num(buf, max, &n, (int)(a / 60), 2, '0');
+                sf_num(buf, max, &n, (int)(a % 60), 2, '0');
+                break;
+            }
+            case 'Z': sf_str(buf, max, &n, tm->tm_zone ? tm->tm_zone : "UTC"); break;
 
             case 'n': sf_str(buf, max, &n, "\n"); break;
             case 't': sf_str(buf, max, &n, "\t"); break;
@@ -9902,9 +10056,11 @@ int gettimeofday(struct timeval *tv, void *fuso)
     /* ! THE ZONE IS FILLED (UTC, both fields 0) AND tv MAY BE NULL: Valkey
      * asks gettimeofday(NULL, &tz) for the zone only; up to now it got -1
      * and an untouched struct, and its log dates read "-73188 Jan 1970". */
-    if (fuso) { ((int *)fuso)[0] = 0; ((int *)fuso)[1] = 0; }
-    if (tv == NULL) return 0;
+    if (tv == NULL && fuso == NULL) return 0;
     if (tod_adesso(&sec, &ms) < 0) return -1;
+    /* (0.340) minutes WEST of UTC, as BSD; dsttime 0, the old meaning */
+    if (fuso) { ((int *)fuso)[0] = (int)(-fuso_scarto(sec, NULL) / 60); ((int *)fuso)[1] = 0; }
+    if (tv == NULL) return 0;
 
     tv->tv_sec  = sec;
     tv->tv_usec = (long)(ms * 1000u);
@@ -13568,12 +13724,13 @@ size_t strnlen(const char *s, size_t n)
     return i;
 }
 
-/* EX-OS non sa in che fuso si trova: UTC, come localtime(). */
-long  timezone = 0;
-int   daylight = 0;
-char *tzname[2] = { "UTC", "UTC" };
+/* (0.340) The zone of the kernel (fuso_aggiorna fills them): a program
+ * that reads them without tzset gets the default until its first date. */
+long  timezone = -3600;
+int   daylight = 1;
+char *tzname[2] = { "CET", "CEST" };
 
-void tzset(void) { }
+void tzset(void) { g_fuso_letto = 0; fuso_aggiorna(); }
 
 /* ! UN CONSIGLIO, E SI PUO' NON SEGUIRE: le pagine restano come sono. Chi
  * chiede MADV_DONTNEED per restituire memoria (il GC) la ritrova com'era, che

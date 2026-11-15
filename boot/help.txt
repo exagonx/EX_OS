@@ -681,10 +681,18 @@ servira'. `date` dice tutt'e due le cose.
 cifre d'anno e il secolo lo mette il sistema: un 2150 tornerebbe indietro
 come 2050, e un errore silenzioso e' peggio di un rifiuto.
 
-!! NESSUN FUSO ORARIO. L'orologio e' ora locale e il sistema non sa dove
-si trova. I secondi che i programmi contano dal 1970 sono letti su quel
-quadrante: buoni per misurare intervalli e datare un file, non
-confrontabili con l'istante di un'altra macchina.
+!! IL FUSO ORARIO (dal kernel 0.340). L'orologio della macchina e' ora
+locale, come su un PC che avvia anche Windows; il kernel conosce il fuso
+(/boot/fuso.cfg, che scrive `date -fuso:`) e i programmi contano i secondi
+in UTC, confrontabili con quelli di qualunque altra macchina. Le date dei
+file su ext2 sono in UTC, su FAT in ora locale, come le scrive Windows.
+
+  date -fuso               il fuso del file, e quello in uso se e' diverso
+  date -fuso:+1,ue         Italia: UTC+1 con l'ora legale europea
+  date -fuso:0,no          UTC tutto l'anno
+
+Senza /boot/fuso.cfg vale UTC+1 con l'ora legale. Da un CD il file non si
+scrive: il fuso nuovo vale fino allo spegnimento.
 
 [uname]
 che sistema e' questo, come lo chiede uno script
@@ -840,6 +848,13 @@ implemented", ENOSYS) dal kernel 0.339, e nel registro c'e' "SYSCALL: 'nome'
 prima, che passava al kernel una struttura piu' piccola. `netupdate` porta i
 programmi ricollegati; uno compilato da te va ricompilato o ricollegato alla
 libc.a nuova. Dalla 0.339 stat() da' i permessi e il proprietario veri.
+
+L'ORA DEI PROGRAMMI E' SPOSTATA DI UNA O DUE ORE, o un certificato fatto in
+EX-OS risulta "not yet valid" su un'altra macchina: il fuso di /boot/fuso.cfg
+non e' quello della macchina. `date -fuso` lo dice; `date -fuso:+1,ue` (o il
+tuo) lo rimette. Fino al kernel 0.339 time() contava l'ora locale come se
+fosse UTC; un programma collegato alla libc di prima lo fa ancora, e
+`netupdate` lo porta ricollegato.
 
 open DA' "File exists" (EEXIST) a un programma che prima andava, dal kernel
 0.331: ha chiesto O_CREAT|O_EXCL (crea solo se non c'e') e il file c'era. Prima

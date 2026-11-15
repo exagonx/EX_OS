@@ -127,7 +127,8 @@ typedef struct {
 
     /* (0.339) Unix seconds, 0 = unknown, and the link count, for the Stat
      * of the syscall. ext2 gives its three times and i_links_count; FAT and
-     * ISO 9660 only the date above (unix_da_fat in vfs.c) and nlink 1. */
+     * ISO 9660 only the date above (secondi_da_fat in vfs.c: local time on FAT,
+     * the CD's own zone on ISO, 0.340) and nlink 1. */
     uint16_t nlink;
     int64_t  mtime;
     int64_t  atime;

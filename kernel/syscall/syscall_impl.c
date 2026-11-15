@@ -5905,6 +5905,26 @@ int32_t sys_time_set(InterruptFrame *frame)
     return 0;
 }
 
+/* SYS_FUSO (270), SYS_FUSO_SET (271): the time zone, see syscall.h. */
+int32_t sys_fuso(InterruptFrame *frame)
+{
+    int32_t *out = (int32_t *)FR_A1(frame);
+
+    if (!syscall_verify_ptr(out, 2 * sizeof(int32_t))) return ERR(EFAULT);
+    rtc_fuso(&out[0], &out[1]);
+    return 0;
+}
+
+int32_t sys_fuso_set(InterruptFrame *frame)
+{
+    int32_t minuti = (int32_t)FR_A1(frame), ue = (int32_t)FR_A2(frame);
+
+    if (!solo_root("fuso_set")) return ERR(EPERM);
+    if (rtc_fuso_metti(minuti, ue) != 0) return ERR(EINVAL);
+    klog(LOG_INFO, "SYSCALL fuso_set: %d minuti da UTC, ora legale %s", minuti, ue ? "europea" : "mai");
+    return 0;
+}
+
 /* =============================================================================
  * SYS_IPC_REGISTER (222) -- Registra il processo chiamante come servizio
  *

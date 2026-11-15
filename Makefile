@@ -8843,7 +8843,8 @@ QEMU_FLAGS  := -fda $(FLOPPY_IMG) \
                -m 32M \
                -boot a \
                -no-reboot \
-               -no-shutdown
+               -no-shutdown \
+               -rtc base=localtime
 
 .PHONY: run
 run: $(FLOPPY_IMG)

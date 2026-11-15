@@ -59,4 +59,15 @@ int rtc_read(RtcTime *t);
  * gesto di chi rimette l'ora, non un modo per correggere una deriva. */
 int rtc_write(const RtcTime *t);
 
+/* (0.340) The time zone. The CMOS clock keeps local time, as on a PC that
+ * also boots Windows; Unix seconds are UTC. minuti = east of UTC, ue = 1 for
+ * the European summer time rule. Default UTC+1 with it, as `date` assumes
+ * without /boot/fuso.cfg (read at boot by cfg_fuso_carica, cfg.c). */
+void    rtc_fuso(int32_t *minuti, int32_t *ue);
+int     rtc_fuso_metti(int32_t minuti, int32_t ue);   /* -1 out of range */
+int32_t rtc_scarto(int64_t utc);          /* seconds east of UTC at that instant */
+int64_t rtc_utc_da_locale(int64_t locale);
+int64_t rtc_secondi(const RtcTime *t);    /* the fields as seconds, no zone */
+int64_t rtc_adesso_utc(void);             /* now, UTC; 0 if the clock is dead */
+
 #endif /* RTC_H */

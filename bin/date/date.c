@@ -73,7 +73,7 @@
 #include "ip_proto.h"
 
 /* +0.001 a ogni modifica: `date -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("date", "0.004");
+EX_VERSIONE("date", "0.005");
 
 /* The whole exchange, name included: without a network the machine has better
  * things to do. The name gets at most NTP_DNS_MS of it. */
@@ -123,8 +123,9 @@ static void aiuto(void)
     printf("! L'anno sta fra 1980 e 2099. L'orologio conserva DUE cifre\n");
     printf("  d'anno, e il secolo lo mette il sistema: un 2150 tornerebbe\n");
     printf("  indietro come 2050, e un errore silenzioso e' peggio di un no.\n\n");
-    printf("! L'orologio della macchina e' ora locale. Il fuso serve solo a\n");
-    printf("  -ntp, che riceve l'ora UTC.\n\n");
+    printf("! L'orologio della macchina e' ora locale. Il fuso serve a -ntp,\n");
+    printf("  che riceve l'ora UTC, e al sistema: le date dei file e time()\n");
+    printf("  dei programmi sono in UTC (kernel 0.340).\n\n");
     printf("Esempi:\n");
     printf("  date                        che ore sono\n");
     printf("  date -set-date:2026/09/16   ci si rimette al giorno giusto\n");
@@ -292,9 +293,9 @@ static void spiega(int err, const char *cosa)
  * (-npt e -npt: valgono come -ntp: l'utente l'ha chiesto cosi', e un errore
  * di battitura che fa la cosa giusta costa meno di uno che la rifiuta.)
  *
- * ! NTP DA' L'ORA UTC, E L'OROLOGIO DELLA MACCHINA E' IN ORA LOCALE. EX-OS non
- * ha fusi orari (vedi tm_gmtoff in libc.h): la conversione si fa QUI, con
- * /boot/fuso.cfg. Senza il file vale l'Italia - UTC+1 e l'ora legale europea
+ * ! NTP DA' L'ORA UTC, E L'OROLOGIO DELLA MACCHINA E' IN ORA LOCALE. La
+ * conversione si fa QUI, con /boot/fuso.cfg; dalla 0.340 lo legge anche il
+ * kernel all'avvio, e -fuso: glielo passa subito (fuso_set). Senza il file vale l'Italia - UTC+1 e l'ora legale europea
  * - e il comando lo dice ogni volta, perche' un fuso supposto e' un'ora
  * sbagliata per chiunque stia altrove.
  *
@@ -374,6 +375,7 @@ static int fuso_imposta(const char *s)
     const char *p = s;
     FILE *fp;
     char  testo[12];
+    int   e;
 
     fuso_leggi(&f);
     if (*p == '+' || *p == '-') { if (*p == '-') segno = -1; p++; }
@@ -394,10 +396,18 @@ static int fuso_imposta(const char *s)
     } else if (*p != '\0') goto male;
     f.minuti = segno * (ore * 60 + min);
 
+    /* (0.340) to the kernel first: on a CD /boot is read-only, and the zone
+     * must still hold until the machine is switched off */
+    e = fuso_set(f.minuti, f.ue);
+    if (e < 0) {
+        printf("date: il kernel non prende il fuso (%s).\n", strerror(-e));
+        if (e == -EPERM) printf("      Serve essere root.\n");
+        return 1;
+    }
     fp = fopen(FUSO_CFG, "w");
     if (fp == NULL) {
-        printf("date: non riesco a scrivere %s (%s).\n", FUSO_CFG, strerror(errno));
-        if (errno == EACCES || errno == EPERM) printf("      Serve essere root.\n");
+        printf("date: non riesco a scrivere %s (%s): il fuso vale fino allo spegnimento.\n",
+               FUSO_CFG, strerror(errno));
         return 1;
     }
     fuso_scrivi_ore(testo, f.minuti);
@@ -719,7 +729,20 @@ int main(int argc, char **argv)
         }
         if (strcmp(a, "-install") == 0) return installa(0);
         if (strcmp(a, "-remove") == 0)  return installa(1);
-        if (strcmp(a, "-fuso") == 0) { Fuso f; fuso_leggi(&f); fuso_mostra(&f); return 0; }
+        if (strcmp(a, "-fuso") == 0) {
+            Fuso f;
+            int  km, ku;
+            char ore[12];
+
+            fuso_leggi(&f);
+            fuso_mostra(&f);
+            /* (0.340) the one in use, if a CD session changed it */
+            if (fuso_get(&km, &ku) == 0 && (km != f.minuti || ku != f.ue)) {
+                fuso_scrivi_ore(ore, km);
+                printf("in uso: UTC%s, ora legale %s (fino allo spegnimento)\n", ore, ku ? "europea" : "mai");
+            }
+            return 0;
+        }
         if (strncmp(a, "-fuso:", 6) == 0) return fuso_imposta(a + 6);
         if (strcmp(a, "-d") == 0) { solo_data = 1; continue; }
         if (strcmp(a, "-t") == 0) { solo_ora   = 1; continue; }

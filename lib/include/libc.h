@@ -997,16 +997,20 @@ int time_now(RtcTime *t);
  * ============================================================================= */
 int time_set(const RtcTime *t);
 
+/* (0.340) The time zone of the kernel: minutes east of UTC, ue = 1 for the
+ * European summer rule. fuso_set is root's (`date -fuso:`, which also writes
+ * /boot/fuso.cfg for the next boot). 0 or a -errno, like time_set. */
+int fuso_get(int *minuti, int *ue);
+int fuso_set(int minuti, int ue);
+
 /* =============================================================================
  * La stessa ora, nella forma del C standard
  *
  * DUPLICATE A MANO in lib/libc.c e ripetute in lib/include/time.h.
  *
- * ! NESSUN FUSO ORARIO. L'orologio CMOS di EX-OS e' ora locale e il
- * sistema non sa dove si trova: localtime() e gmtime() fanno la stessa
- * identica cosa, e i secondi di time() sono "secondi dal 1970 letti su un
- * orologio locale". Buoni per misurare intervalli e datare un file, NON
- * confrontabili con l'istante di un'altra macchina.
+ * (0.340) L'orologio CMOS di EX-OS e' ora locale; time() da' i secondi UTC,
+ * con il fuso del kernel (/boot/fuso.cfg, date -fuso:), e localtime() li
+ * rimette in ora locale. time_now() resta l'orologio come lo tiene il CMOS.
  *
  * time_t e' `long`: a 32 bit con segno arriva al 2038.
  * ============================================================================= */
@@ -1039,21 +1043,20 @@ struct tm {
     int tm_year;    /* anni dal 1900 */
     int tm_wday;    /* 0..6, domenica = 0 */
     int tm_yday;    /* 0..365 */
-    int tm_isdst;   /* sempre 0 */
+    int tm_isdst;   /* 1 in European summer time (localtime, 0.340) */
 
     /* =========================================================================
-     * ! I DUE CAMPI DEL FUSO CI SONO E DICONO LA VERITA': zero e «UTC».
+     * ! I DUE CAMPI DEL FUSO CI SONO E DICONO LA VERITA' (0.340: quelli
+     * del fuso del kernel, /boot/fuso.cfg; gmtime 0 e «UTC»).
      *
      * Non sono un'aggiunta di comodo: stanno in POSIX dal 2024, li hanno la
      * glibc e i BSD, e il codice di terzi li usa senza chiedere permesso —
      * il primo a chiederli e' stato QuickJS, che senza `tm_gmtoff` non
      * compila la sua `Date`.
      *
-     * ! E QUI VALGONO SEMPRE 0 e «UTC» PERCHE' EX-OS NON SA DOVE SI TROVA.
-     * Riempirli con un fuso inventato sarebbe peggio che non averli: un
-     * programma che li legge crederebbe a un'informazione che nessuno ha
-     * mai misurato. Zero non e' un ripiego, e' la risposta esatta finche'
-     * localtime() e gmtime() sono la stessa funzione.
+     * ! Fino alla 0.339 valevano sempre 0 e «UTC», perche' EX-OS non sapeva
+     * dove si trovava. Dalla 0.340 il kernel conosce il fuso (date -fuso:)
+     * e localtime() li riempie con quello.
      *
      * ! STANNO IN FONDO, ed e' l'unico posto dove potevano stare. I campi
      * di prima non si spostano di un byte, quindi un binario gia' collegato
@@ -1062,8 +1065,8 @@ struct tm {
      * questo header — ed e' per questo che le due funzioni nuove sono nuove
      * e non il rifacimento di due vecchie.
      * ========================================================================= */
-    long        tm_gmtoff;  /* secondi a est di UTC: sempre 0 */
-    const char *tm_zone;    /* il nome del fuso: sempre "UTC" */
+    long        tm_gmtoff;  /* secondi a est di UTC */
+    const char *tm_zone;    /* il nome del fuso: "CET", "CEST", "UTC"... */
 };
 
 struct timeval {
@@ -1076,7 +1079,7 @@ struct timeval {
  * 1970, cioe' una data sbagliata spacciata per buona. */
 time_t     time(time_t *t);
 struct tm *gmtime(const time_t *t);      /* risultato in una struttura STATICA */
-struct tm *localtime(const time_t *t);   /* identica a gmtime: vedi sopra */
+struct tm *localtime(const time_t *t);   /* gmtime piu' il fuso (0.340) */
 
 /* ! LE DUE VERSIONI RIENTRANTI, che scrivono dove dice CHI CHIAMA. Le altre
  * due tengono il risultato in una struttura statica: due chiamate di seguito e
@@ -1088,11 +1091,10 @@ struct tm *localtime_r(const time_t *t, struct tm *out);
  * questo il parametro non e' const. Un tm_mon a 12 diventa gennaio
  * dell'anno dopo, un tm_sec a 90 diventa un minuto e mezzo: e' cosi' che
  * si fa aritmetica sulle date. tm_wday e tm_yday in ingresso vengono
- * IGNORATI e riscritti. Interpreta i campi come UTC, perche' EX-OS non sa
- * in che fuso si trova. */
+ * IGNORATI e riscritti. Interpreta i campi come ora locale (0.340); anche
+ * tm_isdst si ignora, decide la regola del fuso. */
 time_t     mktime(struct tm *tm);
-/* timegm: mktime in UTC. Su EX-OS sono la stessa cosa (vedi mktime in
- * lib/libc.c): il sistema non ha fusi orari. */
+/* timegm: mktime in UTC, senza fuso. */
 time_t     timegm(struct tm *tm);
 int        gettimeofday(struct timeval *tv, void *fuso);
 

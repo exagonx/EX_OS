@@ -198,6 +198,7 @@ typedef struct {
 } KernelConfig;
 
 KernelConfig *cfg_load(void);
+void          cfg_fuso_carica(void);   /* /boot/fuso.cfg -> rtc.c (0.340) */
 KernelConfig *cfg_get(void);
 const char   *cfg_getenv(const char *key);
 

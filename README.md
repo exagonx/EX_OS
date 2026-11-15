@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.339
+**Version:** 0.340
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -110,6 +110,29 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### Programs get the real universal time: EX-OS knows its time zone (kernel 0.340)
+
+- **`time()` gives UTC seconds**, comparable with any other machine (kernel 0.340). The machine's
+  clock stays in local time, as on a PC that also boots Windows; the kernel knows the zone
+  (`/boot/fuso.cfg`, read at boot, written by `date -fuso:`, by default UTC+1 with European summer
+  time) and the libc converts: `localtime()` gives local time back with summer time, `mktime()`
+  the other way, `strftime` writes `%z` and `%Z` (`+0200 CEST`), `tzset`, `timezone`, `tzname`
+  and `gettimeofday` tell the zone. Until 0.339 `time()` counted local time as if it were UTC: a
+  certificate made with `openssl` in EX-OS was born an hour in the future and Linux refused it
+  ("not yet valid"). **tested in QEMU** (tools/prova_fuso.sh, 32 and 64 bit: both summer time
+  changes, mktime of the missing and of the repeated hour, new files, /boot/fuso.cfg read at boot)
+- **File times are UTC**: on ext2 and ext4 the inode keeps UTC, as Linux writes it; FAT keeps local
+  time, as Windows writes it, and `stat` converts it; a CD states its zone and that is used.
+  **tested in QEMU**
+- **`date -fuso:` applies at once**, without a reboot; from a CD, where `/boot` cannot be written,
+  it holds until switch-off. `date -fuso` also shows the zone in use when it differs from the file.
+- ! Programs linked to the old libc still count local time as UTC until they are relinked; the
+  update brings them relinked.
+- The QEMU tests start with the clock in local time (`-rtc base=localtime` in
+  `tools/qemu_drive.py`), as on a real machine.
+- `tools/prova_librerie.sh` and `tools/prova_openssl.sh` put the shared libraries they use on the
+  disk: the EX-OS CD has none, and third-party libraries are shared since 3 November.
 
 ### stat() tells the real permissions, owner, links and times, and files written on FAT have their date (kernel 0.339)
 
@@ -6320,8 +6343,9 @@ behind every choice is under
 could only be read, and on a machine with the wrong date there was no way to fix
 it from inside EX-OS.
 
-! In QEMU the RTC starts in **UTC**, not local time. To see the time in your
-timezone you need `-rtc base=localtime` among the Makefile's `QEMU_FLAGS`.
+! In QEMU the RTC starts in **UTC**, not local time: EX-OS reads it as local time
+and the clock is off by the zone. The tests (`tools/qemu_drive.py`) and `make run`
+pass `-rtc base=localtime`, as on a real machine (kernel 0.340).
 
 ---
 
@@ -6621,10 +6645,8 @@ to keep up whatever the rest of the system is doing, and a thread would share
 the server connection and the message queue with it — a busy program manager
 would be a stopped clock.
 
-! **THE TIME IS UNIVERSAL TIME**, and that has to be said rather than left to
-be discovered: the libc declares `localtime()` identical to `gmtime()`, because
-this system does not know what zone it is in nor has anywhere to keep it. A
-made-up local time would be worse than universal time, which is at least true.
+! **THE TIME IS LOCAL TIME**, in the zone of `/boot/fuso.cfg` (kernel 0.340):
+until 0.339 the libc had no zones and `localtime()` was identical to `gmtime()`.
 
 ---
 
@@ -7161,8 +7183,9 @@ wasted.
 
 `sscanf`/`vsscanf` with widths, `%n`, suppression and `%lf`. `time`,
 `localtime`, `gmtime`, `mktime`, `gettimeofday` on top of `SYS_TIME`, that is
-the CMOS clock — with no timezone, because the system does not know which one
-it is in: `localtime` and `gmtime` give the same time. `stat`/`fstat` in the
+the CMOS clock in local time, and `SYS_FUSO` (270), the kernel's zone: `time`
+gives UTC, `localtime` and `mktime` use the zone with European summer time
+(kernel 0.340). `stat`/`fstat` in the
 POSIX form.
 
 ### Processes: spawn with environment and redirections
@@ -9006,10 +9029,10 @@ says both things, and on the floppy it costs one instead of two: when `date`
 was written the floppy had 63488 bytes free and the smallest EX-OS program
 weighs 13.5 KB.
 
-! **No time zone.** The machine's clock is local time and the system does not
-know where it is: `localtime()` and `gmtime()` do exactly the same thing. The
-seconds counted from 1970 are read off that dial — good for measuring intervals
-and dating a file, not comparable with an instant on another machine.
+! **The time zone** (kernel 0.340). The machine's clock is local time; the
+kernel knows the zone of `/boot/fuso.cfg` and the seconds counted from 1970 are
+UTC, comparable with an instant on another machine. `date -fuso:` changes it at
+once; from a CD it holds until switch-off.
 
 ### `ls` — display modes
 

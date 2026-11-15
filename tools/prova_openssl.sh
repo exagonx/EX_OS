@@ -37,6 +37,22 @@ mkdir -p "$T"
 $GCC -O2 -s tools/prove/sslprova.c -o "$T/sslprova" -lssl -lcrypto \
     || { echo "  (manca OpenSSL: tools/openssl-exos/costruisci.sh $BIT)"; exit 1; }
 cp cross_build/openssl-exos$BIT/exos/bin/openssl "$T/" || exit 1
+# ! the libraries are shared since 3 November 2026 and the EX-OS CD has none
+# of them (on a system they are in /exos/lib): the ones named by DT_NEEDED,
+# and theirs, go to /a/lib, found through LD_LIBRARY_PATH, as prova_httpd.sh
+mkdir -p "$T/lib"
+nomi=$(readelf -d "$T"/sslprova "$T"/openssl 2>/dev/null | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')
+while [ -n "$nomi" ]; do
+    nuovi=""
+    for l in $nomi; do
+        [ -f "$T/lib/$l" ] && continue
+        f=$(ls cross_build/*-exos$BIT/exos/lib/"$l" 2>/dev/null | head -1)
+        [ -n "$f" ] || { echo "manca $l (a $BIT bit)" >&2; exit 1; }
+        cp "$f" "$T/lib/"
+        nuovi="$nuovi $(readelf -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')"
+    done
+    nomi=$nuovi
+done
 cp /etc/ssl/certs/ca-certificates.crt "$T/certi.pem" || exit 1
 for i in $(seq 1 2000); do echo "riga $i: OpenSSL in EX-OS"; done > "$T/dati"
 : > "$T/vuoto"
@@ -51,7 +67,7 @@ export EXOS_QEMU_EXTRA="$EXTRA -drive file=$IMG,format=raw,if=ide -netdev user,i
 echo "=== $ARCH ==="
 EXOS_ISTANZA=os$ARCH EXOS_NO_FLOPPY=1 EXOS_CDROM="$ISO" \
     timeout 1200 python3 tools/qemu_drive.py "netdetect -c@12" "dhcp@8" \
-    "mount hd0p1 /a@5" "cd /a@2" \
+    "mount hd0p1 /a@5" "cd /a@2" "export LD_LIBRARY_PATH=/a/lib@1" \
     "/a/sslprova fili@~240" "/a/sslprova locale@~120" \
     "/a/sslprova rete www.example.com /a/certi.pem@~120" \
     "/a/openssl version@~30" "/a/openssl dgst -sha256 dati@~30" \

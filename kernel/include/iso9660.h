@@ -62,6 +62,7 @@ typedef struct {
      * vfs.h per il formato. */
     uint16_t data;
     uint16_t ora;
+    int8_t   fuso;      /* (0.340) byte 24: quarter hours east of UTC */
 } IsoDirEntry;
 
 /* Monta il volume sul dispositivo a blocchi `blkdev` (tipicamente un

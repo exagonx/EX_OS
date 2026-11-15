@@ -87,6 +87,7 @@
 #include "syscall.h"
 #include "sched.h"    /* proc_get_current, sched_yield: il lucchetto del VFS */
 #include "kmalloc.h"
+#include "rtc.h"      /* rtc_utc_da_locale: FAT dates are local (0.340) */
 
 /* Il kernel non ha una libreria di stringhe condivisa: ogni file definisce
  * i propri helper statici (vedi cfg_strcmp in fs/cfg.c, str_equal in
@@ -1836,9 +1837,9 @@ static int vfs_dup_nl(int h)
 #define VFS_IDENT(im, n)   ((((uint32_t)(im) & 0xFu) << 28) | \
                             ((uint32_t)(n) & 0x0FFFFFFFu))
 
-/* (0.339) A FAT date and time (VfsStat.data/ora) as Unix seconds, read as
- * UTC like the libc did until 0.338; 0 stays 0, "not known". */
-static int64_t unix_da_fat(uint16_t data, uint16_t ora)
+/* (0.339) A FAT date and time (VfsStat.data/ora) as seconds from 1970 on
+ * the same clock, no zone; 0 stays 0, "not known". */
+static int64_t secondi_da_fat(uint16_t data, uint16_t ora)
 {
     int32_t a = 1980 + ((data >> 9) & 0x7F), m = (data >> 5) & 0x0F, g = data & 0x1F;
     int32_t era, yoe, doy, doe;
@@ -1865,7 +1866,10 @@ static int stat_interno(int im, const char *interno, VfsStat *st)
 
     if (r == 0) {
         if (st->nlink == 0) st->nlink = 1;
-        if (st->mtime == 0) st->mtime = unix_da_fat(st->data, st->ora);
+        /* (0.340) FAT and the floppy keep local time, as DOS and Windows:
+         * UTC through the zone of the kernel (rtc.c). */
+        if (st->mtime == 0 && st->data != 0)
+            st->mtime = rtc_utc_da_locale(secondi_da_fat(st->data, st->ora));
         if (st->atime == 0) st->atime = st->mtime;
         if (st->ctime == 0) st->ctime = st->mtime;
     }
@@ -1939,6 +1943,8 @@ static int stat_interno_fs(int im, const char *interno, VfsStat *st)
         st->sola_lettura = 1;
         st->data         = e.data;
         st->ora          = e.ora;
+        /* the CD says its own zone, in quarter hours */
+        if (e.data != 0) st->mtime = secondi_da_fat(e.data, e.ora) - (int64_t)e.fuso * 900;
     } else if (g_mnt[im].tipo == VFS_FS_EXT2) {
         Ext2DirEntry e;
         if (ext2_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(ENOENT);

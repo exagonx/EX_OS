@@ -972,7 +972,12 @@
  * st_mode, st_uid, st_gid, st_nlink. 106 and 108 answer ENOSYS with a
  * WARN: a program linked to the old libc must be relinked. fat.c dates
  * what it creates, writes and truncates from the RTC (was 1 Jan 2026). */
-#define EXOS_VERSION    "0.339"
+/* 0.339 -> 0.340: a time zone. The CMOS clock stays local time; the kernel
+ * knows the zone (rtc.c, /boot/fuso.cfg at boot, SYS_FUSO 270 and
+ * SYS_FUSO_SET 271) and keeps file times in UTC: ext2 inodes, FAT dates
+ * converted from local, the CD with the zone it declares. The libc turns
+ * the clock into UTC for time() and back for localtime/mktime. */
+#define EXOS_VERSION    "0.340"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

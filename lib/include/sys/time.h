@@ -32,8 +32,8 @@ extern "C" {
  * un programma; rende 0 se il file c'e', senza toccarle. */
 int utimes(const char *percorso, const struct timeval tempi[2]);
 
-/* Il secondo argomento di gettimeofday, nella forma BSD: EX-OS lo ignora (il
- * fuso orario non sta nel kernel), ma il codice di terzi lo dichiara. */
+/* Il secondo argomento di gettimeofday, nella forma BSD: tz_minuteswest dal
+ * fuso del kernel (0.340), tz_dsttime 0. */
 struct timezone {
     int tz_minuteswest;
     int tz_dsttime;

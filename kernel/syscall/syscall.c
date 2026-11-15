@@ -165,6 +165,8 @@ void syscall_init(void)
     syscall_table[SYS_CHDIR]       = sys_chdir;
     syscall_table[SYS_STAT]        = sys_stat;
     syscall_table[SYS_FSTAT]       = sys_fstat;
+    syscall_table[SYS_FUSO]        = sys_fuso;
+    syscall_table[SYS_FUSO_SET]    = sys_fuso_set;
     syscall_table[SYS_STAT_VECCHIA]  = sys_stat_vecchia;
     syscall_table[SYS_FSTAT_VECCHIA] = sys_stat_vecchia;
     syscall_table[SYS_FTRUNCATE]   = sys_ftruncate;

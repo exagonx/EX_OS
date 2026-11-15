@@ -28,6 +28,7 @@
 #include "cfg.h"
 #include "fat12.h"
 #include "vfs.h"
+#include "rtc.h"       /* rtc_fuso_metti: /boot/fuso.cfg (0.340) */
 #include "version.h"   /* EXOS_*: identità iniettata in [env], vedi cfg_load */
 
 /* Definite più in basso, usate da cfg_load: iniettano OSNAME/OSVER/AUTHOR
@@ -597,4 +598,53 @@ const char *cfg_get_option(const char *key)
         return cfg->net_tx[0] ? cfg->net_tx : NULL;
     }
     return NULL;
+}
+
+/* =============================================================================
+ * cfg_fuso_carica - the time zone from /boot/fuso.cfg (kernel 0.340)
+ *
+ * The file of `date -fuso:` (bin/date/date.c): "minuti = 60" east of UTC and
+ * "legale = ue" or "no". Without it the kernel keeps UTC+1 with European
+ * summer time, what `date` assumes, and says so.
+ * ============================================================================= */
+void cfg_fuso_carica(void)
+{
+    static char buf[1024];
+    int32_t minuti = 60, ue = 1, segno;
+    int     h, n;
+    char   *riga, *fine, *v;
+
+    h = vfs_open("/boot/fuso.cfg", 0x0000);
+    if (h < 0) {
+        klog(LOG_INFO, "FUSO: /boot/fuso.cfg non c'e': UTC+1 con l'ora legale europea (supposto)");
+        return;
+    }
+    n = vfs_read(h, buf, sizeof(buf) - 1, 0);
+    vfs_close(h);
+    if (n < 0) n = 0;
+    buf[n] = '\0';
+    for (riga = buf; *riga; riga = fine) {
+        for (fine = riga; *fine && *fine != '\n'; fine++) { }
+        if (*fine) *fine++ = '\0';
+        riga = cfg_trim(riga);
+        if (*riga == '#') continue;
+        for (v = riga; *v && *v != '='; v++) { }
+        if (*v != '=') continue;
+        *v++ = '\0';
+        riga = cfg_trim(riga);
+        v    = cfg_trim(v);
+        if (cfg_strcmp(riga, "minuti") == 0) {
+            segno = 1;
+            if (*v == '-') { segno = -1; v++; } else if (*v == '+') v++;
+            minuti = segno * (int32_t)cfg_atoi(v);
+        } else if (cfg_strcmp(riga, "legale") == 0) {
+            ue = cfg_strcmp(v, "ue") == 0;
+        }
+    }
+    if (rtc_fuso_metti(minuti, ue) != 0) {
+        klog(LOG_WARN, "FUSO: /boot/fuso.cfg dice %d minuti, fuori da -840..840: resta UTC+1", minuti);
+        return;
+    }
+    klog(LOG_INFO, "FUSO: UTC%c%d:%02d, ora legale %s (/boot/fuso.cfg)", minuti < 0 ? '-' : '+',
+         (minuti < 0 ? -minuti : minuti) / 60, (minuti < 0 ? -minuti : minuti) % 60, ue ? "europea" : "mai");
 }

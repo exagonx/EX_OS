@@ -30,9 +30,8 @@
 
 #include "libc.h"
 
-/* tzset e le sue tre variabili (@EXILLA-JS, 30 settembre 2026). ! EX-OS non sa
- * in che fuso si trova (vedi struct tm in libc.h): tzset non legge niente, e le
- * variabili dicono UTC — che e' quello che localtime() fa davvero. */
+/* tzset e le sue tre variabili (@EXILLA-JS, 30 settembre 2026). (0.340) Dicono
+ * il fuso del kernel (/boot/fuso.cfg, date -fuso:), quello di localtime(). */
 
 #ifdef __cplusplus
 extern "C" {

@@ -991,7 +991,11 @@ int ext2_stat(int mnt, const char *percorso, Ext2DirEntry *out)
     out->dimensione  = le32(inode + 4);
     out->is_dir      = ((le16(inode) & MODE_TIPO) == MODE_DIR) ? 1 : 0;
     /* i_mtime sta all'offset 16 dell'inode ed e' un tempo Unix. */
-    data_fat_da_unix(le32(inode + 16), &out->data, &out->ora);
+    /* the FAT-style date is local time, as on FAT (0.340) */
+    {
+        uint32_t m = le32(inode + 16);
+        data_fat_da_unix(m ? (uint32_t)((int64_t)m + rtc_scarto(m)) : 0, &out->data, &out->ora);
+    }
 
     /* ! IL PROPRIETARIO, agli offset che ext2 usa dal 1993. mkfs li scrive
      * gia': qui si smette solo di ignorarli. */
@@ -1188,32 +1192,13 @@ int ext2_read(int mnt, const char *percorso, void *buf, uint32_t size,
  * col CMOS scarico una data inventata sarebbe peggio di nessuna data,
  * perche' zero vuol dire «non la so» e un 1970 sembra un fatto.
  * ============================================================================= */
+/* (0.340) UTC through the zone of rtc.c: the CMOS clock is local time, and
+ * an inode keeps UTC, as Linux writes it. */
 static uint32_t unix_ora_corrente(void)
 {
-    RtcTime  t;
-    uint32_t a, m, g, giorni;
-    int32_t  era, yoe, doy, mp, doe;
+    int64_t t = rtc_adesso_utc();
 
-    if (rtc_read(&t) != 0) return 0;
-    if (t.anno < 1970u || t.anno > 2200u) return 0;
-
-    /* Data civile -> giorni dal 1970-01-01. E' l'inversa esatta del conto
-     * in data_fat_da_unix qui sopra: stessa origine spostata al
-     * 0000-03-01, cosi' il 29 febbraio cade in fondo all'anno. */
-    a = t.anno;
-    m = t.mese;
-    g = t.giorno;
-    if (m <= 2u) a--;
-
-    era = (int32_t)(a / 400u);
-    yoe = (int32_t)(a - (uint32_t)era * 400u);
-    mp  = (int32_t)(m > 2u ? m - 3u : m + 9u);
-    doy = (153 * mp + 2) / 5 + (int32_t)g - 1;
-    doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-
-    giorni = (uint32_t)(era * 146097 + doe - 719468);
-
-    return giorni * 86400u + t.ora * 3600u + t.minuto * 60u + t.secondo;
+    return t > 0 && t <= 0xFFFFFFFFll ? (uint32_t)t : 0;
 }
 
 /* =============================================================================

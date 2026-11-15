@@ -37,6 +37,22 @@ $GXX -O2 -s tools/prove/libreprova.cpp -o "$T/libreprova" -lfmt -lpcre2-posix -l
 for p in xz/xz zstd/zstd bzip2/bzip2 lz4/lz4; do
     cp "cross_build/${p%/*}-exos$BIT/exos/bin/${p#*/}" "$T/bin/" || exit 1
 done
+# ! the libraries are shared since 3 November 2026 and the EX-OS CD has none
+# of them (on a system they are in /exos/lib): the ones named by DT_NEEDED,
+# and theirs, go to /a/lib, found through LD_LIBRARY_PATH, as prova_httpd.sh
+mkdir -p "$T/lib"
+nomi=$(readelf -d "$T"/libreprova "$T"/bin/* 2>/dev/null | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')
+while [ -n "$nomi" ]; do
+    nuovi=""
+    for l in $nomi; do
+        [ -f "$T/lib/$l" ] && continue
+        f=$(ls cross_build/*-exos$BIT/exos/lib/"$l" 2>/dev/null | head -1)
+        [ -n "$f" ] || { echo "manca $l (a $BIT bit)" >&2; exit 1; }
+        cp "$f" "$T/lib/"
+        nuovi="$nuovi $(readelf -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')"
+    done
+    nomi=$nuovi
+done
 # the Linux side needs the lz4 program too: if this machine has none, one is
 # built for it from the same archive
 if ! command -v lz4 > /dev/null; then
@@ -63,7 +79,7 @@ export EXOS_QEMU_EXTRA="$EXTRA -drive file=$IMG,format=raw,if=ide"
 echo "=== $ARCH ==="
 EXOS_ISTANZA=lb$ARCH EXOS_NO_FLOPPY=1 EXOS_CDROM="$ISO" \
     timeout 900 python3 tools/qemu_drive.py "mount hd0p1 /a@5" "cd /a@2" \
-    "/a/libreprova@~120" \
+    "export LD_LIBRARY_PATH=/a/lib@1" "/a/libreprova@~120" \
     "/a/bin/xz -k dati@~120" "/a/bin/zstd -q -k dati@~60" \
     "/a/bin/bzip2 -k dati@~60" "/a/bin/lz4 -q dati dati.lz4@~60" \
     "/a/bin/xz -d -c l.xz > d.xz@~60" "/a/bin/zstd -q -d -c l.zst > d.zst@~60" \

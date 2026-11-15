@@ -314,3 +314,89 @@ int rtc_write(const RtcTime *t)
 
     return 0;
 }
+
+/* =============================================================================
+ * (0.340) The time zone: local CMOS time <-> UTC Unix seconds
+ *
+ * Until 0.339 there was none: time() counted the local clock as if it were
+ * UTC, and a certificate made here was born an hour in the future for every
+ * other machine. The European rule is one rule, in UTC: from the last Sunday
+ * of March 01:00 to the last Sunday of October 01:00 (bin/date/date.c does
+ * the same). The same code is in lib/libc.c, for localtime and mktime.
+ * ============================================================================= */
+static int32_t g_fuso_minuti = 60;
+static int32_t g_fuso_ue     = 1;
+
+void rtc_fuso(int32_t *minuti, int32_t *ue)
+{
+    *minuti = g_fuso_minuti;
+    *ue     = g_fuso_ue;
+}
+
+int rtc_fuso_metti(int32_t minuti, int32_t ue)
+{
+    if (minuti < -840 || minuti > 840 || (ue != 0 && ue != 1)) return -1;
+    g_fuso_minuti = minuti;
+    g_fuso_ue     = ue;
+    return 0;
+}
+
+/* Days from 1970-01-01 (Hinnant's civil days; years from 1970 up). */
+static int32_t giorni_civili(int32_t a, int32_t m, int32_t g)
+{
+    int32_t era, yoe, doy;
+
+    a  -= m <= 2;
+    era = a / 400;
+    yoe = a - era * 400;
+    doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + g - 1;
+    return era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468;
+}
+
+int64_t rtc_secondi(const RtcTime *t)
+{
+    return (int64_t)giorni_civili((int32_t)t->anno, (int32_t)t->mese, (int32_t)t->giorno) * 86400
+         + (int64_t)(t->ora * 3600u + t->minuto * 60u + t->secondo);
+}
+
+/* The last Sunday of that month, 01:00 UTC. 1970-01-01 was a Thursday. */
+static int64_t ultima_domenica(int32_t anno, int32_t mese)
+{
+    int32_t g = giorni_civili(anno, mese, 31);
+
+    return (int64_t)(g - (g + 4) % 7) * 86400 + 3600;
+}
+
+static int legale(int64_t utc)
+{
+    uint32_t giorni;
+    int32_t  anno;
+
+    if (!g_fuso_ue || utc < 0 || utc > 0xFFFFFFFFll) return 0;
+    giorni = (uint32_t)utc / 86400u;                 /* no 64-bit division */
+    anno   = 1970 + (int32_t)((giorni * 4u + 2u) / 1461u);
+    if (giorni_civili(anno, 1, 1) > (int32_t)giorni) anno--;
+    return utc >= ultima_domenica(anno, 3) && utc < ultima_domenica(anno, 10);
+}
+
+int32_t rtc_scarto(int64_t utc)
+{
+    return g_fuso_minuti * 60 + (legale(utc) ? 3600 : 0);
+}
+
+/* ! The hour that repeats in October is taken the first time, the hour
+ * that does not exist in March comes out an hour later: as Linux does. */
+int64_t rtc_utc_da_locale(int64_t locale)
+{
+    int64_t u = locale - (int64_t)g_fuso_minuti * 60;
+
+    return legale(u - 3600) ? u - 3600 : u;
+}
+
+int64_t rtc_adesso_utc(void)
+{
+    RtcTime t;
+
+    if (rtc_read(&t) != 0 || t.anno < 1970u || t.anno > 2200u) return 0;
+    return rtc_utc_da_locale(rtc_secondi(&t));
+}

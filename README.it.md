@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.339
+**Versione:** 0.340
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -112,6 +112,29 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### L'ora dei programmi e' quella universale vera: EX-OS conosce il suo fuso orario (kernel 0.340)
+
+- **`time()` da' i secondi UTC**, confrontabili con qualunque altra macchina (kernel 0.340).
+  L'orologio della macchina resta in ora locale, come su un PC che avvia anche Windows; il kernel
+  conosce il fuso (`/boot/fuso.cfg`, letto all'avvio, scritto da `date -fuso:`, di serie UTC+1 con
+  l'ora legale europea) e la libc converte: `localtime()` rimette l'ora locale con l'ora legale,
+  `mktime()` fa il contrario, `strftime` scrive `%z` e `%Z` (`+0200 CEST`), `tzset`, `timezone`,
+  `tzname` e `gettimeofday` dicono il fuso. Fino alla 0.339 `time()` contava l'ora locale come se
+  fosse UTC: un certificato fatto con `openssl` in EX-OS nasceva un'ora nel futuro e Linux lo
+  rifiutava («not yet valid»). **testato in QEMU** (tools/prova_fuso.sh, 32 e 64 bit: i due cambi
+  dell'ora legale, mktime dell'ora che manca e di quella doppia, i file nuovi, /boot/fuso.cfg letto all'avvio)
+- **Le date dei file sono in UTC**: su ext2 e ext4 l'inode tiene UTC, come lo scrive Linux; su FAT
+  resta l'ora locale, come la scrive Windows, e `stat` la converte; un CD dice il suo fuso e si usa
+  quello. **testato in QEMU**
+- **`date -fuso:` vale subito**, senza riavviare; da un CD, dove `/boot` non si scrive, vale fino
+  allo spegnimento. `date -fuso` dice anche il fuso in uso, se e' diverso da quello del file.
+- ! I programmi collegati alla libc di prima contano ancora l'ora locale come UTC finche' non
+  vengono ricollegati; arrivano ricollegati con l'aggiornamento.
+- Le prove in QEMU partono con l'orologio in ora locale (`-rtc base=localtime` in
+  `tools/qemu_drive.py`), come su una macchina vera.
+- `tools/prova_librerie.sh` e `tools/prova_openssl.sh` portano sul disco le librerie condivise che
+  usano: il CD di EX-OS non le ha, e dal 3 novembre le librerie di terzi sono condivise.
 
 ### stat() dice i permessi, il proprietario, i collegamenti e le date veri, e i file scritti su FAT hanno la loro data (kernel 0.339)
 
@@ -6431,8 +6454,9 @@ sta in **[`date`](#date--che-ore-sono-e-rimetterle)**. Fino ad allora l'orologio
 si leggeva e basta, e su una macchina con la data sbagliata non c'era modo di
 rimediare da dentro EX-OS.
 
-! In QEMU il RTC parte in **UTC**, non in ora locale. Per vedere l'ora del fuso
-serve `-rtc base=localtime` fra i `QEMU_FLAGS` del Makefile.
+! In QEMU il RTC parte in **UTC**, non in ora locale: EX-OS lo legge come ora locale
+e l'ora risulta spostata del fuso. Le prove (`tools/qemu_drive.py`) e `make run`
+passano `-rtc base=localtime`, come su una macchina vera (kernel 0.340).
 
 ---
 
@@ -6735,10 +6759,8 @@ aggiorni qualunque cosa faccia il resto del sistema, e un filo condividerebbe
 con lui la connessione al server e la coda dei messaggi — un program manager
 occupato sarebbe un orologio fermo.
 
-! **L'ORA È QUELLA UNIVERSALE**, e va detto invece di lasciarlo scoprire: la
-libc dichiara che `localtime()` è identica a `gmtime()`, perché questo sistema
-non sa in che fuso si trovi né ha un posto dove tenerlo. Un'ora locale
-inventata sarebbe peggio di quella universale, che almeno è vera.
+! **L'ORA È QUELLA LOCALE**, del fuso di `/boot/fuso.cfg` (kernel 0.340): fino
+alla 0.339 la libc non aveva fusi e `localtime()` era identica a `gmtime()`.
 
 ---
 
@@ -7271,8 +7293,8 @@ blocco libero invece di essere sprecata.
 
 `sscanf`/`vsscanf` con larghezze, `%n`, soppressione e `%lf`. `time`,
 `localtime`, `gmtime`, `mktime`, `gettimeofday` sopra `SYS_TIME`, cioè
-l'orologio CMOS — senza fuso orario, perché il sistema non sa in quale si trova:
-`localtime` e `gmtime` danno la stessa ora. `stat`/`fstat` nella forma POSIX.
+l'orologio CMOS in ora locale, e `SYS_FUSO` (270), il fuso del kernel: `time` dà
+UTC, `localtime` e `mktime` usano il fuso con l'ora legale europea (kernel 0.340). `stat`/`fstat` nella forma POSIX.
 
 ### Processi: spawn con ambiente e redirezioni
 
@@ -9126,11 +9148,10 @@ solo dice tutt'e due le cose, e sul floppy ne costa uno invece di due: quando
 `date` è stato scritto, sul floppy restavano 63488 byte liberi e il più piccolo
 programma di EX-OS ne pesa 13,5 KB.
 
-! **Nessun fuso orario.** L'orologio della macchina è ora locale e il sistema
-non sa dove si trova: `localtime()` e `gmtime()` fanno la stessa identica cosa.
-I secondi contati dal 1970 sono letti su quel quadrante — buoni per misurare
-intervalli e datare un file, non confrontabili con l'istante di un'altra
-macchina.
+! **Il fuso orario** (kernel 0.340). L'orologio della macchina è ora locale; il
+kernel conosce il fuso di `/boot/fuso.cfg` e i secondi contati dal 1970 sono
+UTC, confrontabili con l'istante di un'altra macchina. `date -fuso:` lo cambia
+subito; da un CD vale fino allo spegnimento.
 
 ### `ls` — modi di visualizzazione
 

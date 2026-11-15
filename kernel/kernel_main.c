@@ -967,6 +967,7 @@ klog(LOG_INFO, "[PASSO 11] Syscall OK");
     klog(LOG_INFO, "[PASSO 13b] Lettura /boot/kernel.cfg...");
 
 KernelConfig *cfg = cfg_load();
+    cfg_fuso_carica();   /* the zone of the CMOS clock, before any file is written */
     klog(LOG_INFO, "[PASSO 13b] Configurazione caricata");
 
     /* ! IL PIO PER SCELTA, E SOLO DA QUI IN AVANTI. `atadma = 0` chiede di

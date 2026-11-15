@@ -265,11 +265,9 @@ static int dir_scorri(IsoMount *m, uint32_t extent, uint32_t dim,
              *   18 anni dal 1900   19 mese   20 giorno
              *   21 ore   22 minuti   23 secondi   24 fuso (quarti d'ora)
              *
-             * ! IL FUSO SI IGNORA DI PROPOSITO. EX-OS non sa in che fuso
-             * si trova — localtime() e gmtime() fanno la stessa cosa, e lo
-             * dice il commento in libc.h — quindi spostare l'ora di
-             * qualche quarto d'ora non la renderebbe piu' giusta, la
-             * renderebbe diversa da quella che il CD dichiara.
+             * (0.340) The zone of byte 24 goes with it: stat_interno_fs
+             * (vfs.c) turns the fields into UTC with it, since the CD
+             * says in which zone it wrote them.
              *
              * ! SI CONTROLLA CHE LA DATA SIA PLAUSIBILE. Sono byte scritti
              * da chi ha masterizzato il disco, e un mese 0 o 13 e' comune
@@ -287,6 +285,7 @@ static int dir_scorri(IsoMount *m, uint32_t extent, uint32_t dim,
 
                 voce.data = 0;
                 voce.ora  = 0;
+                voce.fuso = (int8_t)rec[24];
 
                 if (mese >= 1u && mese <= 12u && giorno >= 1u && giorno <= 31u &&
                     ore < 24u && minuti < 60u && sec < 60u &&

@@ -316,6 +316,9 @@ def main():
         "-display", "none",
         "-serial", "file:%s" % SER,
         "-monitor", "unix:%s,server,nowait" % MON,
+        # (0.340) the CMOS clock in local time, as on a real PC: EX-OS
+        # turns it into UTC with its zone. An -rtc in EXOS_QEMU_EXTRA wins.
+        "-rtc", "base=localtime",
     ] + ([] if os.environ.get("EXOS_RIAVVIO") else ["-no-reboot"]) + rete + (["-cdrom", cdrom] if cdrom else [])
       + (os.environ.get("EXOS_QEMU_EXTRA", "").split() if os.environ.get("EXOS_QEMU_EXTRA") else []), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
