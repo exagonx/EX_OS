@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.340
+**Versione:** 0.341
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -113,6 +113,29 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### munmap non puo' piu' fermare la macchina (kernel 0.341)
+
+- **`munmap` guarda anche la fine dell'intervallo**, come gia' facevano `mmap` e `mprotect`.
+  Fino alla 0.340 controllava solo l'inizio: `munmap(0xBFFFF000, 0x44001000)` a 32 bit passava
+  sulle pagine del kernel, faceva il giro fino alla memoria del kernel e ne liberava le pagine
+  fisiche, e la macchina si fermava («PMM: pagina fuori range»). Bastava un utente qualunque. Ora
+  e' `EINVAL`. Trovato rileggendo la voce 17 di `analisi_kernel.txt`, provato prima in QEMU
+  (la macchina si fermava davvero); `tools/prove/varchiprova.c` ha i due casi.
+- **L'orologio a 12 ore**: con un CMOS in formato 12 ore la mezzanotte restava le 12 invece delle
+  0. E le due porte del CMOS (indice e dato) si usano a interrupt spenti: un cambio di processo in
+  mezzo faceva leggere un registro al posto di un altro (voce 77).
+- **Un programma parte coi registri a zero**: alla prima entrata in ring 3 i registri generali
+  tenevano valori del kernel (indirizzi suoi, a 32 e 64 bit). Ora sono azzerati; resta solo RDI a
+  64 bit, il primo argomento di un filo (voce 77).
+- **Le notifiche di interrupt perse si contano**: quando la cassetta del driver e' piena la
+  notifica cade, e fino alla 0.340 non lo diceva nessuno. Ora la prima caduta va nel registro
+  ("IRQn: notifica caduta per PID p") e `/proc/interrupts` dice `cadute N` accanto al conto. E'
+  la misura per la voce 14 (una scheda che tace dopo una notifica persa).
+- **Voce 76 verificata**: un file cancellato mentre e' aperto si legge e si scrive fino alla
+  chiusura (lo fa dal kernel 0.268). La prova nuova scrive 1 MB dopo `unlink` e rifa' il nome con
+  un altro file nel frattempo: a posto su ext2 e FAT32, 32 e 64 bit (`tools/prova_aperti.sh`).
+  Verificato anche che `rmdir /a/.` non lascia la cartella mezza cancellata su FAT.
+
 ### L'ora dei programmi e' quella universale vera: EX-OS conosce il suo fuso orario (kernel 0.340)
 
 - **`time()` da' i secondi UTC**, confrontabili con qualunque altra macchina (kernel 0.340).
@@ -135,6 +158,28 @@ quella sull'hardware o sul caso reale — non è ancora stata fatta.
   `tools/qemu_drive.py`), come su una macchina vera.
 - `tools/prova_librerie.sh` e `tools/prova_openssl.sh` portano sul disco le librerie condivise che
   usano: il CD di EX-OS non le ha, e dal 3 novembre le librerie di terzi sono condivise.
+- **Provato sul ferro** (il PC di prova con la scheda madre nForce MCP73, aggiornato con netupdate
+  dalla 0.328): `time()` a pochi secondi dall'UTC di un'altra macchina, i due cambi dell'ora
+  legale, il file nuovo su ext4 datato in UTC, `date -fuso:+5:30,no` che vale subito; un
+  certificato fatto da `openssl` ricollegato Linux lo accetta, quello di prima no.
+- **netupdate 0.048: le verifiche aspettano il riavvio** quando l'aggiornamento cambia il kernel.
+  Sotto il kernel di prima i programmi nuovi gli chiedono cose che non ha (lo stat della 0.339):
+  sul PC di prova, dalla 0.328 alla 0.340, ogni `[ -d ]` e `[ -f ]` dava falso e quattro
+  verifiche chiedevano di creare a mano cartelle che c'erano. Ora netupdate lo dice e chiede
+  `netupdate -verifica` dopo il riavvio. **testato in QEMU** (tools/prova_verifiche.sh, prova D:
+  un kernel nuovo sul server). `verifiche/sistema.sh` dice anche se manca `/boot/fuso.cfg`.
+- **L'ora locale anche dove si contava l'UTC per l'ora locale**, cercata in tutto il codice di
+  EX-OS (`gmtime` era uguale a `localtime` fino alla 0.339):
+  - **ExJs**: `getHours`, `setHours`, `new Date(a, m, g)`, `toString`, `toLocaleString` e le
+    stringhe senza fuso sono in ora locale, `getTimezoneOffset` dice -60 o -120; il fuso lo da'
+    chi ospita con `exjs_fuso_metti` (facoltativa: una exjs.so vecchia resta in UTC), EXBrowser
+    0.033 lo prende da `localtime_r`. L'ora che si ripete in autunno vale la prima volta, quella
+    che manca in primavera un'ora dopo. **testato sull'host** (`make prova-exjs`, 510 prove, 18
+    nuove col fuso di Roma 2026); `tools/prova_date.sh` guarda anche il fuso, coi due motori.
+  - **tar** elenca le date in ora locale, come GNU tar (l'archivio tiene UTC).
+  - **libctest 0.003**: le prove di `mktime` erano quelle di `timegm` (l'istante UTC) e la prova
+    di `strftime` lasciava `tm_gmtoff` sporco; ora `timegm` contro `gmtime` e `mktime` contro
+    `localtime`, d'inverno e d'estate.
 
 ### stat() dice i permessi, il proprietario, i collegamenti e le date veri, e i file scritti su FAT hanno la loro data (kernel 0.339)
 
@@ -2973,8 +3018,9 @@ gira, e Ctrl+C lo ferma (`tools/prova_runbas.sh`).
 
 **testato in QEMU** — col motore ExJs c'è `Date`: `new Date()`, `Date.now()`,
 `Date.UTC`, `Date.parse`, i `get`/`set`, `toISOString`, `toString`,
-`toLocaleString` e `JSON.stringify` di una data. È tutta in UTC, perché EX-OS
-non ha fusi orari; l'ora la dà il navigatore. Gli oggetti nei conti passano
+`toLocaleString` e `JSON.stringify` di una data. L'ora la dà il navigatore, e
+dal 16 novembre 2026 anche il fuso (`exjs_fuso_metti`, dal `localtime` della
+libc: kernel 0.340); prima era tutta in UTC. Gli oggetti nei conti passano
 da `valueOf`: la differenza fra due date è un numero, come misurano i tempi le
 pagine. Provato sull'host (`make prova-exjs`, 307 prove) e in EXBrowser coi
 due motori (`tools/prova_date.sh`).

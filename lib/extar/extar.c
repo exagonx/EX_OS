@@ -437,7 +437,8 @@ int ex_tar_voce(ExTar *t, unsigned int i, ExTarVoce *v)
         v->nome[l] = '/'; v->nome[l + 1] = '\0';
     }
     tt = (time_t)s->mtime;
-    if (s->mtime && (tm = gmtime(&tt)) != 0) {
+    /* local time, as GNU tar shows it: the header keeps UTC (kernel 0.340) */
+    if (s->mtime && (tm = localtime(&tt)) != 0) {
         v->anno = (unsigned int)tm->tm_year + 1900; v->mese = (unsigned int)tm->tm_mon + 1;
         v->giorno = (unsigned int)tm->tm_mday;
         v->ore = (unsigned int)tm->tm_hour; v->minuti = (unsigned int)tm->tm_min;

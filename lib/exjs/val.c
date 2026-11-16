@@ -149,6 +149,9 @@ struct ExJsCtx {
     /* L'orologio di chi ospita, per Date (exjs_orologio_metti). */
     ExJsOrologio orologio;
     void        *orologio_dato;
+    /* E il suo fuso (exjs_fuso_metti). */
+    ExJsFuso     fuso;
+    void        *fuso_dato;
 
     /* =====================================================================
      * ! L'ALBERO STA DENTRO IL CONTESTO, e non lo passa chi chiama.
@@ -628,6 +631,22 @@ void exjs_orologio_metti(ExJsCtx *c, ExJsOrologio f, void *dato)
 double exjs_orologio_ms(ExJsCtx *c)
 {
     return (c && c->orologio) ? c->orologio(c->orologio_dato) : 0.0;
+}
+
+void exjs_fuso_metti(ExJsCtx *c, ExJsFuso f, void *dato)
+{
+    if (!c) return;
+    c->fuso = f;
+    c->fuso_dato = dato;
+}
+
+int exjs_fuso_minuti(ExJsCtx *c, double utc_ms)
+{
+    int m;
+
+    if (!c || !c->fuso || utc_ms != utc_ms) return 0;
+    m = c->fuso(utc_ms, c->fuso_dato);
+    return (m < -1440 || m > 1440) ? 0 : m;      /* a host gone mad is UTC */
 }
 
 static int prop_trova_pub(ExJsCtx *c, int ogg, const char *nome);

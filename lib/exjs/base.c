@@ -1058,7 +1058,7 @@ static void c_stringa(Comp *C, const char *s)
 }
 
 static int  data_tempo(ExJsCtx *c, ExJsVal v, double *t);
-static void data_testo(double t, int modo, char *o);
+static void data_testo(double t, int modo, int fm, char *o);
 
 static void componi(ExJsCtx *c, Comp *C, ExJsVal v, int profondo)
 {
@@ -1104,7 +1104,7 @@ static void componi(ExJsCtx *c, Comp *C, ExJsVal v, int profondo)
         double t;
         if (data_tempo(c, v, &t)) {
             if (t != t) { c_testo(C, "null"); return; }
-            data_testo(t, 1, tmp);
+            data_testo(t, 1, 0, tmp);
             c_stringa(C, tmp);
             return;
         }
@@ -1479,11 +1479,12 @@ static void metti_nat_ogg(ExJsCtx *c, int ogg, const char *nome,
  * ore sono, come non sa scaricare una pagina; senza orologio `new Date()` e'
  * l'1 gennaio 1970, che e' un valore valido e non un errore.
  *
- * ! TUTTO IN UTC. EX-OS non ha fusi orari, quindi l'ora «locale» e' quella di
- * Greenwich: getHours e getUTCHours rendono lo stesso numero e
- * getTimezoneOffset rende 0. Una pagina che conta i giorni funziona; una che
- * mostra l'ora mostra quella di Londra d'inverno. Il giorno che il sistema
- * avra' un fuso, lo spostamento si mette in data_locale e basta.
+ * ! L'ORA LOCALE E' DEL FUSO DI CHI OSPITA (exjs_fuso_metti, 16 novembre
+ * 2026, quando EX-OS ha avuto un fuso col kernel 0.340): getHours, setHours,
+ * new Date(a, m, g), toString e le stringhe senza fuso sono in ora locale,
+ * getUTC* e toISOString in UTC. Senza fuso l'ora locale e' l'UTC e
+ * getTimezoneOffset vale 0, come prima. L'ora che si ripete in autunno vale
+ * la prima volta, quella che manca in primavera vale un'ora dopo (la norma).
  *
  * ! SOLO DIVISIONI A 32 BIT. Il giorno si ricava col double (pavimento), e
  * da li' in giu' anno, mese e giorno con gli interi di Howard Hinnant: nei
@@ -1585,6 +1586,32 @@ static double data_componi(const double f[7])
     return giorni * MS_GIORNO + ora;
 }
 
+/* The host's zone, in ms, at the UTC instant t. */
+static double data_scarto(ExJsCtx *c, double t)
+{
+    return (double)exjs_fuso_minuti(c, t) * 60000.0;
+}
+
+/* LocalTime -> UTC: the two offsets around L, the earlier instant if both
+ * fit (the repeated hour), the offset from before if neither does (the
+ * missing one). */
+static double data_da_locale(ExJsCtx *c, double l)
+{
+    double oa, ob, ua, ub;
+    int    va, vb;
+
+    if (l != l) return l;
+    oa = data_scarto(c, l - MS_GIORNO);
+    ob = data_scarto(c, l + MS_GIORNO);
+    ua = l - oa;
+    ub = l - ob;
+    va = data_scarto(c, ua) == oa;
+    vb = data_scarto(c, ub) == ob;
+    if (va && vb) return ua < ub ? ua : ub;
+    if (vb && !va) return ub;
+    return ua;
+}
+
 /* ---- scrivere ------------------------------------------------------------ */
 static char *d_int(char *o, int v, int cifre)
 {
@@ -1602,13 +1629,15 @@ static char *d_int(char *o, int v, int cifre)
 static char *d_txt(char *o, const char *s) { while (*s) *o++ = *s++; return o; }
 
 /* modo: 0 toString, 1 toISOString, 2 toUTCString, 3 toDateString,
- * 4 toTimeString, 5 toLocaleString, 6 toLocaleDateString, 7 toLocaleTimeString */
-static void data_testo(double t, int modo, char *o)
+ * 4 toTimeString, 5 toLocaleString, 6 toLocaleDateString, 7 toLocaleTimeString.
+ * fm: the zone in minutes, for all but 1 and 2. */
+static void data_testo(double t, int modo, int fm, char *o)
 {
     int f[8], h12;
 
     if (t != t) { d_txt(o, "Invalid Date")[0] = '\0'; return; }
-    data_campi(t, f);
+    if (modo == 1 || modo == 2) fm = 0;
+    data_campi(t + fm * 60000.0, f);
     h12 = f[3] % 12 ? f[3] % 12 : 12;
 
     switch (modo) {
@@ -1646,7 +1675,13 @@ static void data_testo(double t, int modo, char *o)
         if (modo == 0) *o++ = ' ';
         if (modo != 3) {
             o = d_int(o, f[3], 2); *o++ = ':'; o = d_int(o, f[4], 2); *o++ = ':';
-            o = d_int(o, f[5], 2); o = d_txt(o, " GMT+0000 (Coordinated Universal Time)");
+            o = d_int(o, f[5], 2);
+            if (fm == 0) o = d_txt(o, " GMT+0000 (Coordinated Universal Time)");
+            else {
+                int a = fm < 0 ? -fm : fm;
+                o = d_txt(o, fm < 0 ? " GMT-" : " GMT+");
+                o = d_int(o, a / 60, 2); o = d_int(o, a % 60, 2);
+            }
         }
         break;
     }
@@ -1669,10 +1704,13 @@ static int d_minuscola(char ch) { return (ch >= 'A' && ch <= 'Z') ? ch + 32 : ch
 
 /* Il formato ISO della norma: AAAA, AAAA-MM, AAAA-MM-GG, poi facoltativi
  * THH:mm, :ss, .sss e Z o +HH:mm. Rende 0 se non lo e'. */
-static int data_leggi_iso(const char *s, double *out)
+/* *locale: 1 when it has a time and no zone, which the norm reads as local */
+static int data_leggi_iso(const char *s, double *out, int *locale)
 {
     double f[7] = { 0, 0, 1, 0, 0, 0, 0 };
     int    v, segno = 1, n, spost = 0;
+
+    *locale = 0;
 
     if (*s == '+' || *s == '-') {
         segno = *s == '-' ? -1 : 1; s++;
@@ -1694,7 +1732,8 @@ static int data_leggi_iso(const char *s, double *out)
                 f[6] = v;
                 while (*s >= '0' && *s <= '9') s++; } }
         if (*s == 'Z' || *s == 'z') s++;
-        else if (*s == '+' || *s == '-') {
+        else if (*s != '+' && *s != '-') *locale = 1;
+        else {
             int sg = *s == '-' ? -1 : 1, hh, mm = 0;
             s++;
             if (d_cifre(&s, 2, &hh) != 2) return 0;
@@ -1714,13 +1753,14 @@ static int data_leggi_iso(const char *s, double *out)
  * («Thu Jan 01 1970 00:00:00 GMT+0000», «Thu, 01 Jan 1970 00:00:00 GMT») e
  * quelle americane «Jan 1, 1970» e «1/31/1970». I nomi dei giorni si
  * saltano, GMT e UTC anche. */
-static double data_leggi(const char *s)
+static double data_leggi(ExJsCtx *c, const char *s)
 {
     double f[7] = { -1e9, -1, -1, 0, 0, 0, 0 };
-    int    v, i, numeri[3], nn = 0, spost = 0, ora_vista = 0;
+    int    v, i, numeri[3], nn = 0, spost = 0, ora_vista = 0, zona = 0;
 
     while (*s == ' ') s++;
-    if (data_leggi_iso(s, &f[0])) return taglia_tempo(f[0]);
+    if (data_leggi_iso(s, &f[0], &zona))
+        return taglia_tempo(zona ? data_da_locale(c, f[0]) : f[0]);
     f[0] = -1e9;
 
     while (*s) {
@@ -1743,6 +1783,7 @@ static double data_leggi(const char *s)
             int sg = *s == '-' ? -1 : 1;                       /* GMT+0100 */
             s++; d_cifre(&s, 4, &v);
             spost = sg * ((v / 100) * 60 + v % 100);
+            zona = 1;
             continue;
         }
         if (d_minuscola(*s) >= 'a' && d_minuscola(*s) <= 'z') {
@@ -1752,6 +1793,9 @@ static double data_leggi(const char *s)
                 s++;
             }
             p[k] = '\0';
+            if ((k == 3 && ((p[0] == 'g' && p[1] == 'm' && p[2] == 't') ||
+                            (p[0] == 'u' && p[1] == 't' && p[2] == 'c'))) ||
+                (k == 1 && p[0] == 'z')) zona = 1;
             for (i = 0; i < 12; i++)
                 if (k == 3 && d_minuscola(nomi_mese[i][0]) == p[0] &&
                     nomi_mese[i][1] == p[1] && nomi_mese[i][2] == p[2]) f[1] = i;
@@ -1770,6 +1814,7 @@ static double data_leggi(const char *s)
         else f[2] = numeri[i];
     }
     if (f[0] == -1e9 || f[1] < 0 || f[2] < 1) return data_nan();
+    if (!zona) return taglia_tempo(data_da_locale(c, data_componi(f)));
     return taglia_tempo(data_componi(f) - spost * 60000.0);
 }
 
@@ -1801,15 +1846,15 @@ static double data_adesso(ExJsCtx *c)
     return taglia_tempo(pavimento(exjs_orologio_ms(c)));
 }
 
-/* I campi dagli argomenti di new Date(a, m, ...) e di Date.UTC. */
-static double data_da_argomenti(ExJsCtx *c, const ExJsVal *a, int n)
+/* I campi dagli argomenti di new Date(a, m, ...) (locale) e di Date.UTC. */
+static double data_da_argomenti(ExJsCtx *c, const ExJsVal *a, int n, int locale)
 {
     double f[7] = { 0, 0, 1, 0, 0, 0, 0 };
     int    i;
 
     for (i = 0; i < n && i < 7; i++) f[i] = exjs_a_numero(c, a[i]);
     if (finito(f[0])) { double y = tronca(f[0]); if (y >= 0 && y <= 99) f[0] = 1900 + y; }
-    return taglia_tempo(data_componi(f));
+    return taglia_tempo(locale ? data_da_locale(c, data_componi(f)) : data_componi(f));
 }
 
 static ExJsVal nat_Date(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
@@ -1820,17 +1865,18 @@ static ExJsVal nat_Date(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
     /* ! SENZA new, Date() e' una STRINGA, l'ora di adesso, e gli argomenti
      * non contano. Con new `this` e' l'oggetto appena fatto. */
     if (exjs_a_oggetto(q) < 0 || q == exjs_globale(c)) {
-        data_testo(data_adesso(c), 0, b);
+        t = data_adesso(c);
+        data_testo(t, 0, exjs_fuso_minuti(c, t), b);
         return exjs_stringa(c, b, -1);
     }
     if (n == 0) t = data_adesso(c);
     else if (n == 1) {
         if (!data_tempo(c, a[0], &t)) {
             ExJsVal p = exjs_primitivo(c, a[0], 0);
-            t = exjs_tipo(c, p) == EXJS_STRINGA ? data_leggi(exjs_a_stringa(c, p))
+            t = exjs_tipo(c, p) == EXJS_STRINGA ? data_leggi(c, exjs_a_stringa(c, p))
                                                 : taglia_tempo(exjs_a_numero(c, p));
         }
-    } else t = data_da_argomenti(c, a, n);
+    } else t = data_da_argomenti(c, a, n, 1);
 
     data_metti(c, q, t);
     exjs_proto_metti(c, q, exjs_da_oggetto((int)(long)d));
@@ -1846,27 +1892,28 @@ static ExJsVal nat_Date_now(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void
 static ExJsVal nat_Date_UTC(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
 {
     (void)q; (void)d;
-    return exjs_numero(c, n ? data_da_argomenti(c, a, n) : data_nan());
+    return exjs_numero(c, n ? data_da_argomenti(c, a, n, 0) : data_nan());
 }
 
 static ExJsVal nat_Date_parse(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
 {
     (void)q; (void)d;
-    return exjs_numero(c, n ? data_leggi(exjs_a_stringa(c, a[0])) : data_nan());
+    return exjs_numero(c, n ? data_leggi(c, exjs_a_stringa(c, a[0])) : data_nan());
 }
 
 /* I get: dato 0-6 un campo, 7 il giorno della settimana, 8 il tempo intero,
- * 9 lo spostamento del fuso, 10 getYear. */
+ * 9 lo spostamento del fuso, 10 getYear; | DATA_LOCALE in ora locale. */
+#define DATA_LOCALE 256
 static ExJsVal nat_data_get(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
 {
     double t = data_questo(c, q);
-    int    f[8], k = (int)(long)d;
+    int    f[8], k = (int)(long)d & 255, loc = (int)(long)d & DATA_LOCALE;
 
     (void)a; (void)n;
     if (t != t) return exjs_numero(c, t);
     if (k == 8) return exjs_numero(c, t);
-    if (k == 9) return exjs_numero(c, 0.0);
-    data_campi(t, f);
+    if (k == 9) return exjs_numero(c, -data_scarto(c, t) / 60000.0);
+    data_campi(loc ? t + data_scarto(c, t) : t, f);
     return exjs_numero(c, (double)(k == 10 ? f[0] - 1900 : f[k]));
 }
 
@@ -1875,7 +1922,8 @@ static ExJsVal nat_data_get(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void
 static ExJsVal nat_data_set(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
 {
     double t = data_questo(c, q), f[7];
-    int    k = (int)(long)d & 15, max = (int)(long)d >> 4, i, g[8];
+    int    k = (int)(long)d & 15, max = ((int)(long)d >> 4) & 15, i, g[8];
+    int    loc = (int)(long)d & DATA_LOCALE;
 
     if (exjs_a_oggetto(q) < 0) return exjs_numero(c, data_nan());
     if (k == 15) t = taglia_tempo(n ? exjs_a_numero(c, a[0]) : data_nan());
@@ -1883,10 +1931,10 @@ static ExJsVal nat_data_set(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void
     else {
         /* setFullYear su una data non valida riparte dall'1/1/1970. */
         if (t != t) { if (k != 0) return exjs_numero(c, t); t = 0.0; }
-        data_campi(t, g);
+        data_campi(loc ? t + data_scarto(c, t) : t, g);
         for (i = 0; i < 7; i++) f[i] = g[i];
         for (i = 0; i < n && i < max; i++) f[k + i] = exjs_a_numero(c, a[i]);
-        t = taglia_tempo(data_componi(f));
+        t = taglia_tempo(loc ? data_da_locale(c, data_componi(f)) : data_componi(f));
     }
     data_metti(c, q, t);
     return exjs_numero(c, t);
@@ -1908,24 +1956,28 @@ static ExJsVal nat_data_testo(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, vo
         exjs_lancia_errore(c, "RangeError", "Invalid time value");
         return exjs_indefinito();
     }
-    data_testo(t, (int)(long)d, b);
+    data_testo(t, (int)(long)d, t == t ? exjs_fuso_minuti(c, t) : 0, b);
     return exjs_stringa(c, b, -1);
 }
 
 static void data_registra(ExJsCtx *c, ExJsVal g)
 {
     static const struct { const char *nome; int dato; } get[] = {
-        { "getFullYear", 0 }, { "getMonth", 1 }, { "getDate", 2 }, { "getHours", 3 },
-        { "getMinutes", 4 }, { "getSeconds", 5 }, { "getMilliseconds", 6 },
-        { "getDay", 7 }, { "getUTCFullYear", 0 }, { "getUTCMonth", 1 },
+        { "getFullYear", 0 | DATA_LOCALE }, { "getMonth", 1 | DATA_LOCALE },
+        { "getDate", 2 | DATA_LOCALE }, { "getHours", 3 | DATA_LOCALE },
+        { "getMinutes", 4 | DATA_LOCALE }, { "getSeconds", 5 | DATA_LOCALE },
+        { "getMilliseconds", 6 | DATA_LOCALE }, { "getDay", 7 | DATA_LOCALE },
+        { "getUTCFullYear", 0 }, { "getUTCMonth", 1 },
         { "getUTCDate", 2 }, { "getUTCHours", 3 }, { "getUTCMinutes", 4 },
         { "getUTCSeconds", 5 }, { "getUTCMilliseconds", 6 }, { "getUTCDay", 7 },
-        { "getTime", 8 }, { "valueOf", 8 }, { "getTimezoneOffset", 9 }, { "getYear", 10 },
+        { "getTime", 8 }, { "valueOf", 8 }, { "getTimezoneOffset", 9 },
+        { "getYear", 10 | DATA_LOCALE },
     };
     static const struct { const char *nome; int dato; } set[] = {
-        { "setFullYear", 0 | 3 << 4 }, { "setMonth", 1 | 2 << 4 }, { "setDate", 2 | 1 << 4 },
-        { "setHours", 3 | 4 << 4 }, { "setMinutes", 4 | 3 << 4 }, { "setSeconds", 5 | 2 << 4 },
-        { "setMilliseconds", 6 | 1 << 4 },
+        { "setFullYear", 0 | 3 << 4 | DATA_LOCALE }, { "setMonth", 1 | 2 << 4 | DATA_LOCALE },
+        { "setDate", 2 | 1 << 4 | DATA_LOCALE }, { "setHours", 3 | 4 << 4 | DATA_LOCALE },
+        { "setMinutes", 4 | 3 << 4 | DATA_LOCALE }, { "setSeconds", 5 | 2 << 4 | DATA_LOCALE },
+        { "setMilliseconds", 6 | 1 << 4 | DATA_LOCALE },
         { "setUTCFullYear", 0 | 3 << 4 }, { "setUTCMonth", 1 | 2 << 4 }, { "setUTCDate", 2 | 1 << 4 },
         { "setUTCHours", 3 | 4 << 4 }, { "setUTCMinutes", 4 | 3 << 4 },
         { "setUTCSeconds", 5 | 2 << 4 }, { "setUTCMilliseconds", 6 | 1 << 4 },

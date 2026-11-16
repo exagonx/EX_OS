@@ -19,7 +19,9 @@
  *   - "ESC[2147483600B" and "ESC[2147483600C" then a character: still alive;
  *   - irq_bind(1) as a user: EPERM; console_setfg of pid 1: EPERM/ESRCH;
  *   - five execv of missing files, then code far away still runs;
- *   - a child doing write(1, 0x50000000, 10) dies, the machine goes on (voce 5).
+ *   - a child doing write(1, 0x50000000, 10) dies, the machine goes on (voce 5);
+ *   - munmap of a range that runs past the end of user space: EINVAL (kernel
+ *     0.341; until 0.340 it freed kernel frames and the machine went down).
  * Prints "varchiprova: N NO".
  * ============================================================================= */
 #include <stdio.h>
@@ -28,6 +30,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/mman.h>
 #include <libc.h>
 
 static int no = 0;
@@ -152,6 +155,14 @@ int main(int argc, char **argv)
         atteso("puntatore cattivo al kernel: muore il figlio, i file si aprono", (pid > 0 && st != 0 && f >= 0) ? 0 : -1, 0);
         if (f >= 0) close(f);
     }
+
+    /* (0.341) munmap across the end of user space, and wrapping round */
+#if defined(__x86_64__)
+    atteso("munmap oltre la fine dello spazio utente", munmap((void *)0xFFFEF000ul, 0x20000), EINVAL);
+#else
+    atteso("munmap oltre la fine dello spazio utente", munmap((void *)0xBFFFF000ul, 0x2000), EINVAL);
+    atteso("munmap che fa il giro fino al kernel", munmap((void *)0xBFFFF000ul, 0x44001000ul), EINVAL);
+#endif
 
     printf("varchiprova: %d NO\n", no);
     return no ? 1 : 0;

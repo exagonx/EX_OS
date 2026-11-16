@@ -66,6 +66,14 @@ if [ -f /boot/kernel.cfg ]; then
         fi
     fi
 fi
+# ! THE TIME ZONE (kernel 0.340, 15 November 2026): time() is real UTC, the
+# kernel turns the CMOS local time into it with /boot/fuso.cfg. Without the
+# file it assumes Italy (UTC+1, European summer time): said, so that a
+# machine elsewhere, or with the CMOS in UTC, knows what to set.
+if [ ! -f /boot/fuso.cfg ]; then
+    echo "  - Nessun /boot/fuso.cfg: il kernel 0.340 suppone UTC+1 con l'ora legale"
+    echo "    europea. Altrove: date -fuso:+2,ue (per esempio); orologio in UTC: date -fuso:0,no."
+fi
 if [ "$NETUPDATE_RIAVVIO" = 1 ]; then
     exit 0
 fi

@@ -151,6 +151,7 @@ static struct {
     int (*lavori_in_attesa)(ExJsCtx *);
     void (*memoria)(ExJsCtx *, unsigned int *, unsigned int *, unsigned int *, unsigned int *);
     void (*orologio_metti)(ExJsCtx *, ExJsOrologio, void *);   /* puo' mancare */
+    void (*fuso_metti)(ExJsCtx *, ExJsFuso, void *);           /* anche questa */
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -297,6 +298,9 @@ static void assicura(void)
      * sarebbe un prezzo sproporzionato. Senza, Date.now() vale 0. */
     P.orologio_metti = (void (*)(ExJsCtx *, ExJsOrologio, void *))
         exlib_simbolo(t, "exjs_orologio_metti");
+    /* the zone (16/11/2026): an older exjs.so keeps Date in UTC */
+    P.fuso_metti = (void (*)(ExJsCtx *, ExJsFuso, void *))
+        exlib_simbolo(t, "exjs_fuso_metti");
 
     P.pronto = 1;
 }
@@ -384,6 +388,9 @@ void exjs_uscita_metti(ExJsCtx *c, ExJsUscita f, void *dato)
 
 void exjs_orologio_metti(ExJsCtx *c, ExJsOrologio f, void *dato)
 { assicura(); if (P.orologio_metti) P.orologio_metti(c, f, dato); }
+
+void exjs_fuso_metti(ExJsCtx *c, ExJsFuso f, void *dato)
+{ assicura(); if (P.fuso_metti) P.fuso_metti(c, f, dato); }
 
 ExJsVal exjs_globale(ExJsCtx *c)
 { assicura(); return P.globale(c); }

@@ -114,7 +114,22 @@ proc_entry_stub_user:
     push qword 0x202        ; RFLAGS: interrupt accesi
     push qword SEL_U_CODICE ; CS, ring 3
     push rax                ; RIP
-    iretq
+    ;(0.341, analisi voce 77) ring 3 gets no kernel values
+    xor  eax, eax
+    xor  ebx, ebx
+    xor  ecx, ecx
+    xor  edx, edx
+    xor  esi, esi
+    xor  ebp, ebp
+    xor  r8d, r8d
+    xor  r9d, r9d
+    xor  r10d, r10d
+    xor  r11d, r11d
+    xor  r12d, r12d
+    xor  r13d, r13d
+    xor  r14d, r14d
+    xor  r15d, r15d
+    iretq                   ; RDI stays: a thread's first argument
 
 ; Il primo avvio di un filo del kernel: RAX = la funzione.
 ; La pila si mette come dopo una «call» (16 byte meno 8): e' quello che il C
@@ -184,6 +199,22 @@ sched_enter_usermode:
     push qword 0x202
     push qword SEL_U_CODICE
     push rdi
+    ;(0.341, analisi voce 77) ring 3 gets no kernel values
+    xor  eax, eax
+    xor  ebx, ebx
+    xor  ecx, ecx
+    xor  edx, edx
+    xor  esi, esi
+    xor  ebp, ebp
+    xor  r8d, r8d
+    xor  r9d, r9d
+    xor  r10d, r10d
+    xor  r11d, r11d
+    xor  r12d, r12d
+    xor  r13d, r13d
+    xor  r14d, r14d
+    xor  r15d, r15d
+    xor  edi, edi
     iretq
 
 ; void pit_configure(uint32_t frequency_hz)   edi

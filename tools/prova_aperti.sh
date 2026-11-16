@@ -6,7 +6,7 @@
 #     EXOS_ARCH=x86_64 tools/prova_aperti.sh [dir]    64 bit
 #
 # The disk: p1 ext2 with 4 KB blocks, p2 FAT32. tools/prove/apertiprova.c
-# (built here with the EX-OS cross gcc) runs its five cases on both; then
+# (built here with the EX-OS cross gcc) runs its six cases on both; then
 # e2fsck -fn on p1 and fsck.fat -n on p2, and no ~EXV file may be left.
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1

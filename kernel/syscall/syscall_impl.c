@@ -2210,6 +2210,10 @@ int32_t sys_munmap(InterruptFrame *frame)
 
     if (addr < USER_SPACE_BASE || addr >= USER_SPACE_END) return ERR(EINVAL);
     if (length == 0) return ERR(EINVAL);
+    /* (0.341) ! THE END TOO, as mmap and mprotect do: munmap(0xBFFFF000,
+     * 0x44001000) ran through the kernel's pages, wrapped round to its
+     * identity map and freed its frames; any user brought the machine down. */
+    if (pages == 0 || pages > (USER_SPACE_END - addr) / PAGE_SIZE) return ERR(EINVAL);
 
     /* ! ONE TLB ROUND FOR THE WHOLE RANGE, AND THE FRAMES FREED AFTER IT
      * (0.321): another thread may be running this space on another

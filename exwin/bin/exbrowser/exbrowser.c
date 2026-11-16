@@ -2205,6 +2205,27 @@ static double js_orologio(void *dato)
     return base + (double)uptime_ms();
 }
 
+/* The zone of Date's local time (exjs_fuso_metti, kernel 0.340): the
+ * libc's localtime at that instant. Outside time_t's range, the nearest end. */
+static int js_fuso(double utc_ms, void *dato)
+{
+    double    s = utc_ms / 1000.0;
+    time_t    t;
+    struct tm r;
+
+    (void)dato;
+    if (sizeof(time_t) == 4) {
+        if (s > 2147483647.0) s = 2147483647.0;
+        if (s < -2147483648.0) s = -2147483648.0;
+    } else {
+        if (s > 8.7e12) s = 8.7e12;          /* Date ends at 8.64e15 ms */
+        if (s < -8.7e12) s = -8.7e12;
+    }
+    t = (time_t)s;
+    if (localtime_r(&t, &r) == 0) return 0;
+    return (int)(r.tm_gmtoff / 60);
+}
+
 /* $HOME/.app/browser/biscotti.txt, accanto alle impostazioni. */
 static int bis_prepara(void)
 {
@@ -3231,6 +3252,7 @@ static int motore_apri(void)
     if (!g_js) { motore_chiudi(); dico("javascript: il motore non si apre"); return 0; }
     exjs_uscita_metti(g_js, js_uscita, 0);
     exjs_orologio_metti(g_js, js_orologio, 0);
+    exjs_fuso_metti(g_js, js_fuso, 0);
 
     /* ! IL PONTE SI DIMENSIONA SUI NODI CHE LA PAGINA HA, piu' un margine
      * per quelli che gli script creeranno — non sul tetto della vista, che

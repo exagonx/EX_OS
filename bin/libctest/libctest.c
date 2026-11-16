@@ -41,7 +41,7 @@
 #include "poll.h"
 
 /* +0.001 a ogni modifica: `libctest -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("libctest", "0.002");
+EX_VERSIONE("libctest", "0.003");
 
 static int passati = 0;
 static int falliti = 0;
@@ -635,6 +635,9 @@ static void prova_terzi(void)
         char      buf[64];
         size_t    n;
 
+        /* (0.003) zeroed first: since kernel 0.340 %z reads tm_gmtoff, as
+         * in glibc, and garbage there is garbage in the output */
+        memset(&t, 0, sizeof(t));
         t.tm_sec = 5; t.tm_min = 4; t.tm_hour = 13;
         t.tm_mday = 2; t.tm_mon = 7; t.tm_year = 126;   /* 2 agosto 2026 */
         t.tm_wday = 0; t.tm_yday = 213; t.tm_isdst = 0;
@@ -1594,7 +1597,9 @@ static void prova_temporanei(void)
                   lc->grouping[0] == '\0');
         }
 
-        /* mktime: l'inversa di gmtime, e ! NORMALIZZA la struttura. */
+        /* timegm: l'inversa di gmtime, e ! NORMALIZZA la struttura. (0.003)
+         * Fino al kernel 0.339 lo faceva mktime, quando l'ora locale era
+         * contata come UTC; dalla 0.340 mktime legge l'ora locale. */
         {
             struct tm t;
             time_t    q;
@@ -1603,8 +1608,8 @@ static void prova_temporanei(void)
             t.tm_year = 100; t.tm_mon = 0;  t.tm_mday = 1;
             t.tm_hour = 0;   t.tm_min = 0;  t.tm_sec  = 0;
             t.tm_isdst = 0;  t.tm_wday = 99; t.tm_yday = 99;
-            q = mktime(&t);
-            esito("mktime da' l'istante giusto", q == (time_t)946684800);
+            q = timegm(&t);
+            esito("timegm da' l'istante giusto", q == (time_t)946684800);
             /* Il 2000-01-01 era un sabato: tm_wday = 6. Il valore assurdo
              * messo sopra dev'essere stato ignorato e riscritto. */
             esito("e riscrive tm_wday che aveva ignorato", t.tm_wday == 6);
@@ -1613,17 +1618,23 @@ static void prova_temporanei(void)
              * aritmetica sulle date. */
             t.tm_year = 100; t.tm_mon = 12; t.tm_mday = 1;
             t.tm_hour = 0;   t.tm_min = 0;  t.tm_sec  = 0;
-            (void)mktime(&t);
-            esito("mktime normalizza il mese 12 in gennaio dell'anno dopo",
+            (void)timegm(&t);
+            esito("timegm normalizza il mese 12 in gennaio dell'anno dopo",
                   t.tm_mon == 0 && t.tm_year == 101);
 
-            /* E l'andata e ritorno con gmtime deve chiudere il giro. */
+            /* E l'andata e ritorno deve chiudere il giro: gmtime con timegm,
+             * localtime con mktime (d'inverno e d'estate). */
             {
-                time_t     adesso = (time_t)1234567890;
+                time_t     adesso = (time_t)1234567890, estate = (time_t)1782907200;
                 struct tm *g = gmtime(&adesso);
                 struct tm  copia = *g;
-                esito("gmtime e mktime sono l'una l'inversa dell'altra",
+                esito("gmtime e timegm sono l'una l'inversa dell'altra",
+                      timegm(&copia) == adesso);
+                copia = *localtime(&adesso);
+                esito("localtime e mktime sono l'una l'inversa dell'altra",
                       mktime(&copia) == adesso);
+                copia = *localtime(&estate);
+                esito("e anche con l'ora legale", mktime(&copia) == estate);
             }
         }
     }

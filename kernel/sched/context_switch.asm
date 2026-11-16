@@ -115,6 +115,15 @@ proc_entry_stub_user:
     push dword 0x200         ; EFLAGS: IF=1
     push dword 0x1B          ; User CS | RPL=3
     push edx                 ; EIP (entry point)
+    ;(0.341, analisi voce 77) ring 3 gets no kernel values; a thread's
+    ; argument is on its stack
+    xor eax, eax
+    xor ebx, ebx
+    xor ecx, ecx
+    xor edx, edx
+    xor esi, esi
+    xor edi, edi
+    xor ebp, ebp
     iret
     ; Non ritorna
 
@@ -205,6 +214,16 @@ sched_enter_usermode:
     push dword 0x200        ; EFLAGS: IF=1 (interrupt enable), tutto il resto 0
     push dword 0x1B         ; User CS (code segment | RPL=3)
     push eax                ; EIP (entry point)
+
+    ;(0.341, analisi voce 77) ring 3 gets no kernel values; a thread's
+    ; argument is on its stack
+    xor eax, eax
+    xor ebx, ebx
+    xor ecx, ecx
+    xor edx, edx
+    xor esi, esi
+    xor edi, edi
+    xor ebp, ebp
 
     ; Salta a ring3 tramite iret
     iret

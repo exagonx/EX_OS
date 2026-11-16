@@ -66,6 +66,13 @@ QUEL CHE E' APERTO — 15 settembre 2026
     ! prova_date a 32 bit con 32 MB: il secondo exbrowser (ExJs) finisce la
     RAM (PMM: OUT OF MEMORY); con EXOS_RAM=64M a posto. Da capire se
     succedeva gia' prima della 0.340.
+    15/11 POMERIGGIO: 0.340 SUL PC DI PROVA .253 (da 0.328, netupdate dal
+    server locale): fusoprova a posto sul ferro, certificato di openssl
+    ricollegato accettato da Linux, quello del pacchetto no (va ricostruito).
+    Trovato: le verifiche di netupdate giravano sotto il kernel vecchio e
+    con lo stat nuovo ([ -d ] [ -f ]) dicevano il falso -> netupdate 0.048
+    le rimanda a dopo il riavvio (prova_verifiche.sh D, 16/16). Poi la
+    ricostruzione completa per la libc della 0.340.
 
 !!! IL 31 OTTOBRE: voci 51 e 52 FATTE. Il disco del portatile in sola lettura
     era ext4.mod 0.280 con kernel 0.291: stessi 40920 byte, il registro si

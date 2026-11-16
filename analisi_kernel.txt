@@ -547,6 +547,13 @@ $ voce 11 { Il kernel scrive nelle pagine di sola lettura dei programmi (CORRETT
     IRQ nel PCB (irq_in_attesa), messo sempre da irq_handler, e ipc_recv che
     lo consegna per primo come messaggio fabbricato sul momento. Costa una
     parola per processo e non si puo' perdere. }
+    PROPOSTA (16/11/2026): prima misurare. Un contatore delle notifiche
+    cadute per IRQ (e un WARN la prima volta) in ipc_notify_irq, poi
+    tools/stress contro httpd in QEMU con -smp 2: se il contatore sale e la
+    scheda tace, la voce e' vera e la riparazione e' quella scritta (un bit
+    per IRQ nel PCB, consegnato per primo da ipc_recv). IL CONTATORE E'
+    MESSO (kernel 0.341): irq_cadute in isr.c, un WARN alla prima caduta,
+    "N: notifiche cadute M" in /proc/interrupts. Manca la prova di carico.
 
 @ voce 15 { ipc_send copia dal programma a interrupt spenti, dentro la sezione critica (DA VERIFICARE)
     DOVE: kernel/ipc/ipc.c ipc_send 215-227 (e ipc_recv 335-340).
@@ -560,6 +567,11 @@ $ voce 11 { Il kernel scrive nelle pagine di sola lettura dei programmi (CORRETT
     COME RIPARARE: vm_precarica_utente(data, len) in sys_ipc_send prima di
     entrare (e sul buffer di arrivo in sys_ipc_recv), oppure copiare in un
     appoggio del kernel fuori dalla sezione, come fa pipe_scrivi. }
+    PROPOSTA (16/11/2026): la via corta, vm_precarica_utente(data, len) in
+    sys_ipc_send e sul buffer d'arrivo in sys_ipc_recv, prima di entrare
+    nella sezione: nessun page fault dentro, quindi niente da misurare con
+    un caso difficile da far succedere. Costa poco (le pagine di solito ci
+    sono gia'). Da approvare perche' tocca la via di ogni messaggio.
 
 @ voce 16 { mmap non riusa i buchi: lo spazio di indirizzamento di un servente si consuma
     DOVE: kernel/syscall/syscall_impl.c sys_mmap 2005-2020, sys_munmap
@@ -573,6 +585,14 @@ $ voce 11 { Il kernel scrive nelle pagine di sola lettura dei programmi (CORRETT
     COME RIPARARE: un elenco delle zone del processo (inizio, fine, permessi,
     tipo) e la ricerca del primo buco abbastanza grande. Lo stesso elenco
     serve alle voci 17, 37 e 39 e toglie il tetto di PROC_MAX_VMA = 4. }
+    PROPOSTA (16/11/2026, da approvare, progetto grosso): un elenco delle
+    zone per processo, ordinato, che cresce (niente PROC_MAX_VMA): inizio,
+    fine, permessi, tipo (anonima, shm, fb, fissa, tls, stack). mmap senza
+    MAP_FIXED cerca il primo buco fra heap_start e heap_max; munmap e
+    mprotect spezzano le zone; fork le copia. E' la base delle voci 17, 37
+    (mmap di un file) e 39. Prima di scriverlo: misurare quanto spazio
+    perde oggi un servente (MariaDB sotto carico, tools/stress) per avere
+    un numero prima e uno dopo.
 
 @ voce 17 { munmap e mmap MAP_FIXED liberano qualunque pagina trovino
     DOVE: kernel/syscall/syscall_impl.c sys_munmap 2169-2174, sys_mmap
@@ -586,7 +606,22 @@ $ voce 11 { Il kernel scrive nelle pagine di sola lettura dei programmi (CORRETT
     agganciata.
     COME RIPARARE: saltare le PTE con PG_FISSA e rifiutare (EINVAL) gli
     intervalli che toccano una zona shm, un framebuffer o una finestra MMIO:
-    quelle si chiudono con la loro chiamata. }
+    quelle si chiudono con la loro chiamata.
+    TROVATO IL 16/11/2026, PIU' GRAVE, E FATTO (kernel 0.341): sys_munmap
+    guardava solo l'inizio. munmap(0xBFFFF000, 0x44001000) a 32 bit passava
+    sulle pagine del kernel e faceva il giro fino alla mappa identica: "PMM:
+    pagina fuori range" e la macchina giu', da utente qualunque (provato in
+    QEMU sulla 0.340). Ora lo stesso controllo di mmap e mprotect: EINVAL.
+    Casi in tools/prove/varchiprova.c. Il resto della voce (PG_FISSA, shm,
+    framebuffer, MMIO) resta da proporre. }
+    PROPOSTA (16/11/2026, da approvare) per il resto: un primo giro sulle
+    PTE dell'intervallo, prima di togliere niente; se una ha PG_FISSA, o
+    l'intervallo tocca una zona della tabella shm del processo, munmap e
+    MAP_FIXED rendono EINVAL senza aver toccato nulla (tutto o niente).
+    Framebuffer e finestre MMIO: mappate con PG_FISSA? Da guardare in
+    sys_fb_map e nelle mappe dei driver; se no, aggiungere il flag li'. Prova:
+    un driver finto che chiede una zona DMA e un munmap sopra: EINVAL, e la
+    pagina resta al driver.
 
 # voce 18 { I numeri dei processi: g_next_pid non e' protetto e non guarda se il numero e' in uso (FATTA, kernel 0.331)
     DOVE: kernel/sched/sched.c 888 "proc->pid = g_next_pid++".
@@ -619,6 +654,16 @@ $ voce 11 { Il kernel scrive nelle pagine di sola lettura dei programmi (CORRETT
     COME RIPARARE: chiamarla proc_scarta_nascente e rifiutare (con un
     avviso) un processo che non sia NASCENTE; per tutto il resto la strada e'
     quella della voce 6. }
+    PROPOSTA (16/11/2026, da approvare): i 11 chiamanti (kernel_main 298,
+    494, 590; fork 1528; exec 3245, 3518; spawn dal kernel 7756, 7803; i
+    fili in sched.c 2520, 2534, 2579) passano tutti un processo mai partito
+    (NASCENTE, o BLOCKED appena creato) e poi chiamano proc_reap_zombie.
+    Quindi: proc_kill -> proc_scarta_nascente(Process *p) che fa i due passi
+    insieme (porta a ZOMBIE e riassorbe), e se p e' partito (state diverso
+    da NASCENTE/BLOCKED o gia' entrato in ring 3) scrive un WARN e prende la
+    via della voce 6 (proc_termina) invece di lasciare un padre fermo.
+    Nessun cambio di comportamento per i chiamanti di oggi; prova: un exec
+    di un file che non c'e' e un fork senza memoria, come in varchiprova.
 
 ===============================================================================
  $  OTTIMIZZABILI / MIGLIORABILI
@@ -997,6 +1042,14 @@ $ voce 45 { Gli avvisi di debug nei percorsi piu' battuti
     quando !autorita) e P_LEGGI sulla directory in vfs_readdir_nl. root e i
     volumi FAT (modo == 0) passano gia' in vfs_permesso. Costa una stat per
     componente: farla dopo la voce 56, che le rende economiche. }
+    PROPOSTA (16/11/2026, da approvare): come scritto, una sola funzione
+    percorso_attraversabile(im, interno) nel VFS, chiamata dove dice la voce
+    e solo per chi non e' root. La 56 e' fatta (passo 1), quindi la stat per
+    componente costa poco. DA DECIDERE: vale anche per stat()? POSIX dice si'
+    (EACCES), e qualche programma che oggi "vede" dentro /root smettera' di
+    vederci: e' il comportamento giusto, ma va detto nei manuali. Prova in
+    varchiprova (utente 1000): /x 0700 di root con dentro f 0644 -> open,
+    stat, readdir di /x: EACCES; root passa; su FAT non cambia niente.
 
 @ voce 49 { rename sopra un file esistente non e' atomica
     DOVE: vfs.c vfs_rename_nl 2255-2270: prima cancella la destinazione
@@ -1010,6 +1063,15 @@ $ voce 45 { Gli avvisi di debug nei percorsi piu' battuti
     DOPO, dentro la stessa transazione del giornale. In attesa: rinominare
     la destinazione in un nome nascosto (come nascondi_aperto), rinominare,
     e solo a cosa riuscita cancellare il nascosto; se fallisce, rimetterlo. }
+    PROPOSTA (16/11/2026, da approvare): subito la via "in attesa" della
+    voce, tutta nel VFS e uguale per ext2 e FAT: la destinazione si rinomina
+    in un nome nascosto ~EXVnnnn.DEL (lo stesso di nascondi_aperto), poi la
+    rinomina vera, e solo se riesce si cancella il nascosto; se fallisce lo
+    si rimette al suo nome. Una mancanza di corrente in mezzo lascia o il
+    file vecchio o quello nuovo, piu' al massimo un .DEL da togliere (chkdsk
+    o l'avvio possono farlo). La sostituzione nella stessa transazione del
+    giornale ext4 dopo, come progetto a parte. Prova: rename sopra con un
+    errore iniettato fra i due passi (una opzione di prova del kernel).
 
 # voce 50 { Un driver puo' scrivere oltre il buffer del disco in ring 3 (FATTA, kernel 0.331)
     DOVE: syscall_impl.c sys_blk_risposta 7450-7463: n = u->settori viene dal
@@ -1453,6 +1515,14 @@ $ voce 72 { Le librerie condivise non si scaricano mai e la tabella ha 64 posti
     cambiati; chi muore mentre carica libera il posto (lo stesso gancio del
     passo 2 della voce 6); solo root, o solo i file sotto le directory di
     sistema, entrano nella tabella comune. E' un progetto: proporlo. }
+    PROPOSTA (16/11/2026, da approvare): in due passi. (1) subito, corto:
+    la tabella cresce come le altre (niente LIB_MAX), e chi muore mentre
+    carica libera il posto (LIB_IN_CARICO torna libero, lo stesso gancio di
+    proc_exit): chiude (b) e (c). (2) dopo: inode, dimensione e mtime
+    ricordati, e un'apertura che li trova cambiati carica la nuova in un
+    posto nuovo (i programmi vecchi tengono la vecchia, contatore di usi,
+    scarico a zero): chiude (a), che e' quello che netupdate vede. Prova per
+    (b): un utente apre 100 .so sue, poi /bin/ls parte ancora.
 
 # voce 73 { Due caricatori compilati nel kernel che nessuno chiama (FATTA, kernel 0.333)
     FATTA COSI' (0.333, scelta dell'utente: spostarli, non cancellarli):
@@ -1555,7 +1625,12 @@ $ voce 75 { FAT e ISO: il percorso si risolve a ogni lettura e la catena si ripe
     per l'ISO leggere direttamente nel buffer di chi chiede quando il
     pezzo e' di blocchi interi. }
 
-$ voce 76 { Cancellare o rinominare un file aperto (DA VERIFICARE)
+# voce 76 { Cancellare o rinominare un file aperto (VERIFICATA IL 16/11/2026: a posto dal kernel 0.268)
+    ESITO: nascondi_aperto (vfs.c) da' al file aperto un nome nascosto ~EXVnnnn.DEL
+    e lo cancella all'ultima chiusura. Caso "scrive" nuovo in
+    tools/prove/apertiprova.c: apri, cancella, scrivi 1 MB, rifai il nome
+    con un altro file, rileggi: a posto su ext2 e FAT32, 32 e 64 bit
+    (tools/prova_aperti.sh), e2fsck e fsck.fat puliti.
     DOVE: ext2_unlink (moduli/ext4/scrittura.c 1688-1731) libera blocchi e
     inode appena i link vanno a zero; fat rimuovi (fat.c 1915) lo stesso.
     I file system lavorano per PERCORSO (voce 56), non per inode.
@@ -1579,6 +1654,10 @@ $ voce 77 { Cose minori viste nel terzo giro
     - fs/fat.c rimuovi 1915: DA VERIFICARE che il VFS tolga "." e ".." dal
       percorso prima; altrimenti "rmdir /a/." libera la catena di /a
       lasciando la voce nel padre.
+      VERIFICATO IL 16/11/2026, A POSTO: il VFS risolve "." e ".." prima.
+      "rmdir /b/x/." e "/b/x/y/.." dicono "non e' vuota" (e' x, che ha y),
+      "rmdir /b/x/y/." toglie y; fsck.fat -n ed e2fsck -fn puliti, su FAT32
+      ed ext2, kernel 0.340.
     - fs/fat12.c: una sola directory di profondita' (fat12_find_path 2027,
       fat12_split_path 2125) e geometria fissa da 1,44 MB (23-38): niente
       720 KB. MAX_OPEN_FILES 64 fisso. (DA IMPLEMENTARE)
@@ -1590,6 +1669,9 @@ $ voce 77 { Cose minori viste nel terzo giro
       restano 12 invece di 0. Aggiungere: se non e' pomeriggio e ore == 12,
       ore = 0. Le due porte del CMOS (indice, dato) non sono protette dal
       cambio di processo: interrupt spenti attorno alla coppia.
+      FATTO IL 16/11/2026 (kernel 0.341): le 12 AM sono le 0, e
+      cmos_leggi/cmos_scrivi spengono gli interrupt attorno alla coppia
+      (smp.c ha la sua, usata solo all'avvio dei processori).
     - sched/segnali.c sys_allarme 710: g_allarmi_armati++ anche se
       l'allarme c'era gia' (si rimette a posto al tick, innocuo). Mancano
       i segnali ai gruppi (pid negativo) e SIGSTOP/SIGCONT (con la voce
@@ -1599,6 +1681,9 @@ $ voce 77 { Cose minori viste nel terzo giro
       generali tengono valori del kernel (rbx, rsi, rbp, r8-r15):
       azzerarli prima di iretq. Lo stesso controllo va fatto nel gemello
       a 32 bit (sched/context_switch.asm).
+      FATTO IL 16/11/2026 (kernel 0.341): azzerati nei quattro ingressi
+      (proc_entry_stub_user e sched_enter_usermode, 32 e 64 bit); a 64 bit
+      in proc_entry_stub_user resta RDI, l'argomento di un filo.
     - kernel_main.c avvia_shell 491-506: se /bin/login non parte, la
       console riceve la shell senza chiedere la parola d'ordine. E' una
       scelta (macchina che non si avvia = console di soccorso): scriverla

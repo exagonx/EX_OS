@@ -17,7 +17,9 @@
 #      -verifica:valkey (exit 2), -noverifica, the log /boot/netupdate.ver;
 #   B. versione.txt says another system (0.999): sistema.sh asks for a reboot
 #      (exit 1, "C'E' DA FARE A MANO");
-#   C. a script changed on the server after verifiche.txt: not run.
+#   C. a script changed on the server after verifiche.txt: not run;
+#   D. (netupdate 0.048) a kernel one byte longer on the server: -check
+#      installs it and leaves the checks to after the reboot.
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1
 RADICE=$PWD
@@ -51,7 +53,7 @@ NOME=$(basename "$REPO")
 # ! HARD LINKS ONLY ON THE SAME FILESYSTEM: /tmp is a tmpfs here, and on
 # 6/11/2026 every `cp -al` failed and the three servers were empty. Symbolic
 # links work anywhere; sed -i and rm below replace the link, not the original.
-for g in a b c; do
+for g in a b c d; do
     mkdir -p "$D/srv-$g"
     cp -al "$RADICE/$REPO" "$D/srv-$g/$NOME" 2>/dev/null || {
         rm -rf "$D/srv-$g/$NOME"; cp -as "$RADICE/$REPO" "$D/srv-$g/$NOME"; } || {
@@ -63,6 +65,14 @@ rm "$D/srv-b/$NOME/versione.txt.tmp" 2>/dev/null
 # C: sistema.sh changed after its fingerprint went in verifiche.txt
 rm "$D/srv-c/$NOME/verifiche/sistema.sh"
 { cat "$RADICE/$REPO/verifiche/sistema.sh"; echo "echo MODIFICATO-SUL-SERVER"; } > "$D/srv-c/$NOME/verifiche/sistema.sh"
+# D: another kernel (one zero byte more), elenco.txt and versione.txt along
+K="$D/srv-d/$NOME/file/boot/kernel.bin"
+rm "$K"; { cat "$RADICE/$REPO/file/boot/kernel.bin"; printf '\0'; } > "$K"
+kb=$(stat -c %s "$K"); kh=$(sha256sum "$K" | cut -d' ' -f1)
+E="$D/srv-d/$NOME/elenco.txt"; V="$D/srv-d/$NOME/versione.txt"
+rm "$E"; awk -F'\t' -v OFS='\t' -v b="$kb" -v h="$kh" '$1 == "boot/kernel.bin" { $2 = b; $3 = h } { print }' \
+    "$RADICE/$REPO/elenco.txt" > "$E"
+rm "$V"; sed "s/^elenco    = .*/elenco    = $(sha256sum "$E" | cut -d' ' -f1)/" "$RADICE/$REPO/versione.txt" > "$V"
 
 L=("root@2" "root@6" "keymap us@3")
 gira() {    # $1 = run, then the commands
@@ -120,7 +130,13 @@ gira c "netupdate -verifica@~120"
 grep -aq "MODIFICATO-SUL-SERVER" "$D/c.txt" && no "C: lo script cambiato e' stato eseguito" || si "C: lo script cambiato non gira"
 grep -aq "sistema.sh (sistema): non arrivata intera" "$D/c.txt" && si "C: lo dice ('non arrivata intera')" || no "C: non dice niente ($D/c.txt)"
 
-for g in a b c; do
+echo "=== 5. D: un kernel nuovo ==="
+gira d "netupdate -check -yes@~900" "cat /boot/netupdate.ver@4" "sync@5"
+grep -aq "IL KERNEL E' CAMBIATO" "$D/d.txt" && si "D: -check installa il kernel nuovo" || no "D: manca 'IL KERNEL E' CAMBIATO' ($D/d.txt)"
+grep -aq "Verifiche: rimandate a dopo il riavvio" "$D/d.txt" && si "D: le verifiche aspettano il riavvio" || no "D: non dice 'rimandate' ($D/d.txt)"
+grep -aq -- "-- sistema.sh (sistema)" "$D/d.txt" && no "D: le verifiche sono partite col kernel di prima" || si "D: nessuna verifica col kernel di prima"
+
+for g in a b c d; do
     grep -a "\[FAULT\]\|KERNEL PANIC" /tmp/exos/serialvf$ARCH$g.txt > /dev/null 2>&1 && no "$g: un [FAULT] sulla seriale"
 done
 echo "=== $ok riusciti, $no no ==="

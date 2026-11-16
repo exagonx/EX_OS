@@ -377,11 +377,12 @@ static void f_interrupts(Usc *u)
     uint32_t i;
 
     for (i = 0; i < 16u; i++) {
-        uint32_t n = irq_notifiche_di((uint8_t)i);
+        uint32_t n = irq_notifiche_di((uint8_t)i), c = irq_cadute_di((uint8_t)i);
 
-        if (n == 0) continue;
+        if (n == 0 && c == 0) continue;
         voce(u, "", i, ": ");
-        voce(u, "", n, "\n");
+        if (c == 0) voce(u, "", n, "\n");
+        else { voce(u, "", n, " cadute "); voce(u, "", c, "\n"); }   /* 0.341 */
     }
 }
 

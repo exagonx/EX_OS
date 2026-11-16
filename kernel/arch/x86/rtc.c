@@ -65,11 +65,21 @@
 
 static uint8_t cmos_leggi(uint8_t reg)
 {
+    uint32_t if_era = read_eflags() & 0x200u;
+    uint8_t  v;
+
     /* Il bit 7 dell'indice disabilita gli NMI. Va lasciato a zero: qui
      * non si sta facendo niente di così delicato da doverli mascherare,
-     * e lasciarli disabilitati per sbaglio è un guaio molto peggiore. */
+     * e lasciarli disabilitati per sbaglio è un guaio molto peggiore.
+     * (0.341, analisi voce 77) ! INDICE E DATO SONO UNA COPPIA: un cambio
+     * di processo in mezzo, e un altro che legge il CMOS, e questo legge il
+     * registro dell'altro. Interrupt spenti attorno, lo stato di prima
+     * rimesso. */
+    interrupts_disable();
     port_outb(CMOS_INDICE, reg & 0x7F);
-    return port_inb(CMOS_DATO);
+    v = port_inb(CMOS_DATO);
+    if (if_era) interrupts_enable();
+    return v;
 }
 
 static int aggiornamento_in_corso(void)
@@ -145,6 +155,9 @@ int rtc_read(RtcTime *t)
          * sommano 12. Senza il caso speciale, mezzogiorno diventerebbe
          * le 24. */
         o = (uint8_t)(((o & 0x7F) % 12) + 12);
+    } else if (!(statoB & STATO_B_24H) && o == 12) {
+        /* (0.341, voce 77) and 12 AM is midnight: hour 0, not 12 */
+        o = 0;
     }
 
     t->secondo = s;
@@ -204,8 +217,12 @@ int rtc_read(RtcTime *t)
 
 static void cmos_scrivi(uint8_t reg, uint8_t val)
 {
+    uint32_t if_era = read_eflags() & 0x200u;
+
+    interrupts_disable();                 /* la coppia: vedi cmos_leggi */
     port_outb(CMOS_INDICE, reg & 0x7F);   /* bit 7 = NMI: vedi cmos_leggi */
     port_outb(CMOS_DATO, val);
+    if (if_era) interrupts_enable();
 }
 
 static uint8_t a_bcd(uint32_t v)

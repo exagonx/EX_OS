@@ -361,6 +361,15 @@ static double orologio_fisso(void *dato)
     return 1000000000123.0;
 }
 
+/* Il fuso di Roma nel 2026, per le prove dell'ora locale (exjs_fuso_metti):
+ * ora legale dal 29/3 01:00 UTC al 25/10 01:00 UTC. Acceso da g_roma. */
+static int g_roma = 0;
+static int fuso_roma(double utc_ms, void *dato)
+{
+    (void)dato;
+    return (utc_ms >= 1774746000000.0 && utc_ms < 1792890000000.0) ? 120 : 60;
+}
+
 static void prova_esegui(const char *nome, const char *codice, const char *atteso)
 {
     static unsigned char memoria[1 << 20];
@@ -377,6 +386,7 @@ static void prova_esegui(const char *nome, const char *codice, const char *attes
     g_console_n = 0; g_console[0] = '\0';
     exjs_uscita_metti(c, raccogli, 0);
     exjs_orologio_metti(c, orologio_fisso, 0);
+    if (g_roma) exjs_fuso_metti(c, fuso_roma, 0);
 
     if (!exjs_esegui(c, codice, (unsigned int)strlen(codice), &r, &err)) {
         if (atteso == 0) {
@@ -1073,6 +1083,34 @@ int main(void)
                  "{\"d\":\"1970-01-01T00:00:00.000Z\"}");
     prova_esegui("for..in non vede il tempo",
                  "var d=new Date(0),n=0,k;for(k in d)n++;n;", "0");
+
+    /* L'ORA LOCALE col fuso di chi ospita (16/11/2026, kernel 0.340): qui
+     * Roma 2026. Senza fuso valgono le prove qui sopra, tutte in UTC. */
+    g_roma = 1;
+    prova_esegui("Roma: d'inverno -60",  "new Date(Date.UTC(2026,0,15,12)).getTimezoneOffset();", "-60");
+    prova_esegui("Roma: d'estate -120",  "new Date(Date.UTC(2026,6,1,12)).getTimezoneOffset();", "-120");
+    prova_esegui("Roma: getHours locale", "new Date(Date.UTC(2026,6,1,12)).getHours();", "14");
+    prova_esegui("Roma: getUTCHours no", "new Date(Date.UTC(2026,6,1,12)).getUTCHours();", "12");
+    prova_esegui("Roma: marzo prima",    "new Date(Date.UTC(2026,2,29,0,59,59)).getHours();", "1");
+    prova_esegui("Roma: marzo dopo",     "new Date(Date.UTC(2026,2,29,1,0,0)).getHours();", "3");
+    prova_esegui("Roma: ottobre dopo",   "new Date(Date.UTC(2026,9,25,1,0,0)).getHours();", "2");
+    prova_esegui("Roma: new Date locale", "new Date(2026,6,1,14).toISOString();", "2026-07-01T12:00:00.000Z");
+    prova_esegui("Roma: l'ora che manca", "new Date(2026,2,29,2,30).toISOString();", "2026-03-29T01:30:00.000Z");
+    prova_esegui("Roma: l'ora doppia",   "new Date(2026,9,25,2,30).toISOString();", "2026-10-25T00:30:00.000Z");
+    prova_esegui("Roma: toString",       "new Date(Date.UTC(2026,6,1,12)).toString();",
+                 "Wed Jul 01 2026 14:00:00 GMT+0200");
+    prova_esegui("Roma: rilegge toString",
+                 "var d=new Date(Date.UTC(2026,6,1,12));Date.parse(d.toString())==d.getTime();", "true");
+    prova_esegui("Roma: ISO senza fuso", "Date.parse('2026-07-01T14:00:00');", "1782907200000");
+    prova_esegui("Roma: solo data e' UTC", "Date.parse('2026-07-01');", "1782864000000");
+    prova_esegui("Roma: Jan 1, 2026",    "Date.parse('Jan 1, 2026');", "1767222000000");
+    prova_esegui("Roma: setHours locale",
+                 "var d=new Date(Date.UTC(2026,6,1,12));d.setHours(15);d.toISOString();",
+                 "2026-07-01T13:00:00.000Z");
+    prova_esegui("Roma: Date.UTC non cambia", "Date.UTC(2000,0,1);", "946684800000");
+    prova_esegui("Roma: toLocaleString", "new Date(Date.UTC(2026,6,1,12)).toLocaleString();",
+                 "7/1/2026, 2:00:00 PM");
+    g_roma = 0;
     prova_esegui("valueOf nel *",      "var o={valueOf:function(){return 5}};o*2;", "10");
     prova_esegui("valueOf nel +",      "var o={valueOf:function(){return 5}};o+1;", "6");
     prova_esegui("toString se valueOf e' un oggetto",

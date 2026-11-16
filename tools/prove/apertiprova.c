@@ -4,7 +4,7 @@
  * Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
- *     apertiprova DIR        runs the five cases in DIR (an ext2 or FAT mount)
+ *     apertiprova DIR        runs the six cases in DIR (an ext2 or FAT mount)
  *
  * The defect (kernel 0.267, 22 October 2026): a VFS handle was a path, so a
  * program whose file was renamed to .old and replaced — what netupdate does —
@@ -16,6 +16,9 @@
  *   sopra      rename another file ON TOP of an open one
  *   cartella   rename the directory that holds an open file
  *   chiuso     unlink a closed file: gone at once, no hidden name
+ *   scrive     (analisi_kernel voce 76, 16/11/2026) open, unlink, write 1 MB,
+ *              read it back; a new file with the same name meanwhile is
+ *              another file, and the open one still reads its own bytes
  *
  * One line per case, "APERTI <caso> OK" or "APERTI <caso> NO <why>", and
  * "APERTI FINE <failures>" at the end, for tools/prova_aperti.sh.
@@ -160,6 +163,38 @@ chiuso:
     else if (stat(a, &st) == 0) esito("chiuso", "il nome c'e' ancora");
     else if (nascosti(argv[1]) != 0) esito("chiuso", "un nome nascosto per un file chiuso");
     else esito("chiuso", NULL);
+
+    /* --- scrive --------------------------------------------------------- */
+    {
+        int k, male = 0;
+
+        snprintf(a, sizeof(a), "%s/tempo", argv[1]);
+        fd = open(a, O_RDWR | O_CREAT | O_TRUNC, 0644);
+        if (fd < 0) { esito("scrive", "open"); goto fine; }
+        if (unlink(a) != 0) { esito("scrive", "unlink"); close(fd); goto fine; }
+        for (k = 0; k < 16 && !male; k++) {          /* 16 x 64 KB = 1 MB */
+            int i;
+            for (i = 0; i < N; i++) g_buf[i] = byte_di(8, k * N + i);
+            if (write(fd, g_buf, N) != N) male = 1;
+        }
+        if (male) { esito("scrive", "write dopo unlink"); close(fd); goto fine; }
+        if (scrivi(a, 9) != 0) { esito("scrive", "il nome rifatto"); close(fd); goto fine; }
+        if (fstat(fd, &st) != 0 || st.st_size != 16 * N) esito("scrive", "fstat: non e' 1 MB");
+        else if (controlla(fd, 8, 0, N) != 0 || controlla(fd, 8, 15 * N, N) != 0)
+            esito("scrive", "rilegge altro (il file del nome rifatto?)");
+        else {
+            fd2 = open(a, O_RDONLY);
+            if (fd2 < 0 || controlla(fd2, 9, 0, N) != 0) esito("scrive", "il nome rifatto non e' il suo");
+            else {
+                close(fd); fd = -1;
+                if (nascosti(argv[1]) != 0) esito("scrive", "il nascosto resta dopo la chiusura");
+                else esito("scrive", NULL);
+            }
+            if (fd2 >= 0) close(fd2);
+        }
+        if (fd >= 0) close(fd);
+        unlink(a);
+    }
 
 fine:
     printf("APERTI FINE %d\n", g_errori);

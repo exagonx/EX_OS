@@ -44,7 +44,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.047");
+EX_VERSIONE("netupdate", "0.048");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -3781,8 +3781,9 @@ static int comando_repo(const char *indirizzo)
  *     NETUPDATE_PACCHETTO  the package the script is for
  *     NETUPDATE_SISTEMA    the system version on the server (0.318...)
  *     NETUPDATE_KERNEL     the kernel running now (kernel_qui(), "0.318")
- *     NETUPDATE_RIAVVIO    1 if this run changed the kernel: what runs now
- *                          is the old one until the reboot
+ *     NETUPDATE_RIAVVIO    always 0 since 0.048: a run that changed the
+ *                          kernel leaves the checks to -verifica after the
+ *                          reboot (see verifiche_esegui)
  *     NETUPDATE_ARCH       i386 or x86_64
  *     NETUPDATE_SERVER     the address it updates from
  * The exit status:  0 all is well,  1 something to do BY HAND (the script
@@ -3816,6 +3817,16 @@ static int verifiche_esegui(const Config *c, const char *ver,
 
     if (g_noverifica) return 0;
     if (chiave_da_file(ver, "verifiche", h_ver, sizeof(h_ver)) != 0) return 0;  /* an older server */
+    /* (0.048) ! NOT UNDER THE OLD KERNEL. The new sh and test ask it for what
+     * it may not have (SYS_STAT 268 from 0.339): on the .253 bench, 0.328 ->
+     * 0.340 on 15/11/2026, every [ -d ] and [ -f ] came out false and four
+     * checks lied ("crealo a mano" for directories that were there). */
+    if (riavvio) {
+        printf("\nVerifiche: rimandate a dopo il riavvio. Gira ancora il kernel di prima,\n"
+               "  e coi programmi nuovi direbbero il falso. Dopo il riavvio:\n"
+               "      netupdate -verifica\n");
+        return 0;
+    }
 
     snprintf(lista, sizeof(lista), "%s/verifiche.txt", TMPDIR);
     if (prendi_verifica_scrivi(c, "verifiche.txt", h_ver, lista) != 0) {

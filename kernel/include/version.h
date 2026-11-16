@@ -977,7 +977,10 @@
  * SYS_FUSO_SET 271) and keeps file times in UTC: ext2 inodes, FAT dates
  * converted from local, the CD with the zone it declares. The libc turns
  * the clock into UTC for time() and back for localtime/mktime. */
-#define EXOS_VERSION    "0.340"
+/* 0.340 -> 0.341: munmap checks the end of the range as mmap and mprotect
+ * do: a range past USER_SPACE_END ran through the kernel's pages, wrapped
+ * round to the identity map and freed its frames (any user, machine down). */
+#define EXOS_VERSION    "0.341"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

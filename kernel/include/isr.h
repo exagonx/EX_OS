@@ -49,6 +49,7 @@ isr_handler_fn irq_handler_get(uint8_t irq);
 /* Quante notifiche IPC sono state consegnate su questa linea da quando la
  * macchina e' accesa. Vedi il commento accanto a irq_notifiche in isr.c. */
 uint32_t irq_notifiche_di(uint8_t irq);
+uint32_t irq_cadute_di(uint8_t irq);     /* notices dropped, mailbox full (0.341) */
 void    irq_unbind_process(uint32_t pid);
 
 /* Edges with their instant (0.323): see isr.c and SYS_IRQ_FRONTI. */

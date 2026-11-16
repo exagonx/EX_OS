@@ -342,6 +342,13 @@ void exjs_uscita_metti(ExJsCtx *c, ExJsUscita f, void *dato);
 typedef double (*ExJsOrologio)(void *dato);
 void exjs_orologio_metti(ExJsCtx *c, ExJsOrologio f, void *dato);
 
+/* IL FUSO, per l'ora locale di Date (16 novembre 2026, kernel 0.340): i
+ * minuti da aggiungere all'UTC dell'istante `utc_ms` (+60 d'inverno a Roma,
+ * +120 d'estate), dati da chi ospita come l'orologio. Senza, l'ora locale e'
+ * l'UTC e getTimezoneOffset vale 0. ! FACOLTATIVA come l'orologio. */
+typedef int (*ExJsFuso)(double utc_ms, void *dato);
+void exjs_fuso_metti(ExJsCtx *c, ExJsFuso f, void *dato);
+
 /* L'oggetto globale: e' li' che si appendono `console`, `document`, `window`. */
 ExJsVal exjs_globale(ExJsCtx *c);
 

@@ -32,7 +32,7 @@ SER=/tmp/exos/serialdate.txt
 
 # ! EXJS NON HA ANCORA throw, e il suo errore non dice il nome di niente:
 # dice la RIGA. La pagina per ExJs chiama percio' `(0)()` — «non e' una
-# funzione» — sulla riga del controllo che fallisce, e alla riga 13 se sono
+# funzione» — sulla riga del controllo che fallisce, e alla riga 14 se sono
 # passati tutti. QuickJS invece dice riga 0 ma porta il messaggio: per lui si
 # lancia un Error con l'esito scritto dentro.
 pagina() {   # nome-file etichetta
@@ -52,6 +52,7 @@ if (JSON.stringify({d: new Date(0)}) != '{"d":"1970-01-01T00:00:00.000Z"}') $q('
 if (({valueOf: function () { return 5; }}) * 2 != 10) $q('valueOf');
 if (Date.UTC(2000, 0, 1) != 946684800000) $q('UTC');
 if (new Date(2024, 1, 29).getDate() != 29) $q('29 febbraio');
+if (!((a.getTimezoneOffset() == -60 || a.getTimezoneOffset() == -120) && (a.getUTCHours() * 60 - a.getTimezoneOffset()) % 1440 == a.getHours() * 60)) $q('fuso ' + a.getTimezoneOffset());
 $fine
 </script></body></html>
 PAGINA
@@ -85,9 +86,9 @@ case "$r" in
     "")           echo "  [NO]  QuickJS: la pagina non ha detto niente (foto: $D/q.ppm)"; esito=1 ;;
     *)            echo "  [NO]  QuickJS: $r"; esito=1 ;;
 esac
-righe=(- - - - anno b-a Date.now toISOString JSON valueOf Date.UTC "29 febbraio")
+righe=(- - - - - anno b-a Date.now toISOString JSON valueOf Date.UTC "29 febbraio" fuso)   # the script starts on line 1, with <script>
 n=$(tr -d '\r' < "$SER" | grep -o "riga [0-9]*: non e' una funzione" | head -1 | grep -o "[0-9]*")
-if [ "$n" = 13 ]; then echo "  [OK]  ExJs: tutti i controlli passati (anno, b-a, Date.now, ISO, JSON, valueOf, UTC)"
+if [ "$n" = 14 ]; then echo "  [OK]  ExJs: tutti i controlli passati (anno, b-a, Date.now, ISO, JSON, valueOf, UTC, fuso)"
 elif [ -z "$n" ]; then echo "  [NO]  ExJs: la pagina non ha detto niente (foto: $D/e.ppm)"; esito=1
 else echo "  [NO]  ExJs: fallisce il controllo della riga $n (${righe[$n]:-?})"; esito=1; fi
 exit $esito

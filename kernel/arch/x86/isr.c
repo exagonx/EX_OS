@@ -121,6 +121,15 @@ uint32_t irq_notifiche_di(uint8_t irq)
     return (irq < 16) ? irq_notifiche[irq] : 0;
 }
 
+/* (0.341, analisi voce 14) and how many FELL, the owner's mailbox full: the
+ * measure of whether a lost notice leaves a card silent. Was mute. */
+static uint32_t irq_cadute[16] = { 0 };
+
+uint32_t irq_cadute_di(uint8_t irq)
+{
+    return (irq < 16) ? irq_cadute[irq] : 0;
+}
+
 /* C'è qualcuno su questa linea? Solo una scansione di quattro parole.
  *
  * ! NON SI CHIAMA irq_ripulisci() DAL DISPATCHER, e non è un dettaglio di
@@ -951,6 +960,9 @@ void irq_handler(InterruptFrame *frame)
                 if (ipc_notify_irq(irq_owner_pid[irq][k], (uint8_t)irq)) {
                     irq_pendenti[irq] |= (1u << k);
                     irq_notifiche[irq]++;
+                } else if (irq_cadute[irq]++ == 0) {
+                    klog(LOG_WARN, "IRQ%d: notifica caduta per PID %u (cassetta piena); "
+                         "il conto e' in /proc/interrupts", irq, irq_owner_pid[irq][k]);
                 }
             }
 

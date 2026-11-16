@@ -25,11 +25,9 @@
  * ! LA FINESTRA STA SOPRA A TUTTE, come la barra: e' un pezzo della barra, e
  * deve restare visibile anche sotto una finestra a schermo intero.
  *
- * ! L'ORA E' QUELLA UNIVERSALE, e va detto invece di lasciarlo scoprire. La
- * libc dichiara che localtime() e' IDENTICA a gmtime(): questo sistema non sa
- * in che fuso si trovi, perche' non c'e' niente che glielo dica ne' un posto
- * dove tenerlo. Mostrare un'ora locale inventata sarebbe peggio di mostrare
- * quella universale, che almeno e' vera.
+ * L'ORA E' QUELLA LOCALE: localtime() col fuso del kernel (/boot/fuso.cfg,
+ * date -fuso:), dalla 0.340. Prima localtime() era identica a gmtime() e
+ * l'orologio della macchina, in ora locale, passava per UTC.
  * ============================================================================= */
 
 #include "libc.h"

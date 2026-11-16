@@ -375,6 +375,8 @@ const char  *exjs_vettore_testo(ExJsCtx *c, ExJsVal vet);
 const char  *exjs_vettore_testo_sep(ExJsCtx *c, ExJsVal vet, const char *sep);
 /* I millisecondi dell'orologio di chi ospita (0 se non c'e'). */
 double       exjs_orologio_ms(ExJsCtx *c);
+/* I minuti del fuso di chi ospita all'istante utc_ms (0 se non c'e'). */
+int          exjs_fuso_minuti(ExJsCtx *c, double utc_ms);
 /* ToPrimitive: un oggetto diventa un valore semplice. `numero` = 1 prova
  * prima valueOf (e' il caso di `-`, `*`, `<`); 0 e' il suggerimento del `+`,
  * che per una Date vuole il testo. Un valore gia' semplice torna com'e'. */

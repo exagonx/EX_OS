@@ -88,6 +88,7 @@ static const char *const g_nomi[] = {
     "exjs_memoria",
 
     "exjs_orologio_metti",
+    "exjs_fuso_metti",
 
     "__lib_avvio"
 };
@@ -139,6 +140,7 @@ static void *const g_indirizzi[] = {
      * non rompe niente (lo stub cerca per nome), ma in fondo si vede quando
      * e' arrivato. */
     (void *)exjs_orologio_metti,
+    (void *)exjs_fuso_metti,
 
     (void *)__libc_ponti_avvia
 };

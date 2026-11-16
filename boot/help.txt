@@ -856,6 +856,18 @@ tuo) lo rimette. Fino al kernel 0.339 time() contava l'ora locale come se
 fosse UTC; un programma collegato alla libc di prima lo fa ancora, e
 `netupdate` lo porta ricollegato.
 
+munmap DA' "Invalid argument" (EINVAL) dal kernel 0.341 a un programma che
+chiede di togliere un intervallo che va oltre la fine dello spazio utente:
+prima lo faceva, passando sulla memoria del kernel, e la macchina si fermava.
+Il difetto e' del programma: scrivi a chi sviluppa EX-OS quale era.
+
+LE VERIFICHE DI NETUPDATE CHIEDONO DI CREARE A MANO COSE CHE CI SONO ("non
+riesco a creare /exos/apache2/logs", "Manca /exwin/app/exilla/firefox") subito
+dopo un aggiornamento che ha cambiato il kernel, con netupdate 0.047 o prima:
+giravano ancora sotto il kernel vecchio, che non capisce i programmi nuovi.
+Riavvia e lancia netupdate -verifica: dice il vero. Da netupdate 0.048 le
+verifiche aspettano da sole il riavvio.
+
 open DA' "File exists" (EEXIST) a un programma che prima andava, dal kernel
 0.331: ha chiesto O_CREAT|O_EXCL (crea solo se non c'e') e il file c'era. Prima
 O_EXCL non era guardato e il file veniva riaperto. Cancella il file vecchio, o

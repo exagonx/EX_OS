@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.340
+**Version:** 0.341
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -111,6 +111,30 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### munmap can no longer stop the machine (kernel 0.341)
+
+- **`munmap` checks the end of the range too**, as `mmap` and `mprotect` already did. Until 0.340
+  it checked only the start: `munmap(0xBFFFF000, 0x44001000)` at 32 bit went over the kernel's
+  pages, wrapped round to the kernel's memory and freed its physical pages, and the machine
+  stopped ("PMM: pagina fuori range"). Any user could do it. Now it is `EINVAL`. Found while
+  rereading item 17 of `analisi_kernel.txt`, tried first in QEMU (the machine really stopped);
+  `tools/prove/varchiprova.c` has both cases.
+- **The 12-hour clock**: with a CMOS in 12-hour format midnight stayed 12 instead of 0. And the two
+  CMOS ports (index and data) are used with interrupts off: a process switch in between made one
+  register be read in place of another (item 77).
+- **A program starts with its registers at zero**: on the first entry into ring 3 the general
+  registers held kernel values (its addresses, at 32 and 64 bit). Now they are zeroed; only RDI
+  stays at 64 bit, a thread's first argument (item 77).
+- **Lost interrupt notices are counted**: when a driver's mailbox is full the notice drops, and
+  until 0.340 nobody said so. Now the first drop goes in the log ("IRQn: notifica caduta per PID
+  p") and `/proc/interrupts` shows `cadute N` beside the count. It is the measure for item 14 (a
+  card that goes silent after a lost notice).
+- **Item 76 verified**: a file deleted while open can be read and written until it is closed
+  (it has been so since kernel 0.268). The new test writes 1 MB after `unlink` and meanwhile
+  makes the name again with another file: right on ext2 and FAT32, 32 and 64 bit
+  (`tools/prova_aperti.sh`). Also verified that `rmdir /a/.` does not leave a half-deleted
+  directory on FAT.
+
 ### Programs get the real universal time: EX-OS knows its time zone (kernel 0.340)
 
 - **`time()` gives UTC seconds**, comparable with any other machine (kernel 0.340). The machine's
@@ -133,6 +157,28 @@ the one on real hardware or on the real case — has not been done yet.
   `tools/qemu_drive.py`), as on a real machine.
 - `tools/prova_librerie.sh` and `tools/prova_openssl.sh` put the shared libraries they use on the
   disk: the EX-OS CD has none, and third-party libraries are shared since 3 November.
+- **Tested on real hardware** (the test PC with the nForce MCP73 board, updated with netupdate
+  from 0.328): `time()` within a few seconds of another machine's UTC, both summer time changes,
+  the new file on ext4 dated in UTC, `date -fuso:+5:30,no` applying at once; a certificate made
+  by the relinked `openssl` is accepted by Linux, the old one is not.
+- **netupdate 0.048: the checks wait for the reboot** when the update changes the kernel. Under
+  the old kernel the new programs ask it for what it lacks (the 0.339 stat): on the test PC, from
+  0.328 to 0.340, every `[ -d ]` and `[ -f ]` came out false and four checks asked to create by
+  hand directories that were there. Now netupdate says so and asks for `netupdate -verifica`
+  after the reboot. **tested in QEMU** (tools/prova_verifiche.sh, test D: a new kernel on the
+  server). `verifiche/sistema.sh` also says when `/boot/fuso.cfg` is missing.
+- **Local time also where UTC stood in for local time**, searched through all the EX-OS code
+  (`gmtime` equalled `localtime` until 0.339):
+  - **ExJs**: `getHours`, `setHours`, `new Date(y, m, d)`, `toString`, `toLocaleString` and
+    strings without a zone are local time, `getTimezoneOffset` says -60 or -120; the host gives
+    the zone with `exjs_fuso_metti` (optional: an old exjs.so stays UTC), EXBrowser 0.033 takes
+    it from `localtime_r`. The hour repeated in autumn counts the first time, the one missing in
+    spring an hour later. **tested on the host** (`make prova-exjs`, 510 checks, 18 new with the
+    Rome 2026 zone); `tools/prova_date.sh` also checks the zone, with both engines.
+  - **tar** lists dates in local time, as GNU tar does (the archive keeps UTC).
+  - **libctest 0.003**: the `mktime` checks were `timegm`'s (the UTC instant) and the `strftime`
+    check left `tm_gmtoff` dirty; now `timegm` against `gmtime` and `mktime` against
+    `localtime`, in winter and in summer.
 
 ### stat() tells the real permissions, owner, links and times, and files written on FAT have their date (kernel 0.339)
 
@@ -2883,8 +2929,10 @@ it runs, and Ctrl+C stops it (`tools/prova_runbas.sh`).
 
 **tested in QEMU** — the ExJs engine has `Date`: `new Date()`, `Date.now()`,
 `Date.UTC`, `Date.parse`, the getters and setters, `toISOString`,
-`toString`, `toLocaleString` and `JSON.stringify` of a date. It is all UTC,
-since EX-OS has no time zones; the browser supplies the time. Objects in
+`toString`, `toLocaleString` and `JSON.stringify` of a date. The browser
+supplies the time, and since 16 November 2026 the zone too
+(`exjs_fuso_metti`, from the libc's `localtime`: kernel 0.340); before, it
+was all UTC. Objects in
 arithmetic go through `valueOf`: the difference between two dates is a
 number, which is how pages measure time. Tested on the host
 (`make prova-exjs`, 307 checks) and in EXBrowser with both engines
