@@ -600,8 +600,9 @@ nera (registri VGA SR01 e AR): un monitor a tubo resta acceso.
 la porta parallela: stampanti, ZIP, scanner, datasette, schede di prova
 
   lpt.drv                   le porte, cosa sanno fare, chi le usa
-  lpt.drv -avvia            cerca le porte (0x378, 0x278, 0x3BC) e
-                            accende un servizio per ognuna: lpt0, lpt1
+  lpt.drv -avvia            cerca le porte (0x378, 0x278, 0x3BC, poi le
+                            schede PCI se pci.drv e' acceso) e accende
+                            un servizio per ognuna: lpt0, lpt1
                             (-porta:0x378 solo quella, -irq:N la linea)
   lpt.drv -ferma            spegne i servizi
   lpt.drv -stampa FILE      FILE alla stampante
@@ -626,6 +627,10 @@ fronti aperte, e l'EOI parte prima dell'attesa: in QEMU con due
 processori 300 fronti su 300 in quattro giri su sei, 1-2 persi
 negli altri (la prova li manda a 60-100 us l'uno dall'altro).
 `-fronti` dice quanti ne ha visti.
+
+Dalla 0.003 lpt.drv trova anche le schede PCI (classe 07.01, come la
+SUNIX 1fd4:1999): l'ECR sta in un loro BAR, e la linea d'interrupt
+PCI non si usa se non con -irq:N.
 
 Dalla 0.324 lpt.drv fa in/out da solo, senza chiamate di sistema
 (la bitmap I/O del TSS, ioport_diretto): l'onda su D1 esce in
@@ -860,6 +865,12 @@ munmap DA' "Invalid argument" (EINVAL) dal kernel 0.341 a un programma che
 chiede di togliere un intervallo che va oltre la fine dello spazio utente:
 prima lo faceva, passando sulla memoria del kernel, e la macchina si fermava.
 Il difetto e' del programma: scrivi a chi sviluppa EX-OS quale era.
+
+"lpt: nessuna porta parallela" con una scheda parallela PCI nello slot:
+fino a lpt.drv 0.002 si cercavano solo 0x378, 0x278 e 0x3BC. netupdate
+porta la 0.003, che cerca anche sul PCI; serve pci.drv acceso prima di
+lpt.drv -avvia. Se dice "scheda PCI a 0x..., ma la porta non risponde",
+scrivi a chi sviluppa EX-OS l'id della scheda (hwinfo -n).
 
 LA RETE SPARISCE (o "ipc_register ... fallita (-17)" e "Accendo la rete...")
 dopo aver lanciato un programma che apre una shell su un tubo (echo x | sh,

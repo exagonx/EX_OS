@@ -5587,10 +5587,10 @@ LPT_DRV_SRC := drivers/lpt/lpt.c
 LPT_DRV_OUT := $(BUILD_DRIVERS_CD)/lpt.drv
 LPT_DRV_LD  := drivers/lpt/lpt.ld
 
-$(LPT_DRV_OUT): $(LPT_DRV_SRC) drivers/lpt/lpt_proto.h $(LPT_DRV_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
+$(LPT_DRV_OUT): $(LPT_DRV_SRC) drivers/lpt/lpt_proto.h $(PCI_DRV_PROTO) $(LPT_DRV_LD) $(LIBC_HDR) $(LIBC_PONTI_OBJ) $(LIBC_SO) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione driver ring3 lpt.drv ==="
 	@mkdir -p $(BUILD_DRIVERS_CD)
-	$(CC) $(CFLAGS_USER) -I lib/include -c $(LPT_DRV_SRC) -o $(BUILD_DRIVERS_CD)/lpt_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I drivers/pci -c $(LPT_DRV_SRC) -o $(BUILD_DRIVERS_CD)/lpt_main.o
 	$(CC) $(CFLAGS_USER) -c $(LIBC_SRC)   -o $(BUILD_DRIVERS_CD)/lpt_libc.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_DRIVERS_CD)/lpt_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections -T $(LPT_DRV_LD) \

@@ -113,6 +113,28 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### lpt.drv trova le schede parallele PCI (lpt.drv 0.003, voce 98) — testato
+
+- **Dopo 0x378, 0x278 e 0x3BC, ogni dispositivo di classe 07.01** che `pci.drv` conosce. Una
+  scheda PCI non ha base+0x400: il suo ECR sta in un BAR suo. La SUNIX/Lenovo 1fd4:1999
+  (sottosistema 17aa:0100, come la SUNIX 4008A) tiene la porta nel BAR1 e l'ECR nel BAR2, come
+  dice `parport_serial` di Linux; le altre schede prendono i primi due BAR di I/O, e decide la
+  sonda. Una linea PCI e' condivisa e a livello: niente IRQ se non lo chiede `-irq:N` (`-avvia`
+  dice quale linea ha la scheda).
+- **La sonda prende la porta se rilegge il registro dei dati O quello di controllo**, come
+  `parport_SPP_supported` di Linux: sulla SUNIX nSelectIn si rilegge sempre 0 (scritto 0x0C,
+  letto 0x04).
+- **Cio' che si scrive nel registro di controllo resta in memoria** (il `priv->ctr` di Linux), e
+  stampa, fronti, `-dati` e `-controllo` partono da li': rileggendolo, la SUNIX perdeva il
+  piedino 17 a ogni byte stampato.
+- **`-dati` e `-controllo` dicevano "0x00, 0x00"**, e `-prova-onda` non vedeva un'onda
+  interrotta: la risposta si leggeva dopo che quella di LASCIA l'aveva sovrascritta (dalla 0.001).
+- Sul PC di prova (64 bit, MCP73): `lpt0: 0xdc00, SPP PS/2 EPP ECP (PCI, ecr a 0xd882)`, `-dati`
+  riletto da `-pin`, `-id` e `-stampa` senza niente collegato si arrendono col loro messaggio.
+  L'onda di 2000 mezze onde da 200 us sulla porta vera: ritardo peggiore 4,8 us, nessuna oltre
+  10 us; rifatta mentre partiva ExWin, 22,8 ms (188 oltre 10 us): il processore riservato riceve
+  ancora il battito del timer (non misurato). `tools/prova_lpt.sh` 14 su 14 a 32 e 64 bit.
+
 ### munmap non puo' piu' fermare la macchina (kernel 0.341)
 
 - **`munmap` guarda anche la fine dell'intervallo**, come gia' facevano `mmap` e `mprotect`.

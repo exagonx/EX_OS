@@ -213,7 +213,8 @@ GRUPPO  VOCI             COSA
                          0.001 e kernel 0.323 (fronti con l'istante), provato in QEMU;
                          10/11 kernel 0.324 + lpt.drv 0.002: EOI prima del lucchetto,
                          attesa con le linee dei fronti aperte, bitmap I/O nel TSS
-                         (scelte dell'utente) FATTO in QEMU; poi porta vera e voce 96
+                         (scelte dell'utente) FATTO in QEMU; 16/11 lpt.drv 0.003 trova
+                         la SUNIX PCI sul .253 (provato); poi stampante, datasette, voce 96
  --     97               (9/11) exwin lanciato mentre girano i lavori d'avvio torna al
                          prompt senza wserver e senza dire niente (prova-lampi 4/4);
                          11/11 non riprodotto con la 0.326 (prova_exwin_presto.sh, 5 giri)
@@ -9275,9 +9276,23 @@ tools/netinst/velocita tolto da netinst.
         virtuale fermo nell'ospite (QEMU): da misurare, e da vedere sul ferro.
       ! La lettura del nastro alla mtap (interrogare il piedino col TSC sul
         processore riservato) ora si puo' fare nel driver: con la voce 96.
-      DA FARE: provarlo su una porta vera (sul PC 192.168.0.247, che ha anche
-      slot PCI e PCIe, con l'utente) con una stampante e col datasette; ZIP e
-      scanner quando l'utente dice quali; poi la voce 96.
+      FATTO (16/11 sera), lpt.drv 0.003, non committato: le schede PCI di
+      classe 07.01 dopo le tre ISA (pci.drv); la SUNIX 1fd4:1999 del PC .253
+      con porta nel BAR1 ed ECR nel BAR2 (parport_serial di Linux), le altre i
+      primi due BAR di I/O; nessun IRQ PCI se non con -irq:N. Misurato sul
+      ferro: la SUNIX rilegge 0x04 dopo 0x0C (nSelectIn sempre 0) -> la sonda
+      accetta dati O controllo (parport_SPP_supported), e il controllo si
+      tiene in memoria (g_ctrl, come priv->ctr). Riparati anche -dati e
+      -prova-onda che leggevano la risposta dopo quella di LASCIA.
+      Sul .253: lpt0 0xdc00 SPP PS/2 EPP ECP, ecr 0xd882; -dati/-pin ok, -id e
+      -stampa senza niente collegato si arrendono. Onda 2000x200 us: peggiore
+      4,8 us, 0 oltre 10 us; rifatta mentre partiva ExWin 22,8 ms (188 oltre
+      10 us) - il battito sul processore riservato? NON misurato.
+      prova_lpt.sh 14/14 a 32 e 64 bit.
+      DA FARE: una stampante e il datasette sulla SUNIX (con l'utente); la
+      linea IRQ 10 della scheda per i fronti (condivisa, a livello: da
+      provare con -irq:10); ZIP e scanner quando l'utente dice quali; poi la
+      voce 96.
 
   97. exwin SUBITO DOPO L'AVVIO NON PARTE (visto il 9/11 con
       tools/exilla/prova-lampi.sh, kernel 0.322, -smp 1 e -smp 2): `mount

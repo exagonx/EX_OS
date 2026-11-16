@@ -111,6 +111,27 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### lpt.drv finds the PCI parallel cards (lpt.drv 0.003, voce 98) — tested
+
+- **After 0x378, 0x278 and 0x3BC, every device of class 07.01** that `pci.drv` knows. A PCI card
+  has no base+0x400: its ECR is in a BAR of its own. The SUNIX/Lenovo 1fd4:1999 (subsystem
+  17aa:0100, like the SUNIX 4008A) keeps the port in BAR1 and the ECR in BAR2, as Linux's
+  `parport_serial` says; any other card gets its first two I/O BARs, and the probe decides. A PCI
+  line is shared and level-triggered: no IRQ unless `-irq:N` asks for it (`-avvia` names the
+  line).
+- **The probe takes the port if the data OR the control register reads back**, as Linux's
+  `parport_SPP_supported`: on the SUNIX card nSelectIn always reads 0 (0x0C written, 0x04 read).
+- **What was written to the control register is kept in memory** (Linux's `priv->ctr`), and
+  printing, edges and `-dati`/`-controllo` start from it: reading it back, the SUNIX card lost
+  pin 17 at every byte printed.
+- **`-dati` and `-controllo` said "0x00, 0x00"**, and `-prova-onda` could not see an interrupted
+  wave: the answer was read after the one of LASCIA had overwritten it (since 0.001).
+- On the bench PC (64 bit, MCP73): `lpt0: 0xdc00, SPP PS/2 EPP ECP (PCI, ecr a 0xd882)`, `-dati`
+  read back by `-pin`, `-id` and `-stampa` with nothing attached give up with their message.
+  The wave of 2000 half-waves of 200 us on the real port: worst delay 4.8 us, none over 10 us;
+  run again while ExWin was starting, 22.8 ms (188 over 10 us), the reserved processor still
+  gets the timer's tick (not measured). `tools/prova_lpt.sh` 14 out of 14 at 32 and 64 bit.
+
 ### munmap can no longer stop the machine (kernel 0.341)
 
 - **`munmap` checks the end of the range too**, as `mmap` and `mprotect` already did. Until 0.340

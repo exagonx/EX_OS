@@ -25,6 +25,14 @@
  *     lpt.drv -i                 0 if this machine has a parallel port
  *     -n:N                       which port the commands talk to (0)
  *
+ * PCI CARDS (0.003): after the three ISA addresses, every device of class
+ * 07.01 (parallel port) that pci.drv knows. A PCI card has no base+0x400:
+ * its ECR lives in a BAR of its own. The SUNIX/Lenovo 1fd4:1999 (4008A-like)
+ * keeps the port in BAR1 and the ECR window in BAR2, as Linux's
+ * parport_serial says; any other card gets its first two I/O BARs, and the
+ * probe decides. A PCI line is shared and level-triggered, so no IRQ is used
+ * unless -irq:N asks for it.
+ *
  * ONE DRIVER FOR EVERYTHING ON THE PORT. Printers, the Iomega ZIP drive
  * (ppa/imm), parallel scanners, a Commodore datasette through a C64S-style
  * adapter, prototype boards: all of them are the same 17 wires used in a
@@ -59,15 +67,22 @@
  * ============================================================================= */
 #include "libc.h"
 #include "lpt_proto.h"
+#include "pci_proto.h"
 
-EX_VERSIONE("lpt.drv", "0.002");
+EX_VERSIONE("lpt.drv", "0.003");
 
-#define PORTE_N 3
-static const unsigned int g_candidate[PORTE_N] = { 0x378, 0x278, 0x3BC };
+#define ISA_N   3
+#define PORTE_N 8                       /* lpt0..lpt7 */
+static const unsigned int g_isa[ISA_N] = { 0x378, 0x278, 0x3BC };
+
+/* Where to look: the ISA addresses, then the PCI cards. */
+typedef struct { unsigned int base, alto, irq_pci, pci; } Candidata;
+static Candidata    g_cand[PORTE_N];
+static unsigned int g_cand_n;
 
 /* --- the port ------------------------------------------------------------------ */
 
-static unsigned int g_base, g_irq, g_modi;
+static unsigned int g_base, g_alto, g_irq, g_modi;   /* g_alto: the ECR window */
 static int          g_ecp;
 
 /* ! IN AND OUT STRAIGHT FROM HERE when the kernel opens the port's windows in
@@ -76,25 +91,40 @@ static int          g_ecp;
  * late against half-waves of 180 us. With an older kernel, the calls. */
 static int          g_diretto;
 
+/* off >= 0x400 is the ECR window: base+0x400 on ISA, a BAR of its own on PCI. */
+static unsigned int porta_di(unsigned int off)
+{
+    return off >= 0x400 ? g_alto + off - 0x400 : g_base + off;
+}
 static unsigned int in8(unsigned int off)
 {
+    unsigned int pt = porta_di(off);
     int v;
 
     if (g_diretto) {
         unsigned char b;
-        __asm__ volatile ("inb %w1, %0" : "=a"(b) : "Nd"((unsigned short)(g_base + off)));
+        __asm__ volatile ("inb %w1, %0" : "=a"(b) : "Nd"((unsigned short)pt));
         return b;
     }
-    v = ioport_in(g_base + off);
+    v = ioport_in(pt);
     return v < 0 ? 0xFFu : (unsigned int)v;
 }
+/* ! WHAT WAS WRITTEN TO CONTROL, not what reads back: on the SUNIX card
+ * nSelectIn always reads 0, and a read-modify-write dropped pin 17 at every
+ * byte printed. Linux keeps the same copy (parport_pc's priv->ctr). */
+static unsigned int g_ctrl;
+
 static void out8(unsigned int off, unsigned int v)
 {
+    unsigned int pt = porta_di(off);
+
+    if (off == LPT_CONTROLLO) g_ctrl = v & 0xFFu;
+
     if (g_diretto) {
-        __asm__ volatile ("outb %b0, %w1" : : "a"((unsigned char)v), "Nd"((unsigned short)(g_base + off)));
+        __asm__ volatile ("outb %b0, %w1" : : "a"((unsigned char)v), "Nd"((unsigned short)pt));
         return;
     }
-    ioport_out(g_base + off, v & 0xFFu);
+    ioport_out(pt, v & 0xFFu);
 }
 
 /* 64 bits divided by 32 without libgcc's __udivdi3 (the drivers link only the
@@ -154,21 +184,23 @@ static unsigned int tick_a_ns(unsigned long long t)
 
 /* Is there a port at `base`, and what can it do? 0 = none. The data and
  * control registers are put back as they were. */
-static unsigned int sonda(unsigned int base, int *ecp)
+static unsigned int sonda(unsigned int base, unsigned int alto, int *ecp)
 {
     unsigned int dati, ctrl, a, b, modi = 0, ecr = 0;
-    unsigned int vecchia = g_base;
+    unsigned int vecchia = g_base, vecchio_alto = g_alto;
 
     *ecp = 0;
     if (ioport_bind(base, base == 0x3BC ? 3 : 8) < 0) return 0;
-    g_base = base;
+    g_base = base; g_alto = alto;
     dati = in8(LPT_DATI); ctrl = in8(LPT_CONTROLLO);
     out8(LPT_CONTROLLO, LPT_CT_RIPOSO);         /* outputs, no interrupt */
     out8(LPT_DATI, 0xAA); a = in8(LPT_DATI);
     out8(LPT_DATI, 0x55); b = in8(LPT_DATI);
-    if (a != 0xAA || b != 0x55 || (in8(LPT_CONTROLLO) & 0x1F) != LPT_CT_RIPOSO) {
+    /* ! Either register is enough, as Linux's parport_SPP_supported: the
+     * SUNIX PCI card reads 0x04 after 0x0C, nSelectIn always back as 0. */
+    if ((a != 0xAA || b != 0x55) && (in8(LPT_CONTROLLO) & 0x1F) != LPT_CT_RIPOSO) {
         out8(LPT_DATI, dati); out8(LPT_CONTROLLO, ctrl);
-        g_base = vecchia;
+        g_base = vecchia; g_alto = vecchio_alto;
         return 0;
     }
     modi = LPT_MODO_SPP;
@@ -176,7 +208,7 @@ static unsigned int sonda(unsigned int base, int *ecp)
     /* ECP: the test of the IEEE 1284 extended control register. Some SPP
      * ports repeat the control register at +0x402: a bit changed there must
      * not change here. */
-    if (base != 0x3BC && ioport_bind(base + 0x400, 3) == 0) {
+    if (alto && ioport_bind(alto, 3) == 0) {
         unsigned int c = in8(LPT_CONTROLLO), e = in8(LPT_ECR), si = 1;
 
         if ((e & 3) == (c & 3)) {
@@ -219,11 +251,100 @@ static unsigned int sonda(unsigned int base, int *ecp)
     }
     out8(LPT_DATI, dati);
     out8(LPT_CONTROLLO, (ctrl & ~(LPT_CT_IRQ | LPT_CT_INGRESSO)) & 0x0F);
-    g_base = vecchia;
+    g_base = vecchia; g_alto = vecchio_alto;
     return modi;
 }
 
 static unsigned int irq_di(unsigned int base) { return base == 0x278 ? 5 : 7; }
+
+/* --- the PCI cards ---------------------------------------------------------- */
+
+/* Cards whose BARs are not "first two I/O BARs": port BAR, ECR BAR. */
+static const struct { unsigned short ven, dev; unsigned char bar, bar_alto; } g_pci_note[] = {
+    { 0x1fd4, 0x1999, 1, 2 },           /* SUNIX 4008A-like (Lenovo 17aa:0100) */
+};
+
+static int pci_chiedi(int pid, unsigned int ord, PciDispositivo *out)
+{
+    static unsigned char buf[IPC_MSG_MAX_DATA];
+    PciRichiesta r;
+    IpcMessage   m;
+    int          t;
+
+    r.ordinale = ord;
+    r.classe = 0x07; r.sottoclasse = 0x01;      /* parallel port */
+    r.venditore = PCI_QUALUNQUE; r.dispositivo = PCI_QUALUNQUE;
+    if (ipc_send((unsigned int)pid, PCI_MSG_CERCA, &r, sizeof(r)) < 0) return -1;
+    for (t = 0; t < 8; t++) {
+        if (ipc_recv_timeout(&m, buf, sizeof(buf), 2000) < 0) return -1;
+        if ((int)m.sender_pid != pid) continue;
+        if (m.tipo == PCI_MSG_FINE) return 0;
+        if (m.tipo == PCI_MSG_DISPOSITIVO && m.len >= sizeof(*out)) {
+            memcpy(out, buf, sizeof(*out));
+            return 1;
+        }
+        return -1;
+    }
+    return -1;
+}
+
+/* The candidates: ISA first (lpt0 stays 0x378), then PCI. No pci.drv, no PCI. */
+static void candidate_trova(void)
+{
+    PciDispositivo d;
+    unsigned int   i, ord;
+    int            pid;
+
+    g_cand_n = 0;
+    for (i = 0; i < ISA_N; i++) {
+        g_cand[g_cand_n].base = g_isa[i];
+        g_cand[g_cand_n].alto = g_isa[i] == 0x3BC ? 0 : g_isa[i] + 0x400;
+        g_cand[g_cand_n].irq_pci = 0; g_cand[g_cand_n].pci = 0;
+        g_cand_n++;
+    }
+    pid = ipc_lookup(PCI_SERVIZIO);
+    if (pid <= 0) return;
+    for (ord = 0; ord < 8 && g_cand_n < PORTE_N; ord++) {
+        unsigned int b, base = 0, alto = 0, k;
+
+        if (pci_chiedi(pid, ord, &d) <= 0) break;
+        for (k = 0; k < sizeof(g_pci_note) / sizeof(g_pci_note[0]); k++)
+            if (g_pci_note[k].ven == d.venditore && g_pci_note[k].dev == d.dispositivo) {
+                if (d.bar_io[g_pci_note[k].bar]) base = d.bar[g_pci_note[k].bar];
+                if (d.bar_io[g_pci_note[k].bar_alto]) alto = d.bar[g_pci_note[k].bar_alto];
+                break;
+            }
+        if (base == 0)
+            for (b = 0; b < 6; b++) {
+                if (d.bar[b] == 0 || !d.bar_io[b]) continue;
+                if (base == 0) base = d.bar[b];
+                else if (alto == 0) alto = d.bar[b];
+            }
+        if (base == 0) continue;
+        {
+            PciAzione a;
+
+            memset(&a, 0, sizeof(a));
+            a.bus = d.bus; a.slot = d.slot; a.funzione = d.funzione;
+            a.bit = PCI_ABIL_IO;
+            if (ipc_send((unsigned int)pid, PCI_MSG_ABILITA, &a, sizeof(a)) == 0) {
+                IpcMessage m;
+                unsigned char buf[16];
+                int t;
+
+                for (t = 0; t < 8; t++) {
+                    if (ipc_recv_timeout(&m, buf, sizeof(buf), 2000) < 0) break;
+                    if ((int)m.sender_pid == pid) break;
+                }
+            }
+        }
+        g_cand[g_cand_n].base = base;
+        g_cand[g_cand_n].alto = alto;
+        g_cand[g_cand_n].irq_pci = d.irq_linea == 0xFF ? 0 : d.irq_linea;
+        g_cand[g_cand_n].pci = 1;
+        g_cand_n++;
+    }
+}
 
 /* --- the service ---------------------------------------------------------------- */
 
@@ -256,7 +377,7 @@ static void esito(int pid, unsigned int tipo, int rc)
 static void fronti_spegni(void)
 {
     if (!g_fronti) return;
-    out8(LPT_CONTROLLO, in8(LPT_CONTROLLO) & ~LPT_CT_IRQ & 0x3Fu);
+    out8(LPT_CONTROLLO, g_ctrl & ~LPT_CT_IRQ & 0x3Fu);
     irq_fronti_spegni(g_irq);
     /* ! irq_unbind, NOT irq_done: with the edges off, a line kept would come
      * back masked after its first interrupt, and the next client asking for
@@ -329,7 +450,7 @@ static int fronti_accendi(unsigned int quanti)
     if (rc < 0) { irq_unbind(g_irq); g_irq_preso = 0; return rc; }
     g_fronti = 1; g_ed_persi = 0;
     g_ed_inizio = g_ed_fine = 0;
-    out8(LPT_CONTROLLO, (in8(LPT_CONTROLLO) | LPT_CT_IRQ) & 0x3Fu);
+    out8(LPT_CONTROLLO, (g_ctrl | LPT_CT_IRQ) & 0x3Fu);
     return 0;
 }
 
@@ -379,7 +500,7 @@ static void scrivi(int pid, const unsigned char *d, unsigned int n)
     unsigned int i, st = 0, ctrl;
 
     memset(&r, 0, sizeof(r));
-    ctrl = (in8(LPT_CONTROLLO) & ~(LPT_CT_STROBE | LPT_CT_IRQ | LPT_CT_INGRESSO | LPT_CT_AUTOFD)) & 0x0F;
+    ctrl = (g_ctrl & ~(LPT_CT_STROBE | LPT_CT_IRQ | LPT_CT_INGRESSO | LPT_CT_AUTOFD)) & 0x0F;
     ctrl |= LPT_CT_NINIT | LPT_CT_SELECTIN;
     out8(LPT_CONTROLLO, ctrl | (g_fronti ? LPT_CT_IRQ : 0));
     for (i = 0; i < n; i++) {
@@ -581,18 +702,18 @@ static void onda_suona(int pid, const LptOndaSuona *o)
     rispondi(pid, LPT_MSG_ONDA_SUONA, &r, sizeof(r));
 }
 
-static int servizio(unsigned int base, unsigned int irq, unsigned int n)
+static int servizio(unsigned int base, unsigned int alto, unsigned int irq, unsigned int n)
 {
     char       nome[IPC_NAME_LEN];
     IpcMessage m;
     int        pid, fine = 0;
 
     g_base = base;
-    g_modi = sonda(base, &g_ecp);
+    g_modi = sonda(base, alto, &g_ecp);
     if (g_modi == 0) { printf("lpt: nessuna porta a 0x%x\n", base); return 1; }
-    g_base = base;
+    g_base = base; g_alto = alto;
     ioport_bind(base, base == 0x3BC ? 3 : 8);
-    if (g_ecp) ioport_bind(base + 0x400, 3);
+    if (g_ecp) ioport_bind(alto, 3);
     g_diretto = (ioport_diretto(1) == 0);
     g_irq = irq;
     orologio_apri();
@@ -642,8 +763,7 @@ static int servizio(unsigned int base, unsigned int irq, unsigned int n)
             if (len < 3 || (p->registro != LPT_DATI && p->registro != LPT_CONTROLLO)) {
                 pin(pid, m.tipo, -EINVAL); break;
             }
-            r = in8(p->registro);
-            if (p->registro == LPT_CONTROLLO) r &= 0x3Fu;
+            r = p->registro == LPT_CONTROLLO ? g_ctrl & 0x3Fu : in8(p->registro);
             out8(p->registro, (r & ~(unsigned int)p->maschera) | (p->valore & p->maschera));
             pin(pid, m.tipo, 0);
             break;
@@ -812,10 +932,11 @@ static int avvia(const char *argv0, unsigned int solo, int irq_dato)
     const char *via = strchr(argv0, '/') ? argv0 : "/dev/lpt.drv";
 
     if (getuid() != 0) { printf("lpt: -avvia solo da root\n"); return 1; }
-    for (i = 0; i < PORTE_N; i++) {
-        unsigned int base = g_candidate[i], modi, irq;
+    candidate_trova();
+    for (i = 0; i < g_cand_n; i++) {
+        unsigned int base = g_cand[i].base, modi, irq;
         int ecp, pid;
-        char a1[48], *av[3];
+        char a1[64], *av[3];
 
         if (solo && base != solo) continue;
         pid = servizio_di(n);
@@ -825,10 +946,13 @@ static int avvia(const char *argv0, unsigned int solo, int irq_dato)
             n++;
             continue;
         }
-        modi = sonda(base, &ecp);
-        if (modi == 0) continue;
-        irq = irq_dato >= 0 ? (unsigned int)irq_dato : irq_di(base);
-        snprintf(a1, sizeof(a1), "-servizio:0x%x:%u:%u", base, irq, n);
+        modi = sonda(base, g_cand[i].alto, &ecp);
+        if (modi == 0) {
+            if (g_cand[i].pci) printf("lpt: scheda PCI a 0x%x, ma la porta non risponde\n", base);
+            continue;
+        }
+        irq = irq_dato >= 0 ? (unsigned int)irq_dato : g_cand[i].pci ? 0 : irq_di(base);
+        snprintf(a1, sizeof(a1), "-servizio:0x%x:%u:%u:0x%x", base, irq, n, g_cand[i].alto);
         av[0] = (char *)via; av[1] = a1; av[2] = 0;
         if (spawn(via, av) < 0) { printf("lpt: %s non si avvia\n", via); return 1; }
         snprintf(a1, sizeof(a1), "%s%u", LPT_SERVIZIO, n);
@@ -837,6 +961,12 @@ static int avvia(const char *argv0, unsigned int solo, int irq_dato)
         if (irq) printf(" irq %u", irq);
         printf(", ");
         modi_scrivi(modi);
+        if (g_cand[i].pci) {
+            printf(" (PCI");
+            if (ecp) printf(", ecr a 0x%x", g_cand[i].alto + 2);
+            if (!irq && g_cand[i].irq_pci) printf(", linea %u non usata: -irq:%u", g_cand[i].irq_pci, g_cand[i].irq_pci);
+            printf(")");
+        }
         printf("\n");
         n++; avviati++;
     }
@@ -919,15 +1049,19 @@ static int id(int pid)
 static int pin_scrivi(int pid, unsigned int reg, unsigned int v)
 {
     LptPinScrivi p;
-    LptPin *r = (LptPin *)g_risposta;
+    LptPin r;                           /* a copy: LASCIA's answer lands on g_risposta */
     int rc;
 
     if (prendi(pid, LPT_USO_PIN) < 0) return 1;
     p.registro = (unsigned char)reg; p.valore = (unsigned char)v; p.maschera = 0xFF;
-    rc = chiedi(pid, LPT_MSG_PIN_SCRIVI, &p, sizeof(p)) >= (int)sizeof(LptPin) ? r->rc : -EIO;
+    memset(&r, 0, sizeof(r));
+    if (chiedi(pid, LPT_MSG_PIN_SCRIVI, &p, sizeof(p)) >= (int)sizeof(LptPin)) {
+        memcpy(&r, g_risposta, sizeof(r));
+        rc = r.rc;
+    } else rc = -EIO;
     chiedi_esito(pid, LPT_MSG_LASCIA, 0, 0);
     if (rc < 0) { printf("lpt: non scritto (%d)\n", rc); return 1; }
-    printf("dati 0x%02x, controllo 0x%02x\n", r->dati, r->controllo);
+    printf("dati 0x%02x, controllo 0x%02x\n", r.dati, r.controllo);
     return 0;
 }
 
@@ -1049,7 +1183,7 @@ static int onda_prova(int pid, unsigned int n, unsigned int us)
 {
     static LptOndaPezzo p;
     LptOndaSuona s;
-    LptOndaFatta *r = (LptOndaFatta *)g_risposta;
+    LptOndaFatta f, *r = &f;            /* a copy: LASCIA's answer lands on g_risposta */
     unsigned int fatti = 0, i, rc;
 
     if (prendi(pid, LPT_USO_PIN) < 0) return 1;
@@ -1065,6 +1199,7 @@ static int onda_prova(int pid, unsigned int n, unsigned int us)
     if (chiedi(pid, LPT_MSG_ONDA_SUONA, &s, sizeof(s)) < (int)sizeof(LptOndaFatta)) {
         printf("lpt: il servizio non risponde\n"); chiedi_esito(pid, LPT_MSG_LASCIA, 0, 0); return 1;
     }
+    memcpy(&f, g_risposta, sizeof(f));
     chiedi_esito(pid, LPT_MSG_LASCIA, 0, 0);
     if (r->rc == -EOPNOTSUPP) { printf("lpt: per l'onda serve un orologio fine (TSC)\n"); return 1; }
     if (r->rc < 0) { printf("lpt: onda interrotta (%d) dopo %u\n", r->rc, r->suonate); return 1; }
@@ -1098,7 +1233,8 @@ static void aiuto(void)
     printf("lpt.drv - la porta parallela (stampanti, ZIP, scanner, datasette, schede)\n\n");
     printf("  lpt.drv                  le porte, cosa sanno fare, chi le usa\n");
     printf("  lpt.drv -avvia           cerca le porte e accende un servizio per ognuna\n");
-    printf("                           (-porta:0x378 solo quella, -irq:N la linea)\n");
+    printf("                           (-porta:0x378 solo quella, -irq:N la linea;\n");
+    printf("                           anche le schede PCI, se pci.drv e' acceso)\n");
     printf("  lpt.drv -ferma           spegne i servizi\n");
     printf("  lpt.drv -stampa FILE     FILE alla stampante\n");
     printf("  lpt.drv -id              il Device ID IEEE 1284 di cio' che e' collegato\n");
@@ -1121,7 +1257,7 @@ int main(int argc, char **argv)
 
     for (i = 1; i < argc; i++) {
         if (strncmp(argv[i], "-n:", 3) == 0) {
-            if (numero(argv[i] + 3, &n) != 0 || n >= PORTE_N) { printf("lpt: -n:N vuole 0, 1 o 2\n"); return 1; }
+            if (numero(argv[i] + 3, &n) != 0 || n >= PORTE_N) { printf("lpt: -n:N vuole da 0 a %u\n", PORTE_N - 1); return 1; }
         } else if (strncmp(argv[i], "-porta:", 7) == 0) {
             if (numero(argv[i] + 7, &solo) != 0) { printf("lpt: -porta: vuole un indirizzo\n"); return 1; }
         } else if (strncmp(argv[i], "-irq:", 5) == 0) {
@@ -1135,7 +1271,7 @@ int main(int argc, char **argv)
     }
     if (cmd == NULL || strcmp(cmd, "-stato") == 0) return elenco();
     if (strncmp(cmd, "-servizio:", 10) == 0) {
-        unsigned int base, linea, num;
+        unsigned int base, linea, num, alto;
         char *p = (char *)cmd + 10;
 
         base = (unsigned int)strtoul(p, &p, 0);
@@ -1143,13 +1279,15 @@ int main(int argc, char **argv)
         linea = (unsigned int)strtoul(p, &p, 0);
         if (*p++ != ':') return 1;
         num = (unsigned int)strtoul(p, &p, 0);
-        return servizio(base, linea, num);
+        alto = *p == ':' ? (unsigned int)strtoul(p + 1, &p, 0) : (base == 0x3BC ? 0 : base + 0x400);
+        return servizio(base, alto, linea, num);
     }
     if (strcmp(cmd, "-i") == 0) {
         int ecp;
 
         if (servizio_di(0) > 0) return 0;
-        for (v = 0; v < PORTE_N; v++) if (sonda(g_candidate[v], &ecp)) return 0;
+        candidate_trova();
+        for (v = 0; v < g_cand_n; v++) if (sonda(g_cand[v].base, g_cand[v].alto, &ecp)) return 0;
         return 1;
     }
     if (strcmp(cmd, "-avvia") == 0) return avvia(argv[0], solo, irq);
