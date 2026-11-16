@@ -4336,3 +4336,213 @@
   finito /netinst/verifiche.txt: 488 byte
 /netinst/verifiche/exilla.sh
   finito /netinst/verifiche/exilla.sh: 1303 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 25043 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 616421 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 488 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 4182 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 25043 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 616421 byte
+/netinst_64/file/exos/src/valkey/comune.sh
+  finito /netinst_64/file/exos/src/valkey/comune.sh: 15037 byte
+/netinst_64/file/exos/src/valkey/costruisci.sh
+  finito /netinst_64/file/exos/src/valkey/costruisci.sh: 4297 byte
+/netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz
+  finito /netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz: 4440532 byte
+/netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz.sha256
+  finito /netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz.sha256: 86 byte
+/netinst_64/file/exos/valkey/COPYING
+  finito /netinst_64/file/exos/valkey/COPYING: 3091 byte
+/netinst_64/file/exos/valkey/bin/valkey-benchmark
+  finito /netinst_64/file/exos/valkey/bin/valkey-benchmark: 641872 byte
+/netinst_64/file/exos/valkey/bin/valkey-check-aof
+  finito /netinst_64/file/exos/valkey/bin/valkey-check-aof: 2979344 byte
+/netinst_64/file/exos/valkey/bin/valkey-check-rdb
+  finito /netinst_64/file/exos/valkey/bin/valkey-check-rdb: 2979344 byte
+/netinst_64/file/exos/valkey/bin/valkey-cli
+  finito /netinst_64/file/exos/valkey/bin/valkey-cli: 838312 byte
+/netinst_64/file/exos/valkey/bin/valkey-sentinel
+  finito /netinst_64/file/exos/valkey/bin/valkey-sentinel: 2979344 byte
+/netinst_64/file/exos/valkey/bin/valkey-server
+  finito /netinst_64/file/exos/valkey/bin/valkey-server: 2979344 byte
+/netinst_64/file/exos/valkey/dati/.tieni
+  finito /netinst_64/file/exos/valkey/dati/.tieni: 0 byte
+/netinst_64/file/exos/valkey/etc/sentinel.conf
+  finito /netinst_64/file/exos/valkey/etc/sentinel.conf: 14699 byte
+/netinst_64/file/exos/valkey/etc/valkey.conf
+  finito /netinst_64/file/exos/valkey/etc/valkey.conf: 129445 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 488 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 25043 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 616421 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 488 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 25043 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 616421 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 25043 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 616421 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 488 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 4182 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 25043 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 616421 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 488 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 4209 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 394 byte
+/netinst_64/catalogo.txt
+  finito /netinst_64/catalogo.txt: 25043 byte
+/netinst_64/elenco.txt
+  finito /netinst_64/elenco.txt: 616421 byte
+/netinst_64/file/boot/help.txt
+  finito /netinst_64/file/boot/help.txt: 76852 byte
+/netinst_64/file/boot/kernel.bin
+  finito /netinst_64/file/boot/kernel.bin: 446545 byte
+/netinst_64/file/boot/kernel.txt
+  finito /netinst_64/file/boot/kernel.txt: 26742 byte
+/netinst_64/file/boot/minimale.txt
+  finito /netinst_64/file/boot/minimale.txt: 576 byte
+/netinst_64/file/boot/rdboot.lz4
+  finito /netinst_64/file/boot/rdboot.lz4: 667118 byte
+/netinst_64/file/dev/ac97.drv
+  finito /netinst_64/file/dev/ac97.drv: 44128 byte
+/netinst_64/file/dev/ar5k.drv
+  finito /netinst_64/file/dev/ar5k.drv: 189904 byte
+/netinst_64/file/dev/cardbus.drv
+  finito /netinst_64/file/dev/cardbus.drv: 33648 byte
+/netinst_64/file/dev/cpufreq.drv
+  finito /netinst_64/file/dev/cpufreq.drv: 46576 byte
+/netinst_64/file/dev/es1371.drv
+  finito /netinst_64/file/dev/es1371.drv: 44016 byte
+/netinst_64/file/dev/fetta.drv
+  finito /netinst_64/file/dev/fetta.drv: 29032 byte
+/netinst_64/file/dev/hdaudio.drv
+  finito /netinst_64/file/dev/hdaudio.drv: 53272 byte
+/netinst_64/file/dev/mappa.drv
+  finito /netinst_64/file/dev/mappa.drv: 46704 byte
+/netinst_64/file/dev/nv40.drv
+  finito /netinst_64/file/dev/nv40.drv: 82616 byte
+/netinst_64/file/dev/nv50.drv
+  finito /netinst_64/file/dev/nv50.drv: 77624 byte
+/netinst_64/file/dev/ramdisk.drv
+  finito /netinst_64/file/dev/ramdisk.drv: 33632 byte
+/netinst_64/file/dev/sb.drv
+  finito /netinst_64/file/dev/sb.drv: 48752 byte
+/netinst_64/file/dev/sis.drv
+  finito /netinst_64/file/dev/sis.drv: 89736 byte
+/netinst_64/file/dev/sonda.drv
+  finito /netinst_64/file/dev/sonda.drv: 60200 byte
+/netinst_64/file/dev/vgaprova.drv
+  finito /netinst_64/file/dev/vgaprova.drv: 24496 byte
+/netinst_64/file/dev/wifisim.drv
+  finito /netinst_64/file/dev/wifisim.drv: 38112 byte
+/netinst_64/file/dev/wserver.drv
+  finito /netinst_64/file/dev/wserver.drv: 74832 byte
+/netinst_64/file/drivers/ac97.drv
+  finito /netinst_64/file/drivers/ac97.drv: 44128 byte
+/netinst_64/file/drivers/ar5k.drv
+  finito /netinst_64/file/drivers/ar5k.drv: 189904 byte
+/netinst_64/file/drivers/cardbus.drv
+  finito /netinst_64/file/drivers/cardbus.drv: 33648 byte
+/netinst_64/file/drivers/cpufreq.drv
+  finito /netinst_64/file/drivers/cpufreq.drv: 46576 byte
+/netinst_64/file/drivers/dpms.drv
+  finito /netinst_64/file/drivers/dpms.drv: 51624 byte
+/netinst_64/file/drivers/e1000.drv
+  finito /netinst_64/file/drivers/e1000.drv: 38296 byte
+/netinst_64/file/drivers/ehci.drv
+  finito /netinst_64/file/drivers/ehci.drv: 43744 byte
+/netinst_64/file/drivers/es1371.drv
+  finito /netinst_64/file/drivers/es1371.drv: 44016 byte
+/netinst_64/file/drivers/fetta.drv
+  finito /netinst_64/file/drivers/fetta.drv: 29032 byte
+/netinst_64/file/drivers/hdaudio.drv
+  finito /netinst_64/file/drivers/hdaudio.drv: 53272 byte
+/netinst_64/file/drivers/ip.drv
+  finito /netinst_64/file/drivers/ip.drv: 65560 byte
+/netinst_64/file/drivers/kbd.drv
+  finito /netinst_64/file/drivers/kbd.drv: 56592 byte
+/netinst_64/file/drivers/lpt.drv
+  finito /netinst_64/file/drivers/lpt.drv: 69608 byte
+/netinst_64/file/drivers/mappa.drv
+  finito /netinst_64/file/drivers/mappa.drv: 46704 byte
+/netinst_64/file/drivers/mouseser.drv
+  finito /netinst_64/file/drivers/mouseser.drv: 29504 byte
+/netinst_64/file/drivers/ne2k.drv
+  finito /netinst_64/file/drivers/ne2k.drv: 38200 byte
+/netinst_64/file/drivers/nforce.drv
+  finito /netinst_64/file/drivers/nforce.drv: 52072 byte
+/netinst_64/file/drivers/nv40.drv
+  finito /netinst_64/file/drivers/nv40.drv: 82616 byte
+/netinst_64/file/drivers/nv50.drv
+  finito /netinst_64/file/drivers/nv50.drv: 77624 byte
+/netinst_64/file/drivers/ohci.drv
+  finito /netinst_64/file/drivers/ohci.drv: 52624 byte
+/netinst_64/file/drivers/pci.drv
+  finito /netinst_64/file/drivers/pci.drv: 33368 byte
+/netinst_64/file/drivers/pcnet.drv
+  finito /netinst_64/file/drivers/pcnet.drv: 42704 byte
+/netinst_64/file/drivers/ramdisk.drv
+  finito /netinst_64/file/drivers/ramdisk.drv: 33632 byte
+/netinst_64/file/drivers/rtl8169.drv
+  finito /netinst_64/file/drivers/rtl8169.drv: 42784 byte
+/netinst_64/file/drivers/sb.drv
+  finito /netinst_64/file/drivers/sb.drv: 48752 byte
+/netinst_64/file/drivers/sis.drv
+  finito /netinst_64/file/drivers/sis.drv: 89736 byte
+/netinst_64/file/drivers/sis900.drv
+  finito /netinst_64/file/drivers/sis900.drv: 81296 byte
+/netinst_64/file/drivers/sonda.drv
+  finito /netinst_64/file/drivers/sonda.drv: 60200 byte
+/netinst_64/file/drivers/svga.drv
+  finito /netinst_64/file/drivers/svga.drv: 60360 byte
+/netinst_64/file/drivers/uhci.drv
+  finito /netinst_64/file/drivers/uhci.drv: 48720 byte
+/netinst_64/file/drivers/vgaprova.drv
+  finito /netinst_64/file/drivers/vgaprova.drv: 24496 byte
+/netinst_64/file/drivers/wifisim.drv
+  finito /netinst_64/file/drivers/wifisim.drv: 38112 byte
+/netinst_64/file/drivers/wserver.drv
+  finito /netinst_64/file/drivers/wserver.drv: 74832 byte
+/netinst_64/file/drivers/xhci.drv
+  finito /netinst_64/file/drivers/xhci.drv: 53168 byte
+/netinst_64/file/exwin/font/AUTHORS
+  finito /netinst_64/file/exwin/font/AUTHORS: 379 byte
+/netinst_64/file/exwin/font/LICENSE
+  finito /netinst_64/file/exwin/font/LICENSE: 4414 byte

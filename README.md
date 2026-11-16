@@ -134,6 +134,23 @@ the one on real hardware or on the real case — has not been done yet.
   makes the name again with another file: right on ext2 and FAT32, 32 and 64 bit
   (`tools/prova_aperti.sh`). Also verified that `rmdir /a/.` does not leave a half-deleted
   directory on FAT.
+- **A shell on a pipe no longer restarts the system** (sh 0.013). A `/bin/sh` started without
+  arguments with stdin on a pipe (`echo command | sh`, the interruption test of `libctest`)
+  believed it was the boot shell and ran `/boot/avvio.sh` and `/boot/autoexec.sh` again: every
+  driver a second time. On the test PC the second network driver took the network from the first
+  and the machine stopped answering. Now the boot shell puts `EXOS_AVVIO=1` in the environment,
+  and whatever descends from it does not redo the start.
+- **libctest 0.004 writes its files in the directory it starts from**, not in `/`: from a CD the
+  root is read only and a third of the checks failed for nothing (started from `/` it does as
+  before). Checks brought up to date: `sbrk` asks 2 GB twice (one fits under the 3 GB ceiling,
+  two do not) and gives them back; `rename` across directories moves or says ENOSYS/EXDEV; the
+  `mmap` of a file has its bytes with the static libc (which copies it since October) and says ENODEV with the shared one, never zeros. From `/a` in QEMU: 354 checks
+  out of 354, at 32 and 64 bit.
+- **Tried on hardware** (test PC, 64 bit, ext4 disk): updated from 0.340 with
+  `netupdate -check -yes` from the local server, kernel fingerprint equal to the published one,
+  `netupdate -verifica` all right. `varchiprova`: munmap gives EINVAL and the machine stays up;
+  `fusoprova` right; the certificate made by the package's openssl (relinked to the 0.340 libc)
+  has the right UTC time and Linux verifies it.
 
 ### Programs get the real universal time: EX-OS knows its time zone (kernel 0.340)
 

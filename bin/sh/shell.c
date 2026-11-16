@@ -1128,7 +1128,7 @@ static void verbose_init(void)
  * supera i 256. Un nome che si puo' creare ed elencare ma non digitare e'
  * un nome irraggiungibile per meta'. */
 /* +0.001 a ogni modifica: `sh -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define SH_VERSIONE  "0.012"
+#define SH_VERSIONE  "0.013"
 
 #define MAX_LINE    512
 
@@ -4534,8 +4534,20 @@ int shell_main(int argc, char **argv, char **envp)
 
     /* I comandi di /boot/autoexec.sh, se c'e'. Dopo il banner, cosi' quel
      * che stampano si legge sotto e non in mezzo. */
-    esegui_avvio();
-    esegui_autoexec();
+    /* EXOS_AVVIO: the system start runs once per tree. Every child of this
+     * shell inherits it, so a bare sh on a pipe (libctest, "echo x | sh")
+     * no longer reloads the drivers: on the bench PC that killed the NIC
+     * (sh 0.013). */
+    {
+        const char *gia = env_get("EXOS_AVVIO");
+        int         primo = !(gia && gia[0]);
+
+        env_set("EXOS_AVVIO", "1");
+        if (primo) {
+            esegui_avvio();
+            esegui_autoexec();
+        }
+    }
     esegui_autoexec_exwin();
 
     /* Loop principale della shell */

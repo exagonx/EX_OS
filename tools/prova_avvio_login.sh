@@ -43,7 +43,7 @@ if [ ! -f "$IMG" ]; then
     echo "=== 1. disco installato dal CD ($IMG) — qualche minuto ==="
     sed "s|^IMG=dischi/hd.img|IMG=$IMG|; s|^MB=\"\${1:-512}\"|MB=\"\${1:-256}\"|; \
          s|/tmp/exos-mkhd.log|$D/mkhd.log|g" tools/mkhd.sh > "$D/mkhd.sh"
-    EXOS_SUPPORTO=cd bash "$D/mkhd.sh" > "$D/1-disco.log" 2>&1 || {
+    EXOS_HD="$IMG" EXOS_SUPPORTO=cd bash "$D/mkhd.sh" > "$D/1-disco.log" 2>&1 || {
         echo "NON RIUSCITO: il disco non si e' installato (vedi $D/1-disco.log)"
         exit 1
     }

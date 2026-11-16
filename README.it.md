@@ -135,6 +135,22 @@ quella sull'hardware o sul caso reale — non è ancora stata fatta.
   chiusura (lo fa dal kernel 0.268). La prova nuova scrive 1 MB dopo `unlink` e rifa' il nome con
   un altro file nel frattempo: a posto su ext2 e FAT32, 32 e 64 bit (`tools/prova_aperti.sh`).
   Verificato anche che `rmdir /a/.` non lascia la cartella mezza cancellata su FAT.
+- **Una shell su un tubo non riaccende piu' il sistema** (sh 0.013). Un `/bin/sh` lanciato senza
+  argomenti con lo stdin su una pipe (`echo comando | sh`, la prova di interruzione di
+  `libctest`) si credeva la shell dell'avvio e rieseguiva `/boot/avvio.sh` e `/boot/autoexec.sh`:
+  tutti i driver una seconda volta. Sul PC di prova il secondo driver di rete ha tolto la rete al
+  primo e la macchina non rispondeva piu'. Ora la shell dell'avvio mette `EXOS_AVVIO=1`
+  nell'ambiente, e chi discende da lei non rifa' l'avvio.
+- **libctest 0.004 scrive i suoi file nella directory da cui parte**, non in `/`: da CD la radice
+  e' in sola lettura e un terzo delle prove fallivano per niente (lanciata da `/` fa come prima).
+  Le prove rimesse al passo: `sbrk` chiede 2 GB due volte (uno ci sta sotto il tetto di 3 GB, due
+  no) e li restituisce; `rename` fra directory sposta o dice ENOSYS/EXDEV; la `mmap` di un file
+  ne ha i byte con la libc statica (che la copia da ottobre) e dice ENODEV con quella condivisa, mai zeri. Da `/a` in QEMU: 354 prove su 354, a 32 e 64 bit.
+- **Provata sul ferro** (PC di prova, 64 bit, disco ext4): aggiornato dalla 0.340 con
+  `netupdate -check -yes` dal server locale, impronta del kernel uguale a quella pubblicata,
+  `netupdate -verifica` tutto a posto. `varchiprova`: munmap da' EINVAL e la macchina resta in
+  piedi; `fusoprova` a posto; il certificato fatto dall'openssl del pacchetto (ricollegato alla
+  libc della 0.340) ha l'ora UTC giusta e Linux lo verifica.
 
 ### L'ora dei programmi e' quella universale vera: EX-OS conosce il suo fuso orario (kernel 0.340)
 

@@ -41,7 +41,7 @@
 #include "poll.h"
 
 /* +0.001 a ogni modifica: `libctest -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("libctest", "0.003");
+EX_VERSIONE("libctest", "0.004");
 
 static int passati = 0;
 static int falliti = 0;
@@ -50,6 +50,21 @@ static void esito(const char *nome, int ok)
 {
     if (ok) { passati++; printf("  [ok]     %s\n", nome); }
     else    { falliti++; printf("  [FALLITO] %s\n", nome); }
+}
+
+/* (0.004) The test files go in the directory libctest starts from, not in
+ * "/": from a CD the root is read only and half the file tests failed for
+ * nothing. g_dir is "" when started from "/", so the names stay the same. */
+static char g_dir[256] = "";
+
+static const char *qui(const char *nome)
+{
+    static char giro[8][320];
+    static int  n = 0;
+    char       *s = giro[n++ & 7];
+
+    snprintf(s, sizeof(giro[0]), "%s%s", g_dir, nome);
+    return s;
 }
 
 /* =============================================================================
@@ -313,7 +328,7 @@ static void prova_stdio_sola_lettura(void);
 
 static void prova_stdio(void)
 {
-    const char *nome = "/libctest.tmp";
+    const char *nome = qui("/libctest.tmp");
     FILE       *f;
     char        riga[64];
     long        dim;
@@ -658,7 +673,7 @@ static void prova_terzi(void)
 
     /* frexp/ldexp stanno nella sezione della virgola mobile. Qui i file. */
     {
-        const char *nome = "/terzi.tmp";
+        const char *nome = qui("/terzi.tmp");
         struct stat st;
         FILE       *f;
 
@@ -671,7 +686,7 @@ static void prova_terzi(void)
 
             /* freopen: lo stesso FILE*, un altro file. */
             esito("freopen cambia file sotto lo stesso FILE*",
-                  freopen("/terzi2.tmp", "w", f) == f);
+                  freopen(qui("/terzi2.tmp"), "w", f) == f);
             fputs("secondo", f);
             fclose(f);
 
@@ -686,7 +701,7 @@ static void prova_terzi(void)
                 esito("il primo file ha quel che ci era stato scritto", 0);
             }
 
-            f = fopen("/terzi2.tmp", "r");
+            f = fopen(qui("/terzi2.tmp"), "r");
             if (f != NULL) {
                 char riga[32] = { 0 };
                 fgets(riga, sizeof(riga), f);
@@ -712,13 +727,15 @@ static void prova_terzi(void)
               chmod("/non-esiste-di-sicuro", 0644) != 0);
 
         unlink(nome);
-        unlink("/terzi2.tmp");
+        unlink(qui("/terzi2.tmp"));
     }
 
     /* mktemp: da' un nome e non crea niente — e' il suo difetto, ed e'
      * quello che si verifica. */
     {
-        char modello[] = "/mkXXXXXX";
+        char modello[320];
+
+        snprintf(modello, sizeof(modello), "%s/mkXXXXXX", g_dir);
 
         esito("mktemp riempie il modello",
               mktemp(modello) == modello && modello[3] != 'X');
@@ -729,7 +746,7 @@ static void prova_terzi(void)
      * si e' fermata, perche' e' li' che una finestra letta e non
      * riportata indietro si vedrebbe. */
     {
-        const char *nome = "/scan.tmp";
+        const char *nome = qui("/scan.tmp");
         FILE       *f = fopen(nome, "w");
 
         if (f != NULL) {
@@ -764,8 +781,8 @@ static void prova_terzi(void)
      * risposte diverse — e' quello che `ld` usa per non collegare un file
      * su se stesso. */
     {
-        const char *nome = "/reale.tmp";
-        char        a[320], b[320];
+        const char *nome = qui("/reale.tmp");
+        char        a[320], b[320], c[340];
         int         fd = open(nome, O_WRONLY | O_CREAT | O_TRUNC);
 
         if (fd >= 0) close(fd);
@@ -773,9 +790,11 @@ static void prova_terzi(void)
         esito("realpath su un percorso gia' assoluto",
               realpath(nome, a) == a && strcmp(a, nome) == 0);
         esito("realpath toglie i '.' e i doppi '/'",
-              realpath("//./reale.tmp", b) == b && strcmp(b, nome) == 0);
+              (snprintf(c, sizeof(c), "/%s/./reale.tmp", g_dir), realpath(c, b)) == b &&
+              strcmp(b, nome) == 0);
         esito("realpath risolve il '..'",
-              realpath("/bin/../reale.tmp", b) == b && strcmp(b, nome) == 0);
+              (snprintf(c, sizeof(c), "/bin/..%s", nome), realpath(c, b)) == b &&
+              strcmp(b, nome) == 0);
         esito("il '..' sulla radice resta la radice",
               realpath("/../..", b) == b && strcmp(b, "/") == 0);
         esito("realpath su un nome assente fallisce",
@@ -816,7 +835,7 @@ static void prova_terzi(void)
 
     /* mkdir prende due argomenti da agosto 2026; il secondo si ignora. */
     {
-        const char *d = "/duearg.dir";
+        const char *d = qui("/duearg.dir");
         rmdir(d);
         esito("mkdir con i permessi", mkdir(d, 0755) == 0);
         rmdir(d);
@@ -1027,7 +1046,7 @@ static void prova_sscanf(void)
     /* fscanf to the end of a file: feof must be true after the last record
      * (InnoDB's ib_buffer_pool; vfscanf's fseek used to clear it). */
     {
-        const char *nome = "/fscanf.tmp";
+        const char *nome = qui("/fscanf.tmp");
         FILE       *f = fopen(nome, "w");
         int         righe = 0;
 
@@ -1076,7 +1095,7 @@ static void prova_sscanf(void)
 static void prova_stat(void)
 {
     struct stat st;
-    const char *nome = "/provastat.txt";
+    const char *nome = qui("/provastat.txt");
     FILE       *f;
 
     printf("\nstat:\n");
@@ -1169,7 +1188,7 @@ static void prova_directory(void)
     esito("closedir",  closedir(d) == 0);
     {
         /* Stessa ragione: un file che ci mettiamo noi. */
-        const char *tmp = "/opendir.tmp";
+        const char *tmp = qui("/opendir.tmp");
         int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC);
         if (fd >= 0) close(fd);
         esito("opendir su un file fallisce", opendir(tmp) == NULL);
@@ -1347,7 +1366,9 @@ static void prova_entropia(void)
 
 static void prova_temporanei(void)
 {
-    char modello[] = "/tmpXXXXXX";
+    char modello[320];
+
+    snprintf(modello, sizeof(modello), "%s/tmpXXXXXX", g_dir);
     int  fd;
 
     printf("\nFile temporanei e interrogazioni:\n");
@@ -1362,10 +1383,10 @@ static void prova_temporanei(void)
         esito("access lo trova",       access(modello, F_OK) == 0);
 
         /* rename: copia e cancella, ma il risultato dev'essere quello */
-        esito("rename sposta",         rename(modello, "/rinominato.tmp") == 0);
+        esito("rename sposta",         rename(modello, qui("/rinominato.tmp")) == 0);
         esito("il vecchio nome non c'e' piu'", access(modello, F_OK) != 0);
-        esito("il nuovo nome c'e'",    access("/rinominato.tmp", F_OK) == 0);
-        unlink("/rinominato.tmp");
+        esito("il nuovo nome c'e'",    access(qui("/rinominato.tmp"), F_OK) == 0);
+        unlink(qui("/rinominato.tmp"));
     }
 
     /* -----------------------------------------------------------------
@@ -1412,7 +1433,7 @@ static void prova_temporanei(void)
      * la destinazione (EEXIST) e NON attraversa directory (ENOSYS).
      * ----------------------------------------------------------------- */
     {
-        const char *a = "/rin-a.tmp", *b = "/rin-b.tmp";
+        const char *a = qui("/rin-a.tmp"), *b = qui("/rin-b.tmp");
         FILE *f;
         char  riga[64];
         int   ok;
@@ -1476,10 +1497,21 @@ static void prova_temporanei(void)
         f = fopen(a, "w");
         if (f) { fputs("altro\n", f); fclose(f); }
 
-        /* ! Non attraversa directory: sarebbe una copia piu' una
-         * cancellazione, cioe' un'altra operazione. */
-        esito("rename fra directory diverse da ENOSYS",
-              rename(a, "/bin/rin-a.tmp") != 0 && errno == ENOSYS);
+        /* (0.004) Across directories: ext2/ext4 move the entry, a volume
+         * that cannot says ENOSYS or EXDEV. Never a half move: the name is
+         * in exactly one of the two places. */
+        {
+            const char *d = qui("/rin.d"), *in = qui("/rin.d/rin-a.tmp");
+            int         r;
+
+            mkdir(d, 0755);
+            r = rename(a, in);
+            esito("rename fra directory diverse: sposta, o dice che non puo'",
+                  r == 0 ? (access(in, F_OK) == 0 && access(a, F_OK) != 0)
+                         : ((errno == ENOSYS || errno == EXDEV) && access(a, F_OK) == 0));
+            unlink(in);
+            rmdir(d);
+        }
 
         unlink(a); unlink(b);
     }
@@ -1492,7 +1524,7 @@ static void prova_temporanei(void)
         /* Un file CREATO QUI, non uno che si spera esista: /KERNEL.BIN c'e'
          * sul floppy e non su un sistema installato su ext2, e la prova
          * falliva li' per il motivo sbagliato. */
-        const char *tmp = "/isatty.tmp";
+        const char *tmp = qui("/isatty.tmp");
         int f2 = open(tmp, O_WRONLY | O_CREAT | O_TRUNC);
         esito("isatty su un file no", f2 >= 0 && isatty(f2) == 0);
         if (f2 >= 0) close(f2);
@@ -1702,12 +1734,24 @@ static void prova_temporanei(void)
             esito("munmap riesce", munmap(p, 3 * 4096) == 0);
         }
 
-        /* ! Mappare un FILE non si puo', e si dice invece di consegnare
-         * zeri: una mmap che finge darebbe un programma che legge dati
-         * sbagliati senza che niente lo segnali. */
-        esito("mmap di un file e' rifiutata",
-              mmap(NULL, 4096, PROT_READ, MAP_PRIVATE, 1, 0) == MAP_FAILED &&
-              errno == ENODEV);
+        /* (0.004) libc.a maps a file by copying it (1/10/2026), the shared
+         * libc still says ENODEV: either is right, zeros never. The old check
+         * wanted ENODEV on fd 1, and under telnet fd 1 is a pty. */
+        {
+            const char *nm = qui("/mmap.tmp");
+            int         fd = open(nm, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            char       *m;
+
+            if (fd >= 0) { write(fd, "mappato\n", 8); close(fd); }
+            fd = open(nm, O_RDONLY);
+            m  = (fd >= 0) ? mmap(NULL, 4096, PROT_READ, MAP_PRIVATE, fd, 0) : MAP_FAILED;
+            esito("mmap privata di un file: i suoi byte, o ENODEV",
+                  m != MAP_FAILED ? memcmp(m, "mappato\n", 8) == 0
+                                  : (fd >= 0 && errno == ENODEV));
+            if (m != MAP_FAILED) munmap(m, 4096);
+            if (fd >= 0) close(fd);
+            unlink(nm);
+        }
     }
 
     esito("sysconf pagina",   sysconf(_SC_PAGESIZE) == 4096);
@@ -1840,8 +1884,18 @@ static void prova_tetto_heap(void)
      * dev'essere rifiutata su QUALUNQUE macchina, con qualunque RAM: e' la
      * proprieta' che si voleva provare, ed e' vera indipendentemente da
      * dove gira la prova. */
-    esito("sbrk rifiuta una richiesta piu' grande dello spazio",
-          sbrk(0x7FFF0000) == (void *)-1);
+    /* (0.004) sbrk takes an int and the heap ceiling is ~3 GB (elf.c), so
+     * one 2 GB request fits: two in a row (4 GB) must not. And what was
+     * taken goes back, or "torna dov'era" below fails. */
+    {
+        void *g = sbrk(0x7FFF0000);
+        void *h = (g == (void *)-1) ? (void *)-1 : sbrk(0x7FFF0000);
+
+        esito("sbrk rifiuta una richiesta piu' grande dello spazio",
+              g == (void *)-1 || h == (void *)-1);
+        if (h != (void *)-1) sbrk(-0x7FFF0000);
+        if (g != (void *)-1) sbrk(-0x7FFF0000);
+    }
 
     /* La crescita a blocchi resta, ma come MISURA e non come verdetto: se
      * il rifiuto arriva dice che la RAM e' finita — vero su una macchina
@@ -1899,6 +1953,9 @@ static void prova_tetto_heap(void)
         dopo_alloc = sbrk(0);
         esito("2 MB fanno salire il confine",
               grosso != NULL && dopo_alloc > base);
+        if (grosso == NULL || dopo_alloc <= base)
+            printf("           (confine %p, dopo la malloc %p, blocco %p)\n",
+                   base, dopo_alloc, (void *)grosso);
 
         free(grosso);
         dopo_free = sbrk(0);
@@ -1947,7 +2004,7 @@ static void prova_tetto_heap(void)
  * ============================================================================= */
 static void prova_dup(void)
 {
-    const char *nome = "/dup.tmp";
+    const char *nome = qui("/dup.tmp");
     int         a, b, n;
     char        buf[8];
 
@@ -2076,7 +2133,7 @@ static int spawn_v1(const char *path, char *const argv[], SpawnExtraV1 *ex)
 
 static void prova_spawn_forma_vecchia(void)
 {
-    const char  *uscita = "/uscitav1.txt";
+    const char  *uscita = qui("/uscitav1.txt");
     SpawnExtraV1 ex;
     char        *argv[2];
     int          pid, stato = 0;
@@ -2121,7 +2178,7 @@ static void prova_spawn_forma_vecchia(void)
 
 static void prova_spawn(void)
 {
-    const char *uscita = "/uscita.txt";
+    const char *uscita = qui("/uscita.txt");
     SpawnRedir  red;
     char       *argv[2];
     int         pid, stato = 0;
@@ -2587,7 +2644,10 @@ int main(int argc, char **argv)
 {
     (void)argc; (void)argv;
 
+    if (getcwd(g_dir, sizeof(g_dir)) == NULL || strcmp(g_dir, "/") == 0) g_dir[0] = '\0';
+
     printf("libctest - prova della libc di EX-OS\n");
+    if (g_dir[0]) printf("(i file di prova in %s)\n", g_dir);
 
     prova_allocatore();
     prova_printf();

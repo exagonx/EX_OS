@@ -861,6 +861,12 @@ chiede di togliere un intervallo che va oltre la fine dello spazio utente:
 prima lo faceva, passando sulla memoria del kernel, e la macchina si fermava.
 Il difetto e' del programma: scrivi a chi sviluppa EX-OS quale era.
 
+LA RETE SPARISCE (o "ipc_register ... fallita (-17)" e "Accendo la rete...")
+dopo aver lanciato un programma che apre una shell su un tubo (echo x | sh,
+libctest): con sh 0.012 o prima quella shell rieseguiva avvio.sh e
+autoexec.sh, e i driver partivano una seconda volta. Riavvia; netupdate porta
+sh 0.013, che non lo fa piu'.
+
 LE VERIFICHE DI NETUPDATE CHIEDONO DI CREARE A MANO COSE CHE CI SONO ("non
 riesco a creare /exos/apache2/logs", "Manca /exwin/app/exilla/firefox") subito
 dopo un aggiornamento che ha cambiato il kernel, con netupdate 0.047 o prima:

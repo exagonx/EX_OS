@@ -49,7 +49,7 @@ if [ ! -f "$IMG" ]; then
          s|^EXOS_QEMU_EXTRA=\"-drive file=\$IMG,format=raw,if=ide\"|EXOS_QEMU_EXTRA=\"-drive file=\$IMG,format=raw,if=ide -nic none\"|" \
         tools/mkhd.sh > "$D/mkhd.sh"
     grep -q -- "-nic none" "$D/mkhd.sh" || { echo "mkhd.sh e' cambiato: non riesco a togliere la scheda"; exit 1; }
-    EXOS_SUPPORTO=cd bash "$D/mkhd.sh" > "$D/1-disco.log" 2>&1 || {
+    EXOS_HD="$IMG" EXOS_SUPPORTO=cd bash "$D/mkhd.sh" > "$D/1-disco.log" 2>&1 || {
         echo "NON RIUSCITO: il disco non si e' installato (vedi $D/1-disco.log)"
         exit 1
     }
