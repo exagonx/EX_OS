@@ -124,6 +124,9 @@ int  blk_read_diretto(int i, uint64_t lba, uint32_t n, void *buf);
 /* The page cache gives memory back (blk.c): up to `pagine` pages, returns how
  * many. For whoever finds no free page, before the swap. */
 uint32_t blk_cache_cedi(uint32_t pagine);
+/* The page cache is made here, AFTER kernel.cfg (0.344): kernel_main calls it
+ * at PASSO 13b, so that cachedisco counts. Before it, reads go to the disk. */
+void blk_cache_pagine_avvia(void);
 int  blk_flush(int i);
 
 /* =============================================================================

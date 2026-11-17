@@ -19,7 +19,10 @@
 #      (exit 1, "C'E' DA FARE A MANO");
 #   C. a script changed on the server after verifiche.txt: not run;
 #   D. (netupdate 0.048) a kernel one byte longer on the server: -check
-#      installs it and leaves the checks to after the reboot.
+#      installs it and leaves the checks to after the reboot;
+#   E. (netupdate 0.049) /boot/netupdate.avvio left by a map that failed:
+#      the next -check rewrites the map first and removes the file, even with
+#      nothing to update.
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1
 RADICE=$PWD
@@ -135,6 +138,15 @@ gira d "netupdate -check -yes@~900" "cat /boot/netupdate.ver@4" "sync@5"
 grep -aq "IL KERNEL E' CAMBIATO" "$D/d.txt" && si "D: -check installa il kernel nuovo" || no "D: manca 'IL KERNEL E' CAMBIATO' ($D/d.txt)"
 grep -aq "Verifiche: rimandate a dopo il riavvio" "$D/d.txt" && si "D: le verifiche aspettano il riavvio" || no "D: non dice 'rimandate' ($D/d.txt)"
 grep -aq -- "-- sistema.sh (sistema)" "$D/d.txt" && no "D: le verifiche sono partite col kernel di prima" || si "D: nessuna verifica col kernel di prima"
+
+echo "=== 6. E: l'avvio rimasto da riscrivere ==="
+gira d "echo mappa da riscrivere > /boot/netupdate.avvio@2" "netupdate -check -yes@~300" \
+    "cat /boot/netupdate.avvio@3" "echo FINE""-E@2" "sync@5"
+E="$D/d.txt"; cp "$E" "$D/e.txt"; E="$D/e.txt"
+grep -aq "non ha riscritto l'avvio: ci riprovo" "$E" && si "E: -check vede l'avvio sospeso" || no "E: -check non lo vede ($E)"
+grep -aq "settore di avvio riscritto" "$E" && si "E: la mappa e' riscritta" || no "E: la mappa non e' riscritta ($E)"
+sed -n '/> cat \/boot\/netupdate.avvio/,/FINE-E/p' "$E" | grep -aq "^mappa da riscrivere" \
+    && no "E: /boot/netupdate.avvio e' rimasto" || si "E: /boot/netupdate.avvio tolto"
 
 for g in a b c d; do
     grep -a "\[FAULT\]\|KERNEL PANIC" /tmp/exos/serialvf$ARCH$g.txt > /dev/null 2>&1 && no "$g: un [FAULT] sulla seriale"

@@ -280,11 +280,11 @@ int boot_installa_ex(const char *punto, const char *nome_s2, const char *nome_k,
         r = ext2_estensioni(fsmnt, p_k, k_lba, k_cnt,
                             K_MAX_EXT, &k_next);
         if (r == -2) {
-            klog(LOG_ERROR, "INSTALL: /boot/kernel.bin e' spezzato in piu' di "
-                            "%d intervalli", K_MAX_EXT);
+            klog(LOG_ERROR, "INSTALL: %s e' spezzato in piu' di "
+                            "%d intervalli", p_k, K_MAX_EXT);
             return ERR(ESPIPE);
         }
-        if (r != 0) { klog(LOG_ERROR, "INSTALL: /boot/kernel.bin mancante"); return ERR(ENOENT); }
+        if (r != 0) { klog(LOG_ERROR, "INSTALL: %s mancante", p_k); return ERR(ENOENT); }
 
         if (ext2_stat(fsmnt, p_k, &e) != 0) return ERR(EIO);
         k_byte = e.dimensione;
@@ -295,8 +295,8 @@ int boot_installa_ex(const char *punto, const char *nome_s2, const char *nome_k,
         if (r != 0)  { klog(LOG_ERROR, "INSTALL: /BOOT/STAGE2.BIN mancante"); return ERR(ENOENT); }
 
         r = fat_estensione(fsmnt, p_k, &k_rel, &k_sett);
-        if (r == -2) { klog(LOG_ERROR, "INSTALL: /BOOT/KERNEL.BIN e' frammentato"); return ERR(ESPIPE); }
-        if (r != 0)  { klog(LOG_ERROR, "INSTALL: /BOOT/KERNEL.BIN mancante"); return ERR(ENOENT); }
+        if (r == -2) { klog(LOG_ERROR, "INSTALL: %s e' frammentato", p_k); return ERR(ESPIPE); }
+        if (r != 0)  { klog(LOG_ERROR, "INSTALL: %s mancante", p_k); return ERR(ENOENT); }
 
         /* Su FAT il file e' contiguo o non si installa: la lista ha una
          * voce sola. Il formato resta lo stesso dei due filesystem, cosi'

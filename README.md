@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.343
+**Version:** 0.344
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -111,6 +111,41 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### `cachedisco` in kernel.cfg counts (kernel 0.344, voce 27) — tested in QEMU and on the bench PC
+
+- **Up to 0.343 `cachedisco` was never read.** The page cache was made at the first disk
+  read, at PASSO 13a, and kernel.cfg is read at 13b: on the bench PC `cachedisco = 1024`
+  still gave 383 MB. Now the cache is made after kernel.cfg (`blk_cache_pagine_avvia`, or
+  the first disk read if it comes later).
+- **Why it matters (measured on the bench PC, 17/11, kernel 0.343):** Exilla starts in
+  59.8 s cold, 4.0 s warm; after 587 MB of other files are read, 32.3 s and 211 MB read
+  again: 383 MB of cache does not keep Firefox. With 0.344 and `cachedisco = 1024` on the
+  same PC: 32.0 s cold, 3.7 s warm, and **1.2 s after the same 587 MB** (23 MB read). The
+  first 59.8 s was the first start after an Exilla update (390 flushes); the true cold start
+  is about 32 s either way, and that is what is left to do (scattered 4 KB faults, PIO).
+- **383 MB is 1/8 of the RAM the kernel counts under 4 GB** (3071 MB on a 4 GB machine), not
+  the 4 MB table: that one allows 512 MB at 64 bit, 682 at 32. The table lives in the 64 MB
+  kernel band; the default and where the table goes are for the user to decide.
+- `bootinst` names the file it maps (`kernel.new` too) in its errors (voce 60).
+- `tools/prova_cachedisco.sh`: the CD as it is (63 MB, made after kernel.cfg, the second read
+  of a 4 MB file from the cache), `cachedisco = 48`, `cachedisco = 0`, and at 64 bit 4 GB with
+  `cachedisco = 1024`: 1024 MB. 5 out of 5 at 32 bit, 6 out of 6 at 64.
+
+### netupdate tries a failed boot map again (netupdate 0.049, voci 60, 49, 47) — tested in QEMU
+
+- **A map that failed is written down** in `/boot/netupdate.avvio`. The next `netupdate
+  -check` rewrites it first, even with nothing to update, and while the file is there it
+  keeps `rdboot.lz4.old`, the sectors the old map still points to. Up to 0.048 the message
+  said "rilancia netupdate", and the next run did not rewrite the map. `netupdate -avvio`
+  does the same by hand. `tools/prova_verifiche.sh` phase E: 19 out of 19 at 32 and 64 bit.
+- **The system check (`sistema.sh`) also looks for ExPackage**: `/exwin/bin/expackage`, and
+  its line in the start menu (a suggestion with the line to add). Tried on the bench PC with
+  a menu without the line.
+- **The parts a build leaves out are said in one way**: `tools/mancanti.sh` writes "MANCA
+  name | command" (OpenSSL, libgit2, FreeBASIC, rustc, the third-party libraries, ncurses,
+  Exilla, the CJK fonts), and the publishing script asks, on a terminal, which ones to build,
+  builds them and composes the repository again.
+
 ### Exilla: the first tab's address bar works from the second start on (voce 73) — tested in QEMU, package to be published
 
 From the second start of Firefox without an address, what was typed in the
@@ -129,7 +164,7 @@ on the same profile, the address typed in the first tab and in a new tab,
 a photo after Enter. 8 of 8 at 32 and at 64 bit; before the fix the second
 start gave `remoteTab is null`. The first tab starts blank, like new tabs.
 
-### telnetd serves several sessions at once (telnetd 0.015, voce 62) — tested in QEMU
+### telnetd serves several sessions at once (telnetd 0.015, voce 62) — tested in QEMU and on the bench PC
 
 Up to 0.014 telnetd served one session at a time: a second connection was
 accepted and stayed mute until the first one exited, and a forgotten
@@ -142,13 +177,18 @@ libc.so; ExWin does the same. No ceiling: each session costs a process, a
 pty and a shell. The status bar shows how many there are (`TELNET cnn 2`).
 With an ip.drv older than 0.021, telnetd says so and falls back to one
 session at a time.
+On the bench PC (17/11): `tools/telnet_piu_prova.py` 6 out of 6, first on
+a copy listening on port 2341 and then on the telnetd of the boot, port 23,
+under kernel 0.343; `dmesg -segui` held open while two other sessions
+answer. Seen there and older than 0.015 (voce 100): when a session closes,
+a `dmesg -segui` started from its shell stays alive.
 
 Tested with `tools/prova_telnet_piu.sh` at 32 and 64 bit: three sessions
 open together each answer their own command, one closes, a fourth comes in
 and the two left still answer (6 of 6). `prova_telnet.sh` and
 `prova_telnet_fine.sh` pass at 32 and 64 bit.
 
-### No ceiling on mounted volumes (kernel 0.343, mount 0.005, automount 0.005, voce 50) — tested in QEMU
+### No ceiling on mounted volumes (kernel 0.343, mount 0.005, automount 0.005, voce 50) — tested in QEMU, runs on the bench PC
 
 - **The mount tables grow**: they were 6 mount points in all (VFS), 4 ext volumes, 4 FAT, 2 ISO
   9660 and 5 lines in the `[mount]` section of `kernel.cfg`, all `#define`s against the rule
@@ -168,8 +208,12 @@ and the two left still answer (6 of 6). `prova_telnet.sh` and
   Linux's e2fsck and fsck.fat find every volume clean with the file in it. 18 out of 18 at 32
   and 64 bit. Still fixed, written in voce 50: `BLK_MAX_DEV` 16 block devices,
   `MBR_MAX_PART` 16 partitions a disk, `FAT_MAX_OPEN` 16 open FAT files.
+- On the bench PC (17/11): installed with netupdate from the local server, the kernel's
+  fingerprint the one published, rebooted; it starts from hd2p1 (ext4) and `netupdate
+  -verifica` finds everything in order. Eleven volumes at once only in QEMU: that PC has
+  one disk.
 
-### cpufreq reads the two pairs a Core 2 declares, and writes nothing (kernel 0.342, voce 78) — to be tested on the bench PC
+### cpufreq reads the two pairs a Core 2 declares, and writes nothing (kernel 0.342, voce 78) — tested on the bench PC
 
 - **On a Core 2 (family 6, models 0Fh, 16h, 17h, 1Dh) with SpeedStep** the kernel reads the two
   ratio/VID pairs the processor declares, as coreboot's speedstep does: the highest from
@@ -184,6 +228,9 @@ and the two left still answer (6 of 6). `prova_telnet.sh` and
 - QEMU does not pass EIST even with `-cpu Penryn,+est` (measured): there the model 17h is seen and
   nothing stops; the Core 2 path itself is seen only on the bench PC. `tools/prova_cpufreq.sh`
   has the Penryn run, and checks the kernel version from `version.h` (it still asked for 0.311).
+- **On the bench PC (Q9650, 17/11)**: model 17h, SpeedStep on from the BIOS, bus 333 MHz;
+  highest 9 x VID 26h (2997 MHz), lowest 6 x VID 16h (1998 MHz), now 9 x. Whether and how to
+  drive the two pairs is the user's decision.
 
 ### ExEditor prints, shows the print preview, and has a bar and a ruler for text files too (ExEditor 0.009, exwin.so 0.022, lpt.drv 0.004, voce 81) — tested in QEMU
 

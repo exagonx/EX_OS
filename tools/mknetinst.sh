@@ -63,6 +63,7 @@ set -e
 
 RADICE=$(cd "$(dirname "$0")/.." && pwd)
 cd "$RADICE"
+. tools/mancanti.sh     # manca: the parts left out, for repo-update.sh
 
 # ! DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026). ARCH dice per quale
 # macchina si pubblica: i386 (di serie: tutto resta com'era) oppure x86_64.
@@ -677,10 +678,16 @@ if [ "$EXILLA_CI_E" = si ]; then
         echo "  Caratteri CJK: $FONT_CJK_MB MB, $(grep -vc '^#' "$FUORI/pacchetti/font-cjk.txt") file:" \
              "netupdate -install:font-cjk (o con Exilla)."
     else
-        echo "     ! SENZA CARATTERI CJK: manca $FONT_CJK_DIST (tools/font-cjk/prepara.sh)."
+        echo "     ! SENZA CARATTERI CJK: manca $FONT_CJK_DIST."
+        manca "caratteri CJK ($FONT_CJK_DIST)" "tools/font-cjk/prepara.sh"
     fi
 else
     echo "     ! SENZA EXILLA: manca $EXILLA_DIST/firefox o $EXILLA_LANCIA."
+    if [ "$ARCH" = x86_64 ]; then
+        manca "Exilla a 64 bit ($EXILLA_DIST)" "EXOS_ARCH=x86_64 tools/exilla/gecko-costruisci.sh build && EXOS_ARCH=x86_64 tools/exilla/gecko-costruisci.sh package"
+    else
+        manca "Exilla a 32 bit ($EXILLA_DIST)" "tools/exilla/gecko-costruisci.sh build && tools/exilla/gecko-costruisci.sh package"
+    fi
 fi
 if [ "$STRUM_CI_SONO" != si ]; then
     echo "     ! SENZA GLI STRUMENTI: $STRUMENTI/exos/bin/gcc non c'e'."

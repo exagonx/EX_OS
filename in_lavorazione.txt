@@ -180,6 +180,7 @@ GRUPPO  VOCI             COSA
                          17/11: 73 FATTA (patch Tabbrowser, prova-primotab.sh)
   6     25 41 44 69      giro sul portatile; anche poweroff/halt e FIN telnet
   7     49 47 60 67 3 4  attrezzi di aggiornamento e pubblicazione
+                         17/11: 49 47 FATTE, 60 quasi (resta -yes), 3 4 gia' fatte; 67 da decidere
   8     25 24 57 55 56   2D hardware, -install, AHCI
   9     33 37 35 31      fork, EINTR, tetti, file oltre 2 GB
  10     72 42 48 36 34   grandi porting; 72 dopo 33 e 37
@@ -8521,6 +8522,35 @@ tools/netinst/velocita tolto da netinst.
       blk.c); P2 precarica degli eseguibili grossi alla exec; P3 DMA dei
       canali nativi (voce 99) o AHCI; P4 cache in proporzione alla RAM e
       "Cached:" vero in /proc/meminfo. Obiettivo: sotto 10 s come Linux.
+      17/11 MISURATO SUL .253 (0.343, ~/cross_build/prove/firefox-17-11):
+      a freddo 59,8 s (14214 letture, 326 MB, 66,9 s di lettura); a caldo
+      4,0 s (1,8 MB); dopo 587 MB di altri file letti (sha256sum di sorgenti
+      e programmi grossi) 32,3 s e 211 MB riletti: la cache da 383 MB non
+      tiene Firefox. E "cachedisco = 1024" NON SI PUO' PROVARE: la cache si fa
+      in blk_init (PASSO 13a), kernel.cfg si legge al 13b, quindi cachedisco
+      non e' mai stato letto. Kernel 0.344: la cache si fa dopo kernel.cfg
+      (blk_cache_pagine_avvia; o cache_init, se il disco si legge la prima
+      volta dopo). tools/prova_cachedisco.sh: 5 su 5 a 32 bit, 6 su 6 a 64
+      (4 GB con cachedisco = 1024: 1024 MB, 8 MB di tabella).
+      ! CORREZIONE: i 383 MB NON vengono dal tetto della tabella (4 MB: 512
+      MB di cache a 64 bit, 682 a 32), come scritto sopra e in
+      firefox_soluzione.txt. Sono 1/8 della RAM che pmm_get_total_pages
+      conta, 3071 MB sotto i 4 GB: il GB oltre i 4 GB non conta. Misurato in
+      QEMU con 4 GB, 383 MB anche li'. La tabella sta nella fascia del kernel
+      (64 MB in tutto, USER_SPACE_BASE): una cache molto grande la riempie.
+      Da decidere con l'utente: il predefinito (1/8 di tutta la RAM? di
+      piu'?) e dove mettere la tabella.
+      17/11 SUL .253 CON LA 0.344 e cachedisco = 1024 (dmesg: "fino a 1024
+      MB"; kernel.cfg di prima in /boot/kernel.cfg.prima-cache), riassunto in
+      ~/cross_build/prove/firefox-17-11/riassunto.txt:
+                          383 MB (0.343)            1024 MB (0.344)
+        a freddo          59,8 s  326 MB  (*)       32,0 s  213 MB
+        a caldo            4,0 s    2 MB             3,7 s   94 MB
+        dopo 587 MB       32,3 s  211 MB             1,2 s   23 MB
+      (*) primo avvio dopo l'aggiornamento di Exilla: 390 flush, 11,6 s di
+      scrittura; il freddo vero e' circa 32 s in tutti e due (come
+      a383-dopo). Con 1024 MB Firefox resta in cache anche dopo 587 MB di
+      altri file. Resta il freddo (32 s, 10 mila letture sparse): P1, P2, P3.
 
   28. MARIADB, IL SERVER SQL (l'utente, 25/10): «mi serve un server SQL»;
       sorgenti in mariadb-server/ (clone di github.com/MariaDB/server, in
@@ -10351,6 +10381,16 @@ tools/netinst/velocita tolto da netinst.
       fallisce dice NON RIAVVIARE. Resta: rdboot.lz4 si sostituisce prima di
       sapere se la mappa riuscira'. Il messaggio di bootinst.c dice kernel.bin
       anche quando il file e' kernel.new.
+      17/11: i 1400 file riscaricati non si ripresentano (l'aggiornamento del
+      .253 alla 0.343 ne ha scaricati 12 su 5331). netupdate 0.049: una mappa
+      fallita lascia /boot/netupdate.avvio; il -check dopo la riscrive per
+      prima cosa (anche senza niente da aggiornare) e finche' il file c'e'
+      non toglie rdboot.lz4.old, i settori a cui la mappa vecchia punta
+      ancora. Fino alla 0.048 il messaggio diceva "rilancia netupdate" e il
+      giro dopo non la riscriveva. tools/prova_verifiche.sh fase E. Il
+      messaggio di bootinst col nome vero del file: kernel 0.344. Resta da
+      decidere (l'utente): -yes non porta i file nuovi di un pacchetto gia'
+      installato (c'e' -yesall).
 
   58. DISCO FERMO IN AHCI SOTTO CARICO (31/10 22:45, 0.297, foto 225151 e
       225839). Con smpprova -accendi, cp di 214 MB e smpprova 2 5 insieme. Log,
@@ -10485,7 +10525,12 @@ tools/netinst/velocita tolto da netinst.
       o piu' (catalogo senza tetto: con la 0.040 apache ed exilla non si
       installano), /exwin/bin/expackage e la riga ExPackage in
       /exwin/lib/applicazioni.txt (3/11).
-      Stato: in coda.
+      FATTO nella sostanza da netupdate 0.044 (5/11): tools/netinst/verifiche/
+      *.sh, firmati da verifiche.txt, eseguiti dopo ogni aggiornamento e con
+      netupdate -verifica. 17/11: sistema.sh controlla anche /exwin/bin/
+      expackage (manca: da fare a mano) e la riga di ExPackage nel menu (un
+      consiglio), provato sul .253 con un menu senza la riga. Il controllo di
+      netupdate 0.041 non serve: chi esegue le verifiche e' gia' 0.044 o piu'.
 
   48. RIPRODUTTORE DI FILMATI E CODEC AUDIO/VIDEO (l'utente, 30/10: "e'
       necessario un riproduttore di filmati e il porting dei codec video e
@@ -10568,7 +10613,17 @@ tools/netinst/velocita tolto da netinst.
       controllo finche' non resta niente o restano solo i no; senza
       terminale (cron, -guarda) nessuna domanda, si elenca e basta. Non
       toccare repo-update.sh mentre gira: bash lo legge mentre lo esegue.
-      Stato: in coda.
+      FATTO 17/11: tools/mancanti.sh (manca nome comando: la riga "MANCA nome |
+      comando" sullo stderr e nel file EXOS_MANCANTI, una volta sola);
+      mktools64.sh (OpenSSL, libgit2, FreeBASIC, rustc), i due su-cd.sh
+      (librerie, ncurses) e mknetinst.sh (Exilla, caratteri CJK) la usano.
+      exagonx/repo-update.sh, passo 2b: a terminale chiede per ognuna s/n/t/f,
+      esegue i si', svuota la lista e rifa' 1b (con -strumenti) e 2, finche'
+      non resta niente o restano i no (e i comandi falliti); senza terminale
+      le elenca. Provato mancanti_chiedi da solo (terminale finto con script:
+      un si', un comando fallito, un no; il secondo giro non chiede piu'
+      niente) e make netinst / netinst64. repo-update.sh NON provato (pubblica):
+      il primo giro va guardato. ! exagonx/ e' fuori da git.
 
   46. AGGIORNARE I SORGENTI DI TERZI (l'utente, 30/10). tools/aggiorna-sorgenti.sh
       e tools/sorgenti-terzi.txt: elenco delle 17 librerie, -scarica con la

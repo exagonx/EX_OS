@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.343
+**Versione:** 0.344
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -113,6 +113,44 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### `cachedisco` in kernel.cfg vale (kernel 0.344, voce 27) — testato in QEMU e sul PC di prova
+
+- **Fino alla 0.343 `cachedisco` non veniva mai letto.** La cache delle pagine si faceva alla
+  prima lettura del disco, al PASSO 13a, e kernel.cfg si legge al 13b: sul PC di prova
+  `cachedisco = 1024` dava ancora 383 MB. Adesso la cache si fa dopo kernel.cfg
+  (`blk_cache_pagine_avvia`, o la prima lettura del disco se viene dopo).
+- **Perche' conta (misurato sul PC di prova il 17/11, kernel 0.343):** Exilla parte in
+  59,8 s a freddo, 4,0 s a caldo; dopo aver letto 587 MB di altri file, 32,3 s e 211 MB
+  riletti: 383 MB di cache non tengono Firefox. Con la 0.344 e `cachedisco = 1024` sullo
+  stesso PC: 32,0 s a freddo, 3,7 s a caldo, e **1,2 s dopo gli stessi 587 MB** (23 MB
+  letti). Il primo 59,8 s era il primo avvio dopo un aggiornamento di Exilla (390 flush); il
+  freddo vero e' circa 32 s in tutti e due i casi, ed e' quello che resta da fare (fault
+  sparsi da 4 KB, PIO).
+- **383 MB e' 1/8 della RAM che il kernel conta sotto i 4 GB** (3071 MB su una macchina da
+  4 GB), non la tabella da 4 MB: quella permette 512 MB a 64 bit, 682 a 32. La tabella sta
+  nella fascia del kernel da 64 MB; il valore di serie e dove mettere la tabella li decide
+  l'utente.
+- `bootinst` nei suoi errori nomina il file che mappa (anche `kernel.new`) (voce 60).
+- `tools/prova_cachedisco.sh`: il CD com'e' (63 MB, fatta dopo kernel.cfg, la seconda lettura
+  di un file da 4 MB dalla cache), `cachedisco = 48`, `cachedisco = 0`, e a 64 bit 4 GB con
+  `cachedisco = 1024`: 1024 MB. 5 su 5 a 32 bit, 6 su 6 a 64.
+
+### netupdate riprova una mappa d'avvio fallita (netupdate 0.049, voci 60, 49, 47) — testato in QEMU
+
+- **Una mappa fallita resta scritta** in `/boot/netupdate.avvio`. Il `netupdate -check` dopo
+  la riscrive per prima cosa, anche senza niente da aggiornare, e finche' il file c'e' tiene
+  `rdboot.lz4.old`, i settori a cui la mappa vecchia punta ancora. Fino alla 0.048 il
+  messaggio diceva "rilancia netupdate", e il giro dopo la mappa non la riscriveva.
+  `netupdate -avvio` fa lo stesso a mano. `tools/prova_verifiche.sh` fase E: 19 su 19 a 32 e
+  64 bit.
+- **La verifica del sistema (`sistema.sh`) guarda anche ExPackage**: `/exwin/bin/expackage`, e
+  la sua riga nel menu di avvio (un consiglio con la riga da aggiungere). Provata sul PC di
+  prova con un menu senza la riga.
+- **Le parti che una costruzione lascia fuori si dicono in un modo solo**: `tools/mancanti.sh`
+  scrive "MANCA nome | comando" (OpenSSL, libgit2, FreeBASIC, rustc, le librerie di terzi,
+  ncurses, Exilla, i caratteri CJK), e lo script di pubblicazione chiede a terminale quali
+  costruire, le costruisce e rifa' il repository.
+
 ### Exilla: la barra dell'indirizzo del primo tab funziona anche dal secondo avvio (voce 73) — testato in QEMU, il pacchetto e' da pubblicare
 
 Dal secondo avvio di Firefox senza indirizzo, quello che si scriveva nella
@@ -132,7 +170,7 @@ la foto dopo Invio. 8 su 8 a 32 e a 64 bit; prima della correzione il
 secondo avvio dava `remoteTab is null`. Il primo tab parte bianco come i
 tab nuovi.
 
-### telnetd serve piu' sessioni insieme (telnetd 0.015, voce 62) — testato in QEMU
+### telnetd serve piu' sessioni insieme (telnetd 0.015, voce 62) — testato in QEMU e sul PC di prova
 
 Fino alla 0.014 telnetd serviva una sessione per volta: la seconda
 connessione veniva accettata e restava muta finche' la prima non usciva, e
@@ -150,8 +188,13 @@ Provato con `tools/prova_telnet_piu.sh` a 32 e 64 bit: tre sessioni aperte
 insieme rispondono ognuna al suo comando, se ne chiude una, ne entra una
 quarta e le due rimaste rispondono ancora (6 su 6). `prova_telnet.sh` e
 `prova_telnet_fine.sh` sono a posto a 32 e 64 bit.
+Sul PC di prova (17/11): `tools/telnet_piu_prova.py` 6 su 6, prima con una
+copia in ascolto sulla porta 2341 e poi col telnetd dell'avvio, porta 23,
+col kernel 0.343; `dmesg -segui` aperto mentre altre due sessioni
+rispondono. Visto li', e piu' vecchio della 0.015 (voce 100): quando una
+sessione si chiude, un `dmesg -segui` lanciato dalla sua shell resta vivo.
 
-### Nessun tetto ai volumi montati (kernel 0.343, mount 0.005, automount 0.005, voce 50) — testato in QEMU
+### Nessun tetto ai volumi montati (kernel 0.343, mount 0.005, automount 0.005, voce 50) — testato in QEMU, gira sul PC di prova
 
 - **Le tabelle dei montaggi crescono**: erano 6 punti di montaggio in tutto (VFS), 4 volumi ext,
   4 FAT, 2 ISO 9660 e 5 righe nella sezione `[mount]` di `kernel.cfg`, tutti `#define` contro
@@ -172,8 +215,11 @@ quarta e le due rimaste rispondono ancora (6 su 6). `prova_telnet.sh` e
   fsck.fat di Linux trovano ogni volume pulito col suo file. 18 su 18 a 32 e 64 bit. Restano
   fissi, scritti nella voce 50: `BLK_MAX_DEV` 16 dispositivi a blocchi, `MBR_MAX_PART` 16
   partizioni per disco, `FAT_MAX_OPEN` 16 file FAT aperti.
+- Sul PC di prova (17/11): installato con netupdate dal server locale, l'impronta del kernel
+  quella pubblicata, riavviato; parte da hd2p1 (ext4) e `netupdate -verifica` trova tutto a
+  posto. Undici volumi insieme solo in QEMU: quel PC ha un disco solo.
 
-### cpufreq legge le due coppie che un Core 2 dichiara, e non scrive niente (kernel 0.342, voce 78) — da testare sul PC di prova
+### cpufreq legge le due coppie che un Core 2 dichiara, e non scrive niente (kernel 0.342, voce 78) — testato sul PC di prova
 
 - **Su un Core 2 (famiglia 6, modelli 0Fh, 16h, 17h, 1Dh) con SpeedStep** il kernel legge le due
   coppie moltiplicatore/VID che il processore dichiara, come lo speedstep di coreboot: la
@@ -187,6 +233,9 @@ quarta e le due rimaste rispondono ancora (6 su 6). `prova_telnet.sh` e
 - QEMU non passa EIST nemmeno con `-cpu Penryn,+est` (misurato): li' si vede il modello 17h e
   niente si ferma; il ramo Core 2 si vede solo sul PC di prova. `tools/prova_cpufreq.sh` ha il
   giro Penryn, e controlla la versione del kernel da `version.h` (chiedeva ancora la 0.311).
+- **Sul PC di prova (Q9650, 17/11)**: modello 17h, SpeedStep acceso dal BIOS, bus 333 MHz;
+  massima 9 x VID 26h (2997 MHz), minima 6 x VID 16h (1998 MHz), ora 9 x. Se e come pilotare
+  le due coppie lo decide l'utente.
 
 ### ExEditor stampa, fa vedere l'anteprima, e ha barra e righello anche per i file di testo (ExEditor 0.009, exwin.so 0.022, lpt.drv 0.004, voce 81) — testato in QEMU
 

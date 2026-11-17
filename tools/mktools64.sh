@@ -41,6 +41,7 @@
 # =============================================================================
 set -e
 cd "$(dirname "$0")/.." || exit 1
+. tools/mancanti.sh     # manca: the parts left out, for repo-update.sh
 
 TARGET=x86_64-exos
 VER=17.0.0
@@ -138,7 +139,7 @@ if [ -f "$O/libcrypto.a" ] && [ -f "$O/libssl.a" ]; then
         "$O/libssl.a" "$O/libcrypto.a" && "$STRIP" "$OUT/bin/provatls"
     echo "mktools64: OpenSSL $(sed -n 's/^VER=//p' tools/openssl-exos/costruisci.sh) - libcrypto, libssl, provassl, provatls"
 else
-    echo "mktools64: no 64-bit OpenSSL ($O): tools/openssl-exos/costruisci.sh 64" >&2
+    manca "OpenSSL a 64 bit ($O)" "tools/openssl-exos/costruisci.sh 64"
 fi
 
 # --- libgit2, if tools/libgit2-exos/costruisci.sh built it (17 October 2026) -----
@@ -152,7 +153,7 @@ if [ -f "$G2/lib/libgit2.a" ] && [ -f "$O/libssl.a" ]; then
     cp tools/libgit2-exos/prova-git.c "$OUT/prova-git.c"
     echo "mktools64: libgit2 $(sed -n 's/^#define LIBGIT2_VERSION  *"\(.*\)"/\1/p' "$G2/include/git2/version.h") - libgit2.a, git2"
 else
-    echo "mktools64: no libgit2 ($G2): tools/libgit2-exos/costruisci.sh" >&2
+    manca "libgit2 a 64 bit ($G2)" "tools/libgit2-exos/costruisci.sh"
 fi
 
 # --- ncurses, if tools/ncurses-exos/costruisci.sh built it (25 October 2026) ------
@@ -176,7 +177,7 @@ if [ -x "$F/fbc" ] && [ -f "$F/libfb.a" ] && [ -f "$F/fbrt0.o" ]; then
     cp tools/freebasic-exos/prova64.bas "$OUT/prova-fb.bas"
     echo "mktools64: FreeBASIC $("$F/../albero/bin/fbc" -version | sed -n 's/.*Version \([0-9.]*\).*/\1/p') - fbc, libfb, $(ls "$E/include/freebasic" | wc -l) voci di .bi"
 else
-    echo "mktools64: no 64-bit FreeBASIC ($F): tools/freebasic-exos/prepara-fb64.sh" >&2
+    manca "FreeBASIC a 64 bit ($F)" "tools/freebasic-exos/prepara-fb64.sh"
 fi
 
 # --- Rust, if tools/rust-exos/rustc-nativo/costruisci-exos.sh built it -----------
@@ -194,7 +195,7 @@ if [ -x "$RB/x86_64-unknown-exos/stage2/bin/rustc" ] && [ -f "$RS" ]; then
     cp tools/rust-exos/rustc-nativo/ciao.rs "$OUT/prova-rust.rs"
     echo "mktools64: Rust $("$RB/x86_64-unknown-linux-gnu/stage1/bin/rustc" -V | cut -d' ' -f2) - rustc, std ($(ls "$RL" | wc -l) file)"
 else
-    echo "mktools64: no rustc for EX-OS ($RB): tools/rust-exos/rustc-nativo/costruisci-exos.sh" >&2
+    manca "rustc per EX-OS ($RB)" "tools/rust-exos/rustc-nativo/costruisci-exos.sh"
 fi
 
 # --- the catalogue, the test sources, a note -------------------------------------

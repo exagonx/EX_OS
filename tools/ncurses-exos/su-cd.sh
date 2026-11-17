@@ -28,6 +28,7 @@
 CD="$1"
 BIT="$2"
 cd "$(dirname "$0")/../.." || exit 1
+. tools/mancanti.sh
 N=cross_build/ncurses-exos$BIT/exos
 case "$BIT" in
     64) STRIP=cross_build/nasi5deb/exos-cross64/bin/x86_64-exos-strip ;;
@@ -36,7 +37,7 @@ case "$BIT" in
 esac
 [ -x "$STRIP" ] || STRIP=strip
 if [ ! -f "$N/lib/libncurses.a" ] || [ -z "$CD" ]; then
-    echo "     ncurses assente: tools/ncurses-exos/costruisci.sh $BIT" >&2
+    manca "ncurses a $BIT bit" "tools/ncurses-exos/costruisci.sh $BIT"
     exit 0
 fi
 E="$CD/exos"

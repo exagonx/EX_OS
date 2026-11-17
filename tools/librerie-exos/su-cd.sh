@@ -33,6 +33,7 @@
 CD="$1"
 BIT="$2"
 cd "$(dirname "$0")/../.." || exit 1
+. tools/mancanti.sh
 case "$BIT" in
     64) STRIP=cross_build/nasi5deb/exos-cross64/bin/x86_64-exos-strip ;;
     32) STRIP=cross_build/nasi5deb/exos-cross/bin/i386-exos-strip ;;
@@ -48,7 +49,7 @@ for NOME in zlib bzip2 xz lz4 zstd pcre2 fmt openssl mariadb-connector-c mariadb
         expat apr apr-util httpd php valkey ogg vorbis opus flac libvpx dav1d ffmpeg vlc mesa; do
     N=cross_build/$NOME-exos$BIT/exos
     if [ ! -d "$N/src/$NOME" ]; then
-        echo "     $NOME assente: tools/$NOME-exos/costruisci.sh $BIT" >&2
+        manca "$NOME a $BIT bit" "tools/$NOME-exos/costruisci.sh $BIT"
         continue
     fi
     mkdir -p "$E/lib" "$E/include" "$E/src"

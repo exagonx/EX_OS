@@ -989,7 +989,12 @@
  * [mount] (5) grow on demand: arrays of pointers that double, slots that
  * never move (posti.h). The ext4 module keeps its state for a volume in the
  * Ext2Mount (EXT2_IF_ABI 5). */
-#define EXOS_VERSION    "0.343"
+/* 0.343 -> 0.344: the page cache is made after kernel.cfg (PASSO 13b), so
+ * cachedisco counts - up to 0.343 it was made at 13a and never saw it
+ * (voce 27, measured on the PC di prova). dmesg says when the 4 MB table
+ * trims the default 1/8 of the RAM. bootinst names the file it maps
+ * (kernel.new too) in its errors (voce 60). */
+#define EXOS_VERSION    "0.344"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

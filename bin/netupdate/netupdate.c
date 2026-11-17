@@ -44,7 +44,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.048");
+EX_VERSIONE("netupdate", "0.049");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -1827,6 +1827,32 @@ static int e_rdboot(const char *percorso)
     return strcmp(percorso, "boot/rdboot.lz4") == 0;
 }
 
+/* ! A MAP THAT FAILED MUST BE TRIED AGAIN (0.049, voce 60). Until 0.048 the
+ * message said "rilancia netupdate", and the next run did not rewrite it:
+ * rdboot.lz4 matched the server, so nothing to do, or worse it removed
+ * rdboot.lz4.old - the sectors the old map still points to. Now the failure
+ * leaves this file; -check rewrites the map first while it is there, and
+ * fase_avvio removes it when the map is good. */
+#define AVVIO_SOSPESO "/boot/netupdate.avvio"
+
+static int avvio_sospeso(void)
+{
+    int fd = open(AVVIO_SOSPESO, O_RDONLY);
+
+    if (fd < 0) return 0;
+    close(fd);
+    return 1;
+}
+
+static void avvio_sospeso_segna(void)
+{
+    int fd = open(AVVIO_SOSPESO, O_WRONLY | O_CREAT | O_TRUNC);
+
+    if (fd < 0) return;
+    write(fd, "mappa da riscrivere\n", 20);
+    close(fd);
+}
+
 static int menu_e_quello(const char *impronta_server);
 
 static int verdetto(const char *percorso, const char *impronta_server)
@@ -2134,6 +2160,7 @@ static int fase_avvio(int kernel, int stage2)
            info.k_lba, info.k_cnt);
     sync();     /* and the map is committed before anyone reboots */
     if (kernel) printf("  = il kernel di prima resta in /boot/kernel.bin.old\n");
+    remove(AVVIO_SOSPESO);
     return 0;
 }
 
@@ -3146,6 +3173,8 @@ static long pulisci_vecchi(void)
     int  i;
 
     for (i = 0; i < g_nvoci; i++) {
+        /* the old map may still point at its sectors */
+        if (e_rdboot(g_voce[i].percorso) && avvio_sospeso()) continue;
         unisci(b, sizeof(b), "/", g_voce[i].percorso);
         if ((int)strlen(b) + 4 >= PERC_MAX) continue;
         strcat(b, ".old");
@@ -3923,6 +3952,13 @@ static int comando_check(int senza_chiedere)
     int    kernel_nuovo = 0, stage2_nuovo = 0, avvio_guasto = 0;
     int    fai_cambiati, fai_nuovi;
 
+    if (avvio_sospeso()) {
+        printf("L'ultimo aggiornamento non ha riscritto l'avvio: ci riprovo.\n");
+        if (fase_avvio(0, 0) != 0)
+            printf("\n! L'AVVIO E' ANCORA DA RISCRIVERE: NON RIAVVIARE. Riprova con\n"
+                   "  netupdate -avvio; se fallisce ancora, `install` da un altro supporto.\n\n");
+    }
+
     if (guarda(&c, ver, cat, ele, versione, data, &k) != 0) return 1;
 
     if (k.cambiati + k.verif + k.scon + k.nuovi == 0) {
@@ -4103,6 +4139,7 @@ static int comando_check(int senza_chiedere)
         /* rdboot.lz4 e' gia' contato tra i fatti: qui solo la mappa. */
         if (fase_avvio(0, 0) != 0) { falliti++; avvio_guasto = 1; }
     }
+    if (avvio_guasto) avvio_sospeso_segna();
 
     /* --- 7. il registro dice la verita' di adesso ------------------------- */
     printf("\n%ld file aggiornati", fatti);
@@ -4126,7 +4163,8 @@ static int comando_check(int senza_chiedere)
      * after that a reboot may not start at all. */
     if (avvio_guasto)
         printf("\n! L'AVVIO NON E' STATO AGGIORNATO: NON RIAVVIARE ancora. Il sistema di\n"
-               "  base puo' essere cambiato sotto la mappa vecchia: rilancia netupdate.\n");
+               "  base puo' essere cambiato sotto la mappa vecchia: netupdate -avvio\n"
+               "  (o il prossimo netupdate -check) la riscrive.\n");
     else if (kernel_nuovo || stage2_nuovo)
         printf("\n! IL KERNEL E' CAMBIATO: riavvia. Quello di prima e' in\n"
                "  /boot/kernel.bin.old, e il settore di avvio punta al nuovo.\n");

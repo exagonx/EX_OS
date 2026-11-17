@@ -969,6 +969,7 @@ klog(LOG_INFO, "[PASSO 11] Syscall OK");
 KernelConfig *cfg = cfg_load();
     cfg_fuso_carica();   /* the zone of the CMOS clock, before any file is written */
     klog(LOG_INFO, "[PASSO 13b] Configurazione caricata");
+    blk_cache_pagine_avvia();   /* after kernel.cfg: cachedisco (0.344) */
 
     /* ! IL PIO PER SCELTA, E SOLO DA QUI IN AVANTI. `atadma = 0` chiede di
      * leggere il disco un settore per volta: serve a chi sta recuperando dati

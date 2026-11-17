@@ -241,6 +241,10 @@ macchina: il sistema di base puo' essersi spostato sotto la mappa vecchia.
 Libera spazio e rilancia netupdate -check. Con la 0.038 la scritta IL KERNEL
 E' CAMBIATO appariva anche quando non era vero: se dmesg ERROR dice
 "spezzato in piu' di 12 intervalli", prima aggiorna netupdate.
+Dalla 0.049 una mappa non riuscita resta segnata in /boot/netupdate.avvio:
+il netupdate -check dopo la riscrive per prima cosa ("non ha riscritto
+l'avvio: ci riprovo"), e intanto tiene rdboot.lz4.old. Lo stesso a mano:
+netupdate -avvio. Fino alla 0.048 rilanciare netupdate non la riscriveva.
 
 [netupdate expackage pacchetti]
 Installare e togliere le applicazioni del repository
@@ -838,6 +842,14 @@ sistema: `system -unload`, `chkdsk -r`, `system -load` - oppure
 l'avvio, prima di montarla.
 
 [problemi guasti]
+CACHEDISCO IN /boot/kernel.cfg NON CAMBIA NIENTE: dmesg | grep BLK dice
+  ancora "fino a N MB" col valore di serie. E' il kernel fino alla 0.343: la
+  cache si faceva prima di leggere kernel.cfg. Aggiorna con netupdate e
+  riavvia. Di serie la cache e' 1/8 della RAM che il kernel conta sotto i
+  4 GB (383 MB con 4 GB): per Exilla ne serve di piu', cachedisco = 1024.
+NETUPDATE DICE "L'AVVIO NON E' STATO AGGIORNATO: NON RIAVVIARE": non spegnere.
+  netupdate -avvio riscrive la mappa; con netupdate 0.049 lo fa da solo
+  anche il prossimo netupdate -check. Vedi [netupdate frammentato].
 EXILLA (FIREFOX): NEL PRIMO TAB L'INDIRIZZO SCRITTO NON SI APRE, in un tab
   nuovo si'. Succede dal secondo avvio senza indirizzo. Rimedio: apri un tab
   nuovo (Ctrl+T), oppure aggiorna Exilla con netupdate quando arriva il
@@ -1749,8 +1761,9 @@ abbassano (non si alzano oltre l'hardware) in /boot/kernel.cfg [kernel]:
   procmax = N     processi e fili insieme (RAM / 128 KB, al massimo 512)
   fdmax = N       descrittori per programma (uno ogni 2 KB di RAM)
   tcpmax = N      connessioni TCP di ip.drv (una ogni 32 KB di RAM)
-  cachedisco = N  MB della cache di lettura dei dischi (di serie 1/8 della RAM,
-                  0 la spegne); la memoria torna ai programmi quando serve
+  cachedisco = N  MB della cache di lettura dei dischi (di serie 1/8 della RAM
+                  sotto i 4 GB, 0 la spegne; letto dal kernel 0.344); la
+                  memoria torna ai programmi quando serve
   netrx = N       descrittori di ricezione, tutte le schede (uno per MB)
   nettx = N       descrittori di invio della scheda (un quarto di netrx)
 

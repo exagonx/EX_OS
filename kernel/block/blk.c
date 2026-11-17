@@ -594,6 +594,7 @@ static VoceCache *g_cache;
 static int        g_secchio[CACHE_SECCHI];
 static uint32_t   g_cache_orologio = 0;
 static int        g_cache_pronta   = 0;     /* 1 = provata (anche se spenta) */
+static int        g_pc_cfg_letto;     /* kernel.cfg read: pc_init may run */
 
 /* =============================================================================
  * THE READ-AHEAD WINDOW (0.264, @DISCO-VELOCE)
@@ -711,7 +712,13 @@ static void cache_init(void)
     g_cache = (VoceCache *)(uintptr_t)fis;
     for (k = 0; k < CACHE_VOCI; k++) { g_cache[k].disco = -1; g_cache[k].dopo = -1; }
     klog(LOG_INFO, "BLK: cache di %u settori a 0x%08x", (unsigned)CACHE_VOCI, fis);
-    pc_init();
+    /* ! pc_init ONLY AFTER kernel.cfg (0.344): the first disk read, which
+     * lands here, is at PASSO 13a and kernel.cfg is read at 13b, so up to
+     * 0.343 cachedisco was never seen (17/11, PC di prova: 383 MB, 1/8 of
+     * its 3071 MB under 4 GB, whatever kernel.cfg said). Whoever comes
+     * second makes it: this, or
+     * blk_cache_pagine_avvia. */
+    if (g_pc_cfg_letto) pc_init();
 
     fis = pmm_alloc_pages_kernel((AVANTI_SETT * 512u) / 4096u);
     if (fis != 0) g_av = (uint8_t *)(uintptr_t)fis;
@@ -823,6 +830,7 @@ static uint32_t  g_pc_liv = 0;
 static void pc_init(void)
 {
     const char *s = cfg_get_option("cachedisco");
+    uint32_t    voluto = pmm_get_total_pages() / 8u;
     uint32_t    pagine = pmm_get_total_pages() / 8u, secchi = 1, byte, k;
     paddr_t     f;
 
@@ -831,7 +839,11 @@ static void pc_init(void)
         while (*s >= '0' && *s <= '9') pagine = pagine * 10u + (uint32_t)(*s++ - '0');
         pagine *= 256u;
     } else if (pagine > PC_TABELLA_MAX / sizeof(VocePag)) {
+        /* the table lives in the 64 MB kernel band: said, not hidden */
         pagine = PC_TABELLA_MAX / sizeof(VocePag);
+        klog(LOG_INFO, "BLK: cache delle pagine di serie: %u MB invece di %u (1/8 della RAM): "
+             "la tabella sta nella fascia del kernel; di piu' con cachedisco in kernel.cfg",
+             pagine / 256u, voluto / 256u);
     }
     if (pagine == 0) { klog(LOG_INFO, "BLK: cache delle pagine spenta"); return; }
 
@@ -1025,6 +1037,19 @@ static void pc_scarta(int disco, uint64_t abs, uint32_t n)
 
         if (k >= 0) pc_libera(k);
     }
+}
+
+/* kernel.cfg has been read. The cache of the sectors (cache_init) comes at
+ * the first disk read, often before this: then the page cache is made here,
+ * under the disk lock; otherwise cache_init makes it. */
+void blk_cache_pagine_avvia(void)
+{
+    ata_prendi();
+    if (!g_pc_cfg_letto) {
+        g_pc_cfg_letto = 1;
+        if (g_cache_pronta) pc_init();
+    }
+    ata_lascia();
 }
 
 uint32_t blk_cache_cedi(uint32_t pagine)

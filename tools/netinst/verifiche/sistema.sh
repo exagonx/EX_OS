@@ -45,6 +45,24 @@ if [ -f /exwin/lib/applicazioni.txt ]; then
         fi
     fi
 fi
+# ! EXPACKAGE (3 November 2026, voce 49): the program and its line in the
+# start menu. A menu kept from before has no Strumenti/ExPackage line.
+if [ -f /exwin/bin/pm ]; then
+    if [ ! -f /exwin/bin/expackage ]; then
+        echo "  ! Manca /exwin/bin/expackage (i pacchetti dalla scrivania)."
+        echo "    netupdate -check -yes."
+        exit 1
+    fi
+    if [ -f /exwin/lib/applicazioni.txt ]; then
+        if [ -f /bin/grep ]; then
+            grep "/exwin/bin/expackage" /exwin/lib/applicazioni.txt > /dev/null
+            if [ $? != 0 ]; then
+                echo "  - Nel menu di avvio manca ExPackage. Aggiungi a /exwin/lib/applicazioni.txt:"
+                echo "    Strumenti/ExPackage    | /exwin/bin/expackage | /exwin/icon/baseapp/archivi_64.ico"
+            fi
+        fi
+    fi
+fi
 # ! EVERY PROCESSOR AT WORK (voce 92, kernel 0.319, 7 November 2026): smp
 # = 2 is the default and the cpu command places processes on processors.
 # A machine updated without it has the kernel but not the command; a
