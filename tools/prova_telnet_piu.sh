@@ -10,6 +10,7 @@
 # Same network as prova_telnet.sh (10.0.0.0/24, host port 2340 -> 23), then
 # tools/telnet_piu_prova.py: three sessions together, one closed, a fourth.
 # telnetd -s -v: the shell without login, so the test needs no password.
+# telnetd 0.016 (voci 21 and 100): a session's dmesg -segui & go with it.
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1
 BIT=${1:-32}

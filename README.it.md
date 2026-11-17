@@ -113,6 +113,48 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Una sessione telnet si porta via quello che ha lanciato (telnetd 0.016, voci 21 e 100) — testato in QEMU
+
+- **A fine sessione telnetd ferma tutto l'albero, non solo la shell**, come SIGHUP su Unix
+  (la scelta dell'utente del 2/11). Un `dmesg -segui` o un lavoro lanciato con `&` restava
+  addormentato per sempre su un pty senza nessuno dall'altra parte. EX-OS non ha gruppi di
+  processi: telnetd legge pid e padre di ogni processo (`proc_uso`, come `ps`) prima di
+  fermare la shell, ferma ogni discendente e ripete finche' ne trova di nuovi. La console
+  dice "telnetd: chiusi N processi lanciati dalla sessione".
+- **Vanno via anche i lavori lanciati con `&` dalla sessione**: e' il prezzo, ed e' stato scelto.
+- **Provato:** `tools/prova_telnet_piu.sh` (32 e 64 bit) ora lancia in una sessione
+  `dmesg -segui &` e `sh -c 'dmesg -segui' &`, taglia la connessione e controlla da
+  un'altra sessione che in ps non resti nessun dmesg: 8 su 8. `tools/prova_telnet.sh`: tutto
+  a posto a 32 e 64 bit.
+- **Misurato, ancora aperto:** con quei lavori in corso la sessione risulta chiusa dopo
+  circa 22 s, non i 2-4 s di una sessione ferma: il ciclo non conta come riposo (voce 100).
+
+### ATA: un FLUSH CACHE fallito si ritenta, BSY e DMA aspettano 30 s (kernel 0.345, voci 40 e 70) — testato in QEMU e sul PC di prova
+
+- **FLUSH CACHE ritentato una volta dopo un azzeramento, come fa libata di Linux.** Un
+  flush che scadeva era un EIO al primo colpo, e un mount che fa il flush (journal ext3/ext4)
+  metteva il volume in sola lettura. Adesso dmesg dice "FLUSH CACHE fallito ... ci riprovo
+  una volta", il canale IDE si azzera e il flush riparte; AHCI riavvia gia' la porta.
+- **BSY e DMA aspettano 30 s** (erano 5 e 8), la scelta dell'utente del 2/11; le attese BSY
+  di un trasferimento PIO e dell'azzeramento del canale cedono il processore.
+- **"timeout BSY" dice chi e quanto:** i ms aspettati davvero, la funzione che ha chiamato
+  (addr2line su kernel-intero.elf), il pid e chi tiene il lucchetto del disco.
+- **Cosa ha trovato (voce 70):** il "Profile Missing" di Firefox in QEMU era il FLUSH CACHE
+  del mount che aspettava l'host mentre scriveva un'immagine nuova da 1,1 GB: 60 s misurati.
+  Le prove di Exilla ora fanno `sync` dell'immagine prima di QEMU;
+  `SENZA_SYNC=1 tools/exilla/prova-riapertura.sh` tiene apposta il flush lento: a 32 e 64
+  bit il primo flush scade, il secondo riesce e il volume si monta in lettura/scrittura.
+- **tools/exilla/prova-riapertura.sh riscritta:** prendeva un Firefox collegato prima della
+  0.339 e non provava niente. Ora impacchetta quello di adesso su un disco ext4 nuovo e
+  controlla la pagina ai due avvii, Ctrl+Q (codice 0) e prefs.js. In QEMU Firefox riparte
+  dopo Ctrl+Q a 32 e 64 bit; il guasto del portatile del 1/11 resta da provare sul portatile.
+- Le regressioni extfs, ext4, smonta, montaggi e cachedisco passano a 32 bit; extfs ed ext4
+  anche a 64.
+- **PC di prova (17/11):** aggiornato con netupdate, sha256 del kernel 517448e1... controllato
+  prima del riavvio; la 0.345 parte, radice ext4 in lettura/scrittura, nessun timeout BSY o
+  errore di flush in dmesg, cache delle pagine sempre a 1024 MB, `netupdate -verifica` tutto
+  a posto.
+
 ### `cachedisco` in kernel.cfg vale (kernel 0.344, voce 27) — testato in QEMU e sul PC di prova
 
 - **Fino alla 0.343 `cachedisco` non veniva mai letto.** La cache delle pagine si faceva alla
@@ -169,6 +211,17 @@ sullo stesso profilo, l'indirizzo scritto nel primo tab e in un tab nuovo,
 la foto dopo Invio. 8 su 8 a 32 e a 64 bit; prima della correzione il
 secondo avvio dava `remoteTab is null`. Il primo tab parte bianco come i
 tab nuovi.
+
+Sul PC di prova, col pacchetto nuovo installato, il guasto restava: il
+profilo tiene il JavaScript gia' compilato (`startupCache`), e Firefox lo
+butta solo quando cambia il numero di build dentro il programma `firefox`,
+non quando cambia `omni.ja`. exilla 0.007 si ricorda dimensione e data di
+`firefox` e dei due `omni.ja` in `~/.exilla/installata` e, se sono cambiati,
+avvia Firefox una volta con `MOZ_PURGE_CACHES=1`: un avvio piu' lento dopo
+ogni aggiornamento, non a ogni avvio. Provato con
+`tools/exilla/prova-aggiornamento.sh`: un profilo usato con l'`omni.ja` di
+prima, poi aggiornato; senza exilla il primo tab resta morto, con exilla
+carica, e all'avvio dopo la cache resta. 14 su 14 a 64 e a 32 bit.
 
 ### telnetd serve piu' sessioni insieme (telnetd 0.015, voce 62) — testato in QEMU e sul PC di prova
 

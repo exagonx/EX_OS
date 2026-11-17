@@ -8,7 +8,8 @@ misurato, dove sta la causa nel codice e cosa cambiare. Quello che e' misurato
 e' marcato [MISURATO], quello che e' una proposta [PROPOSTA], quello che non e'
 stato verificato [NON VERIFICATO]. Il 16/11 niente era stato modificato nel
 progetto. Il 17/11 la correzione A.4.1 e' stata fatta e pubblicata, ma sul
-ferro il guasto e' rimasto: il perche' e la soluzione sono in A.6.
+ferro il guasto e' rimasto: il perche' e la soluzione sono in A.6, quello
+che e' stato fatto e provato in A.7 (exilla 0.007).
 
 Sono le voci 73 (primo tab) e 27 (avvio lento) di in_lavorazione.txt.
 
@@ -223,6 +224,71 @@ LA SOLUZIONE [PROPOSTA]
    Senza il punto 2: "tab subprocess" all'avvio e primo tab morto; con il
    punto 2: Invio nel primo tab apre la pagina. Poi sul PC di prova con
    l'utente.
+
+A.7 FATTO il 17/11: exilla 0.007 e la prova dell'aggiornamento
+---------------------------------------------------------------
+exwin/bin/exilla/exilla.c (exilla 0.007), il punto 2 di A.6:
+  - impronta(): "nome dimensione data" di firefox, omni.ja e
+    browser/omni.ja nella cartella di Exilla (EXILLA_DIR o
+    /exwin/app/exilla); un file che manca vale "nome -";
+  - se ~/.exilla/installata manca o e' diversa: scrive sulla console
+    "Exilla e' cambiata dall'ultimo avvio: Firefox rifa' la cache degli
+    script (un avvio piu' lento)" e avvia con MOZ_PURGE_CACHES=1;
+  - l'impronta nuova si scrive solo dopo che ex_spawn_program e' riuscito.
+Compilato a 32 bit (make exilla, build/exilla/exilla) e a 64 bit (le
+opzioni di tools/costruisci-utente64.sh, build-64/exwin/bin/exilla), senza
+avvisi. Manuale: boot/help.txt, [problemi guasti], voce EXILLA.
+
+LA PROVA: tools/exilla/prova-aggiornamento.sh (nuova). Un disco, quattro
+avvii, lo stesso profilo. L'omni.ja "vecchio" e' quello di adesso con il
+Tabbrowser.sys.mjs originale (cross_build/nasi5deb/firefox-originali),
+rifatto senza compressione in ~/cross_build/prove/firefox-17-11-tab/
+omni-vecchio{,64}/; il programma firefox e' lo stesso, come sul ferro.
+  1  exilla, omni.ja vecchio, profilo nuovo: il primo tab carica, il
+     profilo ha la cache degli script;
+  2  omni.ja nuovo copiato sopra, firefox avviato SENZA exilla: il primo tab
+     e' morto (il guasto dell'utente riprodotto: la correzione c'e' ma la
+     cache e' vecchia);
+  3  exilla: vede il cambio, butta la cache, il primo tab carica;
+  4  exilla di nuovo: niente di cambiato, la cache resta, il primo tab
+     carica.
+Esito: 14 su 14 a 64 bit e 14 su 14 a 32 bit.
+
+Tre cose imparate facendo la prova, scritte nello script:
+  - il segno affidabile del primo tab remoto e' "Failed to launch tab
+    subprocess" PRIMA del primo clic: dopo, un clic nella barra puo'
+    provarne uno lo stesso, innocuo; "remoteTab is null" a Invio non
+    esce sempre (nel giro 2 non e' uscito, il tab era morto lo stesso);
+  - dal terzo avvio Firefox chiede "Make Nightly your default browser?" e
+    la finestrella si prende quello che si scrive. Nella copia di prova si
+    spegne con browser.shell.checkDefaultBrowser = false in
+    browser/defaults/preferences/ (in defaults/pref non basta: firefox.js
+    del browser viene caricato dopo e la riaccende), piu' un Esc;
+  - dopo il cambio la prima pagina arriva in circa 7 s (la cache si
+    rifa'): la foto si scatta 15 s dopo Invio.
+
+SUL FERRO (PC di prova, 17/11 14:16) [MISURATO, NON VOLUTO]: provando che
+/root/exilla-0.007 partisse, la chiamata senza argomenti ha avviato
+Firefox sul profilo VERO dell'utente, due volte (la seconda ferma su
+"Close Firefox", profilo in uso). Tutti e due senza finestra, perche' ExWin
+era spento, e fermati con kill. Effetto: exilla 0.007 ha scritto
+/root/.exilla/installata e Firefox ha rifatto la cache del profilo
+dell'utente (startupCache 14:16) col Tabbrowser corretto. Nel suo log non
+c'e' "tab subprocess" all'avvio, che nei log delle 11:19 e delle 13:00
+c'era. La prova con la scrivania e la barra scritta a mano resta da fare
+con l'utente: /root/exilla-0.007 e' sul PC di prova (sha256 50485c50...),
+accanto a quello installato, che non e' stato toccato.
+
+Trovati strada facendo, NON corretti:
+  - exilla controlla la scrivania con ex_screen_size, cioe' la modalita'
+    video: con nv50.drv lo schermo e' grafico anche a ExWin spento, e
+    Firefox parte senza finestra (dice soltanto nel log "the ExWin window
+    server ('wserver') is not running"). C'era gia' nella 0.006.
+  - "Set as default browser" della finestrella fallisce
+    (ShellService.sys.mjs riga 480, this.shellService is undefined): EX-OS
+    non ha il servizio. E' la seconda parte della voce 38 (il browser
+    predefinito in ExWin); intanto la domanda compare a ogni utente dal
+    terzo avvio.
 
 
 =============================================================================

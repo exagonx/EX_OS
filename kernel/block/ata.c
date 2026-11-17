@@ -1836,13 +1836,12 @@ int ata_flush(int indice)
     return r;
 }
 
-static int ata_flush_nl(int indice)
+/* One FLUSH CACHE, no retry. */
+static int ata_flush_uno(const AtaDevice *d)
 {
-    const AtaDevice *d = ata_get_device(indice);
     uint16_t io;
     int      st;
 
-    if (d == NULL || !d->presente || d->tipo != ATA_TYPE_ATA) return -1;
     if (d->ahci) return ahci_flush(d->ahci - 1);
 
     io = base_io(d->canale);
@@ -1856,4 +1855,29 @@ static int ata_flush_nl(int indice)
     if (st < 0 || ((uint8_t)st & (ATA_SR_ERR | ATA_SR_DF))) return -1;
 
     return 0;
+}
+
+/* ! A FAILED FLUSH IS TRIED ONCE MORE, AFTER A RESET (kernel 0.345, the
+ * user's choice of 17/11): what Linux's libata does (ata_eh_maybe_retry_flush).
+ * A flush that ran out of time used to be an EIO at the first go, and a mount
+ * that flushes turned the volume read-only: "Profile Missing" in QEMU while
+ * the host was still writing a fresh 1.1 GB image (60 s, voce 70). The disk
+ * keeps writing its cache meanwhile, so the second try usually finds it done.
+ * AHCI already restarts the port when a command times out (porta_riprendi). */
+static int ata_flush_nl(int indice)
+{
+    const AtaDevice *d = ata_get_device(indice);
+
+    if (d == NULL || !d->presente || d->tipo != ATA_TYPE_ATA) return -1;
+    if (ata_flush_uno(d) == 0) return 0;
+
+    klog(LOG_WARN, "ATA: FLUSH CACHE fallito sul disco %d: azzero e ci riprovo una volta",
+         indice);
+    if (!d->ahci) ata_reset_canale(d->canale);
+    if (ata_flush_uno(d) == 0) {
+        klog(LOG_INFO, "ATA: FLUSH CACHE riuscito al secondo tentativo sul disco %d", indice);
+        return 0;
+    }
+    klog(LOG_ERROR, "ATA: FLUSH CACHE fallito due volte sul disco %d", indice);
+    return -1;
 }

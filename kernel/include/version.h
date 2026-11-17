@@ -999,7 +999,9 @@
  * of a channel reset yield. "timeout BSY" now says the ms waited, the
  * caller, the pid and the disk lock's holder: that is how voce 70's
  * "Profile Missing" in QEMU turned out to be FLUSH CACHE at mount waiting
- * for the host to write a fresh 1.1 GB image (60 s), not the kernel. */
+ * for the host to write a fresh 1.1 GB image (60 s), not the kernel.
+ * A failed FLUSH CACHE is tried once more after a channel reset, as
+ * Linux's libata does (the user's choice of 17/11). */
 #define EXOS_VERSION    "0.345"
 
 /* Autore e contatto */

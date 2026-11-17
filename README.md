@@ -111,6 +111,46 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### A telnet session takes away what it started (telnetd 0.016, voci 21 and 100) — tested in QEMU
+
+- **At the end of a session telnetd stops the whole tree, not only the shell**, as SIGHUP
+  does on Unix (the user's choice of 2/11). A `dmesg -segui` or a job started with `&` used
+  to stay asleep for ever on a pty with nobody on the other side. EX-OS has no process
+  groups: telnetd reads pid and parent of every process (`proc_uso`, as `ps`) before it
+  stops the shell, stops every descendant, and repeats while it finds new ones. The console
+  says "telnetd: chiusi N processi lanciati dalla sessione".
+- **Jobs started with `&` from the session go too**: that is the price, and it was chosen.
+- **Tested:** `tools/prova_telnet_piu.sh` (32 and 64 bit) now starts `dmesg -segui &` and
+  `sh -c 'dmesg -segui' &` in a session, cuts the connection and checks from another
+  session that ps has no dmesg left: 8/8. `tools/prova_telnet.sh`: all fine at 32 and 64 bit.
+- **Measured, still open:** with those jobs running the session is seen closed after about
+  22 s, not the 2-4 s of an idle session: the loop does not count as idle (voce 100).
+
+### ATA: a failed FLUSH CACHE is tried again, BSY and DMA wait 30 s (kernel 0.345, voci 40 and 70) — tested in QEMU and on the bench PC
+
+- **FLUSH CACHE tried once more after a reset, as Linux's libata does.** A flush that ran
+  out of time was an EIO at the first go, and a mount that flushes (ext3/ext4 journal) put
+  the volume read-only. Now dmesg says "FLUSH CACHE fallito ... ci riprovo una volta", the
+  IDE channel is reset and the flush is sent again; AHCI already restarts the port.
+- **BSY and DMA wait 30 s** (were 5 and 8), the user's choice of 2/11; the BSY waits of a
+  PIO transfer and of a channel reset give the processor away meanwhile.
+- **"timeout BSY" says who and how long:** the ms really waited, the calling function
+  (addr2line on kernel-intero.elf), the pid and the holder of the disk lock.
+- **What it found (voce 70):** Firefox's "Profile Missing" in QEMU was FLUSH CACHE at mount
+  waiting for the host to write a fresh 1.1 GB disk image: 60 s measured. The Exilla tests
+  now `sync` the image before QEMU; `SENZA_SYNC=1 tools/exilla/prova-riapertura.sh` keeps
+  the slow flush on purpose: at 32 and 64 bit the first flush times out, the second one
+  succeeds and the volume is mounted read/write.
+- **tools/exilla/prova-riapertura.sh rewritten:** it took a Firefox linked before 0.339 and
+  tested nothing. Now it packages the current one on a fresh ext4 disk and checks the page
+  at both starts, Ctrl+Q (exit code 0) and prefs.js. In QEMU Firefox starts again after
+  Ctrl+Q at 32 and 64 bit; the laptop's report of 1/11 is still to be tried on the laptop.
+- extfs, ext4, smonta, montaggi and cachedisco regressions pass at 32 bit; extfs and ext4
+  at 64 bit too.
+- **Bench PC (17/11):** updated with netupdate, kernel sha256 517448e1... checked before the
+  reboot; 0.345 starts, root ext4 read/write, no BSY timeout or flush error in dmesg, page
+  cache still 1024 MB, `netupdate -verifica` all fine.
+
 ### `cachedisco` in kernel.cfg counts (kernel 0.344, voce 27) — tested in QEMU and on the bench PC
 
 - **Up to 0.343 `cachedisco` was never read.** The page cache was made at the first disk
@@ -163,6 +203,17 @@ Tested with `tools/exilla/prova-primotab.sh` at 32 and 64 bit: two starts
 on the same profile, the address typed in the first tab and in a new tab,
 a photo after Enter. 8 of 8 at 32 and at 64 bit; before the fix the second
 start gave `remoteTab is null`. The first tab starts blank, like new tabs.
+
+On the bench PC, with the new package installed, the fault stayed: the
+profile keeps the JavaScript already compiled (`startupCache`), and Firefox
+drops it only when the build number inside the `firefox` program changes,
+not when `omni.ja` does. exilla 0.007 remembers size and date of `firefox`
+and of the two `omni.ja` in `~/.exilla/installata` and, when they changed,
+starts Firefox once with `MOZ_PURGE_CACHES=1`: one slower start after each
+update, not at every start. Tested with `tools/exilla/prova-aggiornamento.sh`:
+a profile used with the previous `omni.ja`, then updated; without exilla the
+first tab stays dead, with exilla it loads, and at the next start the cache
+stays. 14 of 14 at 64 bit and at 32 bit.
 
 ### telnetd serves several sessions at once (telnetd 0.015, voce 62) — tested in QEMU and on the bench PC
 

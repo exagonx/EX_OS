@@ -185,6 +185,7 @@ GRUPPO  VOCI             COSA
   9     33 37 35 31      fork, EINTR, tetti, file oltre 2 GB
  10     72 42 48 36 34   grandi porting; 72 dopo 33 e 37
  --     40 21            decise il 2/11: BSY e DMA a 30 s; telnetd chiude i discendenti
+                         17/11: 40 FATTA (kernel 0.345, anche il FLUSH ritentato); 21 FATTA (telnetd 0.016, voce 100)
  --     61 76            solo se ricompare (76: orologio in FAULT, 3/11)
  --     77               seguiti del 3-4/11: H.264 Firefox, Firefox 32, repo 64 da
                          pubblicare, ExPackage sul portatile, statici rimasti
@@ -8759,6 +8760,23 @@ tools/netinst/velocita tolto da netinst.
       sola copia di prova: al primo avvio si prendeva il fuoco), tab nuovo con
       Ctrl+T. NON girata sul Firefox senza correzione: il guasto si vede nel
       giro4 dell'analisi (~/cross_build/prove/firefox-16-11/), non con lei.
+      17/11 POMERIGGIO, SUL FERRO IL GUASTO RESTAVA con la correzione
+      installata (l'utente; log delle 11:19 e 13:00 sul PC di prova, omni.ja
+      con l'sha256 del pacchetto): il profilo esegue il Tabbrowser VECCHIO
+      dalla sua cache degli script (startupCache), che Firefox butta solo se
+      cambia il numero di build DENTRO il programma firefox (20261116062539,
+      lo stesso del profilo): `build faster` + package cambia solo omni.ja.
+      Provato su una copia del profilo: con startupCache primo tab remoto,
+      senza no. FATTO exilla 0.007: impronta di firefox e dei due omni.ja in
+      ~/.exilla/installata, MOZ_PURGE_CACHES=1 al primo avvio dopo un
+      cambio. tools/exilla/prova-aggiornamento.sh (profilo usato, omni.ja
+      aggiornato, controllo senza exilla): 14 su 14 a 64 e a 32 bit. Tutto in
+      firefox_soluzione.txt, A.6 e A.7. DA PUBBLICARE: il pacchetto exilla
+      col lanciatore nuovo; DA PROVARE con l'utente sulla scrivania del PC di
+      prova (/root/exilla-0.007). Visti, non corretti: exilla parte anche a
+      ExWin spento (ex_screen_size guarda solo il modo video); dal terzo
+      avvio la domanda del browser predefinito, il cui "Set as default"
+      fallisce (voce 38).
 
   72. PORTING DI OPENSSH sshd (l'utente, 2/11). Server per terminali ssh da GitHub,
       come Apache, MariaDB e gli altri: negli strumenti, clona il repository in
@@ -8816,8 +8834,11 @@ tools/netinst/velocita tolto da netinst.
       sporchi, disco da 8 TB a ~18 MB/s). Non e' EX-OS, e' la prova: ora
       prova-riapertura, prova-primotab, prova-aggiornamento e prova-lampi
       fanno sync dell'immagine prima di QEMU (come MariaDB, voce 40).
-      DA DECIDERE CON L'UTENTE: un FLUSH che scade manda il volume in sola
-      lettura al primo colpo; Linux (libata) lo ritenta dopo un reset.
+      DECISO (l'utente, 17/11: "si, ritenta il flush una volta come Linux"):
+      kernel 0.345, un FLUSH CACHE fallito si ritenta una volta dopo
+      l'azzeramento del canale (AHCI: la porta si riavvia gia' da sola).
+      Prova: SENZA_SYNC=1 tools/exilla/prova-riapertura.sh, dmesg deve dire
+      "riuscito al secondo tentativo".
       Con il sync (0.345, 64 bit): niente timeout, profilo creato (prefs.js),
       la pagina gialla c'e' ai due avvii, Ctrl+Q esce con codice 0. I NO
       rimasti erano della prova: pixel sotto il cursore del mouse, la riga
@@ -8827,6 +8848,15 @@ tools/netinst/velocita tolto da netinst.
       secondo avvio oscura la pagina (ora spenta nella copia di prova).
       Quindi IN QEMU IL SECONDO AVVIO VA. Il guasto del portatile del 1/11
       resta da riprovare sul portatile.
+      FATTO IN QEMU 17/11 (0.345): prova-riapertura.sh 8 su 8 a 32 e 64 bit
+      (la domanda "browser predefinito?" spenta con user.js nel profilo: da
+      defaults/pref non veniva presa). Con SENZA_SYNC=1 il primo FLUSH scade,
+      il secondo riesce, volume in lettura/scrittura, a 32 e 64 bit.
+      RESTA: provarla sul portatile; prova-aggiornamento.sh (dell'altra
+      sessione) non ha ancora il sync dell'immagine.
+      17/11 sera: la 0.345 sul PC di prova (.253) con netupdate, sha256
+      517448e1 controllato, riavviato: parte, niente timeout ne' flush
+      falliti in dmesg, cache 1024 MB, netupdate -verifica tutto a posto.
 
   69. TASTIERA MORTA OGNI TANTO DOPO IL RIAVVIO. L'utente, 2/11: non e' il login, la
       tastiera e' morta e il mouse funziona; non accade sempre. kbd_set_leds mandava
@@ -10381,6 +10411,15 @@ tools/netinst/velocita tolto da netinst.
       processi per sessione e un segnale a tutto il gruppo quando il pty si
       chiude (come SIGHUP); intanto dmesg -segui potrebbe uscire quando la
       scrittura fallisce. Da decidere con l'utente. Per ora: kill a mano.
+      GIA' DECISO il 2/11 (voce 21: telnetd chiude i discendenti).
+      FATTO 17/11, telnetd 0.016: interrompi_sessione() legge pid e padre di
+      tutti (proc_uso) PRIMA di fermare la shell, ferma ogni discendente,
+      ripete finche' ne trova di nuovi; tabelle che crescono, niente tetti.
+      prova_telnet_piu.sh 8/8 a 32 e 64 (dmesg -segui & e sotto sh -c,
+      connessione tagliata, ps da un'altra sessione), prova_telnet.sh a
+      posto a 32 e 64. MISURATO: la fine si vede dopo ~22 s, non 2-4: con
+      quei lavori il ciclo della sessione non va a riposo (domanda allo
+      stack ogni 15 s invece di 2). Perche': da guardare.
 
   61. IL LOGIN SI RIPETE DA SOLO SULLA CONSOLE (l'utente, 1/11, foto
       20261101_100408, portatile, 0.299): "EX-OS - accesso / utente:" a catena,
@@ -12310,6 +12349,7 @@ tools/netinst/velocita tolto da netinst.
       sessione e tiene il pty; decidere con l'utente se telnetd alla fine
       della sessione interrompe tutti i discendenti (come SIGHUP su Unix,
       ma uccide anche i lavori lanciati con & dalla sessione).
+      FATTO 17/11 (telnetd 0.016): vedi la voce 100.
   22. SISTEMA DI BASE IN RAMDISK (l'utente, 22/10): l'avvio carica UN
       archivio (~1 MB, oggi «quel che entra nel floppy») in un ramdisk che
       fa da radice: kernel, sh/login/mount, driver e moduli che servono a

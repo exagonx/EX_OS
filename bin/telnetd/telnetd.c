@@ -53,7 +53,7 @@
 #define BARRA_TELNET(t) extaskbar_voce("TELNET", 12, "TELNET " t, 0)
 
 /* +0.001 a ogni modifica: `telnetd -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("telnetd", "0.015");
+EX_VERSIONE("telnetd", "0.016");
 
 /* I comandi del protocollo, quelli che servono. */
 #define IAC     255
@@ -708,6 +708,81 @@ static void consegna(int id, int pty, const unsigned char *msg, unsigned int n)
 /* -----------------------------------------------------------------------------
  * Una sessione: la connessione da una parte, un pty dall'altra
  * --------------------------------------------------------------------------- */
+/* ! THE WHOLE SESSION GOES, NOT ONLY ITS SHELL (0.016, voci 21 and 100; the
+ * user's choice of 2/11). interrompi() stops one process: a `dmesg -segui`
+ * or a job started with & stayed asleep for ever on a pty with nobody on the
+ * other side. EX-OS has no process groups, so the tree is read from the
+ * kernel (proc_uso, pid and parent) BEFORE the shell goes - after, the
+ * grandchildren still name a dead parent - and every descendant is stopped,
+ * as SIGHUP does on Unix. Jobs started with & from the session go too: that
+ * was the price, and the user took it. The scan is repeated while it finds
+ * new ones (a child may start another meanwhile). No fixed cap: the tables
+ * grow with the process count. */
+static void interrompi_sessione(int radice)
+{
+    unsigned int *pid = NULL, *ppid = NULL, *preso = NULL, *gia = NULL;
+    unsigned int  n = 0, cap = 0, n_gia = 0, giro, i, j;
+    ProcUso       v[32];
+
+    for (giro = 0; giro < 4; giro++) {
+        unsigned int start = 0, fermati = 0;
+        int          k, cambiato = 1;
+
+        n = 0;
+        while ((k = proc_uso(v, 32, start, NULL)) > 0) {
+            for (i = 0; i < (unsigned int)k; i++) {
+                if (v[i].state == 4) continue;           /* a zombie: already gone */
+                if (n == cap) {
+                    unsigned int  c  = cap ? cap * 2 : 64;
+                    unsigned int *a  = realloc(pid,  c * sizeof(*a));
+                    unsigned int *b  = a ? realloc(ppid, c * sizeof(*b)) : NULL;
+
+                    if (a) pid = a;
+                    if (b) ppid = b;
+                    if (!a || !b) goto fine;
+                    cap = c;
+                }
+                pid[n] = v[i].pid; ppid[n] = v[i].ppid; n++;
+            }
+            start += (unsigned int)k;
+        }
+        free(preso);
+        preso = calloc(n ? n : 1, sizeof(*preso));
+        if (preso == NULL) goto fine;
+
+        /* the descendants: whoever has a taken parent, until nothing changes */
+        while (cambiato) {
+            cambiato = 0;
+            for (i = 0; i < n; i++) {
+                if (preso[i]) continue;
+                if (ppid[i] == (unsigned int)radice) { preso[i] = 1; cambiato = 1; continue; }
+                for (j = 0; j < n; j++)
+                    if (preso[j] && pid[j] == ppid[i]) { preso[i] = 1; cambiato = 1; break; }
+            }
+        }
+        for (i = 0; i < n; i++) {
+            unsigned int *g;
+
+            if (!preso[i] || pid[i] == (unsigned int)radice || pid[i] == (unsigned int)getpid())
+                continue;
+            for (j = 0; j < n_gia && gia[j] != pid[i]; j++) ;
+            if (j < n_gia) continue;                     /* stopped at a scan before */
+            if (interrompi((int)pid[i]) != 0) continue;
+            g = realloc(gia, (n_gia + 1) * sizeof(*g));
+            if (g == NULL) goto fine;
+            gia = g; gia[n_gia++] = pid[i];
+            fermati++;
+        }
+        if (!fermati) break;
+        usleep(50000);
+    }
+fine:
+    if (n_gia)
+        printf("telnetd: chiusi %u processi lanciati dalla sessione\n", n_gia);
+    free(pid); free(ppid); free(preso); free(gia);
+    interrompi(radice);
+}
+
 static void sessione(int id, const Config *cfg, int con_login)
 {
     static const unsigned char apertura[] = {
@@ -1032,8 +1107,9 @@ static void sessione(int id, const Config *cfg, int con_login)
     /* ! IL FIGLIO SI INTERROMPE, NON SI ASPETTA. Se e' ancora vivo vuol dire
      * che il cliente ha chiuso mentre lui stava li' ad aspettare un tasto:
      * senza questo, resterebbe attaccato a un pty che non ha piu' nessuno
-     * dall'altra parte — un processo per ogni sessione finita male. */
-    interrompi(figlio);
+     * dall'altra parte — un processo per ogni sessione finita male.
+     * 0.016: and everything it started (interrompi_sessione). */
+    interrompi_sessione(figlio);
 
     /* ! AND IT IS COLLECTED (25 October 2026): since kernel 0.278 an
      * interrupted shell really exits, and nobody else waits for it — it

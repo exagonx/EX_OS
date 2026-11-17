@@ -50,8 +50,16 @@ cp -a "$P" "$G/firefox"; cp exwin/font/*.ttf "$G/font/"
 cp "$LANCIA" "$G/firefox/exilla"
 cp "$P/omni.ja" "$G/omni-nuovo.ja"
 cp "$VECCHIO" "$G/firefox/omni.ja"
-# no Privacy Notice tab (as prova-primotab.sh: it takes the focus)
+# no Privacy Notice tab (as prova-primotab.sh: it takes the focus), and no
+# "Make Nightly your default browser?" box: from the third start it covers
+# the window and the address typed went into it (17/11, first run of this test)
+# ! THE BROWSER'S OWN PREFS COME AFTER defaults/pref: firefox.js (in
+# browser/omni.ja) set checkDefaultBrowser back to true. The browser's dir on
+# disk is read after it, as Linux distributions do with vendor.js.
 echo 'pref("datareporting.policy.firstRunURL", "");' > "$G/firefox/defaults/pref/primotab.js"
+mkdir -p "$G/firefox/browser/defaults/preferences"
+echo 'pref("browser.shell.checkDefaultBrowser", false);' \
+    > "$G/firefox/browser/defaults/preferences/primotab.js"
 printf '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Seconda</title></head><body style="background:#fff3c4"><h1>SECONDA PAGINA</h1></body></html>' > "$G/seconda.html"
 MB=$(( $(du -sm "$G" | cut -f1) * 13 / 10 + 128 ))
 rm -f "$IMG" "$PART"
@@ -97,9 +105,10 @@ for giro in 1 2 3 4; do
     fi
     A+=("key:alt-f5@3"
         "foto:$T/a1.ppm@${ATTESA1:-100}" "foto:$T/a2.ppm@${ATTESA2:-30}"
+        "key:esc@3" "foto:$T/a3.ppm@1"
         "vai:110,40@1" "mon:mouse_button 1;mouse_button 0@3"
         "vai:400,76@1" "mon:mouse_button 1;mouse_button 0@3"
-        "file:///disk/seconda.html@n4" "key:ret@1" "foto:$T/d-invio.ppm@12"
+        "file:///disk/seconda.html@n4" "key:ret@15" "foto:$T/d-invio.ppm@1"
         "key:ctrl-q@5" "key:ret@30" "key:alt-f1@3"
         "ls -l /disk/c2/.exilla/profilo/startupCache@4")
     [ $giro != 2 ] && A+=("cat $LOG@8")
@@ -112,7 +121,10 @@ for giro in 1 2 3 4; do
     done
     carica=1; [ -f "$T/d-invio.ppm" ] && gialla "$T/d-invio.ppm" || carica=0
     avviso=0; grep -aq "$AVVISO" "$S" && avviso=1
-    remoto=0; grep -aq "remoteTab is null" "$S" && remoto=1
+    # ! THE FIRST TAB IS REMOTE when "Failed to launch tab subprocess" comes
+    # BEFORE the first click (evento 1): later, a click in the bar may try one
+    # too, harmlessly. "remoteTab is null" on Enter does not always come.
+    remoto=$(awk '/evento 1 su/ { exit } /Failed to launch tab subprocess/ { r = 1 } END { print r + 0 }' "$S")
     case $giro in
     1)  [ $carica = 1 ] && si "1 Exilla vecchia, profilo nuovo: il primo tab carica" \
             || no "1 Exilla vecchia, profilo nuovo: il primo tab non carica (d-invio1.png)"
@@ -128,11 +140,11 @@ for giro in 1 2 3 4; do
             || no "3 exilla non vede l'aggiornamento"
         [ $carica = 1 ] && si "3 dopo l'aggiornamento il primo tab carica" \
             || no "3 dopo l'aggiornamento il primo tab non carica (d-invio3.png)"
-        [ $remoto = 0 ] && si "3 nessun tab remoto" || no "3 tab remoto (remoteTab is null)" ;;
+        [ $remoto = 0 ] && si "3 nessun tab remoto" || no "3 il primo tab nasce remoto (tab subprocess prima del clic)" ;;
     4)  [ $avviso = 0 ] && si "4 niente di cambiato: la cache resta" \
             || no "4 exilla butta la cache anche senza aggiornamento"
         [ $carica = 1 ] && si "4 il primo tab carica" || no "4 il primo tab non carica (d-invio4.png)"
-        [ $remoto = 0 ] && si "4 nessun tab remoto" || no "4 tab remoto" ;;
+        [ $remoto = 0 ] && si "4 nessun tab remoto" || no "4 il primo tab nasce remoto" ;;
     esac
     grep -aq "\[FAULT\]\|PANIC" "$S" && no "$giro FAULT o PANIC" || si "$giro nessun FAULT"
 done

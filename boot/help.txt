@@ -851,9 +851,12 @@ ATA: "timeout BSY sul canale N" IN dmesg E UN VOLUME ext MONTATO IN SOLA
   LETTURA ("the journal could not be opened"): il disco non ha finito un
   comando in tempo, e programmi come Exilla non scrivono il profilo
   ("Profile Missing"). Dal kernel 0.345 il messaggio dice anche i ms
-  aspettati e chi ha chiamato. In QEMU succede quando l'immagine del disco
-  e' appena stata scritta sull'host: fai sync prima di avviare QEMU. Sul
-  ferro, smonta e rimonta il volume; se torna, il disco e' da guardare.
+  aspettati e chi ha chiamato, e un FLUSH CACHE fallito si ritenta una
+  volta dopo l'azzeramento del canale, come Linux ("riuscito al secondo
+  tentativo" in dmesg). In QEMU succede quando l'immagine del disco e'
+  appena stata scritta sull'host: fai sync prima di avviare QEMU. Sul
+  ferro, smonta e rimonta il volume; se "fallito due volte" torna, il
+  disco e' da guardare.
 NETUPDATE DICE "L'AVVIO NON E' STATO AGGIORNATO: NON RIAVVIARE": non spegnere.
   netupdate -avvio riscrive la mappa; con netupdate 0.049 lo fa da solo
   anche il prossimo netupdate -check. Vedi [netupdate frammentato].
@@ -868,6 +871,11 @@ EXILLA (FIREFOX): NEL PRIMO TAB L'INDIRIZZO SCRITTO NON SI APRE, in un tab
   vecchio, a Firefox chiuso, una volta per ogni utente:
       rm -r ~/.exilla/profilo/startupCache
   oppure avvia una volta  /exwin/app/exilla/exilla -purgecaches
+TELNET: DOPO UNA SESSIONE CHIUSA RESTANO PROCESSI in ps (un dmesg -segui,
+  un lavoro lanciato con &): e' telnetd fino alla 0.015, che fermava solo la
+  shell. Aggiorna con netupdate; intanto kill PID. Dalla 0.016 a fine
+  sessione si chiude tutto quello che la sessione ha lanciato, anche i
+  lavori con & (la console dice "chiusi N processi"), entro circa 20 s.
 TELNET: LA SECONDA SESSIONE NON RISPONDE finche' la prima non esce: e'
   telnetd fino alla 0.014. Aggiorna con netupdate. Se la console dice "non
   passa alla copia", ip.drv e' piu' vecchio della 0.021: aggiorna anche quello.

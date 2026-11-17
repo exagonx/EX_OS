@@ -43,9 +43,10 @@ rm -rf "$G"; mkdir -p "$G/font" "$G/casa" "$G/profilo"
 cp -a "$P" "$G/firefox"; cp exwin/font/*.ttf "$G/font/"
 # ! NO PRIVACY NOTICE TAB (test copy only): it takes the focus and covers the
 # page on a first start (see prova-primotab.sh)
-# nor the "default browser?" dialog, which dims the page at the second start
-printf 'pref("datareporting.policy.firstRunURL", "");\npref("browser.shell.checkDefaultBrowser", false);\n' \
-    > "$G/firefox/defaults/pref/riapertura.js"
+echo 'pref("datareporting.policy.firstRunURL", "");' > "$G/firefox/defaults/pref/riapertura.js"
+# nor the "default browser?" dialog, which dims the page at the second start:
+# in the profile's user.js (from defaults/pref it was not taken, 17/11)
+echo 'user_pref("browser.shell.checkDefaultBrowser", false);' > "$G/profilo/user.js"
 printf '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Prova</title></head><body style="background:#fff3c4"><h1>RIAPERTURA</h1></body></html>' > "$G/prova.html"
 MB=$(( $(du -sm "$G" | cut -f1) * 13 / 10 + 256 ))
 rm -f "$IMG" "$PART"
@@ -58,7 +59,9 @@ dd if="$PART" of="$IMG" bs=1M seek=1 conv=notrunc status=none; rm -f "$PART"
 # guest's FLUSH CACHE is QEMU's fdatasync of this file, and a fresh 1.1 GB
 # image took the host 60 s to write. The flush at mount ran out of its 30 s,
 # the ext4 journal did not open, the volume went read-only: "Profile Missing".
-sync "$IMG"
+# SENZA_SYNC=1 skips it on purpose: the slow flush then tests the kernel's
+# second FLUSH CACHE (0.345); dmesg must say "riuscito al secondo tentativo".
+[ -n "$SENZA_SYNC" ] || sync "$IMG"
 
 KVM=""; [ -w /dev/kvm ] && KVM="-enable-kvm"
 export EXOS_ISTANZA=riap$SUFF EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD" EXOS_RAM="${EXOS_RAM:-2048M}"
