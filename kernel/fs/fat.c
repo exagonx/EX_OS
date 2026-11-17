@@ -116,6 +116,7 @@
  * ============================================================================= */
 
 #include "kernel.h"
+#include "posti.h"
 #include "fat.h"
 #include "blk.h"
 #include "rtc.h"
@@ -322,9 +323,13 @@ typedef struct {
     uint32_t fsinfo_lba;      /* FAT32: settore FSInfo, 0 = assente */
 
     char     etichetta[12];
+    int      indice;          /* its own slot: the slots are apart (0.343) */
 } FatMount;
 
-static FatMount g_mnt[FAT_MAX_MOUNT];
+/* Grows (kernel 0.343, voce 50): it was FatMount[FAT_MAX_MOUNT]; see posti.h. */
+static FatMount **volatile g_mnt;
+static volatile int g_mnt_n;
+POSTI_CRESCI(fat_posti_cresci, FatMount, g_mnt, g_mnt_n, 4)
 static int      g_init = 0;
 
 /* --- letture non allineate --- */
@@ -691,10 +696,13 @@ int fat_mount(int blkdev)
 
     if (!g_init) { cache_init(); g_init = 1; }
 
-    for (i = 0; i < FAT_MAX_MOUNT; i++) {
-        if (!g_mnt[i].usato) { slot = i; break; }
+    for (i = 0; i < g_mnt_n; i++) {
+        if (!(*g_mnt[i]).usato) { slot = i; break; }
     }
-    if (slot < 0) return -1;
+    if (slot < 0) {
+        slot = g_mnt_n;
+        if (fat_posti_cresci() != 0) { klog(LOG_ERROR, "FAT: niente memoria per un altro montaggio"); return -1; }
+    }
 
     s = settore(blkdev, 0);
     if (s == NULL) return -1;
@@ -804,7 +812,8 @@ int fat_mount(int blkdev)
         m.etichetta[i] = '\0';
     }
 
-    g_mnt[slot] = m;
+    m.indice = slot;
+    *g_mnt[slot] = m;
 
     klog(LOG_INFO, "FAT: montato dispositivo %d: FAT%u, %u cluster da %u settori, '%s'",
          blkdev, m.tipo, m.n_cluster, m.sec_per_clus, m.etichetta);
@@ -814,29 +823,29 @@ int fat_mount(int blkdev)
 
 int fat_umount(int mnt)
 {
-    if (mnt < 0 || mnt >= FAT_MAX_MOUNT || !g_mnt[mnt].usato) return -1;
-    cache_invalida(g_mnt[mnt].dev);
-    g_mnt[mnt].usato = 0;
+    if (mnt < 0 || mnt >= g_mnt_n || !(*g_mnt[mnt]).usato) return -1;
+    cache_invalida((*g_mnt[mnt]).dev);
+    (*g_mnt[mnt]).usato = 0;
     g_fat_gen++;
     return 0;
 }
 
 int fat_tipo(int mnt)
 {
-    if (mnt < 0 || mnt >= FAT_MAX_MOUNT || !g_mnt[mnt].usato) return -1;
-    return (int)g_mnt[mnt].tipo;
+    if (mnt < 0 || mnt >= g_mnt_n || !(*g_mnt[mnt]).usato) return -1;
+    return (int)(*g_mnt[mnt]).tipo;
 }
 
 uint32_t fat_n_cluster(int mnt)
 {
-    if (mnt < 0 || mnt >= FAT_MAX_MOUNT || !g_mnt[mnt].usato) return 0;
-    return g_mnt[mnt].n_cluster;
+    if (mnt < 0 || mnt >= g_mnt_n || !(*g_mnt[mnt]).usato) return 0;
+    return (*g_mnt[mnt]).n_cluster;
 }
 
 const char *fat_etichetta(int mnt)
 {
-    if (mnt < 0 || mnt >= FAT_MAX_MOUNT || !g_mnt[mnt].usato) return "";
-    return g_mnt[mnt].etichetta;
+    if (mnt < 0 || mnt >= g_mnt_n || !(*g_mnt[mnt]).usato) return "";
+    return (*g_mnt[mnt]).etichetta;
 }
 
 /* =============================================================================
@@ -1345,9 +1354,9 @@ int fat_readdir(int mnt, const char *percorso, FatDirEntry *out,
     uint32_t  visti = 0, scritti = 0;
     int       esito;
 
-    if (mnt < 0 || mnt >= FAT_MAX_MOUNT || !g_mnt[mnt].usato) return -1;
+    if (mnt < 0 || mnt >= g_mnt_n || !(*g_mnt[mnt]).usato) return -1;
     if (out == NULL || max == 0) return -1;
-    m = &g_mnt[mnt];
+    m = g_mnt[mnt];
 
     if (risolvi(m, percorso, NULL, &clus, NULL) != 0) return -1;
     if (m->tipo != 32 && clus == m->root_clus) clus = 0;
@@ -1387,8 +1396,8 @@ int fat_stat(int mnt, const char *percorso, FatDirEntry *out)
     FatMount *m;
     uint8_t   voce[32];
 
-    if (mnt < 0 || mnt >= FAT_MAX_MOUNT || !g_mnt[mnt].usato) return -1;
-    m = &g_mnt[mnt];
+    if (mnt < 0 || mnt >= g_mnt_n || !(*g_mnt[mnt]).usato) return -1;
+    m = g_mnt[mnt];
 
     if (risolvi(m, percorso, voce, NULL, NULL) != 0) return -1;
     if (voce[0] == 0) return -1;    /* era la root, non un file */
@@ -1411,9 +1420,9 @@ int fat_read(int mnt, const char *percorso, void *buf,
     uint8_t     *dst = (uint8_t *)buf;
     uint32_t     clus_byte;
 
-    if (mnt < 0 || mnt >= FAT_MAX_MOUNT || !g_mnt[mnt].usato) return -1;
+    if (mnt < 0 || mnt >= g_mnt_n || !(*g_mnt[mnt]).usato) return -1;
     if (buf == NULL) return -1;
-    m = &g_mnt[mnt];
+    m = g_mnt[mnt];
 
     if (fat_stat(mnt, percorso, &e) != 0) return -1;
     if (e.is_dir) return -1;
@@ -1767,7 +1776,7 @@ static int voce_nuova(FatMount *m, const char *percorso, uint8_t attr,
     /* Un nome che esiste gia' non si sovrascrive in silenzio: due voci
      * con lo stesso nome renderebbero il file precedente irraggiungibile
      * e i suoi cluster non piu' liberabili. */
-    if (fat_stat((int)(m - g_mnt), percorso, &gia) == 0) return -2;
+    if (fat_stat(m->indice, percorso, &gia) == 0) return -2;
 
     if (dir_slot_libero(m, clus_dir, &pos) != 0) return -1;
 
@@ -1801,8 +1810,8 @@ int fat_create(int mnt, const char *percorso)
 {
     FatMount *m;
 
-    if (mnt < 0 || mnt >= FAT_MAX_MOUNT || !g_mnt[mnt].usato) return -1;
-    m = &g_mnt[mnt];
+    if (mnt < 0 || mnt >= g_mnt_n || !(*g_mnt[mnt]).usato) return -1;
+    m = g_mnt[mnt];
 
     return voce_nuova(m, percorso, FAT_ATTR_ARCHIVE, 0, NULL);
 }
@@ -1814,8 +1823,8 @@ int fat_mkdir(int mnt, const char *percorso)
     PosVoce   pos;
     uint8_t  *v;
 
-    if (mnt < 0 || mnt >= FAT_MAX_MOUNT || !g_mnt[mnt].usato) return -1;
-    m = &g_mnt[mnt];
+    if (mnt < 0 || mnt >= g_mnt_n || !(*g_mnt[mnt]).usato) return -1;
+    m = g_mnt[mnt];
 
     {
         char padre[FAT_PERCORSO_MAX], nome[FAT_NOME_MAX];
@@ -1914,8 +1923,8 @@ int fat_rename(int mnt, const char *da, const char *a)
     FatDirEntry gia;
     int         i;
 
-    if (mnt < 0 || mnt >= FAT_MAX_MOUNT || !g_mnt[mnt].usato) return -1;
-    m = &g_mnt[mnt];
+    if (mnt < 0 || mnt >= g_mnt_n || !(*g_mnt[mnt]).usato) return -1;
+    m = g_mnt[mnt];
 
     if (percorso_dividi(da, pad_da, sizeof(pad_da),
                         nom_da, sizeof(nom_da)) != 0) return -1;
@@ -2008,14 +2017,14 @@ static int rimuovi(FatMount *m, const char *percorso, int vuole_dir)
 
 int fat_unlink(int mnt, const char *percorso)
 {
-    if (mnt < 0 || mnt >= FAT_MAX_MOUNT || !g_mnt[mnt].usato) return -1;
-    return rimuovi(&g_mnt[mnt], percorso, 0);
+    if (mnt < 0 || mnt >= g_mnt_n || !(*g_mnt[mnt]).usato) return -1;
+    return rimuovi(g_mnt[mnt], percorso, 0);
 }
 
 int fat_rmdir(int mnt, const char *percorso)
 {
-    if (mnt < 0 || mnt >= FAT_MAX_MOUNT || !g_mnt[mnt].usato) return -1;
-    return rimuovi(&g_mnt[mnt], percorso, 1);
+    if (mnt < 0 || mnt >= g_mnt_n || !(*g_mnt[mnt]).usato) return -1;
+    return rimuovi(g_mnt[mnt], percorso, 1);
 }
 
 /* =============================================================================
@@ -2032,9 +2041,9 @@ int fat_write(int mnt, const char *percorso, const void *buf,
     uint32_t     scritti = 0, dentro;
     int          primo_nuovo = 0;
 
-    if (mnt < 0 || mnt >= FAT_MAX_MOUNT || !g_mnt[mnt].usato) return -1;
+    if (mnt < 0 || mnt >= g_mnt_n || !(*g_mnt[mnt]).usato) return -1;
     if (buf == NULL) return -1;
-    m = &g_mnt[mnt];
+    m = g_mnt[mnt];
 
     if (size == 0) return 0;
 
@@ -2165,8 +2174,8 @@ int fat_truncate(int mnt, const char *percorso, uint32_t nuova_dim)
     PosVoce   pos;
     uint32_t  primo, dim, clus_byte, tenuti, clus, i;
 
-    if (mnt < 0 || mnt >= FAT_MAX_MOUNT || !g_mnt[mnt].usato) return -1;
-    m = &g_mnt[mnt];
+    if (mnt < 0 || mnt >= g_mnt_n || !(*g_mnt[mnt]).usato) return -1;
+    m = g_mnt[mnt];
 
     if (risolvi(m, percorso, voce, NULL, &pos) != 0) return -1;
     if (pos.lba == 0) return -1;
@@ -2240,8 +2249,8 @@ int fat_sync(int mnt)
 {
     FatMount *m;
 
-    if (mnt < 0 || mnt >= FAT_MAX_MOUNT || !g_mnt[mnt].usato) return -1;
-    m = &g_mnt[mnt];
+    if (mnt < 0 || mnt >= g_mnt_n || !(*g_mnt[mnt]).usato) return -1;
+    m = g_mnt[mnt];
 
     if (m->tipo == 32 && m->fsinfo_lba != 0) {
         uint8_t *f = settore_mut(m->dev, m->fsinfo_lba);
@@ -2277,9 +2286,9 @@ int fat_estensione(int mnt, const char *percorso, uint32_t *lba_rel,
     uint8_t   voce[32];
     uint32_t  primo, dim, clus, passi = 0;
 
-    if (mnt < 0 || mnt >= FAT_MAX_MOUNT || !g_mnt[mnt].usato) return -1;
+    if (mnt < 0 || mnt >= g_mnt_n || !(*g_mnt[mnt]).usato) return -1;
     if (lba_rel == NULL || n_sett == NULL) return -1;
-    m = &g_mnt[mnt];
+    m = g_mnt[mnt];
 
     if (risolvi(m, percorso, voce, NULL, NULL) != 0) return -1;
     if (voce[11] & FAT_ATTR_DIR) return -1;

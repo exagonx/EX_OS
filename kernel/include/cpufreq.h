@@ -44,6 +44,7 @@
 #define CPUFREQ_NO_BIOS         5   /* SpeedStep switched off by the BIOS (IA32_MISC_ENABLE) */
 #define CPUFREQ_NO_HWP          6   /* Intel HWP active: the processor decides by itself */
 #define CPUFREQ_NO_STATI        7   /* fewer than two usable P-states */
+#define CPUFREQ_NO_CORE2        8   /* Core 2: the pairs are read and shown in dmesg, nothing written yet (0.342) */
 
 /* modo */
 #define CPUFREQ_SPENTO      0       /* the kernel does not touch the frequency (at boot) */

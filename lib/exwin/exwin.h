@@ -605,6 +605,9 @@ int         ex_redraw(ExWindow c);
  * arrives as EXM_COMMAND: the program flips its setting and calls this again.
  * Over an older exwin.so the entry is a plain one. */
 void        ex_menu_check(ExWindow menu, unsigned int id, int acceso);
+/* exwin.so 0.022: si = 0 greys the entry, and choosing it sends nothing. Over
+ * an older exwin.so the entry stays as it is. */
+void        ex_menu_enable(ExWindow menu, unsigned int id, int si);
 
 /* Drawing in window f stays inside (x, y, w, h) until ex_set_clip(f, 0, 0, 0, 0)
  * (30 September 2026). For a program that draws a part of its window itself
@@ -1235,6 +1238,13 @@ void         ex_textarea_set_cursor(ExWindow area, unsigned int riga, unsigned i
  * piena, non mezza vuota. */
 unsigned int ex_textarea_get_view(ExWindow area, unsigned int *visibili);
 void         ex_textarea_scroll_to(ExWindow area, unsigned int riga);
+/* Tabs (exwin.so 0.022): ex_textarea_set_tab(area, 8) shows a tab as the
+ * spaces up to the next multiple of 8; 0 or 1 = one column, the default.
+ * ex_textarea_get_column() gives the caret's SCREEN column from 0 (tabs
+ * counted) and in `prima` the first column shown: a ruler needs both. Over an
+ * older exwin.so the tab stays one column and the column is 0. */
+void         ex_textarea_set_tab(ExWindow area, unsigned int n);
+unsigned int ex_textarea_get_column(ExWindow area, unsigned int *prima);
 
 /* ! UNA RIGA INTERA SI SOSTITUISCE IN UN COLPO, senza passare da un tasto per
  * volta: e' quel che serve a un «cerca e sostituisci», che cambia un pezzo di

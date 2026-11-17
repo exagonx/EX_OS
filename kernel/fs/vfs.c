@@ -85,6 +85,7 @@
 #include "vol.h"
 #include "blk.h"
 #include "syscall.h"
+#include "posti.h"
 #include "sched.h"    /* proc_get_current, sched_yield: il lucchetto del VFS */
 #include "kmalloc.h"
 #include "rtc.h"      /* rtc_utc_da_locale: FAT dates are local (0.340) */
@@ -112,7 +113,38 @@ static void v_copia(char *dst, const char *src, uint32_t max)
     dst[i] = '\0';
 }
 
-static VfsMount g_mnt[VFS_MAX_MOUNT];
+/* THE MOUNT TABLE GROWS (kernel 0.343, voce 50): it was VfsMount[6], and the
+ * fourth ext volume of prova_extfs met "nessuno slot di montaggio libero".
+ * One VfsPosto per mount point, with what vfs.c keeps beside the VfsMount
+ * that `mount` lists (the subtree, read-only as asked, the dirty mark); the
+ * slots never move: see kernel/include/posti.h. */
+typedef struct {
+    VfsMount m;
+    char     sotto[VFS_PUNTO_MAX];   /* see g_base below */
+    uint8_t  ro_chiesto;             /* see vfs_ext2_rivaluta */
+    uint8_t  segnato;                /* this slot was marked dirty by us */
+} VfsPosto;
+
+static VfsPosto **volatile g_posto;
+static volatile int        g_posti_n;
+POSTI_CRESCI(vfs_posti_cresci, VfsPosto, g_posto, g_posti_n, 8)
+
+/* A free slot for a mount, growing the table if every one is taken: its
+ * index, or -1 when the heap is out. Under the VFS lock. */
+static int posto_libero(int da)
+{
+    int i, n;
+
+    for (i = da; i < g_posti_n; i++) if (!g_posto[i]->m.usato) return i;
+    n = g_posti_n;
+    if (vfs_posti_cresci() != 0) {
+        klog(LOG_ERROR, "VFS: niente memoria per un altro punto di montaggio (%d)", n);
+        return -1;
+    }
+    return n;
+}
+
+int vfs_posti(void) { return g_posti_n; }
 
 /* =============================================================================
  * IL SISTEMA DI BASE: /rdboot, e la radice che c'e' sotto il disco
@@ -134,13 +166,12 @@ static VfsMount g_mnt[VFS_MAX_MOUNT];
  * ! g_sotto STA FUORI DA VfsMount, come g_ro_chiesto: la struttura e' quella
  * che `mount` elenca, e non cambia per un campo che serve solo qui.
  * ============================================================================= */
-static char g_sotto[VFS_MAX_MOUNT][VFS_PUNTO_MAX];
 static int  g_base = -1;     /* lo slot di /rdboot, -1 = nessun sistema di base */
 
 /* Vero se lo slot 0 (la radice) e' il sistema di base e non un disco. */
 static int radice_e_base(void)
 {
-    return g_base >= 0 && g_mnt[0].usato && g_mnt[0].blkdev == g_mnt[g_base].blkdev;
+    return g_base >= 0 && g_posto[0]->m.usato && g_posto[0]->m.blkdev == g_posto[g_base]->m.blkdev;
 }
 
 /* Read-only because whoever mounted it ASKED (mount -r), as opposed to
@@ -148,7 +179,6 @@ static int radice_e_base(void)
  * lifted when the ext2 write module registers (vfs_ext2_rivaluta). Kept
  * here and not in VfsMount, whose layout is the one the mount listing
  * hands out. */
-static uint8_t g_ro_chiesto[VFS_MAX_MOUNT];
 
 /* =============================================================================
  * IL SEGNO «SPORCO» DI UN VOLUME ext2 (@RDBOOT passo 3, 22 ottobre 2026)
@@ -172,7 +202,6 @@ static uint8_t g_ro_chiesto[VFS_MAX_MOUNT];
  *
  * ! I VOLUMI IN RAM NO: sparire con la corrente e' il loro patto.
  * ============================================================================= */
-static uint8_t g_segnato[VFS_MAX_MOUNT];   /* questo slot l'abbiamo segnato sporco */
 static uint8_t g_e2_sett[1024];
 
 /* The superblock's crc32c, as kernel/moduli/ext4/somme.c: this is the only
@@ -526,11 +555,11 @@ static int instrada(const char *abs, char *interno, uint32_t max)
     int      i, migliore = -1;
     uint32_t len_migliore = 0;
 
-    for (i = 0; i < VFS_MAX_MOUNT; i++) {
+    for (i = 0; i < g_posti_n; i++) {
         uint32_t l, k;
 
-        if (!g_mnt[i].usato) continue;
-        l = lunghezza_prefisso(&g_mnt[i]);
+        if (!g_posto[i]->m.usato) continue;
+        l = lunghezza_prefisso(&g_posto[i]->m);
 
         if (l == 0) {                       /* la root combacia sempre */
             if (migliore < 0) migliore = i;
@@ -538,7 +567,7 @@ static int instrada(const char *abs, char *interno, uint32_t max)
         }
 
         for (k = 0; k < l; k++) {
-            if (abs[k] != g_mnt[i].punto[k]) break;
+            if (abs[k] != g_posto[i]->m.punto[k]) break;
         }
         if (k < l) continue;
 
@@ -555,14 +584,14 @@ static int instrada(const char *abs, char *interno, uint32_t max)
     if (migliore < 0) return -1;
 
     {
-        uint32_t l = lunghezza_prefisso(&g_mnt[migliore]);
+        uint32_t l = lunghezza_prefisso(&g_posto[migliore]->m);
         const char *resto = abs + l;
 
-        if (g_sotto[migliore][0]) {
+        if (g_posto[migliore]->sotto[0]) {
             /* Un sottoalbero: "/rdboot/bin" -> "/rdboot" + "/bin". */
-            uint32_t ls = v_len(g_sotto[migliore]);
+            uint32_t ls = v_len(g_posto[migliore]->sotto);
 
-            v_copia(interno, g_sotto[migliore], max);
+            v_copia(interno, g_posto[migliore]->sotto, max);
             if (resto[0] != '\0' && ls < max) v_copia(interno + ls, resto, max - ls);
         } else if (resto[0] == '\0') {
             v_copia(interno, "/", max);
@@ -647,15 +676,14 @@ static int partizione_attiva(int disco_idx)
 
 void vfs_init(uint8_t boot_drive)
 {
-    int i;
-
-    for (i = 0; i < VFS_MAX_MOUNT; i++) g_mnt[i].usato = 0;
+    if (g_posti_n == 0 && vfs_posti_cresci() != 0)
+        kpanic("VFS: niente memoria per la tabella dei montaggi");
     if (g_vfs_posti == 0 && vfs_blocco_in_piu() != 0)
         kpanic("VFS: niente memoria per la tabella dei file aperti");
 
-    v_copia(g_mnt[0].punto, "/", VFS_PUNTO_MAX);
-    g_mnt[0].usato        = 1;
-    g_mnt[0].sola_lettura = 0;
+    v_copia(g_posto[0]->m.punto, "/", VFS_PUNTO_MAX);
+    g_posto[0]->m.usato        = 1;
+    g_posto[0]->m.sola_lettura = 0;
 
     /* =====================================================================
      * IL VOLUME IN RAM VIENE PRIMA DI TUTTO, e non e' una preferenza: se c'e',
@@ -673,10 +701,10 @@ void vfs_init(uint8_t boot_drive)
 
             if (mnt >= 0) {
                 blk_acquisisci(ird);
-                g_mnt[0].tipo   = VFS_FS_FAT;
-                g_mnt[0].mnt    = mnt;
-                g_mnt[0].blkdev = ird;
-                v_copia(g_mnt[0].dev, "rd0", BLK_NOME_MAX);
+                g_posto[0]->m.tipo   = VFS_FS_FAT;
+                g_posto[0]->m.mnt    = mnt;
+                g_posto[0]->m.blkdev = ird;
+                v_copia(g_posto[0]->m.dev, "rd0", BLK_NOME_MAX);
                 klog(LOG_INFO, "VFS: root '/' sul volume in RAM (FAT%d)",
                      fat_tipo(mnt));
                 return;
@@ -783,15 +811,15 @@ void vfs_init(uint8_t boot_drive)
 
             blk_acquisisci(ipart);
 
-            g_mnt[0].tipo   = (uint8_t)tipo;
-            g_mnt[0].mnt    = mnt;
-            g_mnt[0].blkdev = ipart;
-            v_copia(g_mnt[0].dev, d2 ? d2->nome : "hd0", BLK_NOME_MAX);
+            g_posto[0]->m.tipo   = (uint8_t)tipo;
+            g_posto[0]->m.mnt    = mnt;
+            g_posto[0]->m.blkdev = ipart;
+            v_copia(g_posto[0]->m.dev, d2 ? d2->nome : "hd0", BLK_NOME_MAX);
             /* ! AN ext2 ROOT STARTS READ-ONLY (kernel 0.263): the writing is
              * /dev/ext4.mod, loaded right after this (modulo_avvio), and
              * vfs_ext2_rivaluta() lifts it when the module registers. */
-            g_ro_chiesto[0] = 0;
-            if (tipo == VFS_FS_EXT2 && ext2_sola_lettura(mnt)) g_mnt[0].sola_lettura = 1;
+            g_posto[0]->ro_chiesto = 0;
+            if (tipo == VFS_FS_EXT2 && ext2_sola_lettura(mnt)) g_posto[0]->m.sola_lettura = 1;
 
             /* ! COM'ERA STATO LASCIATO, letto ADESSO: fra un istante il
              * modulo di scrittura lo segnera' «in uso» (vfs_ext2_rivaluta),
@@ -799,14 +827,14 @@ void vfs_init(uint8_t boot_drive)
             g_sist_sporco = (tipo == VFS_FS_EXT2 && e2_stato(ipart) == 0);
             if (g_sist_sporco)
                 klog(LOG_WARN, "VFS: %s non e' stato smontato pulito (spegnimento "
-                               "brusco?)", g_mnt[0].dev);
+                               "brusco?)", g_posto[0]->m.dev);
 
             if (tipo == VFS_FS_EXT2)
                 klog(LOG_INFO, "VFS: root '/' su %s (ext2, avvio da disco 0x%02x)",
-                     g_mnt[0].dev, boot_drive);
+                     g_posto[0]->m.dev, boot_drive);
             else
                 klog(LOG_INFO, "VFS: root '/' su %s (FAT%d, avvio da disco 0x%02x)",
-                     g_mnt[0].dev, fat_tipo(mnt), boot_drive);
+                     g_posto[0]->m.dev, fat_tipo(mnt), boot_drive);
             return;
         }
 
@@ -864,18 +892,18 @@ void vfs_init(uint8_t boot_drive)
             /* La root non si smonta mai: si rivendica il dispositivo. */
             blk_acquisisci(i2);
 
-            g_mnt[0].tipo         = VFS_FS_ISO;
-            g_mnt[0].mnt          = mnt;
-            g_mnt[0].blkdev       = i2;
+            g_posto[0]->m.tipo         = VFS_FS_ISO;
+            g_posto[0]->m.mnt          = mnt;
+            g_posto[0]->m.blkdev       = i2;
             /* ! SOLA LETTURA, e non e' una scelta: un ISO 9660 non si
              * scrive. Dichiararlo qui fa rifiutare ogni modifica con EROFS
              * PRIMA di toccare il filesystem, invece di lasciarla fallire
              * piu' in basso in un punto qualunque. */
-            g_mnt[0].sola_lettura = 1;
-            v_copia(g_mnt[0].dev, d->nome, BLK_NOME_MAX);
+            g_posto[0]->m.sola_lettura = 1;
+            v_copia(g_posto[0]->m.dev, d->nome, BLK_NOME_MAX);
 
             klog(LOG_INFO, "VFS: root '/' su %s (ISO 9660, avvio da CD per "
-                           "emulazione floppy)", g_mnt[0].dev);
+                           "emulazione floppy)", g_posto[0]->m.dev);
             return;
         }
 
@@ -884,10 +912,10 @@ void vfs_init(uint8_t boot_drive)
     }
 
     /* Montaggio 0: la root sul floppy, via fat12.c (punto 1). */
-    g_mnt[0].tipo   = VFS_FS_FAT12FD;
-    g_mnt[0].mnt    = -1;
-    g_mnt[0].blkdev = -1;
-    v_copia(g_mnt[0].dev, "fd0", BLK_NOME_MAX);
+    g_posto[0]->m.tipo   = VFS_FS_FAT12FD;
+    g_posto[0]->m.mnt    = -1;
+    g_posto[0]->m.blkdev = -1;
+    v_copia(g_posto[0]->m.dev, "fd0", BLK_NOME_MAX);
 
     klog(LOG_INFO, "VFS: root '/' sul floppy (fat12.c)");
 }
@@ -895,16 +923,16 @@ void vfs_init(uint8_t boot_drive)
 int vfs_conta(void)
 {
     int i, n = 0;
-    for (i = 0; i < VFS_MAX_MOUNT; i++) if (g_mnt[i].usato) n++;
+    for (i = 0; i < g_posti_n; i++) if (g_posto[i]->m.usato) n++;
     return n;
 }
 
 const VfsMount *vfs_get(int i)
 {
     int k, n = 0;
-    for (k = 0; k < VFS_MAX_MOUNT; k++) {
-        if (!g_mnt[k].usato) continue;
-        if (n == i) return &g_mnt[k];
+    for (k = 0; k < g_posti_n; k++) {
+        if (!g_posto[k]->m.usato) continue;
+        if (n == i) return &g_posto[k]->m;
         n++;
     }
     return NULL;
@@ -929,13 +957,14 @@ static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
      * con se stesso: meglio rifiutarlo che accettarlo e non funzionare. */
     if (punto[1] != '\0' && punto[v_len(punto) - 1] == '/') return ERR(EINVAL);
 
-    for (i = 0; i < VFS_MAX_MOUNT; i++) {
-        if (!g_mnt[i].usato) { if (slot < 0) slot = i; continue; }
-        if (v_uguale(g_mnt[i].punto, punto) && !(i == 0 && punto[1] == '\0'))
+    for (i = 0; i < g_posti_n; i++) {
+        if (!g_posto[i]->m.usato) { if (slot < 0) slot = i; continue; }
+        if (v_uguale(g_posto[i]->m.punto, punto) && !(i == 0 && punto[1] == '\0'))
             return ERR(EBUSY);
-        if (v_uguale(g_mnt[i].dev,   dev))   return ERR(EBUSY);
+        if (v_uguale(g_posto[i]->m.dev,   dev))   return ERR(EBUSY);
     }
-    if (slot < 0) return ERR(EMFILE);
+    if (slot < 0) slot = posto_libero(0);
+    if (slot < 0) return ERR(ENOMEM);
 
     blkdev = blk_trova(dev);
     if (blkdev < 0) return ERR(ENOENT);
@@ -996,7 +1025,7 @@ static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
         mnt = iso_mount(blkdev);
         if (mnt < 0) return ERR(EIO);
 
-        g_mnt[slot].tipo = VFS_FS_ISO;
+        g_posto[slot]->m.tipo = VFS_FS_ISO;
 
         /* La sola lettura NON e' una scelta del montaggio: e' una
          * proprieta' del formato (vedi kernel/include/iso9660.h). Si
@@ -1015,9 +1044,9 @@ static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
             if (segnato) e2_segna(blkdev, 1);
             return ERR(EIO);
         }
-        g_segnato[slot] = (uint8_t)segnato;
+        g_posto[slot]->segnato = (uint8_t)segnato;
 
-        g_mnt[slot].tipo = VFS_FS_EXT2;
+        g_posto[slot]->m.tipo = VFS_FS_EXT2;
         /* Read-only until /dev/ext4.mod registers, and for features it
          * cannot write (kernel 0.263, kernel/fs/ext2.c valuta()). */
         if (ext2_sola_lettura(mnt)) sola_lettura = 1;
@@ -1025,9 +1054,9 @@ static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
         mnt = fat_mount(blkdev);
         if (mnt < 0) return ERR(EIO);
 
-        g_mnt[slot].tipo = VFS_FS_FAT;
+        g_posto[slot]->m.tipo = VFS_FS_FAT;
     }
-    if (g_mnt[slot].tipo != VFS_FS_EXT2) g_segnato[slot] = 0;
+    if (g_posto[slot]->m.tipo != VFS_FS_EXT2) g_posto[slot]->segnato = 0;
 
     /* Dichiara al livello a blocchi che questo dispositivo e' in uso: da
      * qui in poi blk_rescan() rifiutera' di rileggere la tabella del suo
@@ -1035,14 +1064,14 @@ static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
      * contatore invece di una domanda al VFS. */
     blk_acquisisci(blkdev);
 
-    g_mnt[slot].usato        = 1;
-    v_copia(g_mnt[slot].punto, punto, VFS_PUNTO_MAX);
-    g_mnt[slot].sola_lettura = sola_lettura ? 1 : 0;
-    g_ro_chiesto[slot]       = (uint8_t)chiesto;
-    g_mnt[slot].mnt          = mnt;
-    g_mnt[slot].blkdev       = blkdev;
-    v_copia(g_mnt[slot].dev, dev, BLK_NOME_MAX);
-    g_sotto[slot][0] = '\0';
+    g_posto[slot]->m.usato        = 1;
+    v_copia(g_posto[slot]->m.punto, punto, VFS_PUNTO_MAX);
+    g_posto[slot]->m.sola_lettura = sola_lettura ? 1 : 0;
+    g_posto[slot]->ro_chiesto       = (uint8_t)chiesto;
+    g_posto[slot]->m.mnt          = mnt;
+    g_posto[slot]->m.blkdev       = blkdev;
+    v_copia(g_posto[slot]->m.dev, dev, BLK_NOME_MAX);
+    g_posto[slot]->sotto[0] = '\0';
 
     /* ! IL DISCO TORNA SOPRA LA BASE (@RDBOOT passo 2). Montato in uno slot
      * qualunque, ora prende lo slot 0, quello della radice. I file aperti
@@ -1054,27 +1083,27 @@ static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
 
         for (k = 0; k < (int)g_vfs_posti; k++)
             if (g_file_(k).usato && g_file_(k).im == 0) g_file_(k).im = g_base;
-        blk_rilascia(g_mnt[0].blkdev);          /* la radice-base non c'e' piu' */
-        g_mnt[0]        = g_mnt[slot];
-        g_ro_chiesto[0] = g_ro_chiesto[slot];
-        g_segnato[0]    = g_segnato[slot];
-        g_segnato[slot] = 0;
-        g_sotto[0][0]   = '\0';
-        g_mnt[slot].usato = 0;
+        blk_rilascia(g_posto[0]->m.blkdev);          /* la radice-base non c'e' piu' */
+        g_posto[0]->m        = g_posto[slot]->m;
+        g_posto[0]->ro_chiesto = g_posto[slot]->ro_chiesto;
+        g_posto[0]->segnato    = g_posto[slot]->segnato;
+        g_posto[slot]->segnato = 0;
+        g_posto[0]->sotto[0]   = '\0';
+        g_posto[slot]->m.usato = 0;
         slot = 0;
         klog(LOG_WARN, "VFS: %s e' di nuovo la radice, sopra il sistema di base", dev);
     }
 
-    if (g_mnt[slot].tipo == VFS_FS_ISO)
+    if (g_posto[slot]->m.tipo == VFS_FS_ISO)
         klog(LOG_INFO, "VFS: montato %s su %s (ISO 9660%s, sola lettura): '%s'",
              dev, punto, iso_joliet(mnt) ? "/Joliet" : "", iso_etichetta(mnt));
-    else if (g_mnt[slot].tipo == VFS_FS_EXT2)
+    else if (g_posto[slot]->m.tipo == VFS_FS_EXT2)
         klog(LOG_INFO, "VFS: montato %s su %s (ext2, %s)", dev, punto,
-             g_mnt[slot].sola_lettura ? "sola lettura" : "lettura/scrittura");
+             g_posto[slot]->m.sola_lettura ? "sola lettura" : "lettura/scrittura");
     else
         klog(LOG_INFO, "VFS: montato %s su %s (FAT%d, %s)",
              dev, punto, fat_tipo(mnt),
-             g_mnt[slot].sola_lettura ? "sola lettura" : "lettura/scrittura");
+             g_posto[slot]->m.sola_lettura ? "sola lettura" : "lettura/scrittura");
     return 0;
 }
 
@@ -1086,9 +1115,9 @@ static int vfs_umount_nl(const char *punto)
 
     if (punto == NULL) return ERR(EINVAL);
 
-    for (i = 0; i < VFS_MAX_MOUNT; i++) {
-        if (!g_mnt[i].usato) continue;
-        if (!v_uguale(g_mnt[i].punto, punto)) continue;
+    for (i = 0; i < g_posti_n; i++) {
+        if (!g_posto[i]->m.usato) continue;
+        if (!v_uguale(g_posto[i]->m.punto, punto)) continue;
 
         /* /rdboot e' il sistema di base: e' cio' che resta quando il disco
          * se ne va, e non se ne va lui. */
@@ -1110,32 +1139,32 @@ static int vfs_umount_nl(const char *punto)
             }
         }
 
-        if      (g_mnt[i].tipo == VFS_FS_ISO)  iso_umount (g_mnt[i].mnt);
-        else if (g_mnt[i].tipo == VFS_FS_EXT2) ext2_umount(g_mnt[i].mnt);
-        else                                   fat_umount (g_mnt[i].mnt);
+        if      (g_posto[i]->m.tipo == VFS_FS_ISO)  iso_umount (g_posto[i]->m.mnt);
+        else if (g_posto[i]->m.tipo == VFS_FS_EXT2) ext2_umount(g_posto[i]->m.mnt);
+        else                                   fat_umount (g_posto[i]->m.mnt);
 
         /* Smontato: il volume e' di nuovo coerente sul disco. */
-        if (g_segnato[i]) {
-            if (e2_segna(g_mnt[i].blkdev, 1)) blk_flush(g_mnt[i].blkdev);
-            g_segnato[i] = 0;
+        if (g_posto[i]->segnato) {
+            if (e2_segna(g_posto[i]->m.blkdev, 1)) blk_flush(g_posto[i]->m.blkdev);
+            g_posto[i]->segnato = 0;
         }
 
-        if (g_mnt[i].blkdev >= 0) blk_rilascia(g_mnt[i].blkdev);
-        g_mnt[i].usato = 0;
+        if (g_posto[i]->m.blkdev >= 0) blk_rilascia(g_posto[i]->m.blkdev);
+        g_posto[i]->m.usato = 0;
         klog(LOG_INFO, "VFS: smontato %s", punto);
 
         /* ! E LA RADICE TORNA IL SISTEMA DI BASE: il volume intero, con
          * /rdboot dentro, nello slot 0. Lo stesso montaggio di /rdboot (un
          * handle ext2 solo), visto da un'altra altezza. */
         if (i == 0) {
-            g_mnt[0]          = g_mnt[g_base];
-            v_copia(g_mnt[0].punto, "/", VFS_PUNTO_MAX);
-            g_ro_chiesto[0]   = g_ro_chiesto[g_base];
-            g_segnato[0]      = 0;
-            g_sotto[0][0]     = '\0';
-            blk_acquisisci(g_mnt[0].blkdev);
+            g_posto[0]->m          = g_posto[g_base]->m;
+            v_copia(g_posto[0]->m.punto, "/", VFS_PUNTO_MAX);
+            g_posto[0]->ro_chiesto   = g_posto[g_base]->ro_chiesto;
+            g_posto[0]->segnato      = 0;
+            g_posto[0]->sotto[0]     = '\0';
+            blk_acquisisci(g_posto[0]->m.blkdev);
             klog(LOG_WARN, "VFS: la radice e' il sistema di base (%s): il disco "
-                           "di sistema si puo' modificare", g_mnt[0].dev);
+                           "di sistema si puo' modificare", g_posto[0]->m.dev);
         }
         return 0;
     }
@@ -1157,7 +1186,7 @@ static int e_radice(const char *interno)
  * /rdboot non si cancella ne' si rinomina, come la radice di un montaggio. */
 static int e_radice_di(int im, const char *interno)
 {
-    return e_radice(interno) || (g_sotto[im][0] && v_uguale(interno, g_sotto[im]));
+    return e_radice(interno) || (g_posto[im]->sotto[0] && v_uguale(interno, g_posto[im]->sotto));
 }
 
 /* Rilascia lo slot prenotato da vfs_open e riporta l'errore al chiamante.
@@ -1338,16 +1367,16 @@ static void segui_rinomina(int im, const char *da, const char *a)
 
 static int esiste_interno(int im, const char *interno)
 {
-    if (g_mnt[im].tipo == VFS_FS_PROC) {
+    if (g_posto[im]->m.tipo == VFS_FS_PROC) {
         VfsStat st;
         return procfs_stat(interno, &st) == 0;
     }
-    if (g_mnt[im].tipo == VFS_FS_EXT2) {
+    if (g_posto[im]->m.tipo == VFS_FS_EXT2) {
         Ext2DirEntry e;
-        return ext2_stat(g_mnt[im].mnt, interno, &e) == 0;
+        return ext2_stat(g_posto[im]->m.mnt, interno, &e) == 0;
     } else {
         FatDirEntry e;
-        return fat_stat(g_mnt[im].mnt, interno, &e) == 0;
+        return fat_stat(g_posto[im]->m.mnt, interno, &e) == 0;
     }
 }
 
@@ -1380,10 +1409,10 @@ static int nascondi_aperto(int im, const char *interno)
     }
     if (tentativi == 10000) return ERR(EEXIST);
 
-    if (g_mnt[im].tipo == VFS_FS_EXT2)
-        r = ext2_rename(g_mnt[im].mnt, interno, nascosto);
+    if (g_posto[im]->m.tipo == VFS_FS_EXT2)
+        r = ext2_rename(g_posto[im]->m.mnt, interno, nascosto);
     else
-        r = fat_rename(g_mnt[im].mnt, interno, nascosto);
+        r = fat_rename(g_posto[im]->m.mnt, interno, nascosto);
     if (r != 0) return ERR(EIO);
 
     for (i = 0; i < (int)g_vfs_posti; i++)
@@ -1514,7 +1543,7 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
     if (im < 0) return ERR(ENOENT);
 
     /* EROFS PRIMA di toccare il filesystem (punto 5). */
-    if (g_mnt[im].sola_lettura &&
+    if (g_posto[im]->m.sola_lettura &&
         (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND))) {
         return ERR(EROFS);
     }
@@ -1588,37 +1617,37 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
     g_file_(slot).posiz.di  = 0;
     v_copia(g_file_(slot).interno, interno, VFS_PATH_MAX);
 
-    if (g_mnt[im].tipo == VFS_FS_FAT12FD) {
+    if (g_posto[im]->m.tipo == VFS_FS_FAT12FD) {
         int h = fat12_open(interno, flags);
         if (h < 0) return apri_fallito(slot, ERR(ENOENT));
         g_file_(slot).h12 = h;
-    } else if (g_mnt[im].tipo == VFS_FS_PROC) {
+    } else if (g_posto[im]->m.tipo == VFS_FS_PROC) {
         VfsStat st;
         int     r = procfs_stat(interno, &st);
 
         if (r < 0) return apri_fallito(slot, r);
         if (st.is_dir) return apri_cartella(slot, flags);
-    } else if (g_mnt[im].tipo == VFS_FS_ISO) {
+    } else if (g_posto[im]->m.tipo == VFS_FS_ISO) {
         IsoDirEntry e;
 
         /* Nessun ramo O_CREAT: su ISO non si crea niente, e il montaggio
          * e' gia' stato dichiarato in sola lettura piu' sopra — quindi qui
          * ci si arriva solo in lettura. */
-        if (iso_stat(g_mnt[im].mnt, interno, &e) != 0)
+        if (iso_stat(g_posto[im]->m.mnt, interno, &e) != 0)
             return apri_fallito(slot, ERR(ENOENT));
         if (e.is_dir) return apri_cartella(slot, flags);
-    } else if (g_mnt[im].tipo == VFS_FS_EXT2) {
+    } else if (g_posto[im]->m.tipo == VFS_FS_EXT2) {
         Ext2DirEntry e;
 
-        if (ext2_stat(g_mnt[im].mnt, interno, &e) != 0) {
+        if (ext2_stat(g_posto[im]->m.mnt, interno, &e) != 0) {
             if (!(flags & O_CREAT)) return apri_fallito(slot, ERR(ENOENT));
             {
-                int r = ext2_create(g_mnt[im].mnt, interno,
+                int r = ext2_create(g_posto[im]->m.mnt, interno,
                                     vfs_uid_corrente(), vfs_gid_corrente());
                 if (r == -2) return apri_fallito(slot, ERR(EEXIST));
                 if (r != 0)  return apri_fallito(slot, ERR(EIO));
             }
-            if (ext2_stat(g_mnt[im].mnt, interno, &e) != 0)
+            if (ext2_stat(g_posto[im]->m.mnt, interno, &e) != 0)
                 return apri_fallito(slot, ERR(EIO));
         } else if ((flags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL)) {
             /* ! O_EXCL DID NOT EXIST (analisi voce 47): two programs both
@@ -1630,7 +1659,7 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
              * was truncated first and refused after */
             return apri_cartella(slot, flags);
         } else if (flags & O_TRUNC) {
-            if (ext2_truncate(g_mnt[im].mnt, interno, 0) != 0)
+            if (ext2_truncate(g_posto[im]->m.mnt, interno, 0) != 0)
                 return apri_fallito(slot, ERR(EIO));
         }
 
@@ -1638,14 +1667,14 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
     } else {
         FatDirEntry e;
 
-        if (fat_stat(g_mnt[im].mnt, interno, &e) != 0) {
+        if (fat_stat(g_posto[im]->m.mnt, interno, &e) != 0) {
             if (!(flags & O_CREAT)) return apri_fallito(slot, ERR(ENOENT));
             {
-                int r = fat_create(g_mnt[im].mnt, interno);
+                int r = fat_create(g_posto[im]->m.mnt, interno);
                 if (r == -2) return apri_fallito(slot, ERR(EEXIST));
                 if (r != 0)  return apri_fallito(slot, ERR(EIO));
             }
-            if (fat_stat(g_mnt[im].mnt, interno, &e) != 0)
+            if (fat_stat(g_posto[im]->m.mnt, interno, &e) != 0)
                 return apri_fallito(slot, ERR(EIO));
         } else if ((flags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL)) {
             /* ! O_EXCL DID NOT EXIST (analisi voce 47): two programs both
@@ -1655,7 +1684,7 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
         } else if (e.is_dir) {
             return apri_cartella(slot, flags);      /* before O_TRUNC, as ext2 */
         } else if (flags & O_TRUNC) {
-            if (fat_truncate(g_mnt[im].mnt, interno, 0) != 0)
+            if (fat_truncate(g_posto[im]->m.mnt, interno, 0) != 0)
                 return apri_fallito(slot, ERR(EIO));
         }
 
@@ -1670,21 +1699,21 @@ static int vfs_read_nl(int h, void *buf, uint32_t size, uint32_t offset)
     if (!VFS_H_VALIDO(h) || !g_file_(h).usato) return ERR(EBADF);
     if (g_file_(h).cartella) return ERR(EISDIR);   /* readdir reads directories */
 
-    if (g_mnt[g_file_(h).im].tipo == VFS_FS_FAT12FD)
+    if (g_posto[g_file_(h).im]->m.tipo == VFS_FS_FAT12FD)
         return fat12_read(g_file_(h).h12, buf, size, offset);
 
-    if (g_mnt[g_file_(h).im].tipo == VFS_FS_PROC)
+    if (g_posto[g_file_(h).im]->m.tipo == VFS_FS_PROC)
         return procfs_read(g_file_(h).interno, buf, size, offset);
 
-    if (g_mnt[g_file_(h).im].tipo == VFS_FS_ISO)
-        return iso_read(g_mnt[g_file_(h).im].mnt, g_file_(h).interno,
+    if (g_posto[g_file_(h).im]->m.tipo == VFS_FS_ISO)
+        return iso_read(g_posto[g_file_(h).im]->m.mnt, g_file_(h).interno,
                         buf, size, offset);
 
-    if (g_mnt[g_file_(h).im].tipo == VFS_FS_EXT2)
-        return ext2_read(g_mnt[g_file_(h).im].mnt, g_file_(h).interno,
+    if (g_posto[g_file_(h).im]->m.tipo == VFS_FS_EXT2)
+        return ext2_read(g_posto[g_file_(h).im]->m.mnt, g_file_(h).interno,
                          buf, size, offset);
 
-    return fat_read(g_mnt[g_file_(h).im].mnt, g_file_(h).interno,
+    return fat_read(g_posto[g_file_(h).im]->m.mnt, g_file_(h).interno,
                     buf, size, offset);
 }
 
@@ -1699,25 +1728,25 @@ static int vfs_write_nl(int h, const void *buf, uint32_t size, uint32_t offset)
     if (!VFS_H_VALIDO(h) || !g_file_(h).usato) return ERR(EBADF);
     if (g_file_(h).cartella) return ERR(EBADF);    /* opened read-only, always */
     im = g_file_(h).im;
-    if (g_mnt[im].sola_lettura) return ERR(EROFS);
+    if (g_posto[im]->m.sola_lettura) return ERR(EROFS);
 
     /* Ridondante finche' il montaggio ISO resta in sola lettura per
      * forza — ed e' li' apposta: senza, un montaggio ISO che per un
      * difetto arrivasse qui con sola_lettura a 0 finirebbe nel ramo FAT
      * per esclusione, cioe' scriverebbe su un volume ottico attraverso il
      * driver sbagliato. */
-    if (g_mnt[im].tipo == VFS_FS_ISO || g_mnt[im].tipo == VFS_FS_PROC) return ERR(EROFS);
+    if (g_posto[im]->m.tipo == VFS_FS_ISO || g_posto[im]->m.tipo == VFS_FS_PROC) return ERR(EROFS);
 
-    if (g_mnt[im].tipo == VFS_FS_FAT12FD)
+    if (g_posto[im]->m.tipo == VFS_FS_FAT12FD)
         return fat12_write(g_file_(h).h12, buf, size, offset);
 
-    if (g_mnt[im].tipo == VFS_FS_EXT2) {
-        int n = ext2_write(g_mnt[im].mnt, g_file_(h).interno, buf, size, offset);
+    if (g_posto[im]->m.tipo == VFS_FS_EXT2) {
+        int n = ext2_write(g_posto[im]->m.mnt, g_file_(h).interno, buf, size, offset);
         return (n < 0) ? ERR(EIO) : n;
     }
 
     {
-        int n = fat_write(g_mnt[im].mnt, g_file_(h).interno, buf, size, offset);
+        int n = fat_write(g_posto[im]->m.mnt, g_file_(h).interno, buf, size, offset);
         return (n < 0) ? ERR(EIO) : n;
     }
 }
@@ -1734,13 +1763,13 @@ static int vfs_close_nl(int h)
         return 0;
     }
 
-    if (g_mnt[g_file_(h).im].tipo == VFS_FS_FAT12FD)
+    if (g_posto[g_file_(h).im]->m.tipo == VFS_FS_FAT12FD)
         fat12_close(g_file_(h).h12);
 
     /* ext2 keeps blocks set aside for a file being appended to, and the
      * superblock's counters, until the file is closed (0.264). */
-    if (g_mnt[g_file_(h).im].tipo == VFS_FS_EXT2)
-        ext2_chiudi(g_mnt[g_file_(h).im].mnt);
+    if (g_posto[g_file_(h).im]->m.tipo == VFS_FS_EXT2)
+        ext2_chiudi(g_posto[g_file_(h).im]->m.mnt);
 
     /* the last reference: no lock may go on naming this slot */
     {
@@ -1762,10 +1791,10 @@ static int vfs_close_nl(int h)
 
         g_file_(h).orfano = 0;
         if (aperti_su(im, g_file_(h).interno) == 0) {
-            if (g_mnt[im].tipo == VFS_FS_EXT2)
-                ext2_unlink(g_mnt[im].mnt, g_file_(h).interno);
+            if (g_posto[im]->m.tipo == VFS_FS_EXT2)
+                ext2_unlink(g_posto[im]->m.mnt, g_file_(h).interno);
             else
-                fat_unlink(g_mnt[im].mnt, g_file_(h).interno);
+                fat_unlink(g_posto[im]->m.mnt, g_file_(h).interno);
         }
     }
     return 0;
@@ -1915,7 +1944,7 @@ static int stat_interno_fs(int im, const char *interno, VfsStat *st)
         st->dimensione   = 0;
         st->ident        = VFS_IDENT(im, 0);
         st->is_dir       = 1;
-        st->sola_lettura = g_mnt[im].sola_lettura;
+        st->sola_lettura = g_posto[im]->m.sola_lettura;
         /* La radice non ha una voce di directory, quindi non ha nemmeno
          * una data: zero, che vuol dire «non la so». */
         st->data = 0;
@@ -1923,9 +1952,9 @@ static int stat_interno_fs(int im, const char *interno, VfsStat *st)
         return 0;
     }
 
-    if (g_mnt[im].tipo == VFS_FS_PROC) {
+    if (g_posto[im]->m.tipo == VFS_FS_PROC) {
         return procfs_stat(interno, st);
-    } else if (g_mnt[im].tipo == VFS_FS_FAT12FD) {
+    } else if (g_posto[im]->m.tipo == VFS_FS_FAT12FD) {
         Fat12Stat f;
         if (fat12_stat(interno, &f) != 0) return ERR(ENOENT);
         st->dimensione   = f.size;
@@ -1934,9 +1963,9 @@ static int stat_interno_fs(int im, const char *interno, VfsStat *st)
         st->sola_lettura = (f.attr & FAT12_ATTR_READONLY)  ? 1 : 0;
         st->data         = f.date;
         st->ora          = f.time;
-    } else if (g_mnt[im].tipo == VFS_FS_ISO) {
+    } else if (g_posto[im]->m.tipo == VFS_FS_ISO) {
         IsoDirEntry e;
-        if (iso_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(ENOENT);
+        if (iso_stat(g_posto[im]->m.mnt, interno, &e) != 0) return ERR(ENOENT);
         st->dimensione   = e.dimensione;
         st->ident        = VFS_IDENT(im, e.extent + 1u);
         st->is_dir       = e.is_dir;
@@ -1945,9 +1974,9 @@ static int stat_interno_fs(int im, const char *interno, VfsStat *st)
         st->ora          = e.ora;
         /* the CD says its own zone, in quarter hours */
         if (e.data != 0) st->mtime = secondi_da_fat(e.data, e.ora) - (int64_t)e.fuso * 900;
-    } else if (g_mnt[im].tipo == VFS_FS_EXT2) {
+    } else if (g_posto[im]->m.tipo == VFS_FS_EXT2) {
         Ext2DirEntry e;
-        if (ext2_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(ENOENT);
+        if (ext2_stat(g_posto[im]->m.mnt, interno, &e) != 0) return ERR(ENOENT);
         st->dimensione   = e.dimensione;
         st->ident        = VFS_IDENT(im, e.inode + 1u);
         st->is_dir       = e.is_dir;
@@ -1956,7 +1985,7 @@ static int stat_interno_fs(int im, const char *interno, VfsStat *st)
          * program saw files without write bits, and rustc refused to
          * link its own object files ("not writeable"). Read-only means
          * the volume is, or no one may write the inode. */
-        st->sola_lettura = (g_mnt[im].sola_lettura || (e.modo & 0222u) == 0) ? 1 : 0;
+        st->sola_lettura = (g_posto[im]->m.sola_lettura || (e.modo & 0222u) == 0) ? 1 : 0;
         st->data         = e.data;
         st->ora          = e.ora;
         st->modo         = e.modo;
@@ -1968,13 +1997,13 @@ static int stat_interno_fs(int im, const char *interno, VfsStat *st)
         st->ctime        = e.ctime;
     } else {
         FatDirEntry e;
-        if (fat_stat(g_mnt[im].mnt, interno, &e) != 0) return ERR(ENOENT);
+        if (fat_stat(g_posto[im]->m.mnt, interno, &e) != 0) return ERR(ENOENT);
         st->dimensione   = e.dimensione;
         st->ident        = VFS_IDENT(im, e.primo_cluster + 1u);
         st->is_dir       = e.is_dir;
         /* 0.259: the volume or the entry's FAT read-only attribute, as on
          * the floppy above - no longer always 1 (see the ext2 branch). */
-        st->sola_lettura = (g_mnt[im].sola_lettura || (e.attributi & 0x01u)) ? 1 : 0;
+        st->sola_lettura = (g_posto[im]->m.sola_lettura || (e.attributi & 0x01u)) ? 1 : 0;
         st->data         = e.data;
         st->ora          = e.ora;
 
@@ -2029,11 +2058,11 @@ static int vfs_readdir_nl(const char *abs, VfsDirEntry *out, uint32_t max,
     if (im < 0) return ERR(ENOENT);
 
     /* --- I punti di montaggio figli, in TESTA (punto 6) --- */
-    for (i = 0; i < VFS_MAX_MOUNT && scritti < max; i++) {
+    for (i = 0; i < g_posti_n && scritti < max; i++) {
         const char *nome;
 
-        if (!g_mnt[i].usato || i == im) continue;
-        if (!e_figlio(g_mnt[i].punto, abs, &nome)) continue;
+        if (!g_posto[i]->m.usato || i == im) continue;
+        if (!e_figlio(g_posto[i]->m.punto, abs, &nome)) continue;
         /* Con la base come radice /rdboot e' gia' una directory vera della
          * radice: elencarla anche come montaggio la mostrerebbe due volte. */
         if (i == g_base && radice_e_base()) continue;
@@ -2056,7 +2085,7 @@ static int vfs_readdir_nl(const char *abs, VfsDirEntry *out, uint32_t max,
     {
         uint32_t s_fs = (start > k_punti) ? (start - k_punti) : 0;
 
-        if (g_mnt[im].tipo == VFS_FS_PROC) {
+        if (g_posto[im]->m.tipo == VFS_FS_PROC) {
             int n = procfs_readdir(interno, &out[scritti], max - scritti, s_fs);
             uint32_t j;
 
@@ -2064,7 +2093,7 @@ static int vfs_readdir_nl(const char *abs, VfsDirEntry *out, uint32_t max,
             for (j = 0; j < (uint32_t)n; j++)
                 out[scritti + j].ident = VFS_IDENT(im, out[scritti + j].ident);
             scritti += (uint32_t)n;
-        } else if (g_mnt[im].tipo == VFS_FS_FAT12FD) {
+        } else if (g_posto[im]->m.tipo == VFS_FS_FAT12FD) {
             while (scritti < max) {
                 Fat12DirEntry tmp[8];
                 uint32_t cap = max - scritti, n = 0, j;
@@ -2089,14 +2118,14 @@ static int vfs_readdir_nl(const char *abs, VfsDirEntry *out, uint32_t max,
                 s_fs += n;
                 if (n < cap) break;
             }
-        } else if (g_mnt[im].tipo == VFS_FS_ISO) {
+        } else if (g_posto[im]->m.tipo == VFS_FS_ISO) {
             while (scritti < max) {
                 IsoDirEntry tmp[4];        /* 4 e non 8: i nomi Joliet sono lunghi */
                 uint32_t cap = max - scritti, j;
                 int      n;
 
                 if (cap > 4) cap = 4;
-                n = iso_readdir(g_mnt[im].mnt, interno, tmp, cap, s_fs);
+                n = iso_readdir(g_posto[im]->m.mnt, interno, tmp, cap, s_fs);
                 if (n < 0) {
                     if (scritti == 0) return ERR(ENOENT);
                     break;
@@ -2112,14 +2141,14 @@ static int vfs_readdir_nl(const char *abs, VfsDirEntry *out, uint32_t max,
                 s_fs += (uint32_t)n;
                 if ((uint32_t)n < cap) break;
             }
-        } else if (g_mnt[im].tipo == VFS_FS_EXT2) {
+        } else if (g_posto[im]->m.tipo == VFS_FS_EXT2) {
             while (scritti < max) {
                 Ext2DirEntry tmp[4];       /* 4 e non 8: le voci sono piu' grosse */
                 uint32_t cap = max - scritti, j;
                 int      n;
 
                 if (cap > 4) cap = 4;
-                n = ext2_readdir(g_mnt[im].mnt, interno, tmp, cap, s_fs);
+                n = ext2_readdir(g_posto[im]->m.mnt, interno, tmp, cap, s_fs);
                 if (n < 0) {
                     if (scritti == 0) return ERR(ENOENT);
                     break;
@@ -2146,7 +2175,7 @@ static int vfs_readdir_nl(const char *abs, VfsDirEntry *out, uint32_t max,
                 int      n;
 
                 if (cap > 8) cap = 8;
-                n = fat_readdir(g_mnt[im].mnt, interno, tmp, cap, s_fs);
+                n = fat_readdir(g_posto[im]->m.mnt, interno, tmp, cap, s_fs);
                 if (n < 0) {
                     if (scritti == 0) return ERR(ENOENT);
                     break;
@@ -2181,8 +2210,8 @@ static int modifica(const char *abs, int quale)
 
     im = instrada(abs, interno, sizeof(interno));
     if (im < 0) return ERR(ENOENT);
-    if (g_mnt[im].sola_lettura) return ERR(EROFS);
-    if (g_mnt[im].tipo == VFS_FS_ISO || g_mnt[im].tipo == VFS_FS_PROC) return ERR(EROFS);   /* vedi vfs_write */
+    if (g_posto[im]->m.sola_lettura) return ERR(EROFS);
+    if (g_posto[im]->m.tipo == VFS_FS_ISO || g_posto[im]->m.tipo == VFS_FS_PROC) return ERR(EROFS);   /* vedi vfs_write */
 
     /* La radice di un montaggio non si crea ne' si cancella. */
     if (e_radice_di(im, interno)) return ERR(EBUSY);
@@ -2225,10 +2254,10 @@ static int modifica(const char *abs, int quale)
     }
 
     /* Un file aperto non si toglie da sotto chi lo usa: vedi nascondi_aperto. */
-    if (quale == 2 && g_mnt[im].tipo != VFS_FS_FAT12FD && aperti_su(im, interno) > 0)
+    if (quale == 2 && g_posto[im]->m.tipo != VFS_FS_FAT12FD && aperti_su(im, interno) > 0)
         return nascondi_aperto(im, interno);
 
-    if (g_mnt[im].tipo == VFS_FS_FAT12FD) {
+    if (g_posto[im]->m.tipo == VFS_FS_FAT12FD) {
         if (quale == 0) return fat12_mkdir(interno);
         if (quale == 1) return fat12_rmdir(interno);
         return fat12_delete(interno);
@@ -2237,17 +2266,17 @@ static int modifica(const char *abs, int quale)
     /* ext2 usa la stessa convenzione di ritorni di fat.c — -2 per il caso
      * che il chiamante deve distinguere — proprio perche' questo blocco
      * possa essere identico invece che quasi identico. */
-    if (g_mnt[im].tipo == VFS_FS_EXT2) {
+    if (g_posto[im]->m.tipo == VFS_FS_EXT2) {
         int r;
         if (quale == 0) {
-            r = ext2_mkdir(g_mnt[im].mnt, interno,
+            r = ext2_mkdir(g_posto[im]->m.mnt, interno,
                            vfs_uid_corrente(), vfs_gid_corrente());
             if (r == -2) return ERR(EEXIST);
         } else if (quale == 1) {
-            r = ext2_rmdir(g_mnt[im].mnt, interno);
+            r = ext2_rmdir(g_posto[im]->m.mnt, interno);
             if (r == -2) return ERR(ENOTEMPTY);
         } else {
-            r = ext2_unlink(g_mnt[im].mnt, interno);
+            r = ext2_unlink(g_posto[im]->m.mnt, interno);
         }
         return (r != 0) ? ERR(EIO) : 0;
     }
@@ -2258,13 +2287,13 @@ static int modifica(const char *abs, int quale)
     {
         int r;
         if (quale == 0) {
-            r = fat_mkdir(g_mnt[im].mnt, interno);
+            r = fat_mkdir(g_posto[im]->m.mnt, interno);
             if (r == -2) return ERR(EEXIST);
         } else if (quale == 1) {
-            r = fat_rmdir(g_mnt[im].mnt, interno);
+            r = fat_rmdir(g_posto[im]->m.mnt, interno);
             if (r == -2) return ERR(ENOTEMPTY);
         } else {
-            r = fat_unlink(g_mnt[im].mnt, interno);
+            r = fat_unlink(g_posto[im]->m.mnt, interno);
         }
         return (r != 0) ? ERR(EIO) : 0;
     }
@@ -2358,8 +2387,8 @@ static int vfs_rename_nl(const char *da, const char *a)
     /* Due montaggi diversi: non e' una rinomina. */
     if (im_da != im_a) return ERR(ENOSYS);
 
-    if (g_mnt[im_da].sola_lettura)          return ERR(EROFS);
-    if (g_mnt[im_da].tipo == VFS_FS_ISO || g_mnt[im_da].tipo == VFS_FS_PROC)    return ERR(EROFS);
+    if (g_posto[im_da]->m.sola_lettura)          return ERR(EROFS);
+    if (g_posto[im_da]->m.tipo == VFS_FS_ISO || g_posto[im_da]->m.tipo == VFS_FS_PROC)    return ERR(EROFS);
     if (e_radice_di(im_da, int_da) || e_radice_di(im_a, int_a)) return ERR(EBUSY);
 
     /* =====================================================================
@@ -2402,13 +2431,13 @@ static int vfs_rename_nl(const char *da, const char *a)
      * gia'» a una rinomina di un file inesistente, perche' -2 vuol dire
      * ENOENT di qua e EEXIST di la'. Stessa scelta di modifica(), che i
      * ritorni di fat12 li rigira tali e quali. */
-    if (g_mnt[im_da].tipo == VFS_FS_FAT12FD)
+    if (g_posto[im_da]->m.tipo == VFS_FS_FAT12FD)
         return fat12_rename(int_da, int_a);
 
-    if (g_mnt[im_da].tipo == VFS_FS_EXT2)
-        r = ext2_rename(g_mnt[im_da].mnt, int_da, int_a);
+    if (g_posto[im_da]->m.tipo == VFS_FS_EXT2)
+        r = ext2_rename(g_posto[im_da]->m.mnt, int_da, int_a);
     else
-        r = fat_rename(g_mnt[im_da].mnt, int_da, int_a);
+        r = fat_rename(g_posto[im_da]->m.mnt, int_da, int_a);
 
     if (r == -2) return ERR(EEXIST);
     if (r == -3) return ERR(ENOSYS);   /* directory diverse (FAT only, since 0.260) */
@@ -2438,8 +2467,8 @@ static int vfs_truncate_nl(const char *abs, uint32_t nuova_dim)
 
     im = instrada(abs, interno, sizeof(interno));
     if (im < 0) return ERR(ENOENT);
-    if (g_mnt[im].sola_lettura) return ERR(EROFS);
-    if (g_mnt[im].tipo == VFS_FS_ISO || g_mnt[im].tipo == VFS_FS_PROC) return ERR(EROFS);   /* vedi vfs_write */
+    if (g_posto[im]->m.sola_lettura) return ERR(EROFS);
+    if (g_posto[im]->m.tipo == VFS_FS_ISO || g_posto[im]->m.tipo == VFS_FS_PROC) return ERR(EROFS);   /* vedi vfs_write */
     if (e_radice(interno))      return ERR(EISDIR);
 
     /* Una directory non si tronca: le sue dimensioni le decide il driver
@@ -2450,18 +2479,18 @@ static int vfs_truncate_nl(const char *abs, uint32_t nuova_dim)
     /* (0.330, analisi voce 46) truncate("/boot/ombra", 0) by anybody */
     if (!vfs_permesso(&st, P_SCRIVI)) return ERR(EACCES);
 
-    if (g_mnt[im].tipo == VFS_FS_FAT12FD) {
+    if (g_posto[im]->m.tipo == VFS_FS_FAT12FD) {
         /* fat12.c non ha un troncamento, e non gliene si aggiunge uno per
          * questa occasione: e' il driver del floppy di avvio, la strada
          * collaudata che non si tocca senza una ragione forte. */
         return ERR(ENOSYS);
     }
 
-    if (g_mnt[im].tipo == VFS_FS_EXT2)
-        return (ext2_truncate(g_mnt[im].mnt, interno, nuova_dim) != 0)
+    if (g_posto[im]->m.tipo == VFS_FS_EXT2)
+        return (ext2_truncate(g_posto[im]->m.mnt, interno, nuova_dim) != 0)
              ? ERR(EIO) : 0;
 
-    return (fat_truncate(g_mnt[im].mnt, interno, nuova_dim) != 0)
+    return (fat_truncate(g_posto[im]->m.mnt, interno, nuova_dim) != 0)
          ? ERR(EIO) : 0;
 }
 
@@ -2474,12 +2503,12 @@ static int vfs_ftruncate_nl(int h, uint32_t nuova_dim)
     if (!VFS_H_VALIDO(h) || !g_file_(h).usato) return ERR(EBADF);
     if (g_file_(h).cartella) return ERR(EISDIR);
     im = g_file_(h).im;
-    if (g_mnt[im].sola_lettura) return ERR(EROFS);
-    if (g_mnt[im].tipo == VFS_FS_FAT12FD) return ERR(ENOSYS);
-    if (g_mnt[im].tipo == VFS_FS_EXT2)
-        return (ext2_truncate(g_mnt[im].mnt, g_file_(h).interno, nuova_dim) != 0)
+    if (g_posto[im]->m.sola_lettura) return ERR(EROFS);
+    if (g_posto[im]->m.tipo == VFS_FS_FAT12FD) return ERR(ENOSYS);
+    if (g_posto[im]->m.tipo == VFS_FS_EXT2)
+        return (ext2_truncate(g_posto[im]->m.mnt, g_file_(h).interno, nuova_dim) != 0)
              ? ERR(EIO) : 0;
-    return (fat_truncate(g_mnt[im].mnt, g_file_(h).interno, nuova_dim) != 0)
+    return (fat_truncate(g_posto[im]->m.mnt, g_file_(h).interno, nuova_dim) != 0)
          ? ERR(EIO) : 0;
 }
 
@@ -2492,10 +2521,10 @@ static void vfs_sync_nl(void)
     /* Ogni montaggio fat.c ha la propria cache sporca. Riversarne solo
      * alcuni lascerebbe un volume coerente e un altro no, senza che
      * l'utente possa sapere quale. */
-    for (i = 0; i < VFS_MAX_MOUNT; i++) {
-        if (!g_mnt[i].usato) continue;
-        if (g_mnt[i].tipo == VFS_FS_FAT)  fat_sync(g_mnt[i].mnt);
-        if (g_mnt[i].tipo == VFS_FS_EXT2) ext2_sync(g_mnt[i].mnt);
+    for (i = 0; i < g_posti_n; i++) {
+        if (!g_posto[i]->m.usato) continue;
+        if (g_posto[i]->m.tipo == VFS_FS_FAT)  fat_sync(g_posto[i]->m.mnt);
+        if (g_posto[i]->m.tipo == VFS_FS_EXT2) ext2_sync(g_posto[i]->m.mnt);
     }
 }
 
@@ -2519,7 +2548,7 @@ int vfs_mount(const char *dev, const char *punto, int sola_lettura)
  * ============================================================================= */
 static int vfs_monta_base_nl(void)
 {
-    int        ird = blk_trova("rdb0"), slot = -1, i, mnt;
+    int        ird = blk_trova("rdb0"), slot = -1, mnt;
     VolumeInfo vi;
 
     if (ird < 0) return ERR(ENOENT);
@@ -2527,22 +2556,22 @@ static int vfs_monta_base_nl(void)
         klog(LOG_ERROR, "VFS: rdb0 non e' un volume ext2: niente /rdboot");
         return ERR(EINVAL);
     }
-    for (i = 1; i < VFS_MAX_MOUNT; i++) if (!g_mnt[i].usato) { slot = i; break; }
-    if (slot < 0) return ERR(EMFILE);
+    slot = posto_libero(1);
+    if (slot < 0) return ERR(ENOMEM);
 
     mnt = ext2_mount_come(ird, 0);
     if (mnt < 0) return ERR(EIO);
     blk_acquisisci(ird);
 
-    g_mnt[slot].usato        = 1;
-    v_copia(g_mnt[slot].punto, "/rdboot", VFS_PUNTO_MAX);
-    g_mnt[slot].tipo         = VFS_FS_EXT2;
-    g_mnt[slot].sola_lettura = ext2_sola_lettura(mnt) ? 1 : 0;
-    g_ro_chiesto[slot]       = 0;
-    g_mnt[slot].mnt          = mnt;
-    g_mnt[slot].blkdev       = ird;
-    v_copia(g_mnt[slot].dev, "rdb0", BLK_NOME_MAX);
-    v_copia(g_sotto[slot], "/rdboot", VFS_PUNTO_MAX);
+    g_posto[slot]->m.usato        = 1;
+    v_copia(g_posto[slot]->m.punto, "/rdboot", VFS_PUNTO_MAX);
+    g_posto[slot]->m.tipo         = VFS_FS_EXT2;
+    g_posto[slot]->m.sola_lettura = ext2_sola_lettura(mnt) ? 1 : 0;
+    g_posto[slot]->ro_chiesto       = 0;
+    g_posto[slot]->m.mnt          = mnt;
+    g_posto[slot]->m.blkdev       = ird;
+    v_copia(g_posto[slot]->m.dev, "rdb0", BLK_NOME_MAX);
+    v_copia(g_posto[slot]->sotto, "/rdboot", VFS_PUNTO_MAX);
     g_base = slot;
 
     klog(LOG_WARN, "VFS: sistema di base su /rdboot (rdb0, ext2)");
@@ -2565,10 +2594,10 @@ int vfs_sistema_rimanda(void)
     int           r;
 
     fs_prendi_n("sistema");
-    if (g_base < 0 || !g_mnt[0].usato || radice_e_base()) { fs_rilascia(); return ERR(ENOENT); }
-    b = blk_get(g_mnt[0].blkdev);
+    if (g_base < 0 || !g_posto[0]->m.usato || radice_e_base()) { fs_rilascia(); return ERR(ENOENT); }
+    b = blk_get(g_posto[0]->m.blkdev);
     if (b == NULL || b->tipo != BLK_TIPO_PART) { fs_rilascia(); return ERR(ENOENT); }
-    v_copia(g_sist_dev, g_mnt[0].dev, BLK_NOME_MAX);
+    v_copia(g_sist_dev, g_posto[0]->m.dev, BLK_NOME_MAX);
     r = vfs_umount_nl("/");
     if (r != 0) g_sist_dev[0] = '\0';
     fs_rilascia();
@@ -2596,12 +2625,12 @@ int         vfs_sistema_sporco(void) { return g_sist_sporco; }
  * ============================================================================= */
 static void vfs_chiudi_volume(int i)
 {
-    if (g_mnt[i].tipo == VFS_FS_EXT2) ext2_chiudi_scrittura(g_mnt[i].mnt);
-    if (g_mnt[i].tipo == VFS_FS_FAT)  fat_sync(g_mnt[i].mnt);
-    g_mnt[i].sola_lettura = 1;
-    if (g_segnato[i]) {
-        if (e2_segna(g_mnt[i].blkdev, 1)) blk_flush(g_mnt[i].blkdev);
-        g_segnato[i] = 0;
+    if (g_posto[i]->m.tipo == VFS_FS_EXT2) ext2_chiudi_scrittura(g_posto[i]->m.mnt);
+    if (g_posto[i]->m.tipo == VFS_FS_FAT)  fat_sync(g_posto[i]->m.mnt);
+    g_posto[i]->m.sola_lettura = 1;
+    if (g_posto[i]->segnato) {
+        if (e2_segna(g_posto[i]->m.blkdev, 1)) blk_flush(g_posto[i]->m.blkdev);
+        g_posto[i]->segnato = 0;
     }
 }
 
@@ -2612,11 +2641,11 @@ void vfs_spegnimento(void)
 
     fs_prendi_n("spegnimento");
     vfs_sync_nl();
-    for (i = VFS_MAX_MOUNT - 1; i >= 0; i--) {
-        if (!g_mnt[i].usato || g_mnt[i].tipo == VFS_FS_PROC) continue;
+    for (i = g_posti_n - 1; i >= 0; i--) {
+        if (!g_posto[i]->m.usato || g_posto[i]->m.tipo == VFS_FS_PROC) continue;
         if (i == g_base || (i == 0 && radice_e_base()))      continue;
-        v_copia(punto, g_mnt[i].punto, VFS_PUNTO_MAX);
-        kprintf("  Smonto %s (%s)...", punto, g_mnt[i].dev);
+        v_copia(punto, g_posto[i]->m.punto, VFS_PUNTO_MAX);
+        kprintf("  Smonto %s (%s)...", punto, g_posto[i]->m.dev);
         r = vfs_umount_nl(punto);
         if (r == 0) { kprintf(" ok\n"); continue; }
         vfs_chiudi_volume(i);
@@ -2628,7 +2657,7 @@ void vfs_spegnimento(void)
 /* The caller holds the lock (kernel/fs/procfs.c, /proc/mounts) */
 const VfsMount *vfs_mount_nl_di(int i)
 {
-    return (i >= 0 && i < VFS_MAX_MOUNT) ? &g_mnt[i] : NULL;
+    return (i >= 0 && i < g_posti_n) ? &g_posto[i]->m : NULL;
 }
 
 /* ! NO DEVICE AND NOTHING TO SYNC, and vfs_umount refuses it: without /proc
@@ -2638,21 +2667,21 @@ int vfs_monta_proc(void)
     int i;
 
     fs_prendi_n("monta_proc");
-    for (i = 0; i < VFS_MAX_MOUNT; i++) {
-        if (g_mnt[i].usato) continue;
-        g_mnt[i].usato        = 1;
-        g_mnt[i].tipo         = VFS_FS_PROC;
-        g_mnt[i].sola_lettura = 1;
-        g_mnt[i].mnt          = -1;
-        g_mnt[i].blkdev       = -1;
-        g_sotto[i][0]         = '\0';
-        v_copia(g_mnt[i].punto, "/proc", VFS_PUNTO_MAX);
-        v_copia(g_mnt[i].dev, "proc", BLK_NOME_MAX);
+    i = posto_libero(0);
+    if (i >= 0) {
+        g_posto[i]->m.usato        = 1;
+        g_posto[i]->m.tipo         = VFS_FS_PROC;
+        g_posto[i]->m.sola_lettura = 1;
+        g_posto[i]->m.mnt          = -1;
+        g_posto[i]->m.blkdev       = -1;
+        g_posto[i]->sotto[0]       = '\0';
+        v_copia(g_posto[i]->m.punto, "/proc", VFS_PUNTO_MAX);
+        v_copia(g_posto[i]->m.dev, "proc", BLK_NOME_MAX);
         fs_rilascia();
         return 0;
     }
     fs_rilascia();
-    return ERR(EMFILE);
+    return ERR(ENOMEM);
 }
 
 int vfs_monta_base(void)
@@ -2682,8 +2711,8 @@ int vfs_punto_di_handle(int h, char *punto, uint32_t max)
 
     fs_prendi_n("punto");
     if (VFS_H_VALIDO(h) && g_file_(h).usato &&
-        g_file_(h).im >= 0 && g_mnt[g_file_(h).im].usato) {
-        v_copia(punto, g_mnt[g_file_(h).im].punto, max);
+        g_file_(h).im >= 0 && g_posto[g_file_(h).im]->m.usato) {
+        v_copia(punto, g_posto[g_file_(h).im]->m.punto, max);
         r = 0;
     }
     fs_rilascia();
@@ -2697,7 +2726,7 @@ int vfs_punto_di_percorso(const char *abs, char *punto, uint32_t max)
 
     fs_prendi_n("punto");
     im = instrada(abs, interno, sizeof(interno));
-    if (im >= 0) v_copia(punto, g_mnt[im].punto, max);
+    if (im >= 0) v_copia(punto, g_posto[im]->m.punto, max);
     fs_rilascia();
     return im >= 0 ? 0 : -1;
 }
@@ -2760,10 +2789,10 @@ int vfs_chown(const char *abs, uint32_t uid, uint32_t gid)
 
     im = instrada(abs, interno, sizeof(interno));
     if (im < 0)                          { fs_rilascia(); return ERR(ENOENT); }
-    if (g_mnt[im].sola_lettura)          { fs_rilascia(); return ERR(EROFS);  }
-    if (g_mnt[im].tipo != VFS_FS_EXT2)   { fs_rilascia(); return ERR(ENOSYS); }
+    if (g_posto[im]->m.sola_lettura)          { fs_rilascia(); return ERR(EROFS);  }
+    if (g_posto[im]->m.tipo != VFS_FS_EXT2)   { fs_rilascia(); return ERR(ENOSYS); }
 
-    r = ext2_chown(g_mnt[im].mnt, interno, uid, gid);
+    r = ext2_chown(g_posto[im]->m.mnt, interno, uid, gid);
     fs_rilascia();
     return (r == 0) ? 0 : ERR(EIO);
 }
@@ -2829,7 +2858,7 @@ int vfs_chmod(const char *abs, uint32_t modo)
 
     im = instrada(abs, interno, sizeof(interno));
     if (im < 0)                          { fs_rilascia(); return ERR(ENOENT); }
-    if (g_mnt[im].sola_lettura)          { fs_rilascia(); return ERR(EROFS);  }
+    if (g_posto[im]->m.sola_lettura)          { fs_rilascia(); return ERR(EROFS);  }
 
     /* ! SU UN FILESYSTEM SENZA PERMESSI SI RENDE 0, NON ENOSYS — ed e' il
      * contrario di quello che fa chown, apposta.
@@ -2845,9 +2874,9 @@ int vfs_chmod(const char *abs, uint32_t modo)
      * produce con umask/chmod, e un chmod che fallisce sul floppy vorrebbe
      * dire binutils che non collega piu' niente dentro EX-OS. E' lo stesso
      * motivo per cui questa funzione esisteva inerte da un anno. */
-    if (g_mnt[im].tipo != VFS_FS_EXT2)   { fs_rilascia(); return 0; }
+    if (g_posto[im]->m.tipo != VFS_FS_EXT2)   { fs_rilascia(); return 0; }
 
-    r = ext2_chmod(g_mnt[im].mnt, interno, modo);
+    r = ext2_chmod(g_posto[im]->m.mnt, interno, modo);
     fs_rilascia();
     return (r == 0) ? 0 : ERR(EIO);
 }
@@ -2857,7 +2886,7 @@ int vfs_radice_ext2(void)
     /* Il sistema di base e' ext2 ma non ha utenti: e' un ripiego, come il
      * floppy, e li' si entra senza password (@RDBOOT passo 3). */
     if (radice_e_base()) return 0;
-    return g_mnt[0].usato && g_mnt[0].tipo == VFS_FS_EXT2;
+    return g_posto[0]->m.usato && g_posto[0]->m.tipo == VFS_FS_EXT2;
 }
 
 int vfs_open(const char *abs, uint32_t flags)
@@ -2982,9 +3011,9 @@ void vfs_ogni_secondo(void)
     int i;
 
     fs_prendi_n("giornale");
-    for (i = 0; i < VFS_MAX_MOUNT; i++)
-        if (g_mnt[i].usato && g_mnt[i].tipo == VFS_FS_EXT2)
-            ext2_ogni_secondo(g_mnt[i].mnt);
+    for (i = 0; i < g_posti_n; i++)
+        if (g_posto[i]->m.usato && g_posto[i]->m.tipo == VFS_FS_EXT2)
+            ext2_ogni_secondo(g_posto[i]->m.mnt);
     fs_rilascia();
 }
 
@@ -2997,10 +3026,10 @@ static int vfs_fsync_nl(int h)
 
     if (!VFS_H_VALIDO(h) || !g_file_(h).usato) return ERR(EBADF);
     im = g_file_(h).im;
-    switch (g_mnt[im].tipo) {
+    switch (g_posto[im]->m.tipo) {
     case VFS_FS_FAT12FD: r = fat12_sync();               break;
-    case VFS_FS_FAT:     r = fat_sync(g_mnt[im].mnt);    break;
-    case VFS_FS_EXT2:    r = ext2_sync(g_mnt[im].mnt);   break;
+    case VFS_FS_FAT:     r = fat_sync(g_posto[im]->m.mnt);    break;
+    case VFS_FS_EXT2:    r = ext2_sync(g_posto[im]->m.mnt);   break;
     default:             break;
     }
     return r < 0 ? ERR(EIO) : 0;
@@ -3019,8 +3048,8 @@ int vfs_fsync(int h)
 
     fs_prendi_n("fsync");
     if (VFS_H_VALIDO(h) && g_file_(h).usato &&
-        g_mnt[g_file_(h).im].tipo == VFS_FS_EXT2) {
-        dev = ext2_fsync_prepara(g_mnt[g_file_(h).im].mnt);
+        g_posto[g_file_(h).im]->m.tipo == VFS_FS_EXT2) {
+        dev = ext2_fsync_prepara(g_posto[g_file_(h).im]->m.mnt);
         r = dev < 0 ? ERR(EIO) : 0;
     } else {
         r = vfs_fsync_nl(h);
@@ -3048,23 +3077,23 @@ void vfs_ext2_rivaluta(void)
     fs_prendi_n("ext2-modulo");
     /* ! IL SEGNO «IN USO» PRIMA che il modulo li prenda in mano: quelli che
      * restano in sola lettura tornano «puliti» allo smontaggio. */
-    for (i = 0; i < VFS_MAX_MOUNT; i++) {
-        if (!g_mnt[i].usato || g_mnt[i].tipo != VFS_FS_EXT2) continue;
-        if (g_ro_chiesto[i] || g_segnato[i] || !g_mnt[i].sola_lettura) continue;
+    for (i = 0; i < g_posti_n; i++) {
+        if (!g_posto[i]->m.usato || g_posto[i]->m.tipo != VFS_FS_EXT2) continue;
+        if (g_posto[i]->ro_chiesto || g_posto[i]->segnato || !g_posto[i]->m.sola_lettura) continue;
         if (i == 0 && radice_e_base()) continue;
-        g_segnato[i] = (uint8_t)e2_segna(g_mnt[i].blkdev, 0);
+        g_posto[i]->segnato = (uint8_t)e2_segna(g_posto[i]->m.blkdev, 0);
     }
     ext2_rivaluta_montaggi();
 
-    for (i = 0; i < VFS_MAX_MOUNT; i++) {
+    for (i = 0; i < g_posti_n; i++) {
         uint8_t ro;
 
-        if (!g_mnt[i].usato || g_mnt[i].tipo != VFS_FS_EXT2) continue;
-        ro = (g_ro_chiesto[i] || ext2_sola_lettura(g_mnt[i].mnt)) ? 1 : 0;
-        if (ro != g_mnt[i].sola_lettura)
-            klog(LOG_INFO, "VFS: %s (%s) is now %s", g_mnt[i].punto, g_mnt[i].dev,
+        if (!g_posto[i]->m.usato || g_posto[i]->m.tipo != VFS_FS_EXT2) continue;
+        ro = (g_posto[i]->ro_chiesto || ext2_sola_lettura(g_posto[i]->m.mnt)) ? 1 : 0;
+        if (ro != g_posto[i]->m.sola_lettura)
+            klog(LOG_INFO, "VFS: %s (%s) is now %s", g_posto[i]->m.punto, g_posto[i]->m.dev,
                  ro ? "read-only" : "read/write");
-        g_mnt[i].sola_lettura = ro;
+        g_posto[i]->m.sola_lettura = ro;
     }
     fs_rilascia();
 }

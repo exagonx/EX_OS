@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.341
+**Versione:** 0.343
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -112,6 +112,116 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### Exilla: la barra dell'indirizzo del primo tab funziona anche dal secondo avvio (voce 73) — testato in QEMU, il pacchetto e' da pubblicare
+
+Dal secondo avvio di Firefox senza indirizzo, quello che si scriveva nella
+barra del primo tab non si apriva; in un tab nuovo si'. La causa e' in
+`Tabbrowser.sys.mjs`, riga 752. Quando la pagina iniziale e' ancora una
+promessa del ripristino della sessione, Firefox crea il primo `<browser>`
+come remoto, nel processo "privilegedabout". EX-OS non lancia processi
+figli, quindi quel browser non carica mai niente, e a Invio la console dice
+`aBrowser.frameLoader.remoteTab is null`. Ora il tipo remoto si sceglie
+solo se la finestra ha i processi di contenuto (`gMultiProcessBrowser`);
+senza, il browser resta nel processo principale, come quelli dei tab nuovi.
+La patch e' `tools/exilla/patch/browser_components_tabbrowser_Tabbrowser.sys.mjs.patch`.
+
+Provato con `tools/exilla/prova-primotab.sh` a 32 e 64 bit: due avvii
+sullo stesso profilo, l'indirizzo scritto nel primo tab e in un tab nuovo,
+la foto dopo Invio. 8 su 8 a 32 e a 64 bit; prima della correzione il
+secondo avvio dava `remoteTab is null`. Il primo tab parte bianco come i
+tab nuovi.
+
+### telnetd serve piu' sessioni insieme (telnetd 0.015, voce 62) — testato in QEMU
+
+Fino alla 0.014 telnetd serviva una sessione per volta: la seconda
+connessione veniva accettata e restava muta finche' la prima non usciva, e
+una sessione dimenticata chiudeva fuori tutti gli altri. Ora ogni connessione
+accettata va a una copia del programma (`telnetd -sessione N`), che la serve
+come prima, mentre il padre torna subito ad accettare. La connessione passa
+alla copia con `IP_MSG_EREDITA` (ip.drv 0.021). Una copia e non `fork()`
+perche' fork sta solo nella libc statica, e telnetd usa libc.so; e' lo stesso
+schema di ExWin. Nessun tetto: ogni sessione costa un processo, un pty e una
+shell. La barra di stato dice quante sono (`TELNET cnn 2`). Con un ip.drv piu'
+vecchio della 0.021 telnetd lo scrive e torna a servire una sessione per
+volta.
+
+Provato con `tools/prova_telnet_piu.sh` a 32 e 64 bit: tre sessioni aperte
+insieme rispondono ognuna al suo comando, se ne chiude una, ne entra una
+quarta e le due rimaste rispondono ancora (6 su 6). `prova_telnet.sh` e
+`prova_telnet_fine.sh` sono a posto a 32 e 64 bit.
+
+### Nessun tetto ai volumi montati (kernel 0.343, mount 0.005, automount 0.005, voce 50) — testato in QEMU
+
+- **Le tabelle dei montaggi crescono**: erano 6 punti di montaggio in tutto (VFS), 4 volumi ext,
+  4 FAT, 2 ISO 9660 e 5 righe nella sezione `[mount]` di `kernel.cfg`, tutti `#define` contro
+  la regola "nessun tetto fisso". `prova_extfs` incontrava "nessuno slot di montaggio libero" al
+  quarto volume ext. Ora ogni tabella e' un vettore di puntatori a posti che raddoppia quando e'
+  pieno, come la tabella dei file aperti dalla 0.282 (`kernel/include/posti.h`): un posto non
+  si sposta mai, il vettore vecchio non si libera sotto chi lo sta leggendo. Il tetto e' la
+  memoria del kernel.
+- **Il modulo di scrittura ext4 tiene il suo stato di un volume nel volume** (il giornale, i
+  parametri delle somme, il superblocco che deve riscrivere), non in tabelle lunghe quanto il
+  vecchio tetto: l'interfaccia ext2 e' ora ABI 5, e `ext4.mod` deve essere quello dello stesso
+  kernel (lo era gia').
+- `mount` e `automount` spiegano l'errore nuovo (il kernel non ha memoria per un altro
+  montaggio) e dicono che "nessuno slot di montaggio libero" e' un kernel fino alla 0.342.
+- **`tools/prova_montaggi.sh`**: un disco con undici partizioni logiche fatte da Linux (3 ext2,
+  3 ext4, 5 FAT16), tutte montate insieme dal CD (con cd0, `/rdboot` e `/proc`: 14 punti di
+  montaggio), un file scritto e riletto su ognuna, tutte smontate, due rimontate; e2fsck e
+  fsck.fat di Linux trovano ogni volume pulito col suo file. 18 su 18 a 32 e 64 bit. Restano
+  fissi, scritti nella voce 50: `BLK_MAX_DEV` 16 dispositivi a blocchi, `MBR_MAX_PART` 16
+  partizioni per disco, `FAT_MAX_OPEN` 16 file FAT aperti.
+
+### cpufreq legge le due coppie che un Core 2 dichiara, e non scrive niente (kernel 0.342, voce 78) — da testare sul PC di prova
+
+- **Su un Core 2 (famiglia 6, modelli 0Fh, 16h, 17h, 1Dh) con SpeedStep** il kernel legge le due
+  coppie moltiplicatore/VID che il processore dichiara, come lo speedstep di coreboot: la
+  massima da IA32_PERF_STATUS (198h, bit 44:32), la minima da MSR_THERM2_CTL (19Dh, bit 12:0), il
+  bus da MSR_FSB_FREQ (CDh). Le scrive in dmesg con i MHz, la coppia in uso adesso e i registri
+  grezzi (198h, 199h, 19Dh, 17h, CDh), e **non scrive niente**: `cpufreq.drv` dice "Core 2: le
+  coppie massima e minima sono lette". E' la scelta dell'utente: solo le due coppie dichiarate,
+  e usarle solo dopo averne guardato i numeri sulla macchina vera (il Q9650 del PC di prova).
+- **La riga di dmesg degli stati elenca gli n che ci sono**: "2 stati: 2100 1050 0 0 MHz" faceva
+  sembrare quattro stati due, due dei quali rotti.
+- QEMU non passa EIST nemmeno con `-cpu Penryn,+est` (misurato): li' si vede il modello 17h e
+  niente si ferma; il ramo Core 2 si vede solo sul PC di prova. `tools/prova_cpufreq.sh` ha il
+  giro Penryn, e controlla la versione del kernel da `version.h` (chiedeva ancora la 0.311).
+
+### ExEditor stampa, fa vedere l'anteprima, e ha barra e righello anche per i file di testo (ExEditor 0.009, exwin.so 0.022, lpt.drv 0.004, voce 81) — testato in QEMU
+
+- **File > Stampa (Ctrl+P)** manda la scheda alla porta parallela (lpt0) come la stampa una
+  stampante a caratteri: 80 colonne e 60 righe per pagina, tre righe vuote sopra, il numero
+  della pagina in fondo, un salto pagina dopo ognuna (66 righe: stanno in Letter e in A4). Le
+  righe lunghe vanno a capo a 80, una tabulazione diventa gli spazi fino al multiplo di 8
+  successivo, le lettere accentate escono in CP437 (il set delle stampanti PC; una lettera che
+  CP437 non ha diventa `?`). Di un RTF si stampa solo il testo: i caratteri sulla carta vogliono
+  un driver di stampante grafica, che EX-OS non ha.
+- **L'editor non aspetta mai la stampante**: le pagine vanno a `lpt.drv -stampa -` per un tubo
+  scritto un pezzo alla volta a tempo, le sue parole tornano per un altro tubo, e l'ultima
+  ("lpt: N byte alla stampante", o cosa e' andato storto) va nella riga di stato o in un
+  avviso. Una stampante senza carta tiene lpt.drv 30 s; l'editor intanto lavora. Niente file
+  temporaneo: un CD avviato non ha dove scriverlo.
+- **File > Anteprima di stampa** mostra le stesse pagine su un foglio A4, una alla volta:
+  Prima/Dopo, PagSu/PagGiu o le frecce; Stampa da li' stampa.
+- **lpt.drv 0.004: `-stampa -` legge lo standard input** (`cat f | lpt.drv -stampa -`).
+- **Anche i file di testo hanno la barra**: Nuovo, Apri, Salva, Taglia, Copia, Incolla, Annulla,
+  Cerca; e un **righello a colonne di caratteri** con le tabulazioni ogni 8 e un segno sulla
+  colonna del cursore. Il menu Formato e' grigio su un file di testo (e' per l'RTF), e su un RTF
+  sono grigie le voci che li' non funzionano ancora (annulla, cerca, sostituisci).
+- **Tab scrive una tabulazione nel testo** e le colonne si allineano sotto il righello: l'area
+  disegna una tabulazione fino al multiplo di 8 successivo, e cursore, selezione e clic contano
+  le colonne dello schermo.
+- **exwin.so 0.022**: `ex_textarea_set_tab(area, n)` (n > 1: tabulazioni disegnate come fermi
+  ogni n colonne, e Tab va all'area invece di spostare il fuoco; 0 o 1 come prima),
+  `ex_textarea_get_column` (la colonna del cursore sullo schermo), `ex_menu_enable(menu, id, si)`
+  (voci grigie, disegnate ma non sceglibili). Un programma collegato con lo stub gira anche su
+  un exwin.so piu' vecchio: li' le tre non fanno niente.
+- In QEMU a 32 e 64 bit: `/boot/help.txt` stampato da ExEditor nel file parallelo di QEMU e',
+  byte per byte, quello che fa uno script su Linux con le stesse regole (30 pagine, 81239 byte),
+  dal menu e con Ctrl+P. `tools/prova_lpt.sh` 28 su 28 (la prova nuova: `-stampa FILE` e poi
+  `cat | -stampa -`, il file due volte), `tools/prova_rtf.sh` 6 su 6. Su una stampante vera: da
+  testare.
 
 ### lpt.drv trova le schede parallele PCI (lpt.drv 0.003, voce 98) — testato
 

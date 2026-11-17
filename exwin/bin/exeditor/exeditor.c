@@ -34,7 +34,7 @@
 #include "exrtf_vista.h"
 
 /* +0.001 a ogni modifica: `exeditor -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.008"
+#define VERSIONE_APP "0.009"
 EX_VERSIONE("exeditor", VERSIONE_APP);
 
 /* ! LA FINESTRA NASCE LARGA QUANTO UNA COLONNA DI A4, se lo schermo lo
@@ -115,6 +115,9 @@ static int g_w0 = 640, g_h0 = 420;
 #define ID_V_BARRA    61
 #define ID_V_RIGH     62
 #define ID_V_PAG      63
+#define ID_BT_NUOVO   64        /* the bar's first button: a document like the tab's */
+#define ID_ANTEPRIMA  65
+#define ID_STAMPA     66
 
 static char g_perc[PERC_MAX] = "";
 static int  g_parziale = 0;     /* letto SOLO IN PARTE: non si salva */
@@ -295,6 +298,10 @@ static void stato_aggiorna(void)
                 g_parziale ? "  [PARZIALE: non si salva]" : "");
     } else {
         ex_textarea_get_cursor(g_area, &r, &c);
+        {
+            unsigned int v = ex_textarea_get_column(g_area, 0);
+            if (v || c == 1) c = v + 1;         /* the screen column, tabs counted */
+        }
         sprintf(s, "%s%s  -  riga %u/%u  col %u%s",
                 ex_textarea_is_modified(g_area) ? "*" : "", nome,
                 r, ex_textarea_line_count(g_area), c,
@@ -330,12 +337,15 @@ static void barra_allinea(void)
     ex_scroll_set_pos(g_barra, prima);
 }
 
+static void righello_disegna(void);
+
 static void ridisegna(void)
 {
     stato_aggiorna();
     barra_allinea();
     ex_default_proc(g_f, EXM_PAINT, 0, 0);
     vista_disegna_se();
+    if (!g_rtf) righello_disegna();
     ex_update(g_f);
 }
 
@@ -618,7 +628,9 @@ static int        g_mod_visto = -1;     /* the "modified" the tab title shows */
  * ============================================================================= */
 #define RIGH_H       22
 enum { BT_NUOVO, BT_APRI, BT_SALVA, BT_TAGLIA, BT_COPIA, BT_INCOLLA,
+       BT_ANNULLA, BT_CERCA,                    /* text tabs only (16/11/2026) */
        BT_G, BT_C, BT_S, BT_SIN, BT_CEN, BT_DES, BT_GIU, BT_RM, BT_RP, BT_N };
+#define TAB_TESTO    8          /* a tab in a text tab reaches the next multiple of 8 */
 static ExWindow g_bt[BT_N];
 static int      g_bt_x[BT_N];
 static int      g_vedi_barra = 1, g_vedi_righello = 1, g_vedi_pagina = 1;
@@ -744,13 +756,46 @@ static void barra_segni(void)
 }
 
 /* Text area or view, and their bars; the keys go with them. */
+/* =============================================================================
+ * ! A TEXT TAB HAS THE BAR AND THE RULER TOO (voce 81, 16/11/2026). Until then
+ * both were the rich text's only, and Visualizza offered them on a .txt where
+ * nothing appeared. A text tab shows new, open, save, the clipboard, undo and
+ * find (where the format buttons stand on an RTF tab), and a ruler in
+ * character columns with the tab stops and the caret's column. Formato is
+ * grey there, and undo and find are grey on an RTF tab, which has none yet.
+ * ============================================================================= */
+static void area_posto(void)
+{
+    int y = AREA_Y + (g_vedi_barra ? RTF_BARRA_H : 0) + (g_vedi_righello ? RIGH_H : 0);
+
+    ex_move(g_area, AREA_X, y);
+    ex_resize(g_area, g_fw - AREA_X * 2 - BARRA_W, g_fh - y - BASSO);
+}
+
+static void menu_per_modo(void)
+{
+    static const unsigned int FORMATO[] = {
+        ID_M_G, ID_M_C, ID_M_S, ID_R_SIN, ID_R_CEN, ID_R_DES, ID_R_GIU, ID_R_RM, ID_R_RP,
+        ID_F_INT1, ID_F_INT15, ID_F_INT2, ID_F_TABVIA, ID_F_PAR, ID_F_PAG
+    };
+    static const unsigned int SOLO_TESTO[] = { ID_ANNULLA, ID_CERCA, ID_AVANTI, ID_INDIETRO, ID_SOSTITUISCI };
+    unsigned int i;
+
+    for (i = 0; i < sizeof(FORMATO) / sizeof(FORMATO[0]); i++) ex_menu_enable(g_menu, FORMATO[i], g_rtf);
+    for (i = 0; i < sizeof(SOLO_TESTO) / sizeof(SOLO_TESTO[0]); i++) ex_menu_enable(g_menu, SOLO_TESTO[i], !g_rtf);
+}
+
 static void modo_mostra(void)
 {
     int i, barra = g_rtf && g_vedi_barra;
 
     ex_show(g_area, !g_rtf);
     if (g_barra) ex_show(g_barra, !g_rtf);
-    for (i = 0; i < BT_N; i++) if (g_bt[i]) ex_show(g_bt[i], barra);
+    for (i = 0; i < BT_N; i++) {
+        int c = !g_vedi_barra ? 0 : g_rtf ? i != BT_ANNULLA && i != BT_CERCA : i <= BT_CERCA;
+
+        if (g_bt[i]) ex_show(g_bt[i], c);
+    }
     if (g_rfam)   ex_show(g_rfam, barra);
     if (g_rcorpo) ex_show(g_rcorpo, barra);
     if (g_rcol)   ex_show(g_rcol, barra);
@@ -758,6 +803,8 @@ static void modo_mostra(void)
      * typed into a text nobody sees. With no control focused they come to
      * this program, which gives them to the view. */
     ex_tab_content(g_f, g_rtf);           /* Tab is a letter of the text */
+    area_posto();
+    menu_per_modo();
     if (g_rtf) { ex_clear_focus(g_f); g_seg_g = -1; barra_rtf_segui(); }
     else       ex_set_focus(g_area);
 }
@@ -1017,19 +1064,22 @@ static void formato(unsigned int id, long lp)
 static void barra_rtf_crea(void)
 {
     static const struct { unsigned int id; const char *icona; const char *lettera; } B[BT_N] = {
-        { ID_NUOVO_RTF, "nuovo", "N" },   { ID_APRI, "apri", "A" },       { ID_SALVA, "salva", "S" },
+        { ID_BT_NUOVO, "nuovo", "N" },    { ID_APRI, "apri", "A" },       { ID_SALVA, "salva", "S" },
         { ID_TAGLIA, "taglia", "X" },     { ID_COPIA, "copia", "C" },     { ID_INCOLLA, "incolla", "V" },
+        { ID_ANNULLA, "annulla", "Z" },   { ID_CERCA, "cerca", "?" },
         { ID_R_G, "grassetto", "G" },     { ID_R_C, "corsivo", "C" },     { ID_R_S, "sottolineato", "S" },
         { ID_R_SIN, "sinistra", "<" },    { ID_R_CEN, "centro", "=" },    { ID_R_DES, "destra", ">" },
         { ID_R_GIU, "giustifica", "#" },  { ID_R_RM, "rientro_meno", "-" }, { ID_R_RP, "rientro_piu", "+" }
     };
-    int y = AREA_Y + 2, i, x = 4;
+    int y = AREA_Y + 2, i, x = 4, x_testo = 0;
 
     for (i = 0; i < BT_N; i++) {
         char   p[96];
         ExIcon ic;
 
-        if (i == BT_TAGLIA || i == BT_G || i == BT_RM) x += 6;
+        if (i == BT_ANNULLA) x_testo = x;       /* text tabs' undo and find, then */
+        if (i == BT_G) x = x_testo;             /* the format group in the same place */
+        if (i == BT_TAGLIA || i == BT_ANNULLA || i == BT_G || i == BT_RM) x += 6;
         if (i == BT_SIN) {
             /* typeface, size, colour sit between the letters and the lines */
             int k;
@@ -1109,12 +1159,50 @@ static void tri_su(int x, int y, unsigned int c)        /* point up, base at y +
     for (i = 0; i < 5; i++) ex_fill_rect(g_f, x - i, y + i, 2 * i + 1, 1, c);
 }
 
+/* The ruler of a text tab: character columns of 8 pixels from the area's
+ * first shown one, a number every ten, the tab stops as small L's, the
+ * caret's column as a blue triangle. Nothing to drag: a text file has no
+ * indents, and its tab stops are every TAB_TESTO. */
+static void righello_testo(void)
+{
+    ExFont       fo = ex_font_find(EXRTF_SANS, 10, 0, 0);
+    unsigned int prima = 0, col = ex_textarea_get_column(g_area, &prima), c;
+    int          x, y, w, h, x0, fine;
+
+    righello_rett(&x, &y, &w, &h);
+    ex_fill_rect(g_f, x, y, w, h, EX_GRAY);
+    x0 = x + 2;                                 /* the area draws its text at +2 */
+    fine = x + w - 16;                          /* its scroll bar */
+    ex_fill_rect(g_f, x0, y + 3, fine - x0, h - 6, EX_WHITE);
+    for (c = prima; x0 + (int)(c - prima) * 8 + 8 <= fine; c++) {
+        int px = x0 + (int)(c - prima) * 8;
+
+        if ((c + 1) % 10 == 0) {
+            char t[8];
+
+            snprintf(t, sizeof(t), "%u", c + 1);
+            ex_draw_text_font(g_f, fo, px + 4 - ex_text_width(fo, t) / 2, y + 4, t, EX_DARK_GRAY);
+        } else if ((c + 1) % 5 == 0) {
+            ex_fill_rect(g_f, px + 4, y + 8, 1, 6, EX_DARK_GRAY);
+        } else {
+            ex_fill_rect(g_f, px + 4, y + 10, 1, 2, EX_DARK_GRAY);
+        }
+        if (c > 0 && c % TAB_TESTO == 0) {
+            ex_fill_rect(g_f, px, y + h - 11, 2, 7, EX_BLACK);
+            ex_fill_rect(g_f, px, y + h - 6, 6, 2, EX_BLACK);
+        }
+    }
+    if (col >= prima && x0 + (int)(col - prima) * 8 + 8 <= fine)
+        tri_giu(x0 + (int)(col - prima) * 8 + 4, y, EX_BLUE);
+}
+
 static void righello_disegna(void)
 {
     const ExRtfPar *P;
     ExFont fo;
     int    x, y, w, h, cx, cw, q, a, b;
 
+    if (!g_rtf && g_vedi_righello && g_area) { righello_testo(); return; }
     if (!g_rtf || !g_vedi_righello || !g_vista.doc) return;
     righello_rett(&x, &y, &w, &h);
     exrtf_vista_colonna(&g_vista, &cx, &cw);
@@ -1488,8 +1576,8 @@ static void vedi(unsigned int id)
         g_vista.pagina = g_vedi_pagina;
         vista_rett(&x, &y, &w, &h);
         exrtf_vista_posto(&g_vista, x, y, w, h);
-        modo_mostra();
     }
+    modo_mostra();
 }
 
 static const char *base_nome(const char *p)
@@ -1956,6 +2044,410 @@ static void sostituisci(void)
     }
 }
 
+/* =============================================================================
+ * PRINT AND PRINT PREVIEW (voce 81 c, 16/11/2026; the user chose "Anteprima +
+ * Stampa testo")
+ *
+ * The text as a text printer prints it: 80 columns (10 characters an inch)
+ * and 60 lines a page (6 lines an inch), three blank lines above, the page
+ * number at the foot, a form feed after each page: 66 lines, which fit both
+ * Letter (66) and A4 (70). Longer lines wrap at 80, a tab becomes the spaces
+ * to the next multiple of 8. An RTF tab prints its TEXT only: fonts on paper
+ * need a graphic printer driver, which EX-OS has not.
+ *
+ * ! THE BYTES GO OUT IN CP437, the set of PC printers (Epson, IBM, HP's
+ * PC-8): the text is UTF-8, and a letter CP437 has not becomes '?'.
+ *
+ * ! /dev/lpt.drv -stampa - PRINTS, in the background: the pages go to its
+ * standard input through a pipe written without blocking, a piece at every
+ * tick of a timer, and its words come back through another. A printer out of
+ * paper keeps it 30 s, and the editor must not freeze for that; and a live CD
+ * has no place where a file of the pages could be written. Its last line is
+ * the outcome, shown in the status line.
+ * ============================================================================= */
+#define ST_COL      80
+#define ST_CORPO    60
+#define ST_SU        3
+#define ST_PIEDE     2          /* blank lines between the body and the page number */
+#define ST_RIGHE_A4 70          /* lines of an A4 sheet at 6 an inch: the preview */
+#define ID_A_PREC   1
+#define ID_A_SUCC   2
+#define ID_A_STAMPA 3
+#define ID_A_CHIUDI 4
+
+static char         *g_st_testo;        /* the wrapped lines, one after the other */
+static unsigned int  g_st_testo_n, g_st_testo_posti;
+static unsigned int *g_st_inizio;       /* where each line starts in g_st_testo */
+static unsigned int  g_st_n, g_st_posti, g_st_pagine, g_st_vista;
+static ExWindow      g_da, g_da_pag;
+static int           g_da_w, g_da_h;    /* the preview's size, as created */
+static int           g_st_pid = 0, g_st_fd = -1;  /* lpt.drv, and the pipe to its stdin */
+static char         *g_st_out;          /* the bytes for the printer */
+static unsigned int  g_st_out_n, g_st_out_posti, g_st_out_fatti;
+static char          g_st_esito[160];
+
+static int st_metti(const char *t, unsigned int n)
+{
+    if (g_st_n + 1 > g_st_posti) {
+        unsigned int  np = g_st_posti ? g_st_posti * 2 : 256;
+        unsigned int *ni = (unsigned int *)realloc(g_st_inizio, np * sizeof(unsigned int));
+
+        if (!ni) return 0;
+        g_st_inizio = ni; g_st_posti = np;
+    }
+    if (g_st_testo_n + n + 1 > g_st_testo_posti) {
+        unsigned int np = g_st_testo_posti ? g_st_testo_posti : 8192;
+        char        *nt;
+
+        while (np < g_st_testo_n + n + 1) np *= 2;
+        nt = (char *)realloc(g_st_testo, np);
+        if (!nt) return 0;
+        g_st_testo = nt; g_st_testo_posti = np;
+    }
+    g_st_inizio[g_st_n++] = g_st_testo_n;
+    memcpy(g_st_testo + g_st_testo_n, t, n);
+    g_st_testo_n += n;
+    g_st_testo[g_st_testo_n++] = '\0';
+    return 1;
+}
+
+static const char *st_riga(unsigned int i) { return g_st_testo + g_st_inizio[i]; }
+
+static unsigned int u8_lung(unsigned char c)
+{
+    return c < 0x80 ? 1 : (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : (c & 0xF8) == 0xF0 ? 4 : 1;
+}
+
+/* One line of the text (n bytes): wrapped at ST_COL, tabs as spaces. */
+static void st_riga_metti(const char *s, unsigned int n)
+{
+    char         out[ST_COL * 4 + 8];
+    unsigned int o = 0, col = 0, i = 0, messe = 0;
+
+    while (i < n && s[i]) {
+        if (s[i] == '\t') {
+            unsigned int f = (col / 8 + 1) * 8;
+
+            if (f > ST_COL) f = ST_COL;
+            while (col < f) { out[o++] = ' '; col++; }
+            i++;
+        } else if ((unsigned char)s[i] < 0x20) {
+            i++;                                /* \r and the like: not on paper */
+        } else {
+            unsigned int l = u8_lung((unsigned char)s[i]), k;
+
+            for (k = 0; k < l && i < n && s[i]; k++) out[o++] = s[i++];
+            col++;
+        }
+        if (col >= ST_COL) { st_metti(out, o); messe++; o = 0; col = 0; }
+    }
+    if (o || !messe) st_metti(out, o);
+}
+
+/* The tab's text, wrapped: 1 if there is something to print. */
+static int st_prepara(void)
+{
+    g_st_n = 0; g_st_testo_n = 0;
+    if (g_rtf) {
+        const ExRtfDoc *d = g_vista.doc;
+        unsigned int    a = 0, b;
+
+        if (!d) return 0;
+        for (b = 0; b <= d->testo_n; b++)
+            if (b == d->testo_n || d->testo[b] == '\n') {
+                st_riga_metti(d->testo + a, b - a);
+                a = b + 1;
+            }
+    } else {
+        unsigned int i, n = ex_textarea_line_count(g_area);
+
+        for (i = 0; i < n; i++) {
+            const char *t = ex_textarea_line(g_area, i);
+            st_riga_metti(t ? t : "", t ? (unsigned int)strlen(t) : 0);
+        }
+    }
+    while (g_st_n > 1 && st_riga(g_st_n - 1)[0] == '\0') g_st_n--;  /* no blank page at the end */
+    g_st_pagine = (g_st_n + ST_CORPO - 1) / ST_CORPO;
+    if (g_st_pagine == 0) g_st_pagine = 1;
+    return g_st_n > 0;
+}
+
+static void st_piede(char *out, unsigned int max, unsigned int p)
+{
+    char t[64];
+    int  sp;
+
+    snprintf(t, sizeof(t), "- %u -", p + 1);
+    sp = (ST_COL - (int)strlen(t)) / 2;
+    snprintf(out, max, "%*s%s", sp, "", t);
+}
+
+/* The CP437 byte of a code point, '?' if it has none (the toolkit's table). */
+static unsigned char st_cp437(unsigned int u)
+{
+    static const unsigned short da437[128] = {
+        0x00C7,0x00FC,0x00E9,0x00E2,0x00E4,0x00E0,0x00E5,0x00E7,0x00EA,0x00EB,0x00E8,0x00EF,0x00EE,0x00EC,0x00C4,0x00C5,
+        0x00C9,0x00E6,0x00C6,0x00F4,0x00F6,0x00F2,0x00FB,0x00F9,0x00FF,0x00D6,0x00DC,0x00A2,0x00A3,0x00A5,0x20A7,0x0192,
+        0x00E1,0x00ED,0x00F3,0x00FA,0x00F1,0x00D1,0x00AA,0x00BA,0x00BF,0x2310,0x00AC,0x00BD,0x00BC,0x00A1,0x00AB,0x00BB,
+        0x2591,0x2592,0x2593,0x2502,0x2524,0x2561,0x2562,0x2556,0x2555,0x2563,0x2551,0x2557,0x255D,0x255C,0x255B,0x2510,
+        0x2514,0x2534,0x252C,0x251C,0x2500,0x253C,0x255E,0x255F,0x255A,0x2554,0x2569,0x2566,0x2560,0x2550,0x256C,0x2567,
+        0x2568,0x2564,0x2565,0x2559,0x2558,0x2552,0x2553,0x256B,0x256A,0x2518,0x250C,0x2588,0x2584,0x258C,0x2590,0x2580,
+        0x03B1,0x00DF,0x0393,0x03C0,0x03A3,0x03C3,0x00B5,0x03C4,0x03A6,0x0398,0x03A9,0x03B4,0x221E,0x03C6,0x03B5,0x2229,
+        0x2261,0x00B1,0x2265,0x2264,0x2320,0x2321,0x00F7,0x2248,0x00B0,0x2219,0x00B7,0x221A,0x207F,0x00B2,0x25A0,0x00A0
+    };
+    unsigned int i;
+
+    if (u < 0x80) return (unsigned char)u;
+    for (i = 0; i < 128; i++) if (da437[i] == u) return (unsigned char)(0x80 + i);
+    return '?';
+}
+
+static void st_out(const char *b, unsigned int n)
+{
+    if (g_st_out_n + n > g_st_out_posti) {
+        unsigned int np = g_st_out_posti ? g_st_out_posti : 65536;
+        char        *no;
+
+        while (np < g_st_out_n + n) np *= 2;
+        no = (char *)realloc(g_st_out, np);
+        if (!no) return;
+        g_st_out = no; g_st_out_posti = np;
+    }
+    memcpy(g_st_out + g_st_out_n, b, n);
+    g_st_out_n += n;
+}
+
+/* A line as CP437 bytes, then CR LF. */
+static void st_scrivi_riga(const char *t)
+{
+    char         b[ST_COL * 2 + 4];
+    unsigned int o = 0, i = 0;
+
+    while (t[i] && o < ST_COL * 2) {
+        unsigned char c = (unsigned char)t[i];
+        unsigned int  l = u8_lung(c), u = c;
+
+        if (l == 2 && t[i + 1])                       u = ((c & 0x1Fu) << 6) | (t[i + 1] & 0x3Fu);
+        else if (l == 3 && t[i + 1] && t[i + 2])      u = ((c & 0x0Fu) << 12) | ((t[i + 1] & 0x3Fu) << 6) | (t[i + 2] & 0x3Fu);
+        else if (l == 4)                              u = 0xFFFD;
+        b[o++] = (char)st_cp437(u);
+        while (l-- && t[i]) i++;
+    }
+    b[o++] = '\r'; b[o++] = '\n';
+    st_out(b, o);
+}
+
+/* All the pages as the printer gets them, in g_st_out. */
+static int st_pagine_fai(void)
+{
+    unsigned int p, j;
+    char         piede[ST_COL + 1];
+
+    g_st_out_n = g_st_out_fatti = 0;
+    for (p = 0; p < g_st_pagine; p++) {
+        for (j = 0; j < ST_SU; j++) st_scrivi_riga("");
+        for (j = 0; j < ST_CORPO; j++) {
+            unsigned int i = p * ST_CORPO + j;
+            st_scrivi_riga(i < g_st_n ? st_riga(i) : "");
+        }
+        for (j = 0; j < ST_PIEDE; j++) st_scrivi_riga("");
+        st_piede(piede, sizeof(piede), p);
+        st_scrivi_riga(piede);
+        st_out("\f", 1);
+    }
+    return g_st_out_n > 0;
+}
+
+/* At every tick: into the pipe what it takes now. All of it in: closed, and
+ * lpt.drv sees the end. */
+static void st_avanza(void)
+{
+    while (g_st_fd >= 0 && g_st_out_fatti < g_st_out_n) {
+        int n = (int)write(g_st_fd, g_st_out + g_st_out_fatti, g_st_out_n - g_st_out_fatti);
+
+        if (n <= 0) {
+            if (n < 0 && errno == EAGAIN) return;   /* full: next tick */
+            break;                                  /* lpt.drv is gone */
+        }
+        g_st_out_fatti += (unsigned int)n;
+    }
+    if (g_st_fd >= 0) { close(g_st_fd); g_st_fd = -1; }
+    ex_set_timer(g_f, 0);
+}
+
+/* lpt.drv's words, as they come; at the end the last line is the outcome. */
+static void st_leggi(void *dato, int fd)
+{
+    static char riga[160];
+    static unsigned int rn = 0;
+    char b[128];
+    int  n = (int)read(fd, b, sizeof(b)), i;
+
+    (void)dato;
+    if (n > 0) {
+        for (i = 0; i < n; i++) {
+            if (b[i] == '\n' || b[i] == '\r') {
+                if (rn) { riga[rn] = '\0'; strcpy(g_st_esito, riga); rn = 0; }
+            } else if (rn + 1 < sizeof(riga)) riga[rn++] = b[i];
+        }
+        return;
+    }
+    if (rn) { riga[rn] = '\0'; strcpy(g_st_esito, riga); rn = 0; }
+    ex_watch_fd(fd, 0, 0);
+    close(fd);
+    if (g_st_fd >= 0) { close(g_st_fd); g_st_fd = -1; ex_set_timer(g_f, 0); }
+    if (g_st_pid > 0) { int st = 0; waitpid(g_st_pid, &st, 0); }
+    g_st_pid = 0;
+    if (strstr(g_st_esito, "alla stampante")) {
+        snprintf(g_avviso, sizeof(g_avviso), "stampa: %s", g_st_esito);
+    } else {
+        snprintf(g_avviso, sizeof(g_avviso), "stampa NON riuscita");
+        ex_dlg_avviso("Stampa", g_st_esito[0] ? g_st_esito : "lpt.drv non ha detto niente");
+    }
+    ridisegna();
+}
+
+static void st_stampa(void)
+{
+    static const char *const LPT[2] = { "/dev/lpt.drv", "/cdrom/dev/lpt.drv" };
+    const char *drv = 0;
+    char        q[160], *av[4];
+    SpawnRedir  red[3];
+    int         p[2], d[2], i;
+
+    if (g_st_pid > 0) { strcpy(g_avviso, "una stampa e' gia' in corso"); return; }
+    for (i = 0; i < 2 && !drv; i++) if (access(LPT[i], F_OK) == 0) drv = LPT[i];
+    if (!drv) { ex_dlg_avviso("Stampa", "Manca /dev/lpt.drv, il driver della porta parallela."); return; }
+    if (!st_prepara()) { strcpy(g_avviso, "niente da stampare"); return; }
+    snprintf(q, sizeof(q), "%u %s di %u colonne e %u righe, %s, sulla porta parallela (lpt0)?",
+             g_st_pagine, g_st_pagine == 1 ? "pagina" : "pagine", ST_COL, ST_CORPO,
+             g_rtf ? "solo il testo" : "come testo");
+    if (!ex_dlg_conferma("Stampa", q, "Stampa", "Annulla")) return;
+
+    if (!st_pagine_fai()) { ex_dlg_avviso("Stampa", "Non c'e' memoria per le pagine."); return; }
+    if (pipe(p) != 0) { ex_dlg_avviso("Stampa", "Non riesco ad aprire un tubo."); return; }
+    if (pipe(d) != 0) { close(p[0]); close(p[1]); ex_dlg_avviso("Stampa", "Non riesco ad aprire un tubo."); return; }
+    red[0].fd = 0; red[0].flags = 0; red[0].percorso = 0; red[0].fd_padre = d[0];
+    red[1].fd = 1; red[1].flags = 0; red[1].percorso = 0; red[1].fd_padre = p[1];
+    red[2].fd = 2; red[2].flags = 0; red[2].percorso = 0; red[2].fd_padre = p[1];
+    av[0] = (char *)drv; av[1] = "-stampa"; av[2] = "-"; av[3] = 0;
+    g_st_pid = spawn_ex(drv, av, environ, red, 3);
+    close(p[1]);                                /* or EOF never comes: see pipe() */
+    close(d[0]);
+    if (g_st_pid < 0) {
+        g_st_pid = 0; close(p[0]); close(d[1]);
+        ex_dlg_avviso("Stampa", "lpt.drv non parte.");
+        return;
+    }
+    g_st_esito[0] = '\0';
+    g_st_fd = d[1];
+    fcntl(g_st_fd, F_SETFL, O_NONBLOCK);
+    if (ex_watch_fd(p[0], st_leggi, 0) != 0) {
+        /* an exwin.so without pipes to watch: everything here, as a last resort */
+        fcntl(g_st_fd, F_SETFL, 0);
+        st_avanza();
+        st_leggi(0, p[0]);
+        return;
+    }
+    ex_set_timer(g_f, 20);
+    st_avanza();
+    snprintf(g_avviso, sizeof(g_avviso), "stampa in corso: %u %s", g_st_pagine,
+             g_st_pagine == 1 ? "pagina" : "pagine");
+}
+
+/* --- the preview: one sheet at a time, scaled to the window ---------------- */
+
+static void anteprima_disegna(void)
+{
+    int    w = g_da_w, h = g_da_h, fw, fh, fx, fy, corpo, j, bx, bw;
+    ExFont fo = 0;
+    char   t[48], piede[ST_COL + 1];
+
+    fh = h - 56;
+    fw = fh * 210 / 297;
+    fx = (w - fw) / 2;
+    fy = 46;
+    ex_fill_rect(g_da, 0, 40, w, h - 40, EX_DARK_GRAY);
+    ex_fill_rect(g_da, fx + 4, fy + 4, fw, fh, EX_BLACK);           /* the shadow */
+    ex_fill_rect(g_da, fx, fy, fw, fh, EX_WHITE);
+    /* 80 columns are 8 inches of the 8.27 of A4, centred */
+    bw = fw * 800 / 827;
+    bx = fx + (fw - bw) / 2;
+    for (corpo = 12; corpo >= 4; corpo--) {
+        fo = ex_font_find(EXRTF_MONO, corpo, 0, 0);
+        if (fo && ex_text_width(fo, "M") * ST_COL <= bw) break;
+    }
+    for (j = 0; j < ST_CORPO; j++) {
+        unsigned int i = g_st_vista * ST_CORPO + (unsigned int)j;
+        int          y = fy + (ST_SU + j) * fh / ST_RIGHE_A4;
+
+        if (i >= g_st_n) break;
+        if (fo) ex_draw_text_font(g_da, fo, bx, y, st_riga(i), EX_BLACK);
+    }
+    st_piede(piede, sizeof(piede), g_st_vista);
+    if (fo) ex_draw_text_font(g_da, fo, bx, fy + (ST_SU + ST_CORPO + ST_PIEDE) * fh / ST_RIGHE_A4,
+                              piede, EX_BLACK);
+    snprintf(t, sizeof(t), "pagina %u di %u", g_st_vista + 1, g_st_pagine);
+    ex_set_text(g_da_pag, t);
+}
+
+static long anteprima_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
+{
+    long r;
+
+    if (msg == EXM_CLOSE || (msg == EXM_COMMAND && wp == ID_A_CHIUDI)) { finestra_via(&g_da); return 0; }
+    if (msg == EXM_COMMAND && wp == ID_A_STAMPA) { finestra_via(&g_da); st_stampa(); ridisegna(); return 0; }
+    if (msg == EXM_COMMAND && (wp == ID_A_PREC || wp == ID_A_SUCC)) {
+        if (wp == ID_A_PREC && g_st_vista > 0) g_st_vista--;
+        if (wp == ID_A_SUCC && g_st_vista + 1 < g_st_pagine) g_st_vista++;
+        ex_default_proc(f, EXM_PAINT, 0, 0);
+        anteprima_disegna();
+        ex_update(f);
+        return 0;
+    }
+    if (msg == EXM_KEY) {
+        unsigned int c = wp & KBD_KEY_MASK;
+
+        if (c == KBD_K_PGDN || c == KBD_K_RIGHT) return anteprima_proc(f, EXM_COMMAND, ID_A_SUCC, 0);
+        if (c == KBD_K_PGUP || c == KBD_K_LEFT)  return anteprima_proc(f, EXM_COMMAND, ID_A_PREC, 0);
+        if (c == 27)                             return anteprima_proc(f, EXM_COMMAND, ID_A_CHIUDI, 0);
+    }
+    if (msg == EXM_PAINT) {
+        r = ex_default_proc(f, msg, wp, lp);
+        anteprima_disegna();
+        ex_update(f);
+        return r;
+    }
+    return ex_default_proc(f, msg, wp, lp);
+}
+
+static void anteprima_apri(void)
+{
+    unsigned int sw = 0, sh = 0;
+    int          h, w;
+
+    if (g_da) return;
+    if (!st_prepara()) { strcpy(g_avviso, "niente da vedere: il testo e' vuoto"); return; }
+    ex_screen_size(&sw, &sh);
+    h = sh > 200 ? (int)sh - 80 : 520;
+    if (h > 760) h = 760;
+    w = (h - 56) * 210 / 297 + 60;
+    if (w < 470) w = 470;
+    g_st_vista = 0;
+    g_da_w = w; g_da_h = h;
+    g_da = ex_create("window", "Anteprima di stampa", EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_MODAL,
+                     EX_AUTO, EX_AUTO, w, h, 0, 0, anteprima_proc);
+    if (!g_da) return;
+    ex_create("button", "< Prima",  EX_CHILD, 8,   8, 70, 26, g_da, ID_A_PREC, 0);
+    ex_create("button", "Dopo >",   EX_CHILD, 82,  8, 70, 26, g_da, ID_A_SUCC, 0);
+    g_da_pag = ex_create("label", "", EX_CHILD, 160, 13, 130, 16, g_da, 0, 0);
+    ex_create("button", "Stampa",   EX_CHILD, w - 168, 8, 76, 26, g_da, ID_A_STAMPA, 0);
+    ex_create("button", "Chiudi",   EX_CHILD, w - 86,  8, 76, 26, g_da, ID_A_CHIUDI, 0);
+    ex_default_proc(g_da, EXM_PAINT, 0, 0);
+    anteprima_disegna();
+    ex_update(g_da);
+}
+
 static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 {
     unsigned int c;
@@ -1971,6 +2463,9 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         if (wp == ID_SALVA)     { salva();            break; }
         if (wp == ID_NUOVO)     { doc_nuovo();        break; }
         if (wp == ID_NUOVO_RTF) { rtf_nuovo_doc();    break; }
+        if (wp == ID_BT_NUOVO)  { if (g_rtf) rtf_nuovo_doc(); else doc_nuovo(); break; }
+        if (wp == ID_ANTEPRIMA) { anteprima_apri();   break; }
+        if (wp == ID_STAMPA)    { st_stampa();        break; }
         if (wp >= ID_R_G && wp <= ID_F_TABVIA) {
             formato(wp, lp);
             break;
@@ -2065,6 +2560,7 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
                 if (c == 'q' || c == 'Q') { esci_se_si_puo();   break; }
                 if (c == 'n' || c == 'N') { doc_nuovo();        break; }
                 if (c == 'o' || c == 'O') { apri_con_dialogo(); break; }
+                if (c == 'p' || c == 'P') { st_stampa();        break; }
                 if (c == 'z' || c == 'Z' || c == 'f' || c == 'F' || c == 'h' || c == 'H') {
                     strcpy(g_avviso, "nei documenti RTF annulla e cerca non ci sono ancora");
                     break;
@@ -2081,6 +2577,7 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
          * dentro il toolkit se in quel momento ha senso. */
         if (wp & KBD_MOD_CTRL) {
             if (c == 's' || c == 'S') { salva();               break; }
+            if (c == 'p' || c == 'P') { st_stampa();           break; }
             if (c == 'x' || c == 'X') { annulla_segna();
                                         ex_textarea_cut(g_area);  break; }
             if (c == 'c' || c == 'C') { ex_textarea_copy(g_area);   break; }
@@ -2135,7 +2632,7 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
             exrtf_vista_posto(&g_vista, vx, vy, vw, vh);
         }
 
-        ex_resize(g_area, w - AREA_X * 2 - BARRA_W, h - AREA_Y - BASSO);
+        area_posto();
         if (g_schede) ex_resize(g_schede, w - AREA_X * 2, SCHEDE_H);
         if (g_barra) {
             ex_move(g_barra, w - AREA_X - BARRA_W, AREA_Y);
@@ -2161,8 +2658,13 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         /* The view over the grey the base painted; ex_update puts an open
          * menu or combo back on top of it. */
         if (g_rtf) { vista_disegna_se(); ex_update(g_f); }
+        else if (g_vedi_righello) { righello_testo(); ex_update(g_f); }
         return r;
     }
+
+    case EXM_TIMER:
+        st_avanza();
+        return 0;
 
     /* The mouse on the rich text view (@RTF). */
     case EXM_MOUSE_DOWN:
@@ -2207,6 +2709,7 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
      * press it again instead of being written. Not while one of the two
      * windows is open: the focus is theirs. */
     if (comando && g_rtf && !g_dp && !g_dg) ex_clear_focus(g_f);
+    if (comando && !g_rtf && !g_dp && !g_dg && !g_da) ex_set_focus(g_area);      /* a text tab: to the area */
     ridisegna();
     return 0;
 }
@@ -2253,6 +2756,9 @@ int main(int argc, char **argv)
     ex_menu_add_item(g_menu, "File", "Salva\tCtrl+S",     ID_SALVA);
     ex_menu_add_item(g_menu, "File", "Salva con nome...", ID_SALVACOME);
     ex_menu_add_item(g_menu, "File", "Ricarica",         ID_RICARICA);
+    ex_menu_add_item(g_menu, "File", "-",                0);
+    ex_menu_add_item(g_menu, "File", "Anteprima di stampa...", ID_ANTEPRIMA);
+    ex_menu_add_item(g_menu, "File", "Stampa...\tCtrl+P", ID_STAMPA);
     ex_menu_add_item(g_menu, "File", "-",                0);
     ex_menu_add_item(g_menu, "File", "Esci\tCtrl+Q",      ID_ESCI);
 
@@ -2311,6 +2817,7 @@ int main(int argc, char **argv)
     }
 
     g_barra = 0;        /* vedi BARRA_W: la barra e' quella dell'area */
+    ex_textarea_set_tab(g_area, TAB_TESTO);
 
     g_stato = ex_create("label", "", EX_CHILD,
                       6, FIN_H - 22, FIN_W - 12, 16, g_f, 0, 0);

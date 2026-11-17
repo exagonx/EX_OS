@@ -26,6 +26,7 @@
 
 #include "kernel.h"
 #include "cfg.h"
+#include "kmalloc.h"
 #include "fat12.h"
 #include "vfs.h"
 #include "rtc.h"       /* rtc_fuso_metti: /boot/fuso.cfg (0.340) */
@@ -260,16 +261,24 @@ static void cfg_apply_key(KernelConfig *cfg, const char *section,
      * Solo raccolta: il montaggio vero avviene al PASSO 13d, dopo
      * blk_init(). Qui i dispositivi non esistono ancora. */
     if (cfg_strcmp(section, "mount") == 0) {
-        if (cfg->mount_count < CFG_MAX_MOUNT) {
-            cfg_strcpy(cfg->mounts[cfg->mount_count].punto,
-                       key, CFG_NAME_LEN);
-            cfg_strcpy(cfg->mounts[cfg->mount_count].dev,
-                       value, CFG_NAME_LEN);
-            cfg->mount_count++;
-        } else {
-            klog(LOG_WARN, "CFG: [mount] oltre %d voci: '%s' ignorata",
-                 CFG_MAX_MOUNT, key);
+        /* as many as the file lists (0.343): the array doubles, the old one
+         * goes back to the heap - nobody holds it while the file is read */
+        if (cfg->mount_count == cfg->mount_posti) {
+            uint32_t  posti = cfg->mount_posti ? cfg->mount_posti * 2u : 8u, i;
+            CfgMount *n = (CfgMount *)kmalloc(posti * sizeof(CfgMount));
+
+            if (n == NULL) {
+                klog(LOG_WARN, "CFG: [mount] niente memoria: '%s' ignorata", key);
+                return;
+            }
+            for (i = 0; i < cfg->mount_count; i++) n[i] = cfg->mounts[i];
+            if (cfg->mounts) kfree(cfg->mounts);
+            cfg->mounts      = n;
+            cfg->mount_posti = posti;
         }
+        cfg_strcpy(cfg->mounts[cfg->mount_count].punto, key, CFG_NAME_LEN);
+        cfg_strcpy(cfg->mounts[cfg->mount_count].dev, value, CFG_NAME_LEN);
+        cfg->mount_count++;
         return;
     }
 

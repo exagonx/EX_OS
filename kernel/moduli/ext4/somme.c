@@ -32,7 +32,11 @@
 
 #include "ext4.h"
 
-Ext4Vol g_vol[EXT2_MAX_MOUNT];
+/* ! NO TABLE OF VOLUMES (0.343): the kernel's mounts grow, so each one
+ * carries its Ext4Vol (Ext2Mount.mod_vol), made at its first mount here and
+ * kept for the slot's next volume. A mount the module never saw reads this
+ * empty one: no extents, no sums, as the zeroed table used to say. */
+static Ext4Vol g_vol_vuoto;
 
 static uint32_t g_crc32c[256];
 static uint16_t g_crc16[256];
@@ -85,9 +89,7 @@ static uint32_t crc_con_buco(uint32_t crc, const uint8_t *p, uint32_t n,
 
 Ext4Vol *vol_di(const Ext2Mount *m)
 {
-    int i = (int)(m - K->mnt);
-
-    return (i >= 0 && i < EXT2_MAX_MOUNT) ? &g_vol[i] : NULL;
+    return (m != NULL && m->mod_vol != NULL) ? (Ext4Vol *)m->mod_vol : &g_vol_vuoto;
 }
 
 /* =============================================================================
@@ -95,10 +97,16 @@ Ext4Vol *vol_di(const Ext2Mount *m)
  * ============================================================================= */
 int vol_monta(int mnt)
 {
-    Ext2Mount *m = &K->mnt[mnt];
-    Ext4Vol   *v = &g_vol[mnt];
+    Ext2Mount *m = K->mnt[mnt];
+    Ext4Vol   *v;
     uint8_t    sb[1024];
     uint32_t   x;
+
+    if (m->mod_vol == NULL) {
+        m->mod_vol = MK->kmalloc(sizeof(Ext4Vol));
+        if (m->mod_vol == NULL) return -1;
+    }
+    v = (Ext4Vol *)m->mod_vol;
 
     memset(v, 0, sizeof(*v));
     est_dimentica();

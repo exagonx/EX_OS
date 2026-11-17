@@ -26,7 +26,7 @@
 #include "libc.h"
 
 /* +0.001 a ogni modifica: `mount -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("mount", "0.004");
+EX_VERSIONE("mount", "0.005");
 
 /* Gli stessi errno del kernel (kernel/include/syscall.h): la syscall
  * ritorna il valore negato. */
@@ -36,6 +36,7 @@ EX_VERSIONE("mount", "0.004");
 #define E_INVAL    22
 #define E_BUSY     16
 #define E_MFILE    24
+#define E_NOMEM    12
 #define E_ROFS     30
 #define E_NOMEDIUM 123  /* il lettore c'e', il disco dentro no */
 
@@ -47,7 +48,8 @@ static const char *spiega(int err)
         case E_EXIST: return "il punto di montaggio esiste gia'";
         case E_INVAL: return "punto non valido o filesystem non riconosciuto";
         case E_BUSY:  return "punto o dispositivo gia' in uso, oppure file aperti";
-        case E_MFILE: return "nessuno slot di montaggio libero";
+        case E_MFILE: return "nessuno slot di montaggio libero (kernel fino alla 0.342)";
+        case E_NOMEM: return "il kernel non ha memoria per un altro montaggio";
         case E_ROFS:  return "filesystem in sola lettura";
         case E_NOMEDIUM: return "nessun disco nel lettore";
         default:      return "errore";

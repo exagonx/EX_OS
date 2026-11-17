@@ -2,7 +2,7 @@
 # =============================================================================
 # tools/dmesg-pc.py — saves on this PC what a remote EX-OS kernel says
 #
-#     tools/dmesg-pc.py [host] [file]
+#     tools/dmesg-pc.py [host[:port]] [file]
 #
 # Default 192.168.0.177 and /tmp/exos-dmesg.log. Opens one telnet session and
 # leaves `dmesg -segui` running on it: the session and the program are already
@@ -41,7 +41,8 @@ def pulisci(s, buf):
 
 
 def sessione(f):
-    s = socket.create_connection((host, 23), timeout=10)
+    h, _, pt = host.partition(":")          # host[:port]
+    s = socket.create_connection((h, int(pt or 23)), timeout=10)
     s.settimeout(1)
     time.sleep(2)
     s.sendall(b"dmesg -segui\r\n")

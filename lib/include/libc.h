@@ -1469,6 +1469,7 @@ int guardia_imposta(unsigned int secondi);
 #define CPUFREQ_NO_BIOS         5
 #define CPUFREQ_NO_HWP          6
 #define CPUFREQ_NO_STATI        7
+#define CPUFREQ_NO_CORE2        8   /* Core 2: pairs in dmesg, not driven yet (kernel 0.342) */
 #define CPUFREQ_SPENTO      0
 #define CPUFREQ_AUTO        1
 #define CPUFREQ_MAX         2

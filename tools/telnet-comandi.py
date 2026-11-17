@@ -2,7 +2,7 @@
 # =============================================================================
 # tools/telnet-comandi.py — run commands on an EX-OS machine over telnet
 #
-#     tools/telnet-comandi.py <host> "cmd@seconds" "cmd@seconds" ...
+#     tools/telnet-comandi.py <host[:port]> "cmd@seconds" "cmd@seconds" ...
 #
 # For a telnetd started with -s (no login). Refuses every option
 # negotiation, prints what comes back, and ALWAYS ends with `exit`: a session
@@ -51,7 +51,8 @@ def leggi(s, attesa):
 
 
 def main():
-    s = socket.create_connection((sys.argv[1], 23), timeout=10)
+    h, _, pt = sys.argv[1].partition(":")   # host[:port]
+    s = socket.create_connection((h, int(pt or 23)), timeout=10)
     print(leggi(s, 4), end="")
     for c in sys.argv[2:]:
         testo, _, t = c.rpartition("@") if "@" in c else (c, "", "3")

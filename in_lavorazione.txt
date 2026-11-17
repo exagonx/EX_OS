@@ -173,8 +173,11 @@ GRUPPO  VOCI             COSA
                          riordina, Applicazioni... in Impostazioni > Sistema
   2     74               CHIUSA 8/11: a cavo staccato il portatile arriva al login
   3     75 5 65          dati sicuri: mappa d'avvio, spento da solo (59 e 63 fatte)
-  4     50 62            tetti montaggi; telnetd (serve il passaggio in ip.drv). 53 e 9 fatte
+  4     50 62            FATTE 17/11 (kernel 0.343, telnetd 0.015). 53 e 9 fatte
   5     66 27 38 70 73   Firefox: si rimisura prima (54 bis e 71 per la cache)
+                         17/11: 73 causa trovata (Tabbrowser riga 752, una riga);
+                         27 e' tutto disco (fault da 4 KB, PIO, cache): vedi le voci
+                         17/11: 73 FATTA (patch Tabbrowser, prova-primotab.sh)
   6     25 41 44 69      giro sul portatile; anche poweroff/halt e FIN telnet
   7     49 47 60 67 3 4  attrezzi di aggiornamento e pubblicazione
   8     25 24 57 55 56   2D hardware, -install, AHCI
@@ -8494,6 +8497,30 @@ tools/netinst/velocita tolto da netinst.
          giro, il lucchetto del VFS: @CODA-20-10 p.5).
       Da fare: misurare prima di cambiare (secondi di disco contro secondi
       di CPU), poi l'SMP a 64 bit, che serve comunque.
+      17/11 MISURATO (firefox_soluzione.txt nella radice, parte B; misure in
+      ~/cross_build/prove/firefox-16-11/): sul .253 a 0.341 l'avvio a freddo
+      e' 47-57 s, a caldo 2,5 s: E' TUTTO DISCO. 11014 letture da 14,7 KB
+      in media, 44,5 s di lettura su 49,8; la lettura anticipata quasi mai
+      (3,6 MB su 162). Cause in ordine: (1) pf_carica_da_file
+      (kernel/mm/paging.c 1636) legge UNA pagina da 4 KB per fault, sparse;
+      (2) il disco del .253 in PIO, 11,3 MB/s (ata.c canale_nativo, voce
+      99); (3) la cache delle pagine a 383 MB non tiene Firefox fra due
+      avvii; (4) dopo l'avvio 36 s di FLUSH su 69 (voce 71).
+      CONTROLLATO NEL CODICE (17/11): (1) e (3) confermati. Sulla (3): il
+      tetto di 4 MB di tabella (PC_TABELLA_MAX, blk.c 806) vale SOLO se
+      kernel.cfg non dice cachedisco; `cachedisco = 1024` lo toglie gia':
+      misura da fare SUBITO sul .253 senza cambiare codice (e il tetto fisso
+      di difetto va comunque tolto: regola "nessun tetto fisso"). Sul
+      sospetto di P3 (PRDT con indirizzo virtuale, ata.c 433): il kernel e'
+      collegato a 0x100000 a 32 E a 64 bit (kernel.ld, kernel64.ld) con la
+      mappa identica, quindi g_dma_buf virtuale = fisico: la causa del DMA
+      bloccato sul MCP73 e' altrove.
+      ORDINE PROPOSTO (da approvare): P0 contatore dei fault da file in
+      /proc; misura con cachedisco = 1024; P1 lettura a grappoli nel fault
+      (64-128 KB, N in kernel.cfg; forse una vfs_precarica nella cache di
+      blk.c); P2 precarica degli eseguibili grossi alla exec; P3 DMA dei
+      canali nativi (voce 99) o AHCI; P4 cache in proporzione alla RAM e
+      "Cached:" vero in /proc/meminfo. Obiettivo: sotto 10 s come Linux.
 
   28. MARIADB, IL SERVER SQL (l'utente, 25/10): «mi serve un server SQL»;
       sorgenti in mariadb-server/ (clone di github.com/MariaDB/server, in
@@ -8671,6 +8698,37 @@ tools/netinst/velocita tolto da netinst.
       in un tab nuovo tutto funziona. Si puo' aggirare, l'utente: si risolve piu'
       avanti. Causa non cercata. Stesso giorno: quindi la tastiera sulla scrivania
       risponde con kbd.drv 0.009.
+      17/11 CAUSA TROVATA (firefox_soluzione.txt, parte A; giri in QEMU in
+      ~/cross_build/prove/firefox-16-11/): al SECONDO avvio senza indirizzo
+      l'URL iniziale e' una promessa di SessionStore, e Tabbrowser.sys.mjs
+      riga 752 sceglie sempre PRIVILEGEDABOUT_REMOTE_TYPE senza guardare
+      gMultiProcessBrowser: il primo <browser> nasce remoto, EX-OS non lancia
+      processi figli ("Failed to launch tab subprocess"), e a Invio
+      "aBrowser.frameLoader.remoteTab is null". Profilo nuovo o indirizzo
+      sulla riga di comando: passa da predictRemoteTypeForURI e va.
+      CONTROLLATO NEL SORGENTE (17/11): riga 752 confermata; in browser/ e'
+      l'UNICO punto che assegna quel tipo a un browser (gli altri lo
+      confrontano soltanto).
+      DA FARE: tocca.sh sul file, poi alla riga 752
+        remoteType = this.documentGlobal.gMultiProcessBrowser
+          ? lazy.E10SUtils.PRIVILEGEDABOUT_REMOTE_TYPE : lazy.E10SUtils.NOT_REMOTE;
+      patch-crea.sh, `gecko-costruisci.sh build faster` a 32 e 64 (prima e
+      dopo: config.statusd/substs non null), pacchetto, e primotab.sh portato
+      in tools/exilla/ come prova OK/NO. Il ripiego "about:home" in exilla.c
+      NON serve se si fa la correzione (toglierebbe la pagina iniziale e il
+      ripristino della sessione).
+      FATTO 17/11: la riga 752 come scritto sopra, patch
+      browser_components_tabbrowser_Tabbrowser.sys.mjs.patch; build faster e
+      package a 32 e 64 (config.statusd a posto prima e dopo).
+      tools/exilla/prova-primotab.sh 8 su 8 a 32 e 64 bit (due avvii, primo tab
+      e tab nuovo, foto gialla dopo Invio). Il primo tab parte bianco come i tab
+      nuovi (AboutNewTabRedirector riga 550 NS_ERROR_NOT_AVAILABLE: about:home
+      nel processo principale). Resta un "Failed to launch tab subprocess" al
+      clic nella barra, innocuo. DA PUBBLICARE: il pacchetto Exilla nuovo.
+      La prova: senza rete e senza la scheda Privacy Notice (preferenza nella
+      sola copia di prova: al primo avvio si prendeva il fuoco), tab nuovo con
+      Ctrl+T. NON girata sul Firefox senza correzione: il guasto si vede nel
+      giro4 dell'analisi (~/cross_build/prove/firefox-16-11/), non con lei.
 
   72. PORTING DI OPENSSH sshd (l'utente, 2/11). Server per terminali ssh da GitHub,
       come Apache, MariaDB e gli altri: negli strumenti, clona il repository in
@@ -8707,6 +8765,12 @@ tools/netinst/velocita tolto da netinst.
   70. tools/exilla/prova-riapertura.sh NON E' ANCORA UNA PROVA: su ext4 da 4 KB in
       QEMU Firefox si ferma su "Profile Missing", anche con i file di root. Causa
       non trovata. Sul portatile lo stesso Firefox parte.
+      17/11 PISTA (prova-primotab.sh, ext2 in QEMU): "Profile Missing" anche li',
+      e la causa misurata era banale: mkdir /disk/p2 battuto durante il fermo
+      ATA BSY dell'avvio non ha creato niente e non ha scritto niente (ne'
+      "creata" ne' un errore: perche', da cercare), il profilo non esisteva. Con 30 s di attesa prima dei comandi parte. Da guardare se
+      prova-riapertura.sh ha lo stesso difetto. Strano: nel giro a mano del
+      mattino p2 mancava lo stesso e Firefox partiva (lo creava?).
 
   69. TASTIERA MORTA OGNI TANTO DOPO IL RIAVVIO. L'utente, 2/11: non e' il login, la
       tastiera e' morta e il mouse funziona; non accade sempre. kbd_set_leds mandava
@@ -10065,7 +10129,21 @@ tools/netinst/velocita tolto da netinst.
          c'e';
       b) il righello, per le tabulazioni e l'orientamento del testo;
       c) la vista della pagina: un'anteprima sul foglio prima di stampare.
-      Stato: in coda.
+      16/11 VISTO in QEMU: barra, righello e vista pagina ci sono dal 9/10
+      ma SOLO per gli RTF (prova_rtf 6/6); con un .txt Visualizza le offre
+      e non compare niente. SCELTE DELL'UTENTE (16/11): a+b) "Barra +
+      righello a colonne": nei .txt la barra con Nuovo, Apri, Salva, Taglia,
+      Copia, Incolla, Annulla, Cerca, il righello in colonne con tabulazioni
+      e colonna del cursore, il menu Formato spento; c) "Anteprima + Stampa
+      testo": File > Anteprima di stampa (fogli A4) e File > Stampa che
+      manda il testo impaginato a lpt.drv (RTF: solo il testo).
+      16/11 sera FATTO (ExEditor 0.009, exwin.so 0.022, lpt.drv 0.004): barra
+      e righello a colonne nei .txt, Tab scrive la tabulazione (fermi ogni
+      8), Formato grigio; Anteprima di stampa e Stampa/Ctrl+P via
+      `lpt.drv -stampa -` (tubo, niente file temporaneo: il CD non ha /tmp).
+      QEMU 32 e 64: help.txt stampato = atteso byte per byte (30 pagine,
+      81239 byte); prova_lpt 28/28, prova_rtf 6/6.
+      Stato: da provare con una stampante vera sulla SUNIX del .253.
 
   78. DRIVER DEL RISPARMIO ENERGETICO (l'utente, 4/11: "bisogna implementare
       il driver per il risparmio energetico", messo come PROSSIMA cosa dopo
@@ -10110,6 +10188,26 @@ tools/netinst/velocita tolto da netinst.
          da decidere); il pannello Impostazioni (@IMPOSTAZIONI-SCHEDE) non
          ha ancora la scelta del tempo.
       Stato: a) e b) fatti e provati sul portatile.
+      16/11: il Q9650 del .253 (Core 2, famiglia 6 modello 17h) dice "nessun
+      controllo": cpufreq conosce solo Intel da Sandy Bridge (MSR 0xCE).
+      SCELTA DELL'UTENTE (16/11): "Si', solo le due coppie dichiarate": sul
+      Core 2 solo le coppie moltiplicatore/VID massima e minima che il
+      processore dichiara (come coreboot); prima un kernel che le legge e le
+      stampa senza scrivere, l'accensione con cpufreq.drv solo dopo averle
+      viste con l'utente. Anche la riga di dmesg con gli stati a 0.
+      17/11 notte: kernel 0.342 scritto (core2_racconta in cpufreq.c: 198h
+      alto, 19Dh basso, bus da CDh, grezzi in dmesg, niente wrmsr; riga
+      degli stati con gli n veri). QEMU non passa EIST neanche con +est:
+      li' solo "modello 17h" e nessun FAULT. DA FARE CON L'UTENTE: la 0.342
+      sul .253 (netupdate dal server locale o a mano), dmesg | grep
+      CPUFREQ, guardare insieme le coppie; poi decidere se pilotarle.
+      17/11 mattina, SUL .253 (Q9650): la 0.342 parte. dmesg: "Core 2 modello
+      17h, SpeedStep acceso dal BIOS, bus 333 MHz"; massima 9 x VID 26h (2997
+      MHz), minima 6 x VID 16h (1998 MHz), ora 9 x VID 26h. Grezzi: 198h
+      06160926:06000926, 199h 00000000:00000926, 19Dh 00000000:00000616, 17h
+      08100000:88c48926, CDh 80000a04. Coincidono col Q9650 (3,0 GHz, 6 x
+      il minimo). RESTA ALL'UTENTE: se e come pilotare le due coppie (scrivere
+      199h).
 
   77. DA FARE DOPO IL 3-4/11 (librerie condivise, VLC, ExPackage), messo in
       coda dall'utente il 4/11 ("metti in coda le cose da fare"):
@@ -10204,6 +10302,29 @@ tools/netinst/velocita tolto da netinst.
   62. telnetd SERVE UNA CONNESSIONE PER VOLTA (1/11): una seconda sessione resta
       muta. Per questo prova_carico_pc.py fa tutto in una sessione; dmesg-pc.py e
       guardia-pc.py non possono girare insieme.
+      FATTO 17/11 in telnetd 0.015: ogni connessione va a una copia,
+      telnetd -sessione N, e la connessione le passa con IP_MSG_EREDITA
+      (ip.drv 0.021). Una copia e non fork: fork sta solo in libc.a.
+      tools/prova_telnet_piu.sh 6 su 6 a 32 e 64 bit (tre insieme, una chiusa,
+      una quarta); prova_telnet e prova_telnet_fine a posto.
+      PROVATA SUL .253 (17/11, kernel 0.342, la copia in /prova343 sulla porta
+      2341, quello dell'avvio lasciato stare): telnet_piu_prova.py 6 su 6;
+      dmesg-pc.py con dmesg -segui aperto e intanto altre due sessioni che
+      rispondono; le copie finite raccolte entro 10 s (il giro di accetta).
+      guardia-pc.py non lanciata: fa ripartire la macchina, serve solo nelle
+      prove rischiose. Trovato: vedi la voce 100.
+      17/11, DOPO IL RIAVVIO NELLA 0.343: il telnetd 0.015 dell'avvio, porta
+      23, telnet_piu_prova.py 6 su 6.
+
+  100. I NIPOTI DI UNA SESSIONE TELNET RESTANO VIVI (17/11, sul .253): chiusa
+      la connessione di dmesg-pc.py, telnetd ferma la sua shell ma dmesg -segui,
+      figlio della shell, resta in "dorme" per sempre, col padre morto. dmesg
+      -segui scrive solo quando arriva un avviso, quindi non scopre mai che il
+      pty e' chiuso. C'era gia' con telnetd 0.014 (interrompi() ferma solo il
+      figlio), non e' delle copie della 0.015. Rimedio vero: un gruppo di
+      processi per sessione e un segnale a tutto il gruppo quando il pty si
+      chiude (come SIGHUP); intanto dmesg -segui potrebbe uscire quando la
+      scrittura fallisce. Da decidere con l'utente. Per ora: kill a mano.
 
   61. IL LOGIN SI RIPETE DA SOLO SULLA CONSOLE (l'utente, 1/11, foto
       20261101_100408, portatile, 0.299): "EX-OS - accesso / utente:" a catena,
@@ -10339,6 +10460,16 @@ tools/netinst/velocita tolto da netinst.
       VFS_MAX_MOUNT 6 e EXT2_MAX_MOUNT 4 sono #define, contro la regola
       "nessun tetto fisso". Toccano tabelle in vfs.c, ext2.c, nel modulo
       (g_gio, g_vol) e K->max_mount: da far crescere insieme.
+      17/11 FATTO, kernel 0.343: VFS, ext2, FAT, ISO e [mount] di kernel.cfg
+      crescono (kernel/include/posti.h: vettore di puntatori che raddoppia,
+      posti che non si spostano); il modulo ext4 tiene giornale, Ext4Vol e
+      superblocco da riscrivere dentro Ext2Mount (EXT2_IF_ABI 5). mount e
+      automount 0.005 spiegano ENOMEM. tools/prova_montaggi.sh: 11 volumi
+      insieme (3 ext2, 3 ext4, 5 FAT16) + cd0, /rdboot, /proc; e2fsck e
+      fsck.fat puliti. ISO oltre 2 non provato (servono 3 lettori).
+      RESTANO FISSI (trovati facendola, da mettere in coda): BLK_MAX_DEV 16
+      (blk.h), MBR_MAX_PART 16 (mbr.h), FAT_MAX_OPEN 16 (fat.h),
+      CFG_MAX_MODULES 16 e CFG_MAX_ENV 32 (cfg.h).
 
   49. netupdate SCARICA UNO SCRIPT CHE VERIFICA L'AMBIENTE (l'utente, 30/10:
       "ogni aggiunta/implementazione del sistema deve essere aggiunta a

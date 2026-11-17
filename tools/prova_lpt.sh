@@ -10,9 +10,10 @@
 #     QEMU_PIU="-smp 2" ...          two processors (the wave reserves one)
 #
 # QEMU's parallel port at 0x378, IRQ 7, written to a file:
-#   1. the kernel is 0.324 or later, lpt.drv 0.003 answers -version;
+#   1. the kernel is 0.324 or later, lpt.drv 0.004 answers -version;
 #   2. without the service lpt.drv says so; -avvia finds 0x378 (SPP);
-#   3. -stampa of /boot/help.txt: the file QEMU writes is the same bytes;
+#   3. -stampa of /boot/help.txt, then the same through `cat | -stampa -`
+#      (0.004): the file QEMU writes is those bytes twice;
 #   4. -id: no IEEE 1284 answer (QEMU's port has nobody behind it), no hang;
 #   5. -dati:0x5A is read back by -pin, and -dati itself says 0x5a (0.003);
 #   6. -prova-fronti:300: QEMU's port raises IRQ 7 at every write of the
@@ -44,6 +45,7 @@ giro() {    # $1 = 32|64
         "lpt.drv -avvia@6" \
         "lpt.drv@3" \
         "lpt.drv -stampa /boot/help.txt@~120" \
+        "cat /boot/help.txt | lpt.drv -stampa -@~120" \
         "lpt.drv -id@4" \
         "lpt.drv -dati:0x5A@3" \
         "lpt.drv -pin@3" \
@@ -55,11 +57,12 @@ giro() {    # $1 = 32|64
     L=$(tr -d '\r' < "$log")
     echo "$L" | grep -a "fronti:\|onda:\|^lpt0:" | sed 's/^/      /'
     echo "$L" | grep -aqE "EX-OS .* 0\.(32[4-9]|3[3-9][0-9]|[4-9][0-9][0-9])" && si "$bit: kernel 0.324 o dopo" || no "$bit: il kernel e' prima della 0.324 (vedi $log)"
-    echo "$L" | grep -aq "lpt.drv 0.003" && si "$bit: lpt.drv 0.003" || no "$bit: -version"
+    echo "$L" | grep -aq "lpt.drv 0.004" && si "$bit: lpt.drv 0.004" || no "$bit: -version"
     echo "$L" | grep -aq "nessun servizio acceso" && si "$bit: senza servizio lo dice" || no "$bit: lo stato senza servizio"
     echo "$L" | grep -aq "lpt0: 0x378 irq 7, SPP" && si "$bit: -avvia trova 0x378, irq 7" || no "$bit: -avvia non trova la porta"
-    if [ -f "$out" ] && cmp -s "$out" boot/help.txt; then si "$bit: la stampa e' identica a /boot/help.txt ($(stat -c %s "$out") byte)"
-    else no "$bit: la stampa non e' /boot/help.txt ($(stat -c %s "$out" 2>/dev/null || echo 0) byte di $(stat -c %s boot/help.txt))"; fi
+    # -stampa FILE, then the same through standard input (-stampa -, 0.004)
+    if [ -f "$out" ] && cmp -s "$out" <(cat boot/help.txt boot/help.txt); then si "$bit: le due stampe (file e standard input) sono /boot/help.txt due volte ($(stat -c %s "$out") byte)"
+    else no "$bit: la stampa non e' /boot/help.txt due volte ($(stat -c %s "$out" 2>/dev/null || echo 0) byte di 2 x $(stat -c %s boot/help.txt))"; fi
     echo "$L" | grep -aq "nessuna risposta IEEE 1284" && si "$bit: -id senza periferica risponde e non si blocca" || no "$bit: -id"
     echo "$L" | grep -aq "dati      0x5a" && si "$bit: -dati:0x5A riletto da -pin" || no "$bit: -dati / -pin"
     echo "$L" | grep -aq "^dati 0x5a, controllo" && si "$bit: -dati dice cio' che ha scritto" || no "$bit: -dati risponde coi registri sbagliati"

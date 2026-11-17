@@ -67,6 +67,7 @@
  * ============================================================================= */
 
 #include "kernel.h"
+#include "posti.h"
 #include "ext2.h"
 #include "ext2_interno.h"
 #include "blk.h"
@@ -110,7 +111,12 @@
                              INCOMPAT_EA_INODE | INCOMPAT_CSUM_SEED | INCOMPAT_LARGEDIR | \
                              INCOMPAT_INLINE)
 
-static Ext2Mount g_mnt[EXT2_MAX_MOUNT];
+/* Grows (kernel 0.343, voce 50): it was Ext2Mount[4]; see posti.h. The
+ * write module sees it through g_interfaccia, updated at every growth. */
+static Ext2Mount **volatile g_mnt;
+static volatile int g_mnt_n;
+POSTI_CRESCI(ext2_posti_cresci_, Ext2Mount, g_mnt, g_mnt_n, 4)
+static int ext2_posti_cresci(void);
 
 /* =============================================================================
  * I BUFFER DI LAVORO, E PERCHE' SONO CINQUE E NON UNO
@@ -157,9 +163,9 @@ static const Ext2Ops *g_ops = NULL;
 
 static Ext2Mount *prendi(int mnt)
 {
-    if (mnt < 0 || mnt >= EXT2_MAX_MOUNT) return NULL;
-    if (!g_mnt[mnt].usato) return NULL;
-    return &g_mnt[mnt];
+    if (mnt < 0 || mnt >= g_mnt_n) return NULL;
+    if (!g_mnt[mnt]->usato) return NULL;
+    return g_mnt[mnt];
 }
 
 /* The mount, for an operation that WRITES: NULL also when the volume is
@@ -669,7 +675,7 @@ static int monta_modulo(int mnt)
 
 static void valuta(int mnt)
 {
-    Ext2Mount *m  = &g_mnt[mnt];
+    Ext2Mount *m  = g_mnt[mnt];
     uint8_t    ro = 0;
 
     if (m->ro_chiesto) {
@@ -724,8 +730,8 @@ void ext2_rivaluta_montaggi(void)
 {
     int i;
 
-    for (i = 0; i < EXT2_MAX_MOUNT; i++)
-        if (g_mnt[i].usato) valuta(i);
+    for (i = 0; i < g_mnt_n; i++)
+        if (g_mnt[i]->usato) valuta(i);
 }
 
 /* =============================================================================
@@ -746,15 +752,19 @@ int ext2_mount_come(int blkdev, int ro_chiesto)
     uint32_t   log_bs, incompat, rev, i;
     int        slot = -1;
 
-    for (i = 0; i < EXT2_MAX_MOUNT; i++)
-        if (!g_mnt[i].usato) { slot = (int)i; break; }
+    for (i = 0; i < (uint32_t)g_mnt_n; i++)
+        if (!g_mnt[i]->usato) { slot = (int)i; break; }
 
     if (slot < 0) {
-        klog(LOG_ERROR, "EXT2: nessun montaggio libero");
-        return -1;
+        slot = g_mnt_n;
+        if (ext2_posti_cresci() != 0) {
+            klog(LOG_ERROR, "EXT2: niente memoria per un altro montaggio");
+            return -1;
+        }
     }
 
-    m = &g_mnt[slot];
+    m = g_mnt[slot];
+    m->indice = slot;
 
     /* Il superblocco sta all'offset 1024 del volume, SEMPRE, qualunque sia
      * la dimensione del blocco. E' l'unica cosa che si puo' leggere prima
@@ -1300,12 +1310,12 @@ void ext2_ogni_secondo(int mnt)
  * The interface the write module asks for by name ("ext2"): see
  * kernel/include/ext2_interno.h and kernel/loader/modulo.c.
  * ============================================================================= */
-static const Ext2Interfaccia g_interfaccia = {
+static Ext2Interfaccia g_interfaccia = {
     EXT2_IF_ABI,
     sizeof(Ext2Mount),
     sizeof(Ext2Stato),
-    EXT2_MAX_MOUNT,
-    g_mnt,
+    0,                  /* max_mount and mnt: ext2_posti_cresci */
+    NULL,
     &g_st,
     leggi_blocco,
     scrivi_blocco,
@@ -1322,6 +1332,16 @@ static const Ext2Interfaccia g_interfaccia = {
     unix_ora_corrente,
     ext2_registra,
 };
+
+/* The table grows, and the module learns where it is now. */
+static int ext2_posti_cresci(void)
+{
+    if (ext2_posti_cresci_() != 0) return -1;
+    g_interfaccia.mnt = g_mnt;
+    __sync_synchronize();
+    g_interfaccia.max_mount = (uint32_t)g_mnt_n;
+    return 0;
+}
 
 const Ext2Interfaccia *ext2_interfaccia(void)
 {

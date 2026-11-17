@@ -11,7 +11,8 @@
  *
  * telnetd — una sessione su una connessione TCP
  *
- *     telnetd            legge /boot/telnetd.cfg e serve una sessione per volta
+ *     telnetd            legge /boot/telnetd.cfg e serve le sessioni, quante
+ *                        ne arrivano (0.015: una per volta fino alla 0.014)
  *     telnetd 2323       la porta della riga di comando vince sul file
  *     telnetd -s         la shell senza accesso: vince anche questa
  *     telnetd -f FILE    un'altra configurazione
@@ -45,14 +46,14 @@
 #include "extaskbar.h"
 
 /* (@EXTASKBAR, 0.010) the TELNET item of the status bar: "on" while
- * listening, "cnn" while a session is open (one at a time), "off" when
+ * listening, "cnn" while sessions are open (0.015: how many), "off" when
  * telnetd stops. extaskbar_voce sends only when the text changes, so "on"
  * is repeated at every accept round: a bar started after telnetd learns it
  * within ten seconds. */
 #define BARRA_TELNET(t) extaskbar_voce("TELNET", 12, "TELNET " t, 0)
 
 /* +0.001 a ogni modifica: `telnetd -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("telnetd", "0.014");
+EX_VERSIONE("telnetd", "0.015");
 
 /* I comandi del protocollo, quelli che servono. */
 #define IAC     255
@@ -1056,15 +1057,132 @@ static void sessione(int id, const Config *cfg, int con_login)
     printf("telnetd: sessione chiusa\n");
 }
 
+/* =============================================================================
+ * ! MORE THAN ONE SESSION (0.015, voce 62). Up to 0.014 the session ran
+ * inside this process, and a second connection was accepted by the stack and
+ * left mute until the first ended: dmesg-pc.py and guardia-pc.py could not
+ * run together, a forgotten session locked the machine out.
+ *
+ * Now each accepted connection gets a copy of this program, `telnetd
+ * -sessione ID`, serving it with the same sessione() as before, and the
+ * parent goes straight back to accept. A copy and not fork(): fork lives only
+ * in libc.a, and telnetd uses libc.so (the ExWin way, see exwin.c).
+ *
+ * The connection is the PARENT's for ip.drv - it accepted it - so before the
+ * copy may touch it the parent makes it an owner (IP_MSG_EREDITA, ip.drv
+ * 0.021) and drops its own share (a close by one of several owners only
+ * lets that one go). The copy waits for a 'v' on its stdin, a pipe: any
+ * request of its own before that would be refused with EBADF.
+ *
+ * No ceiling on sessions: each costs a process, a pty and a shell, and the
+ * kernel's tables for those grow.
+ * ============================================================================= */
+static int  g_sessioni = 0;          /* copies alive */
+static char g_me[128] = "/bin/telnetd";
+
+static void barra_sessioni(void)
+{
+    char t[32];
+
+    if (g_sessioni <= 0) { BARRA_TELNET("on"); return; }
+    snprintf(t, sizeof(t), "TELNET cnn %d", g_sessioni);
+    extaskbar_voce("TELNET", 12, t, 0);
+}
+
+/* The copies that finished: collected, and counted out. */
+static void raccogli(void)
+{
+    int st, w;
+
+    while ((w = waitpid(-1, &st, WNOHANG)) > 0) {
+        if (g_sessioni > 0) g_sessioni--;
+        if (g_verboso) printf("telnetd: la sessione del PID %d e' finita\n", w);
+    }
+}
+
+/* Connection `id` to a copy of its own; when that cannot be done it is
+ * served here, as up to 0.014. */
+static void sessione_alla_copia(int id, const Config *cfg, int con_login)
+{
+    IpEredita  e;
+    IpTcpRif   r;
+    SpawnRedir red;
+    char       num[16], *argv[7];
+    int        p[2], figlio, rc, na = 0;
+    char       via = 'v';
+
+    r.id = (unsigned int)id;
+    if (pipe(p) != 0) {
+        printf("telnetd: niente pipe per una copia: la sessione la servo io\n");
+        sessione(id, cfg, con_login);
+        return;
+    }
+    snprintf(num, sizeof(num), "%d", id);
+    argv[na++] = g_me;
+    argv[na++] = "-sessione";
+    argv[na++] = num;
+    if (!con_login) argv[na++] = "-s";
+    if (g_verboso)  argv[na++] = "-v";
+    if (strcmp(g_cfg_file, "/boot/telnetd.cfg") != 0) {
+        argv[na++] = "-f"; argv[na++] = g_cfg_file;
+    }
+    argv[na] = 0;
+    red.fd = 0; red.flags = 0; red.percorso = 0; red.fd_padre = p[0];
+    figlio = spawn_ex(g_me, argv, environ, &red, 1);
+    close(p[0]);
+    if (figlio < 0) {
+        close(p[1]);
+        printf("telnetd: non riesco a lanciare %s (%d): la sessione la servo io\n",
+               g_me, figlio);
+        sessione(id, cfg, con_login);
+        return;
+    }
+
+    e.tipo = IP_EREDITA_TCP; e.id = (unsigned int)id; e.pid = (unsigned int)figlio;
+    rc = ipc_send(pid_ip, IP_MSG_EREDITA, &e, sizeof(e)) < 0 ? -1 : esito(3000);
+    if (rc != 0) {
+        /* an ip.drv older than 0.021: the copy goes, the old way serves */
+        printf("telnetd: la connessione %d non passa alla copia (%d): "
+               "ip.drv piu' vecchio della 0.021? La servo io\n", id, rc);
+        interrompi(figlio);
+        waitpid(figlio, &rc, 0);
+        close(p[1]);
+        sessione(id, cfg, con_login);
+        return;
+    }
+    ipc_send(pid_ip, IP_MSG_TCP_CHIUDI, &r, sizeof(r));   /* our share only */
+    esito(2000);
+    write(p[1], &via, 1);
+    close(p[1]);
+    g_sessioni++;
+    printf("telnetd: la connessione %d la serve il PID %d (%d %s)\n", id, figlio,
+           g_sessioni, g_sessioni == 1 ? "sessione" : "sessioni");
+}
+
+/* `telnetd -sessione ID`: the copy. */
+static int copia(int id, int con_login)
+{
+    Config cfg;
+    char   via = 0;
+
+    if (read(0, &via, 1) != 1 || via != 'v') return 1;
+    config_leggi(&cfg);
+    pid_ip = rete_richiedi(IP_SERVIZIO);
+    if (pid_ip <= 0) return 1;
+    sessione(id, &cfg, con_login);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     IpTcpAscolta a;
     IpTcpAccetta ac;
     Config       cfg;
-    int          asc, con_login = 1, porta = 0, i, auto_avvio = 0;
+    int          asc, con_login = 1, porta = 0, i, auto_avvio = 0, sess = 0;
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-s") == 0)      con_login = 0;
+        else if (strcmp(argv[i], "-sessione") == 0 && i + 1 < argc) sess = atoi(argv[++i]);
         else if (strcmp(argv[i], "-auto") == 0) auto_avvio = 1;
         else if (strcmp(argv[i], "-v") == 0) g_verboso = 1;
         else if (strcmp(argv[i], "-f") == 0 && i + 1 < argc) {
@@ -1073,7 +1191,8 @@ int main(int argc, char **argv)
         }
         else if (strcmp(argv[i], "-h") == 0) {
             printf("uso: telnetd [PORTA] [-s] [-auto] [-v] [-f FILE]\n\n");
-            printf("  Serve una sessione per volta su una connessione TCP.\n");
+            printf("  Serve le sessioni su TCP, una per connessione, quante ne\n");
+            printf("  arrivano: ognuna in un processo suo.\n");
             printf("  Senza argomenti legge /boot/telnetd.cfg: porta, shell,\n");
             printf("  utenti concessi e negati, e da quali indirizzi.\n\n");
             printf("  -s     da' la shell senza chiedere l'accesso\n");
@@ -1086,6 +1205,12 @@ int main(int argc, char **argv)
             return 0;
         }
         else porta = atoi(argv[i]);
+    }
+
+    if (sess > 0) return copia(sess, con_login);
+    if (argv[0] && argv[0][0] == '/') {
+        strncpy(g_me, argv[0], sizeof(g_me) - 1);
+        g_me[sizeof(g_me) - 1] = '\0';
     }
 
     config_leggi(&cfg);
@@ -1137,7 +1262,8 @@ int main(int argc, char **argv)
     for (;;) {
         int id;
 
-        BARRA_TELNET("on");
+        raccogli();
+        barra_sessioni();
         ac.id         = (unsigned int)asc;
         ac.timeout_ms = 10000;
 
@@ -1189,9 +1315,8 @@ int main(int argc, char **argv)
             }
         }
 
-        BARRA_TELNET("cnn");
-        sessione(id, &cfg, con_login);
-        BARRA_TELNET("on");
+        sessione_alla_copia(id, &cfg, con_login);
+        barra_sessioni();
     }
     BARRA_TELNET("off");
 

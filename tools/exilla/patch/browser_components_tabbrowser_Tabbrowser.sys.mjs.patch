@@ -1,0 +1,15 @@
+--- a/browser/components/tabbrowser/Tabbrowser.sys.mjs
++++ b/browser/components/tabbrowser/Tabbrowser.sys.mjs
+@@ -749,7 +749,11 @@
+ 
+         // In this case we default to the privileged about process as that's
+         // the best guess we can make, and we'll likely need it eventually.
+-        remoteType = lazy.E10SUtils.PRIVILEGEDABOUT_REMOTE_TYPE;
++        // EX-OS: not when the window has no content processes (no e10s):
++        // a remote first browser there never loads anything.
++        remoteType = this.documentGlobal.gMultiProcessBrowser
++          ? lazy.E10SUtils.PRIVILEGEDABOUT_REMOTE_TYPE
++          : lazy.E10SUtils.NOT_REMOTE;
+       }
+     }
+ 

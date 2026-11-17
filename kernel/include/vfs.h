@@ -29,7 +29,8 @@
 #include "kernel.h"
 #include "blk.h"
 
-#define VFS_MAX_MOUNT   6
+/* ! NO VFS_MAX_MOUNT SINCE KERNEL 0.343: the mount table grows (posti.h);
+ * vfs_posti() says how many slots there are now, used or not. */
 /* 48 e non 24 (0.149): con il caricamento su richiesta OGNI processo
  * tiene aperto il proprio eseguibile per tutta la vita, quindi il tetto
  * non conta piu' i soli file aperti dai programmi ma anche i programmi
@@ -186,6 +187,7 @@ int  vfs_punto_di_handle(int h, char *punto, uint32_t max);
 int  vfs_punto_di_percorso(const char *abs, char *punto, uint32_t max);
 
 int  vfs_conta(void);
+int  vfs_posti(void);      /* slots of the mount table, used or not (0.343) */
 const VfsMount *vfs_get(int i);
 
 /* --- operazioni sui percorsi: `abs` e' sempre assoluto e gia' risolto --- */

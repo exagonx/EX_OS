@@ -88,7 +88,7 @@ static int sincronizza(int mnt)
     if (mnt < 0 || (uint32_t)mnt >= K->max_mount) return -1;
     prenotazione_chiudi();
     if (giornale_commit(mnt, 1) != 0) return -1;
-    return blk_flush(K->mnt[mnt].blkdev);
+    return blk_flush(K->mnt[mnt]->blkdev);
 }
 
 static void smonta(int mnt)
@@ -223,7 +223,7 @@ int modulo_ingresso(const ModuloKernel *k)
 
     K = (const Ext2Interfaccia *)k->interfaccia("ext2", EXT2_IF_ABI);
     if (K == NULL || K->dim_mount != sizeof(Ext2Mount) ||
-        K->dim_stato != sizeof(Ext2Stato) || K->max_mount != EXT2_MAX_MOUNT) {
+        K->dim_stato != sizeof(Ext2Stato)) {
         klog(LOG_ERROR, "ext4.mod: the kernel's ext2 interface is not the one this "
                         "module was built for (abi %u, Ext2Mount %u bytes; expected "
                         "%u, %u)", K ? K->abi : 0u, K ? K->dim_mount : 0u,

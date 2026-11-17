@@ -19,7 +19,7 @@
 
 #include "kernel.h"
 
-#define FAT_MAX_MOUNT       4
+/* FAT_MAX_MOUNT (4) gone in 0.343: the mounts grow (posti.h, voce 50). */
 #define FAT_MAX_OPEN        16
 /* ! 256 E NON 13, da agosto 2026. Valeva "NOME8.EXT" + NUL perche' il
  * driver leggeva solo i nomi 8.3 e SALTAVA le voci di nome lungo: un file

@@ -319,6 +319,9 @@ static const char *const g_nomi[] = {
     "ex_spawn_program",
     "ex_track_keys",                  /* 30 ottobre 2026, voce 42 punto 2 */
     "ex_key_info",
+    "ex_textarea_set_tab",            /* 16 novembre 2026, voce 81 */
+    "ex_textarea_get_column",
+    "ex_menu_enable",
 };
 
 static void *const g_indirizzi[] = {
@@ -580,6 +583,9 @@ static void *const g_indirizzi[] = {
     (void *)ex_spawn_program,
     (void *)ex_track_keys,
     (void *)ex_key_info,
+    (void *)ex_textarea_set_tab,
+    (void *)ex_textarea_get_column,
+    (void *)ex_menu_enable,
 };
 
 /* Se qualcuno aggiunge un nome e dimentica l'indirizzo (o viceversa), la

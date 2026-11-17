@@ -16,7 +16,7 @@
 
 #define CFG_MAX_MODULES  16
 #define CFG_MAX_ENV      32
-#define CFG_MAX_MOUNT    5    /* la root e' gia' occupata, vedi VFS_MAX_MOUNT */
+/* CFG_MAX_MOUNT (5) gone in 0.343: [mount] grows with what it lists (voce 50). */
 #define CFG_NAME_LEN     64
 #define CFG_PATH_LEN     128
 
@@ -193,8 +193,9 @@ typedef struct {
     uint32_t    env_count;
 
     /* [mount] */
-    CfgMount    mounts[CFG_MAX_MOUNT];
+    CfgMount   *mounts;             /* [mount_count], kmalloc, grows (0.343) */
     uint32_t    mount_count;
+    uint32_t    mount_posti;
 } KernelConfig;
 
 KernelConfig *cfg_load(void);

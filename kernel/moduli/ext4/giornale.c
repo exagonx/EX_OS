@@ -149,7 +149,10 @@ typedef struct {
  * thing to look at before changing when commits happen. */
 enum { CONTO_OPERAZIONE, CONTO_PIENA, CONTO_CHIUSURA, CONTO_SYNC };
 
-static Giornale *g_gio[EXT2_MAX_MOUNT];
+/* ! NO TABLE (0.343): each mount's journal hangs off it, Ext2Mount.mod_gio,
+ * because the kernel's mounts grow. GIO_DI is NULL past the slots there are. */
+#define GIO_DI(mnt) (((mnt) >= 0 && (uint32_t)(mnt) < K->max_mount) ? \
+                     (Giornale *)K->mnt[mnt]->mod_gio : (Giornale *)NULL)
 
 /* --- big-endian, as jbd2 writes everything ---------------------------------- */
 static uint32_t be32(const uint8_t *p)
@@ -174,18 +177,9 @@ static void pbe16(uint8_t *p, uint32_t v)
     p[0] = (uint8_t)(v >> 8); p[1] = (uint8_t)v;
 }
 
-static int indice_di(const Ext2Mount *m)
-{
-    int i = (int)(m - K->mnt);
-
-    return (i >= 0 && i < EXT2_MAX_MOUNT) ? i : -1;
-}
-
 static Giornale *di(const Ext2Mount *m)
 {
-    int i = indice_di(m);
-
-    return (i >= 0) ? g_gio[i] : NULL;
+    return m != NULL ? (Giornale *)m->mod_gio : NULL;
 }
 
 /* --- the journal's own blocks ------------------------------------------------ */
@@ -520,12 +514,12 @@ static void libera(Giornale *g)
  * ============================================================================= */
 int giornale_monta(int mnt)
 {
-    Ext2Mount *m = &K->mnt[mnt];
+    Ext2Mount *m = K->mnt[mnt];
     Giornale  *g;
     uint8_t    sb[1024], ino[128];
     uint32_t   jino, tipo, i, dim_file, per_desc, start, seq, fine;
 
-    g_gio[mnt] = NULL;
+    K->mnt[mnt]->mod_gio = NULL;
     if (!(m->compat & COMPAT_HAS_JOURNAL)) {
         if (m->incompat & INCOMPAT_RECOVER) {
             klog(LOG_ERROR, "ext3: '%s' says needs_recovery but has no journal",
@@ -658,7 +652,7 @@ int giornale_monta(int mnt)
         klog(LOG_ERROR, "ext3: '%s': the journal could not be opened", m->etichetta);
         goto no;
     }
-    g_gio[mnt] = g;
+    K->mnt[mnt]->mod_gio = g;
     klog(LOG_INFO, "ext3: '%s': journal of %u blocks, %u per transaction",
          m->etichetta, g->maxlen, g->max_slot);
     return 0;
@@ -778,29 +772,29 @@ guasto:
 
 int giornale_commit(int mnt, int perche)
 {
-    Giornale *g = (mnt >= 0 && mnt < EXT2_MAX_MOUNT) ? g_gio[mnt] : NULL;
+    Giornale *g = GIO_DI(mnt);
 
     if (g == NULL) return 0;
     if (g->n_slot != 0) g->conti[perche ? CONTO_SYNC : CONTO_CHIUSURA]++;
-    return commit(&K->mnt[mnt], g);
+    return commit(K->mnt[mnt], g);
 }
 
 /* Before an operation: room for what it may change. */
 int giornale_inizio(int mnt)
 {
-    Giornale *g = (mnt >= 0 && mnt < EXT2_MAX_MOUNT) ? g_gio[mnt] : NULL;
+    Giornale *g = GIO_DI(mnt);
 
     if (g == NULL) return 0;
     if (g->guasto) return -1;
     if (g->max_slot - g->n_slot < GIO_RISERVA) {
         g->conti[CONTO_PIENA]++;
-        return commit(&K->mnt[mnt], g);
+        return commit(K->mnt[mnt], g);
     }
     /* the space a write may need is held: give it back before, not in the
      * middle of the operation (a commit there would split it) */
-    if (g->tot_tr > 0 && K->mnt[mnt].blocchi_liberi < g->tot_tr + GIO_MARGINE) {
+    if (g->tot_tr > 0 && K->mnt[mnt]->blocchi_liberi < g->tot_tr + GIO_MARGINE) {
         g->conti[CONTO_PIENA]++;
-        return commit(&K->mnt[mnt], g);
+        return commit(K->mnt[mnt], g);
     }
     return 0;
 }
@@ -810,18 +804,18 @@ int giornale_inizio(int mnt)
  * memory: see TRATTENUTI). `subito` is no longer used. */
 int giornale_fine(int mnt, int subito)
 {
-    Giornale *g = (mnt >= 0 && mnt < EXT2_MAX_MOUNT) ? g_gio[mnt] : NULL;
+    Giornale *g = GIO_DI(mnt);
 
     if (g == NULL || g->n_slot == 0) return 0;
     (void)subito;
     if (g->liberati) {
         g->conti[CONTO_OPERAZIONE]++;
-        return commit(&K->mnt[mnt], g);
+        return commit(K->mnt[mnt], g);
     }
     if (g->n_slot * 2u >= g->max_slot ||
         unix_ora_corrente() - g->aperto >= GIO_SECONDI) {
         g->conti[CONTO_PIENA]++;
-        return commit(&K->mnt[mnt], g);
+        return commit(K->mnt[mnt], g);
     }
     return 0;
 }
@@ -914,16 +908,16 @@ const uint8_t *giornale_trattenuti(const Ext2Mount *m, uint32_t gr)
 /* Unmount: the last transaction, then needs_recovery off. */
 void giornale_smonta(int mnt)
 {
-    Giornale *g = (mnt >= 0 && mnt < EXT2_MAX_MOUNT) ? g_gio[mnt] : NULL;
+    Giornale *g = GIO_DI(mnt);
 
     if (g == NULL) return;
     klog(LOG_INFO, "ext3: '%s': commit %u per operazione, %u giornale pieno o "
                    "5 s, %u chiusura/fsync, %u sync; %u blocchi",
-         K->mnt[mnt].etichetta, g->conti[CONTO_OPERAZIONE], g->conti[CONTO_PIENA],
+         K->mnt[mnt]->etichetta, g->conti[CONTO_OPERAZIONE], g->conti[CONTO_PIENA],
          g->conti[CONTO_CHIUSURA], g->conti[CONTO_SYNC], g->blocchi);
-    if (commit(&K->mnt[mnt], g) == 0 && blk_flush(K->mnt[mnt].blkdev) == 0)
-        segna_recover(&K->mnt[mnt], 0);
-    g_gio[mnt] = NULL;
+    if (commit(K->mnt[mnt], g) == 0 && blk_flush(K->mnt[mnt]->blkdev) == 0)
+        segna_recover(K->mnt[mnt], 0);
+    K->mnt[mnt]->mod_gio = NULL;
     libera(g);
 }
 
@@ -1030,5 +1024,5 @@ int super_scrivi(Ext2Mount *m, const uint8_t *sb)
 
 int giornale_attivo(int mnt)
 {
-    return mnt >= 0 && mnt < EXT2_MAX_MOUNT && g_gio[mnt] != NULL;
+    return GIO_DI(mnt) != NULL;
 }

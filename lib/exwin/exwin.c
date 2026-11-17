@@ -481,6 +481,7 @@ typedef struct {
     unsigned int n;                     /* quante righe ci sono (>= 1) */
     unsigned int cx, cy;                /* il cursore */
     unsigned int top, left;             /* la prima riga e colonna visibili */
+    unsigned int tab;                   /* tab stop every `tab` columns; 0/1 = one column */
     unsigned int righe, cols;           /* quante ne stanno a video */
     int          modificato;
     /* ! LA SELEZIONE E' UN'ANCORA PIU' IL CURSORE, e non due estremi ordinati.
@@ -601,6 +602,7 @@ typedef struct {
     /* 0 = a plain entry; 1 = one with a check mark, off; 2 = on
      * (ex_menu_check, 30 September 2026) */
     unsigned char spunta;
+    unsigned char spento;               /* 1 = grey, chooses nothing (ex_menu_enable, 0.022) */
 } MenuVoce;
 
 /* ! LE TENDINE LATERALI (27 settembre 2026, per Calctor): una voce che ne
@@ -1343,6 +1345,21 @@ void ex_menu_check(ExWindow menu, unsigned int id, int acceso)
         for (i = 0; i < M->sub[t].n; i++)
             if (M->sub[t].voce[i].id == id)
                 M->sub[t].voce[i].spunta = acceso ? 2 : 1;
+}
+
+/* A grey entry: drawn, chooses nothing. Same search as ex_menu_check. */
+void ex_menu_enable(ExWindow menu, unsigned int id, int si)
+{
+    Menu *M = menu_di(ogg(menu));
+    unsigned int t, i;
+
+    if (!M || id == 0) return;
+    for (t = 0; t < M->n; t++)
+        for (i = 0; i < M->titolo[t].n; i++)
+            if (M->titolo[t].voce[i].id == id) M->titolo[t].voce[i].spento = !si;
+    for (t = 0; t < M->nsub; t++)
+        for (i = 0; i < M->sub[t].n; i++)
+            if (M->sub[t].voce[i].id == id) M->sub[t].voce[i].spento = !si;
 }
 
 void ex_track_mouse_hover(ExWindow f, int si)
@@ -2806,10 +2823,46 @@ static unsigned int tasto_utf8(unsigned int c, char *out)
     return u8_scrivi(c < 0x80 ? c : da437[c - 0x80], out);
 }
 
+/* =============================================================================
+ * ! THE TAB, AS WIDE AS THE NEXT STOP (exwin.so 0.022, ex_textarea_set_tab).
+ * The columns below are SCREEN columns: a tab reaches the next multiple of
+ * A->tab. With tab 0 or 1 it is one column, as every area had before, and
+ * these two are u8_colonna and u8_byte again - cursor, click and drawing all
+ * go through them, so they cannot say three different things.
+ * ============================================================================= */
+static unsigned int area_vcol(const Area *A, const char *t, unsigned int i)
+{
+    unsigned int j = 0, c = 0;
+
+    if (A->tab <= 1) return u8_colonna(t, i);
+    while (j < i && t[j]) {
+        c = t[j] == '\t' ? (c / A->tab + 1) * A->tab : c + 1;
+        j = u8_dopo(t, j);
+    }
+    return c;
+}
+
+/* The byte of the character covering screen column `c` (a tab covers all of
+ * its columns), or the end of `t`. */
+static unsigned int area_vbyte(const Area *A, const char *t, unsigned int c)
+{
+    unsigned int j = 0, v = 0;
+
+    if (A->tab <= 1) return u8_byte(t, c);
+    while (t[j]) {
+        unsigned int dopo = t[j] == '\t' ? (v / A->tab + 1) * A->tab : v + 1;
+
+        if (c < dopo) return j;
+        v = dopo;
+        j = u8_dopo(t, j);
+    }
+    return j;
+}
+
 /* The column of byte `x` in line `y` of a text area (see area_segui). */
 static unsigned int area_colonna(Area *A, unsigned int y, unsigned int x)
 {
-    return u8_colonna(area_riga(A, y), x);
+    return area_vcol(A, area_riga(A, y), x);
 }
 
 /* Da codice Unicode al byte che il font 8x16 disegna (CP437).
@@ -3618,6 +3671,7 @@ static void menu_voci_disegna(ExWindow f, const MenuTitolo *T, int tx, int ty,
             ex_fill_rect(f, tx + 2, ry - 1, tw - 4, MENU_RIGA_H, EX_BLUE);
             colore = EX_WHITE;
         }
+        if (T->voce[i].spento) colore = (int)i == evidenziata ? EX_GRAY : EX_DARK_GRAY;
         if (tab) {
             unsigned int l = (unsigned int)(tab - t);
 
@@ -3711,7 +3765,7 @@ static int menu_clic(ExWindow f, int x, int y, unsigned int *cmd)
             int r = (y - ty - 3) / MENU_RIGA_H;
             MenuTitolo *S = &M->sub[M->sub_aperta];
 
-            if (r >= 0 && r < (int)S->n && S->voce[r].id != 0)
+            if (r >= 0 && r < (int)S->n && S->voce[r].id != 0 && !S->voce[r].spento)
                 *cmd = S->voce[r].id;
             M->aperto = -1; M->sotto = -1; M->sub_aperta = -1;
             return 1;
@@ -3733,7 +3787,7 @@ static int menu_clic(ExWindow f, int x, int y, unsigned int *cmd)
                 M->sub_sotto  = menu_voce_vicina(&M->sub[M->sub_aperta], 0, 1);
                 return 1;
             }
-            if (r >= 0 && r < (int)T->n && T->voce[r].id != 0)
+            if (r >= 0 && r < (int)T->n && T->voce[r].id != 0 && !T->voce[r].spento)
                 *cmd = T->voce[r].id;
             M->aperto = -1;
             M->sotto  = -1;
@@ -3814,7 +3868,7 @@ static int menu_tasto(ExWindow f, unsigned int k, unsigned int *cmd)
             return 1;
         case '\n':
         case '\r':
-            if (M->sub_sotto >= 0 && M->sub_sotto < (int)S->n)
+            if (M->sub_sotto >= 0 && M->sub_sotto < (int)S->n && !S->voce[M->sub_sotto].spento)
                 *cmd = S->voce[M->sub_sotto].id;
             M->aperto = -1; M->sotto = -1; M->sub_aperta = -1;
             return 1;
@@ -3858,7 +3912,8 @@ static int menu_tasto(ExWindow f, unsigned int k, unsigned int *cmd)
 
     case '\n':
     case '\r':
-        if (M->sotto >= 0 && M->sotto < (int)M->titolo[M->aperto].n)
+        if (M->sotto >= 0 && M->sotto < (int)M->titolo[M->aperto].n &&
+            !M->titolo[M->aperto].voce[M->sotto].spento)
             *cmd = M->titolo[M->aperto].voce[M->sotto].id;
         M->aperto = -1; M->sotto = -1;
         return 1;
@@ -4619,20 +4674,33 @@ static void disegna_oggetto_nudo(Oggetto *o)
                 int          ry = y + 2 + (int)k * AREA_RIGA_H;
                 int          da = -1, a = -1;   /* la parte scelta, in colonne */
 
-                b = u8_byte(src, A->left);
-                for (c = 0; c < A->cols && b < l; c++) {
-                    unsigned int dopo = u8_dopo(src, b);
+                b = area_vbyte(A, src, A->left);
+                /* ! IL TAB RESTA UN TAB NEL TESTO e sullo schermo e' fatto di
+                 * spazi fino alla prossima tabulazione (uno solo con tab 0 o
+                 * 1, come prima). Ogni colonna di quegli spazi punta allo
+                 * stesso byte: cursore, clic e lunghezza contano allo stesso
+                 * modo perche' passano tutti da area_vcol / area_vbyte. */
+                {
+                    unsigned int vc = area_vcol(A, src, b);
 
-                    vb[c] = b;
-                    vo[c] = nv;
-                    /* ! IL TAB SI MOSTRA COME UNO SPAZIO E RESTA UN TAB NEL
-                     * TESTO. Espanderlo vorrebbe dire che una colonna sullo
-                     * schermo non e' piu' un carattere nel testo, e allora
-                     * cursore, clic e lunghezza della riga direbbero tre cose
-                     * diverse. */
-                    if (src[b] == '\t') vis[nv++] = ' ';
-                    else while (b < dopo) vis[nv++] = src[b++];
-                    b = dopo;
+                    c = 0;
+                    while (c < A->cols && b < l) {
+                        unsigned int dopo = u8_dopo(src, b);
+
+                        if (src[b] == '\t') {
+                            unsigned int fine = A->tab > 1 ? (vc / A->tab + 1) * A->tab : vc + 1;
+
+                            for (; vc < fine && c < A->cols; vc++) {
+                                if (vc < A->left) continue;
+                                vb[c] = b; vo[c] = nv; vis[nv++] = ' '; c++;
+                            }
+                        } else {
+                            vb[c] = b; vo[c] = nv;
+                            while (b < dopo) vis[nv++] = src[b++];
+                            c++; vc++;
+                        }
+                        b = dopo;
+                    }
                 }
                 vb[c] = b;
                 vo[c] = nv;
@@ -4654,8 +4722,8 @@ static void disegna_oggetto_nudo(Oggetto *o)
                  * che il ritorno a capo resti fuori, e incollando salterebbe
                  * fuori lo stesso. */
                 if (c_e_sel && riga >= sy1 && riga <= sy2) {
-                    unsigned int d  = (riga == sy1) ? u8_colonna(src, sx1) : 0;
-                    unsigned int e_ = (riga == sy2) ? u8_colonna(src, sx2) : A->left + A->cols;
+                    unsigned int d  = (riga == sy1) ? area_vcol(A, src, sx1) : 0;
+                    unsigned int e_ = (riga == sy2) ? area_vcol(A, src, sx2) : A->left + A->cols;
 
                     if (d < A->left) d = A->left;
                     if (e_ > A->left + A->cols) e_ = A->left + A->cols;
@@ -4714,7 +4782,7 @@ static void disegna_oggetto_nudo(Oggetto *o)
          * bianco. Una barretta di un pixel su un font 8x16 si perde. */
         if (col_fuoco && A->cy >= A->top && A->cy < A->top + A->righe) {
             const char  *rc  = area_riga(A, A->cy);
-            unsigned int col = u8_colonna(rc, A->cx);
+            unsigned int col = area_vcol(A, rc, A->cx);
 
             if (col >= A->left && col < A->left + A->cols) {
                 int cx = x + 2 + (int)(col - A->left) * AREA_CAR_W;
@@ -6301,7 +6369,7 @@ static void area_punta(Oggetto *co, int x, int y)
 
     if (r >= A->n) r = A->n - 1;
     A->cy = r;
-    A->cx = u8_byte(area_riga(A, r), c);     /* the column, as a byte */
+    A->cx = area_vbyte(A, area_riga(A, r), c);  /* the column, as a byte */
     area_segui(A);
 }
 
@@ -6362,7 +6430,7 @@ static void area_massimi(Area *A, unsigned int *mv, unsigned int *mo)
     unsigned int i, lunga = 0;
 
     for (i = 0; i < A->n; i++) {
-        unsigned int l = area_lung(A, i);
+        unsigned int l = A->tab > 1 ? area_vcol(A, area_riga(A, i), area_lung(A, i)) : area_lung(A, i);
         if (l > lunga) lunga = l;
     }
     *mv = (A->n > A->righe) ? A->n - A->righe : 0;
@@ -6897,7 +6965,7 @@ static int area_tasto(Area *A, unsigned int k)
             A->cy += passo;
             if (A->cy >= A->n) A->cy = A->n - 1;
         }
-        A->cx = u8_byte(area_riga(A, A->cy), col);
+        A->cx = area_vbyte(A, area_riga(A, A->cy), col);
         area_segui(A);
         return 1;
     }
@@ -7181,7 +7249,14 @@ static int tasto_al_fuoco(ExWindow f, unsigned int k)
 
     if (!r) return 0;
 
-    if (c == '\t') {
+    /* ! AN AREA WITH TAB STOPS (ex_textarea_set_tab > 1) TAKES TAB AS A
+     * CHARACTER: the program asked for tabs, so it is an editor. Shift+Tab
+     * still moves the focus; areas without stops are as before. (0.022) */
+    o = ogg(r->fuoco);
+    if (c == '\t' && !(k & (KBD_MOD_SHIFT | KBD_MOD_CTRL)) && o && o->classe == CL_AREA &&
+        area_di(o) && area_di(o)->tab > 1) {
+        /* to the area, below */
+    } else if (c == '\t') {
         if (r->tab_contenuto && !(k & KBD_MOD_SHIFT) &&
             (r->fuoco == 0 || !fuoco_ce_dopo(f))) {
             r->fuoco = 0;           /* the application takes it from here */
@@ -9160,7 +9235,7 @@ void ex_item_rename(ExWindow c, unsigned int i, const char *testo)
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
  * 0.002 = ex_enable() ed EX_DISABLED; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.021"   /* 0.021: pressioni e rilasci (ex_track_keys), caselle e aree in UTF-8 */
+#define EXWIN_VERSIONE "0.022"   /* 0.022: tabulazioni nelle aree (ex_textarea_set_tab, ex_textarea_get_column), voci di menu spente (ex_menu_enable) */
 
 const char *ex_version(void) { return EXWIN_VERSIONE; }
 
@@ -9448,6 +9523,26 @@ int ex_textarea_paste(ExWindow f)
  * dire che il tasto dopo — una lettera qualunque — cancella un pezzo di testo
  * lontano da dove si sta guardando.
  * ============================================================================= */
+/* Tab stops every `n` columns (0/1 = a tab is one column, the default). */
+void ex_textarea_set_tab(ExWindow f, unsigned int n)
+{
+    Area *A = area_da_h(f);
+
+    if (!A) return;
+    A->tab = n > 64 ? 64 : n;
+    area_segui(A);
+}
+
+/* The screen column of the caret and the first one shown, from 0: what a
+ * ruler over the area needs. */
+unsigned int ex_textarea_get_column(ExWindow f, unsigned int *prima)
+{
+    Area *A = area_da_h(f);
+
+    if (prima) *prima = A ? A->left : 0;
+    return A ? area_colonna(A, A->cy, A->cx) : 0;
+}
+
 unsigned int ex_textarea_get_view(ExWindow f, unsigned int *visibili)
 {
     Area *A = area_da_h(f);

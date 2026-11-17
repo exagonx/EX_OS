@@ -186,6 +186,9 @@ static struct {
     int          (*avvia_programma)(const char *, char *const *, const char *);
     void         (*tasti)(ExWindow, int);                           /* optional: 30/10/2026 */
     int          (*tasto_info)(ExKeyInfo *);
+    void         (*area_tab)(ExWindow, unsigned int);               /* optional: 16/11/2026 */
+    unsigned int (*area_colonna)(ExWindow, unsigned int *);
+    void         (*menu_spegni)(ExWindow, unsigned int, int);
 } P;
 
 static void *chiedi(const ExLibTesta *t, const char *nome)
@@ -401,6 +404,10 @@ static void assicura(void)
                         exlib_simbolo(t, "ex_spawn_program");
     P.tasti           = (void (*)(ExWindow, int)) exlib_simbolo(t, "ex_track_keys");
     P.tasto_info      = (int (*)(ExKeyInfo *)) exlib_simbolo(t, "ex_key_info");
+    P.area_tab        = (void (*)(ExWindow, unsigned int)) exlib_simbolo(t, "ex_textarea_set_tab");
+    P.area_colonna    = (unsigned int (*)(ExWindow, unsigned int *))
+                        exlib_simbolo(t, "ex_textarea_get_column");
+    P.menu_spegni     = (void (*)(ExWindow, unsigned int, int)) exlib_simbolo(t, "ex_menu_enable");
 
     P.pronto = 1;
 }
@@ -731,6 +738,20 @@ int ex_key_info(ExKeyInfo *out)
 {
     assicura();
     return P.tasto_info ? P.tasto_info(out) : 0;
+}
+
+/* Over an exwin.so older than 0.022 a tab stays one column, and the column
+ * is 0. */
+void ex_textarea_set_tab(ExWindow f, unsigned int n)
+{ assicura(); if (P.area_tab) P.area_tab(f, n); }
+void ex_menu_enable(ExWindow menu, unsigned int id, int si)
+{ assicura(); if (P.menu_spegni) P.menu_spegni(menu, id, si); }
+unsigned int ex_textarea_get_column(ExWindow f, unsigned int *prima)
+{
+    assicura();
+    if (P.area_colonna) return P.area_colonna(f, prima);
+    if (prima) *prima = 0;
+    return 0;
 }
 
 /* Over an older exwin.so: the image as it is, in the corner. */

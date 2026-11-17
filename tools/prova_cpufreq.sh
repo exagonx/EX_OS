@@ -18,12 +18,19 @@
 #      serves here, so the installed disk must NOT have cpufreq.drv: that is
 #      checked first, then debugfs puts it there (as prova_modulo_disco does
 #      with nv50.drv) and -install writes the block, -remove takes it away.
-# In both: `cpufreq.drv` describes, `-auto` is accepted without an error and
+#   c: from the CD, -cpu Penryn without the hypervisor bit (kernel 0.342):
+#      family 6 model 17h, the Q9650's. ! QEMU 10 WITHOUT KVM DOES NOT PASS
+#      EIST (CPUID 1 ECX bit 7) even with +est - measured 17/11: the guest
+#      says "non dichiara P-state". So here: the model is seen and nothing
+#      stops; IF a QEMU passes EIST, the two pairs and the raw MSRs must be
+#      in dmesg. The Core 2 path itself is seen on the bench PC (.253).
+# In all: `cpufreq.drv` describes, `-auto` is accepted without an error and
 # without control, an unknown option is refused, -guarda runs, no [FAULT].
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1
 D=/tmp/exos-prove/cpufreq; rm -rf "$D"; mkdir -p "$D"
 SBIN=/usr/sbin
+KV=$(sed -n 's/^#define EXOS_VERSION *"\(.*\)"/\1/p' kernel/include/version.h)
 ok=0; no=0
 si() { echo "  [OK] $1"; ok=$((ok+1)); }
 no() { echo "  [NO] $1"; no=$((no+1)); }
@@ -34,6 +41,7 @@ giro() {    # $1 = 32|64, $2 = v|n
     if [ "$bit" = 64 ]; then iso=dist/exos64.iso; q=qemu-system-x86_64; cpu=qemu64; drv=build-64/drivers/cpufreq.drv
     else                     iso=dist/exos.iso;   q=qemu-system-i386;   cpu=pentium3; drv=build/drivers-cd/cpufreq.drv; fi
     [ "$v" = n ] && cpu="$cpu,-hypervisor"
+    [ "$v" = c ] && cpu="Penryn,-hypervisor,+est"
     log="$D/$bit$v.log"; ser=/tmp/exos/serialcf$bit$v.txt; rm -f "$ser"
     echo "=== $bit bit, -cpu $cpu ==="
     supporto=(EXOS_CDROM=$iso); entra=("root@4" "root@6")
@@ -67,11 +75,20 @@ giro() {    # $1 = 32|64, $2 = v|n
         "cpufreq.drv -remove@4" "cat /boot/avvio.sh@4" \
         "uname -a@2" "sync@3" > "$log" 2>&1
     L=$(tr -d '\r' < "$log")
-    if [ "$v" = v ]; then atteso="macchina virtuale"; else atteso="non dichiara P-state\|non ha il CPUID esteso"; fi   # pentium3: no 8000_0007
+    if [ "$v" = v ]; then atteso="macchina virtuale"; elif [ "$v" = c ]; then atteso="Core 2: coppie lette\|non dichiara P-state"; else atteso="non dichiara P-state\|non ha il CPUID esteso"; fi   # pentium3: no 8000_0007
     echo "$L" | grep -aq "CPUFREQ: nessun controllo" && si "$bit$v: dmesg dice che non c'e' controllo" \
         || no "$bit$v: nessuna riga CPUFREQ in dmesg (vedi $log)"
     echo "$L" | grep -aq "$atteso" && si "$bit$v: il motivo e' «$atteso»" || no "$bit$v: manca «$atteso»"
-    echo "$L" | grep -aq "EX-OS .* 0.311" && si "$bit$v: kernel 0.311" || no "$bit$v: il kernel non e' 0.311"
+    echo "$L" | grep -aq "EX-OS .* $KV" && si "$bit$v: kernel $KV" || no "$bit$v: il kernel non e' $KV"
+    if [ "$v" = c ]; then
+        echo "$L" | grep -aq "CPUFREQ: .*modello 17h" && si "$bit$v: dmesg vede il modello 17h (Core 2 Penryn)" || no "$bit$v: dmesg non dice modello 17h"
+        if echo "$L" | grep -aq "CPUFREQ: Core 2 modello 17h"; then
+            echo "$L" | grep -aq "CPUFREQ: coppia massima .* minima .* ora " && si "$bit$v: dmesg da' le due coppie e quella di ora" || no "$bit$v: niente riga delle coppie"
+            echo "$L" | grep -aq "CPUFREQ: grezzi 198h" && si "$bit$v: dmesg da' gli MSR grezzi" || no "$bit$v: niente riga dei grezzi"
+        else
+            echo "  (questo QEMU non passa EIST: il ramo Core 2 si vede solo sul ferro)"
+        fi
+    fi
     echo "$L" | grep -aq "il kernel dice di no\|non ha SYS_CPUFREQ" && no "$bit$v: -auto rifiutato con un errore" \
         || si "$bit$v: -auto senza errore"
     echo "$L" | grep -aq "opzione sconosciuta '-xyz'" && si "$bit$v: opzione sconosciuta rifiutata" || no "$bit$v: -xyz non rifiutata"
@@ -86,9 +103,9 @@ giro() {    # $1 = 32|64, $2 = v|n
 }
 
 case "${1:-}" in
-    32) giro 32 v; giro 32 n ;;
-    64) giro 64 v; giro 64 n ;;
-    *)  giro 32 v; giro 32 n; giro 64 v; giro 64 n ;;
+    32) giro 32 v; giro 32 c; giro 32 n ;;
+    64) giro 64 v; giro 64 c; giro 64 n ;;
+    *)  giro 32 v; giro 32 c; giro 32 n; giro 64 v; giro 64 c; giro 64 n ;;
 esac
 echo "=== $ok riusciti, $no no ==="
 [ $no = 0 ]

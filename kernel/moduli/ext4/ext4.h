@@ -97,7 +97,6 @@ typedef struct {
     uint32_t backup[2];         /* s_backup_bgs (sparse_super2) */
 } Ext4Vol;
 
-extern Ext4Vol g_vol[EXT2_MAX_MOUNT];
 
 /* The checksums (somme.c). */
 int      vol_monta      (int mnt);

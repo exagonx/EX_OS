@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.341
+**Version:** 0.343
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -110,6 +110,113 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### Exilla: the first tab's address bar works from the second start on (voce 73) — tested in QEMU, package to be published
+
+From the second start of Firefox without an address, what was typed in the
+first tab's bar never opened; in a new tab it did. The cause is in
+`Tabbrowser.sys.mjs`, line 752. While the start page is still a
+session-restore promise, Firefox makes the first `<browser>` remote, in the
+"privilegedabout" process. EX-OS launches no child processes, so that
+browser never loads anything, and on Enter the console says
+`aBrowser.frameLoader.remoteTab is null`. Now the remote type is chosen
+only when the window has content processes (`gMultiProcessBrowser`);
+without them the browser stays in the main process, like those of new tabs.
+The patch is `tools/exilla/patch/browser_components_tabbrowser_Tabbrowser.sys.mjs.patch`.
+
+Tested with `tools/exilla/prova-primotab.sh` at 32 and 64 bit: two starts
+on the same profile, the address typed in the first tab and in a new tab,
+a photo after Enter. 8 of 8 at 32 and at 64 bit; before the fix the second
+start gave `remoteTab is null`. The first tab starts blank, like new tabs.
+
+### telnetd serves several sessions at once (telnetd 0.015, voce 62) — tested in QEMU
+
+Up to 0.014 telnetd served one session at a time: a second connection was
+accepted and stayed mute until the first one exited, and a forgotten
+session locked everyone else out. Now each accepted connection goes to a
+copy of the program (`telnetd -sessione N`), which serves it as before,
+while the parent goes straight back to accepting. The connection is handed
+to the copy with `IP_MSG_EREDITA` (ip.drv 0.021). A copy rather than
+`fork()`, because fork lives only in the static libc and telnetd uses
+libc.so; ExWin does the same. No ceiling: each session costs a process, a
+pty and a shell. The status bar shows how many there are (`TELNET cnn 2`).
+With an ip.drv older than 0.021, telnetd says so and falls back to one
+session at a time.
+
+Tested with `tools/prova_telnet_piu.sh` at 32 and 64 bit: three sessions
+open together each answer their own command, one closes, a fourth comes in
+and the two left still answer (6 of 6). `prova_telnet.sh` and
+`prova_telnet_fine.sh` pass at 32 and 64 bit.
+
+### No ceiling on mounted volumes (kernel 0.343, mount 0.005, automount 0.005, voce 50) — tested in QEMU
+
+- **The mount tables grow**: they were 6 mount points in all (VFS), 4 ext volumes, 4 FAT, 2 ISO
+  9660 and 5 lines in the `[mount]` section of `kernel.cfg`, all `#define`s against the rule
+  "no fixed ceilings". `prova_extfs` met "nessuno slot di montaggio libero" at its fourth ext
+  volume. Now each table is an array of pointers to slots that doubles when it is full, as the
+  open-file table since 0.282 (`kernel/include/posti.h`): a slot never moves, the old array is
+  not freed under whoever is reading it. The ceiling is the kernel heap.
+- **The ext4 write module keeps its state for a volume in the volume** (the journal, the
+  checksum parameters, the superblock it owes), not in tables as long as the old ceiling: the
+  ext2 interface is now ABI 5, and `ext4.mod` must be the one of the same kernel (it already
+  was).
+- `mount` and `automount` explain the new error (the kernel has no memory for another mount)
+  and say that "nessuno slot di montaggio libero" is a kernel up to 0.342.
+- **`tools/prova_montaggi.sh`**: a disk with eleven logical partitions made on Linux (3 ext2,
+  3 ext4, 5 FAT16), all mounted together from the CD (with cd0, `/rdboot` and `/proc`: 14
+  mount points), a file written and read back on each, all unmounted, two mounted again;
+  Linux's e2fsck and fsck.fat find every volume clean with the file in it. 18 out of 18 at 32
+  and 64 bit. Still fixed, written in voce 50: `BLK_MAX_DEV` 16 block devices,
+  `MBR_MAX_PART` 16 partitions a disk, `FAT_MAX_OPEN` 16 open FAT files.
+
+### cpufreq reads the two pairs a Core 2 declares, and writes nothing (kernel 0.342, voce 78) — to be tested on the bench PC
+
+- **On a Core 2 (family 6, models 0Fh, 16h, 17h, 1Dh) with SpeedStep** the kernel reads the two
+  ratio/VID pairs the processor declares, as coreboot's speedstep does: the highest from
+  IA32_PERF_STATUS (198h, bits 44:32), the lowest from MSR_THERM2_CTL (19Dh, bits 12:0), the bus
+  from MSR_FSB_FREQ (CDh). It prints them in dmesg with the MHz, the pair in use now and the raw
+  registers (198h, 199h, 19Dh, 17h, CDh), and **writes nothing**: `cpufreq.drv` says "Core 2: le
+  coppie massima e minima sono lette". It is the user's choice: only the two declared pairs, and
+  using them only after the numbers have been looked at on the real machine (the Q9650 of the
+  bench PC).
+- **The dmesg line of the states lists the n there are**: "2 stati: 2100 1050 0 0 MHz" made two
+  states look like four, two of them broken.
+- QEMU does not pass EIST even with `-cpu Penryn,+est` (measured): there the model 17h is seen and
+  nothing stops; the Core 2 path itself is seen only on the bench PC. `tools/prova_cpufreq.sh`
+  has the Penryn run, and checks the kernel version from `version.h` (it still asked for 0.311).
+
+### ExEditor prints, shows the print preview, and has a bar and a ruler for text files too (ExEditor 0.009, exwin.so 0.022, lpt.drv 0.004, voce 81) — tested in QEMU
+
+- **File > Stampa (Ctrl+P)** sends the tab to the parallel port (lpt0) as a text printer prints
+  it: 80 columns and 60 lines a page, three blank lines above, the page number at the foot, a
+  form feed after each page (66 lines: they fit Letter and A4). Long lines wrap at 80, a tab
+  becomes the spaces up to the next multiple of 8, accented letters go out in CP437 (the PC
+  printers' set; a letter CP437 has not becomes `?`). Of an RTF only the text is printed: fonts
+  on paper need a graphic printer driver, which EX-OS has not.
+- **The editor never waits for the printer**: the pages go to `lpt.drv -stampa -` through a pipe
+  written a piece at a time on a timer, its words come back through another pipe, and the last
+  one ("lpt: N byte alla stampante", or what went wrong) goes in the status line or in a
+  message. A printer out of paper keeps lpt.drv 30 s; the editor keeps working. No temporary
+  file: a live CD has nowhere to write one.
+- **File > Anteprima di stampa** shows the same pages on an A4 sheet, one at a time: Prima/Dopo,
+  PgUp/PgDn or the arrows; Stampa from there prints.
+- **lpt.drv 0.004: `-stampa -` reads the standard input** (`cat f | lpt.drv -stampa -`).
+- **Text files have the bar too**: Nuovo, Apri, Salva, Taglia, Copia, Incolla, Annulla, Cerca;
+  and a **ruler in character columns** with the tab stops every 8 and a mark on the caret's
+  column. The Formato menu is grey on a text file (it is for RTF), and on an RTF the entries that
+  do not work there yet (undo, find, replace) are grey.
+- **Tab writes a tab in the text** and the columns line up under the ruler: the area draws a tab
+  up to the next multiple of 8, and the cursor, the selection and the click count screen columns.
+- **exwin.so 0.022**: `ex_textarea_set_tab(area, n)` (n > 1: tabs drawn as stops every n columns,
+  and Tab goes to the area instead of moving the focus; 0 or 1 as before),
+  `ex_textarea_get_column` (the caret's screen column), `ex_menu_enable(menu, id, si)` (grey
+  entries, drawn but not chosen). A program linked with the stub runs on an older exwin.so too:
+  the three just do nothing there.
+- In QEMU at 32 and 64 bit: `/boot/help.txt` printed from ExEditor to QEMU's parallel file is,
+  byte for byte, what a script on Linux makes with the same rules (30 pages, 81239 bytes), with
+  the menu and with Ctrl+P. `tools/prova_lpt.sh` 28 out of 28 (the new check: `-stampa FILE`
+  then `cat | -stampa -`, the file twice), `tools/prova_rtf.sh` 6 out of 6. On a real printer:
+  to be tested.
 
 ### lpt.drv finds the PCI parallel cards (lpt.drv 0.003, voce 98) — tested
 

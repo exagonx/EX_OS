@@ -9,7 +9,8 @@
  *                                (lpt0, lpt1...); -porta:0x378 only that one,
  *                                -irq:N the line of its nACK (0 = none)  (root)
  *     lpt.drv -ferma             the services end                         (root)
- *     lpt.drv -stampa FILE       FILE to the printer (compatibility mode)
+ *     lpt.drv -stampa FILE       FILE to the printer (compatibility mode); "-" =
+ *                                standard input (0.004)
  *     lpt.drv -id                the IEEE 1284 Device ID of what is attached
  *     lpt.drv -pin               the three registers, pin by pin
  *     lpt.drv -dati:V            the data lines to V (0x.. or decimal)
@@ -69,7 +70,7 @@
 #include "lpt_proto.h"
 #include "pci_proto.h"
 
-EX_VERSIONE("lpt.drv", "0.003");
+EX_VERSIONE("lpt.drv", "0.004");
 
 #define ISA_N   3
 #define PORTE_N 8                       /* lpt0..lpt7 */
@@ -1010,9 +1011,11 @@ static int stampa(int pid, const char *file)
     int fd, n, rc = 0;
     unsigned int tot = 0;
 
-    fd = open(file, O_RDONLY);
+    /* "-" = standard input (0.004): ExEditor sends its pages through a pipe,
+     * from a live CD where there is no file to write them in. */
+    fd = strcmp(file, "-") == 0 ? 0 : open(file, O_RDONLY);
     if (fd < 0) { printf("lpt: non riesco ad aprire %s\n", file); return 1; }
-    if (prendi(pid, LPT_USO_STAMPA) < 0) { close(fd); return 1; }
+    if (prendi(pid, LPT_USO_STAMPA) < 0) { if (fd) close(fd); return 1; }
     while ((n = (int)read(fd, b, sizeof(b))) > 0) {
         LptScritto *r = (LptScritto *)g_risposta;
 
@@ -1028,7 +1031,7 @@ static int stampa(int pid, const char *file)
             rc = 1; break;
         }
     }
-    close(fd);
+    if (fd) close(fd);
     chiedi_esito(pid, LPT_MSG_LASCIA, 0, 0);
     if (rc == 0) printf("lpt: %u byte alla stampante\n", tot);
     return rc;
@@ -1236,7 +1239,7 @@ static void aiuto(void)
     printf("                           (-porta:0x378 solo quella, -irq:N la linea;\n");
     printf("                           anche le schede PCI, se pci.drv e' acceso)\n");
     printf("  lpt.drv -ferma           spegne i servizi\n");
-    printf("  lpt.drv -stampa FILE     FILE alla stampante\n");
+    printf("  lpt.drv -stampa FILE     FILE alla stampante (- = lo standard input)\n");
     printf("  lpt.drv -id              il Device ID IEEE 1284 di cio' che e' collegato\n");
     printf("  lpt.drv -pin             i registri piedino per piedino\n");
     printf("  lpt.drv -dati:V          le linee dei dati a V\n");

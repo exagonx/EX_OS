@@ -55,6 +55,8 @@ static const char *nome_perche(unsigned int p)
     case CPUFREQ_NO_BIOS:     return "SpeedStep e' spento dal BIOS: si accende dal menu del BIOS";
     case CPUFREQ_NO_HWP:      return "HWP e' acceso: la frequenza la decide il processore da solo";
     case CPUFREQ_NO_STATI:    return "il processore dichiara meno di due P-state";
+    case CPUFREQ_NO_CORE2:    return "Core 2: le coppie massima e minima sono lette e scritte in\n"
+                                     "  dmesg (riga CPUFREQ), ma il kernel non le usa ancora";
     default:                  return "motivo sconosciuto";
     }
 }

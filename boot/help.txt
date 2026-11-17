@@ -573,6 +573,13 @@ Funziona sugli AMD dalla famiglia 10h (Athlon/Turion X2 dei portatili
 del 2008 in poi) e sugli Intel da Sandy Bridge. Non nelle macchine
 virtuali, e non se il TSC non e' invariante: `cpufreq.drv` dice perche'.
 
+Sui Core 2 (Q9650 e simili, dal kernel 0.342) per ora il kernel legge
+soltanto: le due coppie moltiplicatore/VID che il processore dichiara,
+la massima e la minima, con i MHz e i registri grezzi, in dmesg:
+  dmesg | grep CPUFREQ
+Non scrive niente, e `cpufreq.drv` lo dice. Usarle e' il
+passo dopo, quando i numeri sono stati guardati sulla macchina vera.
+
 [dpms.drv dpms schermo spento salvaschermo]
 lo schermo si spegne quando nessuno lo usa, e si riaccende al primo tasto
 
@@ -605,7 +612,8 @@ la porta parallela: stampanti, ZIP, scanner, datasette, schede di prova
                             un servizio per ognuna: lpt0, lpt1
                             (-porta:0x378 solo quella, -irq:N la linea)
   lpt.drv -ferma            spegne i servizi
-  lpt.drv -stampa FILE      FILE alla stampante
+  lpt.drv -stampa FILE      FILE alla stampante (- = lo standard input,
+                            dalla 0.004:  cat f | lpt.drv -stampa -)
   lpt.drv -id               il Device ID IEEE 1284 della periferica
   lpt.drv -pin              i tre registri, piedino per piedino
   lpt.drv -dati:V           le linee dei dati a V (0x.. o decimale)
@@ -631,6 +639,13 @@ negli altri (la prova li manda a 60-100 us l'uno dall'altro).
 Dalla 0.003 lpt.drv trova anche le schede PCI (classe 07.01, come la
 SUNIX 1fd4:1999): l'ECR sta in un loro BAR, e la linea d'interrupt
 PCI non si usa se non con -irq:N.
+
+Da ExEditor 0.009 File > Stampa (Ctrl+P) manda il testo a lpt0 con
+lpt.drv -stampa -: 80 colonne e 60 righe per pagina, il numero in
+fondo, un salto pagina dopo ognuna, le lettere accentate in CP437
+(quelle che CP437 non ha diventano '?'). Di un RTF esce solo il testo.
+File > Anteprima di stampa mostra i fogli A4 uno alla volta (PagGiu e
+PagSu, o le frecce, sfogliano).
 
 Dalla 0.324 lpt.drv fa in/out da solo, senza chiamate di sistema
 (la bitmap I/O del TSS, ioport_diretto): l'onda su D1 esce in
@@ -804,6 +819,10 @@ Il punto di montaggio non deve esistere gia': lo crea il VFS.
 I montaggi automatici all'avvio stanno nella sezione [mount] di
 /boot/kernel.cfg, spiegata in /boot/kernel.txt.
 
+Dal kernel 0.343 non c'e' un numero massimo di volumi montati insieme
+(erano 6 in tutto, di cui 4 ext e 4 FAT, e 5 righe in [mount]): le
+tabelle crescono con i montaggi, fino alla memoria del kernel.
+
 [chkdsk]
 controlla un filesystem
 
@@ -819,6 +838,23 @@ sistema: `system -unload`, `chkdsk -r`, `system -load` - oppure
 l'avvio, prima di montarla.
 
 [problemi guasti]
+EXILLA (FIREFOX): NEL PRIMO TAB L'INDIRIZZO SCRITTO NON SI APRE, in un tab
+  nuovo si'. Succede dal secondo avvio senza indirizzo. Rimedio: apri un tab
+  nuovo (Ctrl+T), oppure aggiorna Exilla con netupdate quando arriva il
+  pacchetto con la correzione del 17/11/2026.
+TELNET: LA SECONDA SESSIONE NON RISPONDE finche' la prima non esce: e'
+  telnetd fino alla 0.014. Aggiorna con netupdate. Se la console dice "non
+  passa alla copia", ip.drv e' piu' vecchio della 0.021: aggiorna anche quello.
+MOUNT DICE "nessuno slot di montaggio libero" (errore -24) al quarto
+  volume ext o FAT, o al settimo montaggio: e' il kernel fino alla 0.342.
+  Aggiorna con netupdate; intanto smonta un volume che non serve.
+EXEDITOR: STAMPA DICE "il servizio lpt0 non c'e'": lpt.drv non e' partito.
+  Da una console  lpt.drv -avvia  (e  lpt.drv -install  per averlo a ogni
+  avvio), poi di nuovo File > Stampa. "Manca /dev/lpt.drv": il sistema e'
+  piu' vecchio della 0.003 di lpt.drv, aggiornalo con netupdate.
+EXEDITOR: STAMPA DICE "occupata da 30 s": la stampante e' spenta, senza carta
+  o fuori linea; l'avviso dice quale. Sistemala e stampa di nuovo.
+
 "not unmounted cleanly and its journal is not replayed" a ogni avvio, con
   chkdsk -r automatico: fino al kernel 0.301 reboot, halt e poweroff non
   chiudevano il giornale ext3/ext4. Dalla 0.302 smontano. Il disco non si
@@ -1408,6 +1444,19 @@ apre una sessione su un host
 Se la macchina dall'altra parte si riavvia o il server muore, ip.drv dalla
 0.020 chiude la connessione da solo e il client esce. Con una macchina vecchia
 (ip.drv 0.019 o prima) il client resta fermo sul prompt: Ctrl+] e poi quit.
+
+[telnetd]
+il servizio telnet: le sessioni da fuori
+
+  telnetd                          legge /boot/telnetd.cfg
+  telnetd 2323 -s                  un'altra porta, shell senza accesso
+  telnetd -v                       racconta ogni sessione
+
+Dalla 0.015 serve tutte le sessioni che arrivano, ognuna in una copia sua
+(telnetd -sessione N): una seconda connessione non resta piu' muta finche'
+la prima non finisce. La barra dice "TELNET cnn 2" con due sessioni. Ci
+vuole ip.drv 0.021 o piu' nuovo; con uno piu' vecchio torna a una per volta
+e lo scrive sulla console. Tutto viaggia in chiaro, password compresa.
 
 [ftp]
 trasferisce file

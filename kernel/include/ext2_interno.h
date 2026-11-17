@@ -28,7 +28,8 @@
 #include "kernel.h"
 #include "ext2.h"
 
-#define EXT2_IF_ABI         4u          /* 4: the journal hooks (kernel 0.265) */
+#define EXT2_IF_ABI         5u          /* 4: the journal hooks (kernel 0.265); 5: the mounts
+                                           grow, the module's state hangs off each (0.343) */
 #define EXT2_BLOCCO_MAX     4096u   /* the largest block this driver accepts */
 
 /* --- the on-disk format, as both halves need it ----------------------------- */
@@ -152,6 +153,15 @@ typedef struct {
     uint8_t  ro_chiesto;           /* 1: mounted with -r (EXT2_RO_CHIESTO) */
 
     char     etichetta[17];
+
+    /* 0.343 (voce 50): the mount table grows and its slots are apart, so a
+     * mount carries its own index, and the write module keeps its state for
+     * the volume here instead of in tables of its own as long as the old
+     * ceiling. The kernel never reads the three below; they start at 0. */
+    int      indice;
+    void    *mod_vol;               /* the module's Ext4Vol */
+    void    *mod_gio;               /* the module's Giornale, NULL = none */
+    uint8_t  mod_super_sporco;      /* the module owes a superblock write */
 } Ext2Mount;
 
 /* The kernel's working buffers - one per kind of block, see "I BUFFER DI
@@ -224,9 +234,9 @@ typedef struct {
     uint32_t    abi;                    /* EXT2_IF_ABI */
     uint32_t    dim_mount;              /* sizeof(Ext2Mount) */
     uint32_t    dim_stato;              /* sizeof(Ext2Stato) */
-    uint32_t    max_mount;              /* EXT2_MAX_MOUNT */
+    volatile uint32_t   max_mount;      /* slots now: grows (0.343) */
 
-    Ext2Mount  *mnt;                    /* [max_mount] */
+    Ext2Mount **volatile mnt;           /* [max_mount], each slot apart */
     Ext2Stato  *st;
 
     int      (*leggi_blocco)   (Ext2Mount *m, uint32_t n, void *dst);

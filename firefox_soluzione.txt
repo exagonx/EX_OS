@@ -1,0 +1,288 @@
+=============================================================================
+firefox_soluzione.txt - Exilla (Firefox): il primo tab che non naviga e
+l'avvio lento. Cause accertate il 16/11/2026 e soluzione da elaborare.
+=============================================================================
+
+Questo file e' per chi deve SCRIVERE la correzione. Dice cosa e' stato
+misurato, dove sta la causa nel codice e cosa cambiare. Quello che e' misurato
+e' marcato [MISURATO], quello che e' una proposta [PROPOSTA], quello che non e'
+stato verificato [NON VERIFICATO]. Niente e' stato modificato nel progetto:
+ne' il kernel, ne' Firefox, ne' in_lavorazione.txt.
+
+Sono le voci 73 (primo tab) e 27 (avvio lento) di in_lavorazione.txt.
+
+Macchine delle prove:
+  - PC di prova 192.168.0.253, EX-OS 0.341 a 64 bit, 4 core, 4 GB, disco
+    Hitachi HTS543225L9A300 (2,5 pollici) sul SATA NVIDIA MCP73, ext4.
+    Solo letture e un Firefox di prova con HOME=/root/prova-ff, poi chiuso e
+    cancellato. Il profilo dell'utente non e' stato toccato.
+  - QEMU a 64 bit, 2 processori, 4 GB, dist/exos64.iso, Firefox di
+    cross_build/exilla-obj/gecko64/dist/firefox.
+Script, misure e fotografie: ~/cross_build/prove/firefox-16-11/
+  primotab.sh   la prova in QEMU del primo tab (sotto, A.4)
+  analizza.py   trasforma i campioni di /proc in righe per intervallo
+  misura1.txt misura2.txt   i campioni presi sul PC di prova
+  ff.log        il firefox.log dell'utente delle 20:52 (PC di prova)
+  giro3 giro4 giro5         seriale e fotografie dei tre giri in QEMU
+
+
+=============================================================================
+A. IL PRIMO TAB NON NAVIGA
+=============================================================================
+
+A.1 Il sintomo
+--------------
+Firefox avviato dal menu (senza indirizzo). Nel primo tab si scrive nella
+barra, Invio, e non succede niente. Con "+" il tab nuovo funziona.
+
+A.2 La causa [MISURATO]
+-----------------------
+firefox-main/browser/components/tabbrowser/Tabbrowser.sys.mjs, nella
+preparazione del primo browser (righe 724-754): se all'avvio l'indirizzo da
+caricare non e' ancora una stringa, ma una promessa che aspetta SessionStore,
+il codice sceglie SEMPRE
+
+    remoteType = lazy.E10SUtils.PRIVILEGEDABOUT_REMOTE_TYPE;     (riga 752)
+
+senza guardare gMultiProcessBrowser. Poco sotto, in createBrowser (righe
+3053-3056), `if (remoteType)` mette remote="true" sul <browser>. Cosi' il
+primo tab nasce REMOTO anche con MOZ_FORCE_DISABLE_E10S=1.
+
+Su Linux un Firefox senza e10s lancia comunque quel processo di contenuto e
+il tab vive. EX-OS non lancia processi figli ("Failed to launch tab
+subprocess"): il <browser> resta remoto e senza processo, e ogni navigazione
+muore.
+
+Quando l'indirizzo e' una stringa (pagine del primo avvio, indirizzo sulla
+riga di comando) si passa da ChromeUtils.predictRemoteTypeForURI, che senza
+tab remoti rende NOT_REMOTE (dom/base/ChromeUtils.cpp, riga 3028 e seguenti):
+per questo le prove in QEMU, che passano sempre una pagina, non l'hanno mai
+visto, e per questo col profilo nuovo funziona.
+
+A.3 Le prove [MISURATO]
+-----------------------
+Tre giri in QEMU con lo stesso disco, indirizzo scritto nella barra del primo
+tab e poi in un tab nuovo:
+
+  giro3  profilo NUOVO, nessun indirizzo:
+         nessun "Failed to launch tab subprocess"; il primo tab naviga
+         ("Seconda - Nightly" dopo Invio).
+  giro4  STESSO profilo, secondo avvio, nessun indirizzo (il caso dell'utente):
+         all'avvio "WARNING: Failed to launch tab subprocess"; a Invio nel
+         primo tab
+           JavaScript error: resource://gre/modules/E10SUtils.sys.mjs,
+           line 414: TypeError: can't access property "osPid",
+           aBrowser.frameLoader.remoteTab is null
+         e nessuna pagina. Nel tab nuovo la stessa scritta apre la pagina.
+  giro5  STESSO profilo, avviato con "about:home" sulla riga di comando:
+         nessun "tab subprocess"; il primo tab naviga 0,19 s dopo Invio.
+
+Sul PC di prova il log dell'utente (ff.log) ha la stessa riga "Failed to
+launch tab subprocess" all'avvio, tre tasti nel primo tab senza effetto e poi
+il clic su "+".
+
+A.4 La soluzione [PROPOSTA]
+---------------------------
+1. La correzione vera, in Tabbrowser.sys.mjs alla riga 752: il processo
+   "privilegedabout" solo se la finestra usa i tab remoti, altrimenti
+   NOT_REMOTE:
+
+       remoteType = this.documentGlobal.gMultiProcessBrowser
+         ? lazy.E10SUtils.PRIVILEGEDABOUT_REMOTE_TYPE
+         : lazy.E10SUtils.NOT_REMOTE;
+
+   Da guardare nello stesso blocco: il ramo `openWindowInfo.isRemote` (riga
+   715) e ogni altro punto che passa un remoteType a createBrowser senza
+   passare da predictRemoteTypeForURI (cercare PRIVILEGEDABOUT_REMOTE_TYPE e
+   DEFAULT_REMOTE_TYPE in browser/). [NON VERIFICATO se ce ne sono altri che
+   EX-OS raggiunge.]
+
+   Come si fa nel progetto: tools/exilla/tocca.sh sul file PRIMA di
+   cambiarlo, poi tools/exilla/patch-crea.sh (la patch finisce in
+   tools/exilla/patch/). E' solo JavaScript: basta
+   `tools/exilla/gecko-costruisci.sh build faster` e il pacchetto, a 32 e a
+   64 bit.
+   ! Prima e dopo ogni mach: config.statusd/substs/OS_TARGET non deve essere
+     null, ne' in cima ne' in js/src (gecko e gecko64). Se lo e', il rimedio
+     e' quello gia' usato il 24/10 e il 9/11 (write_vars da config.status).
+
+2. Facoltativo, subito e senza ricostruire [PROPOSTA, da decidere con
+   l'utente]: exwin/bin/exilla/exilla.c puo' aggiungere "about:home" quando
+   non riceve un indirizzo (giro5 dice che basta). Limite: un indirizzo sulla
+   riga di comando prende il posto della pagina iniziale scelta dall'utente
+   e del ripristino della sessione. Per questo e' solo un ripiego.
+
+3. La prova da tenere: primotab.sh fa gia' tutto (disco ext2 con Firefox,
+   HOME e profilo creati DENTRO EX-OS, primo avvio, e al secondo lancio sullo
+   stesso disco il caso dell'utente). Va portata in tools/exilla/ come prova
+   con esito OK/NO: secondo avvio senza indirizzo, Invio nel primo tab, deve
+   comparire "titolo 'Seconda" e non devono comparire "tab subprocess" ne'
+   "remoteTab is null".
+
+A.5 Trovato strada facendo [MISURATO]
+-------------------------------------
+Perche' una prova con profilo o HOME preparati sull'host si ferma (e' la
+voce 70, "Profile Missing" di tools/exilla/prova-riapertura.sh):
+  - profilo creato sull'host con mke2fs -d (proprietario 1000):
+    finestra "Profile Missing";
+  - profilo creato dentro EX-OS ma HOME dell'host: Firefox esce con
+    "Running Nightly as root in a regular user's session is not supported.
+    ($HOME is /disk/casa which is owned by utente.)".
+Da quando stat() dice il proprietario vero (kernel 0.339) Firefox li vede.
+Con `mkdir` fatto dentro EX-OS per tutti e due, parte. prova-riapertura.sh
+usa gia' fakeroot+chown: [NON VERIFICATO] se li' la causa e' la stessa.
+
+
+=============================================================================
+B. L'AVVIO LENTO
+=============================================================================
+
+B.1 Le misure [MISURATO, PC di prova, kernel 0.341]
+---------------------------------------------------
+Dal "born at" del processo al titolo "Nightly" (finestra a schermo):
+
+  avvio dell'utente delle 20:52, primo dopo l'accensione     46,9 s
+  avvio di prova tre ore dopo, profilo nuovo                 57,1 s
+  avvio di prova subito dopo, stesso profilo                  2,5 s
+                                  (titolo della pagina a      5,4 s)
+
+Lo stesso PC, lo stesso Firefox: 2,5 secondi quando i file sono gia' in
+memoria. La CPU, i fili e il processo unico NON sono la causa dell'avvio
+lento: e' tutto disco.
+
+/proc/disco durante l'avvio da 57 s (49,8 s campionati):
+
+  comandi di lettura      11014
+  letti dal disco         161,8 MB   (14,7 KB a comando in media)
+  tempo passato a leggere 44,5 s su 49,8   (4,0 ms a comando)
+  serviti dalla cache     940 MB
+  dalla lettura anticipata  3,6 MB (sett_finestra: quasi mai)
+  scritture               1859 comandi, 0,1 s; FLUSH 357, 10,5 s
+
+In ogni secondo dell'avvio il disco legge per circa 1000 ms e porta a casa
+2,5 MB. Lo stesso disco, quando legge di seguito, fa 11,3 MB/s (primo
+campione dell'avvio a caldo: 20 MB in 1,79 s).
+
+Nel dmesg dello stesso PC:
+  ATA: canale nativo 2 a 0xc480/0xc402, in PIO (bus master 0xbc00 non usato)
+  BLK: cache delle pagine fino a 383 MB
+
+B.2 Le cause, in ordine di peso
+-------------------------------
+1. [MISURATO nel codice e nei numeri] UNA LETTURA DA 4 KB PER OGNI PAGE FAULT.
+   kernel/mm/paging.c, pf_carica_da_file (riga 1636, usata anche dal kernel a
+   64 bit): a ogni pagina mancante dell'eseguibile fa
+
+       n = vfs_read(p->exe_handle, buf, da_leggere, off_file);   (riga 1671)
+
+   con da_leggere al massimo PAGE_SIZE. Il programma firefox e' 221 MB (un
+   solo segmento di codice da 213 MB, statico): le pagine si toccano in
+   ordine sparso, ogni fault e' un comando al disco per conto suo.
+   La lettura anticipata di blk.c (leggi_avanti, AVANTI_SETT = 128 KB) parte
+   solo se la richiesta SEGUE esattamente la precedente: con i fault sparsi
+   non parte quasi mai (3,6 MB su 162).
+   Il lucchetto del VFS (vfs_read prende fs_prendi) tiene in fila tutti i
+   fili che aspettano una pagina.
+   I 4 ms a comando sono [NON VERIFICATO nel dettaglio] l'attesa meccanica
+   del disco fra due letture non consecutive.
+   [NON VERIFICATO] quanta parte dei 162 MB viene dall'eseguibile e quanta
+   da omni.ja (50 MB) e dal profilo: manca un contatore in pf_carica_da_file.
+
+2. [MISURATO] IL DISCO IN PIO su questo PC. kernel/block/ata.c,
+   canale_nativo (riga 305): i canali nativi vanno in PIO per scelta dal
+   7/10/2026, perche' sul SATA MCP73 "ogni trasferimento DMA lo lascia
+   occupato per sempre". Di seguito il disco da' 11,3 MB/s; il portatile, in
+   DMA, ne dava 69 (voce 71). E' la voce 99 (DMA/AHCI del disco).
+   [NON VERIFICATO] La macchina "core duo, 4 GB, 2 minuti" di cui parla
+   l'utente: se non e' il PC di prova, guardare nel suo dmesg la riga "ATA:"
+   e rifare la misura di B.4.
+
+3. [MISURATO] LA CACHE NON TIENE FIREFOX FRA UN AVVIO E L'ALTRO. 383 MB
+   (PC_TABELLA_MAX in blk.c, 4 MB di tabella) contro 221 + 50 MB di Firefox
+   piu' quello che la navigazione legge: tre ore dopo il primo avvio il
+   secondo ha riletto 162 MB dal disco. Subito dopo, il terzo ha letto 37 MB
+   in 4,6 s ed e' partito in 2,5 s.
+   /proc/meminfo dice "Cached: 0 kB": la cache delle pagine non e' contata.
+
+4. [MISURATO, viene DOPO l'avvio] I FLUSH. Nei 69 s dell'avvio a caldo:
+   1028 FLUSH, 36,1 s di attesa. La finestra c'e' gia', ma e' il motivo per
+   cui Firefox resta pesante nel primo minuto. E' il seguito della voce 71
+   (scrittura ritardata, fsync).
+
+B.3 La soluzione [PROPOSTA], in ordine di lavoro
+------------------------------------------------
+Regole del progetto da rispettare: 32 e 64 bit; niente tetti fissi (ogni
+numero in kernel.cfg con un valore predefinito ricavato dalla RAM); prima
+QEMU, poi il ferro con l'utente; novita' nei manuali e in netupdate.
+
+P0. PRIMA LO STRUMENTO: un contatore dei fault da file (numero, byte, ms) in
+    /proc (o in /proc/<pid>/), per dire quanta parte della lettura e'
+    dell'eseguibile e per vedere il prima e il dopo.
+
+P1. LETTURA A GRAPPOLI NEL PAGE FAULT (il guadagno piu' grande, vale su ogni
+    disco). In pf_carica_da_file, quando la pagina manca: leggere in UN
+    comando un blocco allineato di N pagine attorno a quella (64-128 KB;
+    N da kernel.cfg) e
+      a) mettere nella cache delle pagine di blk.c tutto il blocco, mappando
+         solo la pagina chiesta (la RAM del processo non cresce, i fault
+         vicini li serve la cache); oppure
+      b) mappare subito anche le vicine gia' lette (meno fault, piu' RAM).
+    Punti delicati gia' scritti nel codice: il buffer oggi sta sulla PILA
+    DEL KERNEL (4 KB) e non puo' diventare uno statico (due processi insieme
+    nel fault); gli interrupt si riaccendono solo per la lettura; al ritorno
+    si ricontrolla che la pagina non sia arrivata da un altro; il lucchetto
+    del VFS e il ciclo fault dentro read (vm_precarica_utente). La via piu'
+    corta e' forse una vfs_precarica(handle, offset, byte) che fa leggere al
+    filesystem dentro la cache senza un buffer del chiamante, e poi la
+    vfs_read di oggi trova la pagina in cache.
+    Conto atteso: 162 MB in blocchi da 128 KB sono circa 1300 comandi invece
+    di 11000.
+
+P2. PRECARICA DELL'ESEGUIBILE GROSSO (il "Prefetch" gia' discusso il 31/10).
+    Alla exec di un file oltre una soglia, un compito del kernel lo legge di
+    seguito nella cache delle pagine, se la cache lo contiene. 221 MB di
+    seguito: circa 20 s in PIO su questo PC, 3-4 s con il DMA. Da solo non
+    basta in PIO, insieme a P3 porta l'avvio a freddo vicino a quello di
+    Linux. Va provato che non rallenti chi ha poca RAM (soglia sulla RAM
+    libera, come fa gia' la cache).
+
+P3. IL DMA SUI CANALI NATIVI (voce 99), o il driver AHCI (voci 56 e 63).
+    Da 11 a 60-70 MB/s di seguito su questo PC, e niente CPU spesa ad
+    aspettare. Punto di partenza per l'indagine [NON VERIFICATO]:
+    ata_dma_blocco scrive nel PRDT `(uint32_t)(uintptr_t)g_dma_buf` (ata.c
+    riga 433), cioe' un indirizzo VIRTUALE: va controllato che a 64 bit sia
+    anche quello fisico, e che il bus master del canale nativo (0xbc00,
+    0xbc08) sia quello giusto e abilitato.
+
+P4. LA CACHE: Firefox non deve uscirne fra un avvio e l'altro. Tetto in
+    proporzione alla RAM libera invece dei 4 MB di tabella; le pagine di un
+    eseguibile in uso tenute piu' a lungo; "Cached:" vero in /proc/meminfo.
+
+P5. I FLUSH dopo l'avvio: e' la voce 71, non parte di questo lavoro, ma il
+    numero (36 s su 69) va tenuto come riferimento.
+
+B.4 Come si rimisura (sul ferro, via telnet, senza toccare il profilo)
+----------------------------------------------------------------------
+    export HOME=/root/prova-ff          (un profilo di prova)
+    /exwin/app/exilla/exilla &
+    cat /proc/uptime; cat /proc/stat; cat /proc/disco      ogni secondo
+    cat /root/prova-ff/.exilla/firefox.log     "born at" e i "titolo"
+Dal PC: tools/telnet-comandi.py <ip> con quei comandi ripetuti, poi
+analizza.py sul risultato. Due avvii di fila: il primo e' il freddo, il
+secondo dice quanto vale la cache. Alla fine `kill <pid>` e
+`rm -r /root/prova-ff`.
+Campi di /proc/disco (kernel/fs/procfs.c, f_disco): letture, settori letti,
+ms di lettura, massimo, scritture, settori scritti, ms, massimo, flush, ms
+di flush, massimo, settori dalla cache, settori dalla finestra, ms di
+attesa, massimo.
+! `cat` di EX-OS legge un file solo per volta: i tre `cat` vanno separati
+  da ";".
+! Il freddo vero e' il primo avvio dopo l'accensione: [NON VERIFICATO] qui,
+  perche' il PC non e' stato riavviato; il dato di 46,9 s viene dal log
+  dell'utente.
+
+B.5 L'obiettivo
+---------------
+Linux sullo stesso ferro: meno di 10 s (l'utente). EX-OS a caldo: 2,5 s,
+quindi il traguardo e' raggiungibile solo dal lato del disco: P1 toglie i
+comandi sparsi, P2+P3 portano i 221 MB in memoria in pochi secondi.

@@ -446,7 +446,7 @@ static void f_mounts(Usc *u)
 {
     int i;
 
-    for (i = 0; i < VFS_MAX_MOUNT; i++) {
+    for (i = 0; i < vfs_posti(); i++) {
         const VfsMount *m = vfs_mount_nl_di(i);
 
         if (!m || !m->usato) continue;

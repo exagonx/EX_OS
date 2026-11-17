@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # =============================================================================
-# tools/exeditor-icone.py - the toolbar icons of ExEditor (9 October 2026)
+# tools/exeditor-icone.py - the toolbar icons of ExEditor (9 October 2026;
+# annulla, cerca and stampa 16 November 2026)
 #
 #     python3 tools/exeditor-icone.py
 #
@@ -142,9 +143,33 @@ def incolla():
     return img
 
 
+def annulla():
+    img, d = tela()
+    d.arc((28, 30, 112, 110), 180, 450, fill=BLU, width=12)
+    d.polygon([(6, 70), (50, 70), (28, 40)], fill=BLU)
+    return img
+
+
+def cerca():
+    img, d = tela()
+    d.ellipse((14, 10, 84, 80), fill=CARTA, outline=NERO, width=9)
+    d.line([(74, 72), (114, 114)], fill=NERO, width=16)
+    return img
+
+
+def stampa():
+    img, d = tela()
+    foglio(d, 36, 6, 92, 60, 14)
+    d.rectangle((10, 52, 118, 100), fill=GRIGIO, outline=NERO, width=6)
+    d.rectangle((32, 84, 96, 122), fill=CARTA, outline=NERO, width=5)
+    d.ellipse((96, 62, 106, 72), fill=(60, 180, 60, 255))
+    return img
+
+
 ICONE = {
     "nuovo": nuovo, "apri": apri, "salva": salva,
     "taglia": taglia, "copia": copia, "incolla": incolla,
+    "annulla": annulla, "cerca": cerca, "stampa": stampa,        # 16/11/2026, voce 81
     "grassetto": lambda: lettera("G", "Bold"),
     "corsivo": lambda: lettera("C", "Italic"),
     "sottolineato": lambda: lettera("S", "Regular", True),

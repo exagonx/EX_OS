@@ -27,8 +27,8 @@
  * (kernel/moduli/ext4/): le funzioni di scrittura qui sotto controllano che
  * il volume sia scrivibile e chiamano il modulo; senza modulo ogni volume
  * ext2/3/4 e' in sola lettura. Quello che lettura e modulo condividono sta
- * in ext2_interno.h. EXT2_MAX_MOUNT e' 4 (era 2): un disco con piu'
- * partizioni ext2 oltre alla radice.
+ * in ext2_interno.h. I montaggi ext2 erano 4 (EXT2_MAX_MOUNT); dalla 0.343
+ * la tabella cresce (posti.h, voce 50).
  * ============================================================================= */
 
 #ifndef EXT2_H
@@ -36,7 +36,6 @@
 
 #include "kernel.h"
 
-#define EXT2_MAX_MOUNT      4
 #define EXT2_NOME_MAX       256     /* 255 caratteri + NUL: il massimo di ext2 */
 #define EXT2_PERCORSO_MAX   320
 

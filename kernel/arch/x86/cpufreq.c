@@ -29,8 +29,18 @@
  *     the highest and lowest ratio, IA32_PERF_CTL (199h) chooses. Only the
  *     models in the list below: on a Core 2 MSR CEh does not exist and rdmsr
  *     would stop the kernel with a #GP.
- * Everything else (AMD K8 with the old FID/VID PowerNow!, Pentium M, Core 2,
- * Atom) says "non supportato" and is left as the BIOS set it.
+ * Everything else (AMD K8 with the old FID/VID PowerNow!, Pentium M, Atom)
+ * says "non supportato" and is left as the BIOS set it.
+ *
+ * ! CORE 2 (0.342, the Q9650 of the bench PC): READ ONLY, FOR NOW. No CEh
+ * there: the processor declares two pairs, ratio and VID, as coreboot's
+ * speedstep reads them: the highest in IA32_PERF_STATUS (198h) bits 44:32,
+ * the lowest in MSR_THERM2_CTL (19Dh) bits 12:0; the bus from MSR_FSB_FREQ
+ * (CDh). The user's choice (16/11): only those two pairs, no invented ones
+ * in between, and first a kernel that prints them in dmesg and writes
+ * nothing; cpufreq drives them only after they have been looked at on the
+ * real machine. Only the Core 2 models, where all these MSRs are in Intel's
+ * table: an MSR that is not there is a #GP, and the kernel stops.
  *
  * ! THE TSC MUST BE INVARIANT, OR NOTHING IS TOUCHED. The kernel measures its
  * timeouts with the TSC (blk.c, ahci.c, the guardia in power.c), calibrated
@@ -98,6 +108,9 @@ static void cpuid_di(uint32_t foglia, uint32_t *eax, uint32_t *ebx,
 #define INTEL_PERF_CTL      0x00000199u     /* [15:8] the ratio asked */
 #define INTEL_MISC_ENABLE   0x000001A0u     /* bit 16: SpeedStep on */
 #define INTEL_PM_ENABLE     0x00000770u     /* bit 0: HWP on */
+#define INTEL_PLATFORM_ID   0x00000017u     /* Core 2: shown raw, for comparison */
+#define INTEL_FSB_FREQ      0x000000CDu     /* Core 2: [2:0] the bus */
+#define INTEL_THERM2_CTL    0x0000019Du     /* Core 2: [12:8] ratio, 14 half, [5:0] VID, the lowest */
 
 /* AUTO: at or above `su` % the processor goes to the top at once; below
  * `giu` % it steps down one state per 100 ms. Up at once and down slowly:
@@ -254,6 +267,44 @@ static int intel_trova(void)
     return 0;
 }
 
+/* -----------------------------------------------------------------------------
+ * Core 2 (0.342): read and told, nothing written
+ * --------------------------------------------------------------------------- */
+static int core2(uint32_t modello)
+{
+    return modello == 0x0F || modello == 0x16 || modello == 0x17 || modello == 0x1D;
+}
+
+/* ratio x bus, the half step (Penryn) included */
+static uint32_t core2_mhz(uint32_t coppia, uint32_t bus)
+{
+    return ((coppia >> 8) & 0x1Fu) * bus + (((coppia >> 14) & 1u) ? bus / 2u : 0u);
+}
+
+static void core2_racconta(void)
+{
+    /* MSR_FSB_FREQ [2:0], in MHz, as Linux's freq_desc for Core 2 */
+    static const uint16_t BUS[8] = { 267, 133, 200, 167, 333, 100, 400, 0 };
+    uint32_t mb, ma, sb, sa, cb, ca, tb, ta, pb, pa, fb, fa, bus;
+
+    msr_leggi(INTEL_MISC_ENABLE, &mb, &ma);
+    msr_leggi(INTEL_PERF_STATO,  &sb, &sa);
+    msr_leggi(INTEL_PERF_CTL,    &cb, &ca);
+    msr_leggi(INTEL_THERM2_CTL,  &tb, &ta);
+    msr_leggi(INTEL_PLATFORM_ID, &pb, &pa);
+    msr_leggi(INTEL_FSB_FREQ,    &fb, &fa);
+    bus = BUS[fb & 7u];
+
+    klog(LOG_INFO, "CPUFREQ: Core 2 modello %xh, SpeedStep %s dal BIOS, bus %u MHz",
+         g_cf.modello, (mb & (1u << 16)) ? "acceso" : "SPENTO", bus);
+    klog(LOG_INFO, "CPUFREQ: coppia massima %u%s x, VID %xh (%u MHz); minima %u%s x, VID %xh (%u MHz); ora %u%s x, VID %xh (%u MHz)",
+         (sa >> 8) & 0x1Fu, ((sa >> 14) & 1u) ? ",5" : "", sa & 0x3Fu, core2_mhz(sa, bus),
+         (tb >> 8) & 0x1Fu, ((tb >> 14) & 1u) ? ",5" : "", tb & 0x3Fu, core2_mhz(tb, bus),
+         (sb >> 8) & 0x1Fu, ((sb >> 14) & 1u) ? ",5" : "", sb & 0x3Fu, core2_mhz(sb, bus));
+    klog(LOG_INFO, "CPUFREQ: grezzi 198h %08x:%08x 199h %08x:%08x 19Dh %08x:%08x 17h %08x:%08x CDh %08x",
+         sa, sb, ca, cb, ta, tb, pa, pb, fb);
+}
+
 static uint32_t intel_ora(void)
 {
     uint32_t b, a, r, i, meglio = CPUFREQ_IGNOTO, dist = 0xFFFFFFFFu;
@@ -306,6 +357,7 @@ static const char *nome_perche(uint32_t p)
     case CPUFREQ_NO_BIOS:     return "SpeedStep spento dal BIOS";
     case CPUFREQ_NO_HWP:      return "HWP acceso: decide il processore";
     case CPUFREQ_NO_STATI:    return "meno di due P-state";
+    case CPUFREQ_NO_CORE2:    return "Core 2: coppie lette, il kernel non le usa ancora";
     default:                  return "?";
     }
 }
@@ -357,6 +409,11 @@ void cpufreq_init(void)
         r = intel_trova();
         if (r) { g_cf.perche = (uint32_t)r; goto fine; }
         g_cf.tipo = CPUFREQ_INTEL_EIST;
+    } else if (intel && g_cf.famiglia == 6 && core2(g_cf.modello) &&
+               (cpuid_ecx1() & (1u << 7))) {
+        core2_racconta();               /* read only: see the head of the file */
+        g_cf.perche = CPUFREQ_NO_CORE2;
+        goto fine;
     } else {
         g_cf.perche = CPUFREQ_NO_SUPPORTO;
         goto fine;
@@ -365,11 +422,25 @@ void cpufreq_init(void)
     g_cf.perche = 0;
     g_cf.cpu[0].iniziale = g_cf.cpu[0].stato = stato_ora();
     g_cf.cpu[0].visto    = 1;
-    klog(LOG_INFO, "CPUFREQ: %s, famiglia %xh modello %xh, %u stati: %u %u %u %u MHz (0 = formula ignota), ora %u",
-         g_cf.tipo == CPUFREQ_AMD_PSTATE ? "AMD P-state" : "Intel SpeedStep",
-         g_cf.famiglia, g_cf.modello, g_cf.n,
-         g_cf.mhz[0], g_cf.mhz[1], g_cf.n > 2 ? g_cf.mhz[2] : 0, g_cf.n > 3 ? g_cf.mhz[3] : 0,
-         g_cf.cpu[0].stato);
+    {
+        /* the n states, not always four: "2100 1050 0 0" made two look like
+         * four, two of them broken (0.342) */
+        char     t[CPUFREQ_STATI_MAX * 7 + 8];
+        uint32_t o = 0, k;
+
+        for (i = 0; i < g_cf.n; i++) {
+            char     c[12];
+            uint32_t v = g_cf.mhz[i], m = 0;
+
+            do { c[m++] = (char)('0' + v % 10u); v /= 10u; } while (v);
+            if (o) t[o++] = ' ';
+            for (k = m; k > 0; k--) t[o++] = c[k - 1];
+        }
+        t[o] = '\0';
+        klog(LOG_INFO, "CPUFREQ: %s, famiglia %xh modello %xh, %u stati: %s MHz (0 = formula ignota), ora %u",
+             g_cf.tipo == CPUFREQ_AMD_PSTATE ? "AMD P-state" : "Intel SpeedStep",
+             g_cf.famiglia, g_cf.modello, g_cf.n, t, g_cf.cpu[0].stato);
+    }
     return;
 fine:
     klog(LOG_INFO, "CPUFREQ: nessun controllo della frequenza (%s), famiglia %xh modello %xh",

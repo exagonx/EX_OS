@@ -980,7 +980,16 @@
 /* 0.340 -> 0.341: munmap checks the end of the range as mmap and mprotect
  * do: a range past USER_SPACE_END ran through the kernel's pages, wrapped
  * round to the identity map and freed its frames (any user, machine down). */
-#define EXOS_VERSION    "0.341"
+/* 0.341 -> 0.342: cpufreq on Core 2 reads the two pairs the processor
+ * declares (198h, 19Dh, the bus from CDh) and prints them in dmesg, writing
+ * nothing (voce 78, the user's choice); the dmesg line of the states lists
+ * the n there are, not always four. */
+/* 0.342 -> 0.343: no ceiling on mounted volumes (voce 50). The mount
+ * tables of the VFS (6), ext2 (4), FAT (4), ISO 9660 (2) and kernel.cfg's
+ * [mount] (5) grow on demand: arrays of pointers that double, slots that
+ * never move (posti.h). The ext4 module keeps its state for a volume in the
+ * Ext2Mount (EXT2_IF_ABI 5). */
+#define EXOS_VERSION    "0.343"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

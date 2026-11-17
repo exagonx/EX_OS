@@ -26,7 +26,7 @@ Ext2Mount *prendi_scrivibile(int mnt)
     Ext2Mount *m;
 
     if (mnt < 0 || (uint32_t)mnt >= K->max_mount) return NULL;
-    m = &K->mnt[mnt];
+    m = K->mnt[mnt];
     if (!m->usato) return NULL;
     if (m->sola_lettura) {
         klog(LOG_WARN, "EXT2: write refused, the volume is read-only");
@@ -137,7 +137,7 @@ static int      g_ind_diff  = 0;        /* 1: dentro ext2_write, b_ind si scrive
 
 static int      g_pre_mnt   = -1;       /* di chi sono i prenotati... */
 static uint32_t g_pre_ino   = 0;        /* ...montaggio e inode */
-static uint8_t  g_super_sporco[EXT2_MAX_MOUNT];
+/* the superblock owed to a volume: Ext2Mount.mod_super_sporco (0.343) */
 
 /* =============================================================================
  * ALLOCAZIONE
@@ -457,8 +457,8 @@ static void prenotati_rilascia(Ext2Mount *m)
                     m->blocchi_liberi += liberati;
             }
         }
-        if (g_pre_mnt >= 0 && (uint32_t)g_pre_mnt < EXT2_MAX_MOUNT)
-            g_super_sporco[g_pre_mnt] = 1;
+        if (g_pre_mnt >= 0 && (uint32_t)g_pre_mnt < K->max_mount)
+            K->mnt[g_pre_mnt]->mod_super_sporco = 1;
     }
     g_pre_n   = 0;
     g_pre_mnt = -1;
@@ -471,15 +471,15 @@ void prenotazione_chiudi(void)
     uint32_t k;
 
     if (g_pre_mnt >= 0 && (uint32_t)g_pre_mnt < K->max_mount &&
-        K->mnt[g_pre_mnt].usato)
-        prenotati_rilascia(&K->mnt[g_pre_mnt]);
+        K->mnt[g_pre_mnt]->usato)
+        prenotati_rilascia(K->mnt[g_pre_mnt]);
     g_pre_n   = 0;
     g_pre_mnt = -1;
 
-    for (k = 0; k < EXT2_MAX_MOUNT && k < K->max_mount; k++) {
-        if (!g_super_sporco[k]) continue;
-        g_super_sporco[k] = 0;
-        if (K->mnt[k].usato && !K->mnt[k].sola_lettura) super_aggiorna(&K->mnt[k]);
+    for (k = 0; k < K->max_mount; k++) {
+        if (!K->mnt[k]->mod_super_sporco) continue;
+        K->mnt[k]->mod_super_sporco = 0;
+        if (K->mnt[k]->usato && !K->mnt[k]->sola_lettura) super_aggiorna(K->mnt[k]);
     }
 }
 
@@ -2103,7 +2103,7 @@ int ext2_write(int mnt, const char *percorso, const void *buf, uint32_t size,
 
     if (scrivi_inode(m, num, inode) != 0) return -1;
     /* Il superblocco alla chiusura: vedi «LA PRENOTAZIONE RESTA». */
-    if (charge) g_super_sporco[mnt] = 1;
+    if (charge) m->mod_super_sporco = 1;
 
     return (int)scritti;
 }

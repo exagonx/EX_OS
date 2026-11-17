@@ -45,7 +45,7 @@
 
 #include "kernel.h"
 
-#define ISO_MAX_MOUNT   2
+/* ISO_MAX_MOUNT (2) gone in 0.343: the mounts grow (posti.h, voce 50). */
 
 /* Joliet consente 64 caratteri; ISO 9660 livello 2 arriva a 31 col numero
  * di versione. 128 li copre entrambi con margine, e resta sotto i 256 di

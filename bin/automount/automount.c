@@ -77,7 +77,7 @@
 
 /* +0.001 a ogni modifica: `automount -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("automount", "0.004");
+EX_VERSIONE("automount", "0.005");
 
 #define TIPO_PART     3
 #define TIPO_RING3    5
@@ -203,7 +203,8 @@ static void monta(Seguito *s, const char *dev, const char *punto)
          : (r == -EBUSY)      ? "il dispositivo e' gia' montato"
          : (r == -ENOMEDIUM)  ? "il supporto non c'e'"
          : (r == -EIO)        ? "errore di lettura"
-         : (r == -EMFILE)     ? "troppi montaggi aperti"
+         : (r == -EMFILE)     ? "troppi montaggi aperti (kernel fino alla 0.342)"
+         : (r == -ENOMEM)     ? "il kernel non ha memoria per un altro montaggio"
          : "motivo non previsto", r);
 }
 

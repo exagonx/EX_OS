@@ -59,6 +59,7 @@
  * ============================================================================= */
 
 #include "kernel.h"
+#include "posti.h"
 #include "iso9660.h"
 #include "blk.h"
 
@@ -92,9 +93,13 @@ typedef struct {
 
     uint8_t  joliet;            /* 1 = i nomi sono UCS-2 */
     char     etichetta[33];
+    int      indice;            /* its own slot: the slots are apart (0.343) */
 } IsoMount;
 
-static IsoMount g_mnt[ISO_MAX_MOUNT];
+/* Grows (kernel 0.343, voce 50): it was IsoMount[ISO_MAX_MOUNT]; see posti.h. */
+static IsoMount **volatile g_mnt;
+static volatile int g_mnt_n;
+POSTI_CRESCI(iso_posti_cresci, IsoMount, g_mnt, g_mnt_n, 4)
 
 /* =============================================================================
  * I DUE BUFFER, e perche' non uno solo
@@ -127,9 +132,9 @@ static uint32_t le32(const uint8_t *p)
 
 static IsoMount *prendi(int mnt)
 {
-    if (mnt < 0 || mnt >= ISO_MAX_MOUNT) return NULL;
-    if (!g_mnt[mnt].usato) return NULL;
-    return &g_mnt[mnt];
+    if (mnt < 0 || mnt >= g_mnt_n) return NULL;
+    if (!g_mnt[mnt]->usato) return NULL;
+    return g_mnt[mnt];
 }
 
 static int leggi_blocco(IsoMount *m, uint32_t blocco, uint8_t *dst)
@@ -414,7 +419,7 @@ static int stessa_stringa(const char *a, const char *b)
 
 static int risolvi_ricordando(IsoMount *m, const char *percorso, IsoDirEntry *out)
 {
-    int      mnt = (int)(m - g_mnt);
+    int      mnt = m->indice;
     uint32_t i, n = 0;
     int      r;
 
@@ -489,15 +494,19 @@ int iso_mount(int blkdev)
     uint32_t  i;
     int       trovato_pvd = 0;
 
-    for (i = 0; i < ISO_MAX_MOUNT; i++)
-        if (!g_mnt[i].usato) { slot = (int)i; break; }
+    for (i = 0; i < (uint32_t)g_mnt_n; i++)
+        if (!g_mnt[i]->usato) { slot = (int)i; break; }
 
     if (slot < 0) {
-        klog(LOG_ERROR, "ISO: nessun montaggio libero");
-        return -1;
+        slot = g_mnt_n;
+        if (iso_posti_cresci() != 0) {
+            klog(LOG_ERROR, "ISO: niente memoria per un altro montaggio");
+            return -1;
+        }
     }
 
-    m = &g_mnt[slot];
+    m = g_mnt[slot];
+    m->indice         = slot;
     m->blkdev         = blkdev;
     m->volume_blocchi = 0;      /* non ancora noto: leggi_blocco non limita */
     m->joliet         = 0;
