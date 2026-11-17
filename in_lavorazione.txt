@@ -8801,6 +8801,32 @@ tools/netinst/velocita tolto da netinst.
       "creata" ne' un errore: perche', da cercare), il profilo non esisteva. Con 30 s di attesa prima dei comandi parte. Da guardare se
       prova-riapertura.sh ha lo stesso difetto. Strano: nel giro a mano del
       mattino p2 mancava lo stesso e Firefox partiva (lo creava?).
+      17/11 SERA: prova-riapertura.sh riscritta. Prima prendeva l'albero del
+      9/11 di prova-gecko.sh, con un Firefox collegato prima della 0.339
+      (stat vecchio: uscita 255 ai due avvii, non provava niente). Ora
+      impacchetta il Firefox di adesso, fa il disco ext4 da 4 KB a ogni
+      giro e conta da sola: pagina gialla, processo vivo, uscita dopo
+      Ctrl+Q, prefs.js nel profilo, titolo in firefox.log ai due avvii.
+      Sulla 0.344 a 64 bit: "timeout BSY sul canale 0" al mount, "ext3:
+      the journal could not be opened", volume in SOLA LETTURA, quindi
+"Profile Missing" (3 riusciti, 5 no). Con la 0.345 (BSY a 30 s) uguale.
+      MISURATO col messaggio nuovo: "dopo 30000 ms, chiamato da 147ad2"
+      = ata_flush_nl: il FLUSH CACHE del mount. In QEMU e' l'fdatasync
+      dell'immagine sull'host: un file nuovo da 1,1 GB ci mette 60 s (2,4 GB
+      sporchi, disco da 8 TB a ~18 MB/s). Non e' EX-OS, e' la prova: ora
+      prova-riapertura, prova-primotab, prova-aggiornamento e prova-lampi
+      fanno sync dell'immagine prima di QEMU (come MariaDB, voce 40).
+      DA DECIDERE CON L'UTENTE: un FLUSH che scade manda il volume in sola
+      lettura al primo colpo; Linux (libata) lo ritenta dopo un reset.
+      Con il sync (0.345, 64 bit): niente timeout, profilo creato (prefs.js),
+      la pagina gialla c'e' ai due avvii, Ctrl+Q esce con codice 0. I NO
+      rimasti erano della prova: pixel sotto il cursore del mouse, la riga
+      "[11] terminato: /disk/firefox/firefox" presa per una riga di ps,
+      firefox.log che nessuno scrive (EXWIN_LOG lo usano exilla e attesa,
+      la prova lancia firefox), e la domanda "browser predefinito?" che al
+      secondo avvio oscura la pagina (ora spenta nella copia di prova).
+      Quindi IN QEMU IL SECONDO AVVIO VA. Il guasto del portatile del 1/11
+      resta da riprovare sul portatile.
 
   69. TASTIERA MORTA OGNI TANTO DOPO IL RIAVVIO. L'utente, 2/11: non e' il login, la
       tastiera e' morta e il mouse funziona; non accade sempre. kbd_set_leds mandava
@@ -11113,6 +11139,11 @@ tools/netinst/velocita tolto da netinst.
       Linux da' 30 s a ogni comando. DA DECIDERE CON L'UTENTE: portare
       anche BSY e DMA a 30 s (piu' tollerante coi dischi lenti, ma un disco
       guasto si scopre dopo 30 s invece di 8).
+      FATTO 17/11, kernel 0.345 (deciso dall'utente il 2/11): BSY e DMA a
+      30 s; le attese BSY di un trasferimento PIO e del reset del canale
+      cedono la CPU. "timeout BSY" ora dice i ms aspettati, chi ha chiamato,
+      il pid e chi tiene il disco. NON era la causa della voce 70 (li' era
+      FLUSH CACHE, gia' a 30 s: vedi la voce 70).
 
   39. PHP CON PDO E IL TEST DI APACHE A 2048 CLIENT (l'utente, 28/10: «e
       apache con pagina php usando pdo invio get e post con 2048 client

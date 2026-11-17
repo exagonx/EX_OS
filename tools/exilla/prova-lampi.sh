@@ -99,6 +99,12 @@ qemu-img create -f raw "$IMG" "$((MB + 2))M" > /dev/null
 printf 'label: dos\nunit: sectors\n\nstart=2048, type=83, bootable\n' \
     | "$(command -v sfdisk || echo /sbin/sfdisk)" "$IMG" > /dev/null 2>&1
 dd if="$PART" of="$IMG" bs=1M seek=1 conv=notrunc status=none
+
+# ! THE IMAGE GOES TO THE HOST DISK BEFORE QEMU STARTS (17/11, voce 70): the
+# guest's FLUSH CACHE is QEMU's fdatasync of this file, and a fresh 1.1 GB
+# image took the host 60 s to write. The flush at mount ran out of its 30 s,
+# the ext4 journal did not open, the volume went read-only: "Profile Missing".
+sync "$IMG"
 rm -f "$PART"
 
 KVM=""; [ -w /dev/kvm ] && [ -z "${LENTO:-}" ] && KVM="-enable-kvm"

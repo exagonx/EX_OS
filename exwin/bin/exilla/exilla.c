@@ -37,13 +37,24 @@
  * there. EXILLA_DIAG=1 (the window diary of widget/exos) is on by default:
  * in a file it costs nothing. Read it over telnet with `cat`; EXWIN_LOG set
  * by hand (even empty) wins. The log is written by attesa 0.005 and later.
+ *
+ * ! AFTER AN UPDATE OF EXILLA THE PROFILE'S SCRIPT CACHE IS THROWN AWAY
+ * (17 November 2026, 0.007, voce 73). The profile keeps the browser's
+ * JavaScript already compiled (startupCache/scriptCache*.bin), and Firefox
+ * drops it only when the build number INSIDE the firefox program changes.
+ * An update of omni.ja alone keeps that number, so Firefox kept running the
+ * old code: the Tabbrowser fix of 17/11 was installed on the test PC and the
+ * first tab stayed dead. So this launcher remembers size and date of firefox
+ * and of the two omni.ja in ~/.exilla/installata, and when they change it
+ * starts Firefox once with MOZ_PURGE_CACHES=1. One slow start after each
+ * update, not at every start (a .purgecaches file would do that).
  * ============================================================================= */
 
 #include "libc.h"
 #include "exwin.h"
 #include "exdlg.h"
 
-#define VERSIONE_APP "0.006"
+#define VERSIONE_APP "0.007"
 EX_VERSIONE("exilla", VERSIONE_APP);
 
 #define PERC_MAX    512
@@ -55,6 +66,56 @@ static char g_dove[PERC_MAX]    = "/exwin/app/exilla";
 static char g_firefox[PERC_MAX] = "/exwin/app/exilla/firefox";
 #define DOVE    g_dove
 #define FIREFOX g_firefox
+
+/* -----------------------------------------------------------------------------
+ * Which Exilla is installed: size and date of the files whose change Firefox
+ * does not see by itself (see the head of this file).
+ * --------------------------------------------------------------------------- */
+static void impronta(char *out, size_t max)
+{
+    static const char *const nomi[] = { "firefox", "omni.ja", "browser/omni.ja" };
+    char   perc[PERC_MAX + 32];
+    size_t n = 0;
+    unsigned int i;
+
+    out[0] = '\0';
+    for (i = 0; i < sizeof(nomi) / sizeof(nomi[0]) && n + 1 < max; i++) {
+        struct stat st;
+        int k;
+
+        snprintf(perc, sizeof(perc), "%s/%s", DOVE, nomi[i]);
+        if (stat(perc, &st) == 0)
+            k = snprintf(out + n, max - n, "%s %lld %lld\n", nomi[i],
+                         (long long)st.st_size, (long long)st.st_mtime);
+        else
+            k = snprintf(out + n, max - n, "%s -\n", nomi[i]);
+        if (k < 0) break;
+        n += (size_t)k;
+    }
+}
+
+/* 1 if what was written in `file` is not `ora` (missing file included) */
+static int impronta_cambiata(const char *file, const char *ora)
+{
+    char  prima[400];
+    FILE *f = fopen(file, "r");
+    size_t n;
+
+    if (!f) return 1;
+    n = fread(prima, 1, sizeof(prima) - 1, f);
+    fclose(f);
+    prima[n] = '\0';
+    return strcmp(prima, ora) != 0;
+}
+
+static void impronta_scrivi(const char *file, const char *ora)
+{
+    FILE *f = fopen(file, "w");
+
+    if (!f) return;
+    fputs(ora, f);
+    fclose(f);
+}
 
 /* -----------------------------------------------------------------------------
  * L'avvio
@@ -71,6 +132,8 @@ static void dillo(const char *testo)
 static int avvia(int argc, char **argv)
 {
     static char profilo[PERC_MAX], casa_exilla[PERC_MAX];
+    static char installata[PERC_MAX + 16], ora[400];
+    int   nuova;
     const char *casa = getenv("HOME");
     char *av[16];
     int   n = 0, i;
@@ -131,6 +194,17 @@ static int avvia(int argc, char **argv)
         rename(log, prima);
         setenv("EXWIN_LOG", log, 1);
     }
+    /* a different Exilla since the last start: the profile's compiled
+     * scripts are the old ones (see the head of this file) */
+    snprintf(installata, sizeof(installata), "%s/.exilla/installata", casa);
+    impronta(ora, sizeof(ora));
+    nuova = impronta_cambiata(installata, ora);
+    if (nuova) {
+        printf("exilla: Exilla e' cambiata dall'ultimo avvio: Firefox rifa' la "
+               "cache degli script (un avvio piu' lento)\n");
+        setenv("MOZ_PURGE_CACHES", "1", 1);
+    }
+
     setenv("EXILLA_DIAG", "1", 0);
     setenv("MOZ_FORCE_DISABLE_E10S", "1", 1);
     setenv("EXILLA_FONTS", "/exwin/font", 0);
@@ -152,6 +226,7 @@ static int avvia(int argc, char **argv)
         dillo("Firefox non parte (memoria insufficiente, o il file e' rovinato: netupdate -check).");
         return 1;
     }
+    if (nuova) impronta_scrivi(installata, ora);
     return 0;
 }
 

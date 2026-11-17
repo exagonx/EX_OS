@@ -6,8 +6,9 @@ l'avvio lento. Cause accertate il 16/11/2026 e soluzione da elaborare.
 Questo file e' per chi deve SCRIVERE la correzione. Dice cosa e' stato
 misurato, dove sta la causa nel codice e cosa cambiare. Quello che e' misurato
 e' marcato [MISURATO], quello che e' una proposta [PROPOSTA], quello che non e'
-stato verificato [NON VERIFICATO]. Niente e' stato modificato nel progetto:
-ne' il kernel, ne' Firefox, ne' in_lavorazione.txt.
+stato verificato [NON VERIFICATO]. Il 16/11 niente era stato modificato nel
+progetto. Il 17/11 la correzione A.4.1 e' stata fatta e pubblicata, ma sul
+ferro il guasto e' rimasto: il perche' e la soluzione sono in A.6.
 
 Sono le voci 73 (primo tab) e 27 (avvio lento) di in_lavorazione.txt.
 
@@ -81,6 +82,13 @@ Sul PC di prova il log dell'utente (ff.log) ha la stessa riga "Failed to
 launch tab subprocess" all'avvio, tre tasti nel primo tab senza effetto e poi
 il clic su "+".
 
+L'utente lo conferma il 17/11/2026: al primo avvio il primo tab funziona;
+chiuso e riaperto Firefox, il primo tab non si usa e bisogna aprirne uno
+nuovo. E' lo stesso schema di giro3 contro giro4. Al primo avvio Firefox ha
+gia' una stringa da caricare (le pagine di benvenuto e l'informativa):
+predictRemoteTypeForURI rende NOT_REMOTE. Dal secondo avvio la pagina viene
+da SessionStore ed e' ancora una promessa: si cade nel ramo della riga 752.
+
 A.4 La soluzione [PROPOSTA]
 ---------------------------
 1. La correzione vera, in Tabbrowser.sys.mjs alla riga 752: il processo
@@ -131,6 +139,90 @@ voce 70, "Profile Missing" di tools/exilla/prova-riapertura.sh):
 Da quando stat() dice il proprietario vero (kernel 0.339) Firefox li vede.
 Con `mkdir` fatto dentro EX-OS per tutti e due, parte. prova-riapertura.sh
 usa gia' fakeroot+chown: [NON VERIFICATO] se li' la causa e' la stessa.
+
+A.6 Perche' sul ferro il guasto e' rimasto dopo la correzione (17/11)
+---------------------------------------------------------------------
+Il 17/11 la correzione A.4.1 e' stata fatta (patch
+tools/exilla/patch/browser_components_tabbrowser_Tabbrowser.sys.mjs.patch),
+provata in QEMU (tools/exilla/prova-primotab.sh, 8 su 8 a 32 e 64 bit) e
+pubblicata. L'utente: al primo avvio il primo tab va, chiuso e riaperto no.
+
+[MISURATO] Il PC di prova HA la correzione: sha256 di
+/exwin/app/exilla/omni.ja = 678e20e8...d4e5b9, uguale al pacchetto
+pubblicato e al file costruito (moz-src/.../Tabbrowser.sys.mjs con
+"EX-OS: not when the window has no content processes"). Eppure nei log
+dell'utente delle 11:19 e delle 13:00 c'e' ancora, subito dopo il titolo
+"Nightly", "Failed to launch tab subprocess", e poi "remoteTab is null".
+
+LA CAUSA [MISURATO]: FIREFOX ESEGUE IL VECCHIO Tabbrowser.sys.mjs DALLA CACHE
+DEGLI SCRIPT DEL PROFILO.
+  - Il profilo tiene in startupCache/ gli script gia' compilati
+    (scriptCache-current.bin, 14 MB, del 16/11 20:33: prima della
+    correzione) e li usa al posto di quelli di omni.ja.
+  - Firefox butta quella cache solo se cambia la versione col numero di
+    build, o con -purgecaches, MOZ_PURGE_CACHES o un file .purgecaches nella
+    cartella del programma (toolkit/xre/nsAppRunner.cpp, CheckCompatibility
+    e riga 5914).
+  - Il numero di build che conta e' quello DENTRO il programma firefox, non
+    quello di application.ini ("This file is not used"). Il programma e'
+    ancora quello del 16/11 08:19 e porta 20261116062539; application.ini e
+    platform.ini dicono 20261116081313. Il profilo dell'utente:
+      LastVersion=158.0a1_20261116062539/20261116062539
+    uguale al programma: per Firefox non e' cambiato niente.
+  - `build faster` + package cambia solo omni.ja: il programma non si
+    ricollega, il numero non cambia, e OGNI aggiornamento di solo JavaScript
+    di Exilla resta nascosto dietro la cache dei profili gia' usati.
+  - Le prove in QEMU passavano perche' fanno sempre un profilo NUOVO.
+
+LA PROVA SUL PC DI PROVA (copia del profilo dell'utente in /root/prova-tab,
+Firefox senza finestra con MOZ_HEADLESS=1, poi fermato e cancellato; il
+profilo dell'utente non e' stato toccato):
+  giro A  copia com'e', con startupCache:
+          subito dopo l'avvio "Failed to launch tab subprocess": primo tab
+          remoto, il guasto.
+  giro B  la stessa copia, tolta SOLO la cartella startupCache:
+          nessun "tab subprocess" all'avvio (restano socket e utility, che
+          ci sono sempre): il primo tab nasce nel processo principale.
+          Firefox ha rifatto la cache (scriptCache.bin, startupCache.8.little).
+Log: ~/cross_build/prove/firefox-17-11-tab/ (giro-a.txt, giro-b.txt, e i
+firefox.log dell'utente ff-1119.log e ff-1300.log).
+
+LA SOLUZIONE [PROPOSTA]
+1. Subito, per l'utente, con Firefox CHIUSO, una volta sola:
+       rm -r /root/.exilla/profilo/startupCache
+   oppure avviare una volta da una console della scrivania
+       /exwin/app/exilla/exilla -purgecaches
+   (exilla passa gli argomenti a firefox). Da fare su ogni profilo gia'
+   usato prima dell'aggiornamento (un utente, un profilo).
+
+2. Per sempre, in exwin/bin/exilla/exilla.c: il lanciatore si ricorda quale
+   Exilla ha avviato l'ultima volta e, se e' cambiata, avvia con
+   MOZ_PURGE_CACHES=1.
+     - impronta: dimensione e data (stat) di firefox, omni.ja e
+       browser/omni.ja nella cartella di Exilla (l'sha256 di 100 MB a ogni
+       avvio costerebbe troppo);
+     - scritta in ~/.exilla/installata (una riga) DOPO che ex_spawn_program
+       e' riuscito;
+     - se il file manca o e' diverso: setenv("MOZ_PURGE_CACHES", "1", 1)
+       solo per quel lancio.
+   Costa un avvio a freddo dopo ogni aggiornamento, non a ogni avvio. Un
+   file .purgecaches nel pacchetto NO: Firefox non lo cancella, e butterebbe
+   la cache a ogni avvio (la voce 27 peggiorerebbe).
+   Alternativa scartata: ricollegare il programma a ogni pacchetto per
+   cambiare il numero di build (circa 2 ore a 32 e 64 bit per una riga di
+   JavaScript).
+   Versione nuova di exilla, nel pacchetto [exilla] di netupdate, e nel
+   manuale (help di exilla e boot/help.txt, [problemi guasti]: "dopo un
+   aggiornamento di Exilla il primo tab non naviga").
+   Lo script di verifica di netupdate (verifiche/exilla.sh) puo' dire se
+   ~/.exilla/installata non corrisponde all'Exilla installata.
+
+3. La prova che manca: prova-primotab.sh con un profilo VECCHIO. Giro 1 col
+   pacchetto senza correzione (omni.ja di prima) fino alla chiusura; giro 2
+   sullo stesso disco con l'omni.ja corretto e lo STESSO programma firefox.
+   Senza il punto 2: "tab subprocess" all'avvio e primo tab morto; con il
+   punto 2: Invio nel primo tab apre la pagina. Poi sul PC di prova con
+   l'utente.
 
 
 =============================================================================

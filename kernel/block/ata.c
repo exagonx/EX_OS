@@ -89,7 +89,10 @@
 /* Scadenze reali, in millisecondi. Generose: uno spin-up puo' durare
  * secondi su un disco dell'epoca, e un timeout troppo corto si
  * presenterebbe come "disco assente". */
-#define ATA_TMO_BSY_MS      5000    /* attesa che il comando finisca */
+/* ! 30 s FOR BSY AND DMA (kernel 0.345, the user's choice of 2/11, voce 40):
+ * what Linux gives every command. A broken disk is now found after 30 s
+ * instead of 5; the waits yield meanwhile. */
+#define ATA_TMO_BSY_MS      30000   /* attesa che il comando finisca */
 #define ATA_TMO_DRQ_MS      3000    /* attesa dati pronti            */
 /* ! IL DMA ASPETTA A TEMPO, E ASPETTA A LUNGO. Qui c'era un conto di GIRI —
  * duecentomila letture di porta, che il commento accanto chiamava «qualche
@@ -101,7 +104,7 @@
  * settore per settore, rispondeva da cima a fondo. Otto secondi sono la stessa
  * generosita' che gia' si da' a BSY, moltiplicata per il fatto che qui, se si
  * sbaglia, si butta via il DMA per tutta la sessione. */
-#define ATA_TMO_DMA_MS      8000    /* un trasferimento DMA, fino a       */
+#define ATA_TMO_DMA_MS      30000   /* un trasferimento DMA (0.345: era 8 s) */
 #define ATA_TMO_IDENT_MS    3000
 /* ! FLUSH CACHE HAS ITS OWN, LONGER DEADLINE (kernel 0.286). The disk writes
  * its whole write cache before it answers: on a real disk that can be tens
@@ -647,7 +650,7 @@ void ata_reset_canale(int canale)
     port_outb(ctl, ATA_CTRL_NIEN);
     for (i = 0; i < 5000; i++) ata_ritardo(canale);    /* i 2 ms dello standard */
 
-    ata_attendi_non_bsy(canale, ATA_TMO_BSY_MS);
+    ata_attendi_non_bsy_cedendo(canale, ATA_TMO_BSY_MS);  /* 30 s: yield */
 }
 
 /* Ritardo di ~400 ns: quattro letture dello stato ALTERNATO.
@@ -696,12 +699,29 @@ static void ata_cedi(uint32_t *giri)
     if (proc_get_current() != NULL) sched_yield();
 }
 
+/* The BSY timeout, said with what it takes to find out who and why: the
+ * milliseconds really waited, the caller (addr2line on kernel-intero.elf),
+ * the pid running and the disk lock's holder. 17/11 (voce 70): the same
+ * "timeout BSY" with 5 s and with 30 s - was it a slow disk or a command
+ * that would never end? The message could not tell. */
+static uint32_t ata_detentore_ora(void);
+static void ata_tmo_bsy_dici(int canale, uint8_t st, uint32_t via, void *chi)
+{
+    Process *p = proc_get_current();
+
+    klog(LOG_ERROR, "ATA: timeout BSY sul canale %d (stato=0x%02x) dopo %u ms, "
+                    "chiamato da %x, pid %u, disco preso da %u",
+         canale, st, (g_ticks - via) * 10u, (uint32_t)(uintptr_t)chi,
+         p != NULL ? p->pid : 0u, ata_detentore_ora());
+}
+
 /* ata_attendi_non_bsy, yielding while it waits: for the commands that take
  * the disk's time (end of a DMA run, FLUSH CACHE). */
 static int ata_attendi_non_bsy_cedendo(int canale, uint32_t timeout_ms)
 {
     uint16_t io    = base_io(canale);
-    uint32_t scad  = g_ticks + (timeout_ms + 9) / 10;
+    uint32_t via   = g_ticks;
+    uint32_t scad  = via + (timeout_ms + 9) / 10;
     uint32_t giri  = 0;
     uint8_t  st;
 
@@ -710,8 +730,7 @@ static int ata_attendi_non_bsy_cedendo(int canale, uint32_t timeout_ms)
         if (st == 0xFF) return -1;
         if (!(st & ATA_SR_BSY)) return (int)st;
         if (g_ticks >= scad) {
-            klog(LOG_ERROR, "ATA: timeout BSY sul canale %d (stato=0x%02x)",
-                 canale, st);
+            ata_tmo_bsy_dici(canale, st, via, __builtin_return_address(0));
             return -1;
         }
         ata_cedi(&giri);
@@ -721,7 +740,8 @@ static int ata_attendi_non_bsy_cedendo(int canale, uint32_t timeout_ms)
 int ata_attendi_non_bsy(int canale, uint32_t timeout_ms)
 {
     uint16_t io    = base_io(canale);
-    uint32_t scad  = g_ticks + (timeout_ms + 9) / 10;
+    uint32_t via   = g_ticks;
+    uint32_t scad  = via + (timeout_ms + 9) / 10;
     uint8_t  st;
 
     for (;;) {
@@ -733,8 +753,7 @@ int ata_attendi_non_bsy(int canale, uint32_t timeout_ms)
         if (!(st & ATA_SR_BSY)) return (int)st;
 
         if (g_ticks >= scad) {
-            klog(LOG_ERROR, "ATA: timeout BSY sul canale %d (stato=0x%02x)",
-                 canale, st);
+            ata_tmo_bsy_dici(canale, st, via, __builtin_return_address(0));
             return -1;
         }
     }
@@ -1609,7 +1628,7 @@ static int ata_rw(int indice, uint64_t lba, uint32_t n, void *buf, int scrivi)
 
         /* Dopo una scrittura il dispositivo puo' restare occupato: va
          * atteso prima del comando successivo. */
-        st = ata_attendi_non_bsy(canale, ATA_TMO_BSY_MS);
+        st = ata_attendi_non_bsy_cedendo(canale, ATA_TMO_BSY_MS);  /* 30 s: yield */
         if (st < 0 || ((uint8_t)st & (ATA_SR_ERR | ATA_SR_DF))) {
             klog(LOG_ERROR, "ATA: %s fallita a lba=%u (stato=0x%02x)",
                  scrivi ? "scrittura" : "lettura", (uint32_t)lba, (uint8_t)st);
@@ -1671,6 +1690,8 @@ static void disco_ricorda(const Process *p)
             g_disco_preso_da[n++] = s[k];
     }
 }
+
+static uint32_t ata_detentore_ora(void) { return g_disco_detentore; }
 
 void ata_sonda_lucchetto(void)
 {

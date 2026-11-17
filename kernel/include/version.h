@@ -994,7 +994,13 @@
  * (voce 27, measured on the PC di prova). dmesg says when the 4 MB table
  * trims the default 1/8 of the RAM. bootinst names the file it maps
  * (kernel.new too) in its errors (voce 60). */
-#define EXOS_VERSION    "0.344"
+/* 0.344 -> 0.345: ATA waits 30 s for BSY and for a DMA run (were 5 and 8),
+ * the user's choice of 2/11 (voce 40); the BSY waits of a PIO transfer and
+ * of a channel reset yield. "timeout BSY" now says the ms waited, the
+ * caller, the pid and the disk lock's holder: that is how voce 70's
+ * "Profile Missing" in QEMU turned out to be FLUSH CACHE at mount waiting
+ * for the host to write a fresh 1.1 GB image (60 s), not the kernel. */
+#define EXOS_VERSION    "0.345"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"
