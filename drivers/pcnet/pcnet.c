@@ -110,7 +110,7 @@
 
 /* +0.001 a ogni modifica: `pcnet.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("pcnet.drv", "0.004");
+EX_VERSIONE("pcnet.drv", "0.005");
 
 /* =============================================================================
  * Registri
@@ -756,6 +756,7 @@ static void uso(void)
     printf("            serie netrx e nettx di kernel.cfg, o dalla RAM)\n\n");
     printf("Senza argomenti cerca la scheda sul bus PCI, si registra come\n");
     printf("servizio '%s' e resta acceso. Va lanciato con '&'.\n", NET_SERVIZIO_0);
+    printf("  -install    a ogni avvio, prima di ip.drv in /boot/avvio.sh; -remove lo toglie\n");
 }
 
 /* =============================================================================
@@ -811,6 +812,10 @@ int main(int argc, char **argv)
     int     solo_elenco = 0, sonda = 0, i, rc;
 
     memset(&g_cont, 0, sizeof(g_cont));
+
+    /* voce 24: -install puts the card before ip.drv in avvio.sh */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_installa_rete("pcnet.drv", argv[1][1] == 'r');
 
     for (i = 1; i < argc; i++) {
         /* -i e' il nome della convenzione: OGNI driver di EX-OS lo

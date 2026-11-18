@@ -79,7 +79,7 @@
 
 /* +0.001 a ogni modifica: `ehci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ehci.drv", "0.003");
+EX_VERSIONE("ehci.drv", "0.004");
 
 /* --- Registri di capacita' (all'inizio della finestra) --------------------- */
 #define C_CAPLENGTH   0x00      /* byte 0 = lunghezza, byte 2-3 = versione */
@@ -970,12 +970,18 @@ int main(int argc, char **argv)
     DmaZona  z;
     int i;
 
+    /* voce 24: -install / -remove (driver_installa in libc) */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_installa("ehci.drv", "# Le chiavette su USB 2.0 (EHCI). Con -avvio esce zitto se il\n"
+                               "# controller non c'e'. `ehci.drv -remove` toglie questo blocco.\n"
+                               "ehci.drv -avvio &\n", argv[1][1] == 'r');
+
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-v") == 0) g_verboso = 1;
         else if (strcmp(argv[i], "-i") == 0) solo_sonda = 1;
         else if (strcmp(argv[i], "-avvio") == 0) g_avvio = 1;
         else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            printf("uso: ehci.drv [-v] [-i] [-avvio]\n");
+            printf("uso: ehci.drv [-v] [-i] [-avvio] [-install] [-remove]\n");
             printf("  -v      dice tutto quello che vede\n");
             printf("  -i      dice se c'e' un EHCI ed esce\n");
             printf("  -avvio  se non c'e' niente da fare, esce in silenzio:\n");

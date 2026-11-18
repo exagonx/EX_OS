@@ -7337,6 +7337,9 @@ int rename(const char *da, const char *a)
 #define AVVIO_SH        "/boot/avvio.sh"
 #define AVVIO_MAX       (64u * 1024u)
 
+int file_sostituisci(const char *path, const char *testo, unsigned int k);
+int getuid(void);
+
 /* il testo di avvio.sh, terminato da '\0'; NULL se non si legge */
 static char *avvio_leggi(unsigned int *n)
 {
@@ -7385,7 +7388,6 @@ int avvio_blocco(const char *nome, const char *righe)
     unsigned int n, da = 0, a = 0, dove, k;
     char *b, *nuovo, *t;
     int   c_era = 0, fd;
-    long  w;
 
     if (nome == NULL || nome[0] == '\0') { errno = EINVAL; return -1; }
     b = avvio_leggi(&n);
@@ -7454,16 +7456,318 @@ int avvio_blocco(const char *nome, const char *righe)
 
     if (k == n && memcmp(nuovo, b, n) == 0) { free(b); free(nuovo); return 0; }
     free(b);
-
-    unlink(AVVIO_SH ".nuovo");
-    fd = open(AVVIO_SH ".nuovo", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0) { free(nuovo); return -1; }
-    w = write(fd, nuovo, k);
-    close(fd);
+    fd = file_sostituisci(AVVIO_SH, nuovo, k);
     free(nuovo);
-    if (w != (long)k) { unlink(AVVIO_SH ".nuovo"); errno = EIO; return -1; }
-    if (unlink(AVVIO_SH) != 0 || rename(AVVIO_SH ".nuovo", AVVIO_SH) != 0) return -1;
+    return fd;
+}
+
+/* =============================================================================
+ * driver_installa & co. — `-install` / `-remove` for every driver (voce 24,
+ * 17 novembre 2026). Three places, the user's choice of 17/11:
+ *   - a block in avvio.sh (avvio_blocco), for who starts after the system;
+ *   - one line in the network chain, before `ip.drv &`: the card has to be
+ *     there before the stack and dhcp;
+ *   - a key of [modules] in kernel.cfg, for the sound (as `audio -i`).
+ * And the parts of the system say who starts them, without touching a file.
+ *
+ * ! A LINE THAT hwconfig WROTE COUNTS. ehci.drv, sis.drv, the network card
+ * are already in avvio.sh as plain lines: -install there says so instead of
+ * starting the driver twice, and -remove comments that line out.
+ * ============================================================================= */
+
+/* 1 if the line at t starts the driver nome: "nome", "/dev/nome" or
+ * "/rdboot/dev/nome", then a blank, '&' or the end of the line */
+static int riga_avvia(const char *t, const char *nome)
+{
+    unsigned int l = (unsigned int)strlen(nome);
+    char c;
+
+    while (*t == ' ' || *t == '\t') t++;
+    if (strncmp(t, "/rdboot/dev/", 12) == 0) t += 12;
+    else if (strncmp(t, "/dev/", 5) == 0) t += 5;
+    if (strncmp(t, nome, l) != 0) return 0;
+    c = t[l];
+    return c == ' ' || c == '\t' || c == '&' || c == '\n' || c == '\0' || c == '\r';
+}
+
+/* the offset of the first live line (not a comment) of b that starts nome;
+ * -1 if none. *num = its number, from 1 */
+static int riga_di(const char *b, const char *nome, unsigned int *num)
+{
+    const char  *t;
+    unsigned int r = 1;
+
+    for (t = b; *t; r++) {
+        if (riga_avvia(t, nome)) { if (num) *num = r; return (int)(t - b); }
+        while (*t && *t != '\n') t++;
+        if (*t) t++;
+    }
+    return -1;
+}
+
+/* the marker above a line written by driver_installa_prima */
+static void segno_prima(char *s, unsigned int n, const char *nome)
+{
+    snprintf(s, n, "# `%s -remove` toglie la riga qui sotto.\n", nome);
+}
+
+/* write testo[0..k) in place of path, through path.nuovo: a file cut in half
+ * by a power cut is a machine that does not start well. 1 written, -1 errno */
+int file_sostituisci(const char *path, const char *testo, unsigned int k)
+{
+    char *nuovo = malloc(strlen(path) + 7);
+    int   fd, rc = -1;
+    long  w;
+
+    if (!nuovo) { errno = ENOMEM; return -1; }
+    strcpy(nuovo, path);
+    strcat(nuovo, ".nuovo");
+    unlink(nuovo);
+    fd = open(nuovo, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd >= 0) {
+        w = write(fd, testo, k);
+        close(fd);
+        if (w != (long)k) { unlink(nuovo); errno = EIO; }
+        else if (unlink(path) == 0 && rename(nuovo, path) == 0) rc = 1;
+    }
+    free(nuovo);
+    return rc;
+}
+
+/* -remove on a line not in a block: the marker and the line go, a plain line
+ * of hwconfig is commented out. 1 done, 0 none, -1 errno */
+static int togli_riga(const char *nome)
+{
+    unsigned int n, num;
+    char *b = avvio_leggi(&n), *nuovo, segno[160];
+    int   at, da, k;
+
+    if (!b) return -1;
+    at = riga_di(b, nome, &num);
+    if (at < 0) { free(b); return 0; }
+    nuovo = malloc(n + 128);
+    if (!nuovo) { free(b); errno = ENOMEM; return -1; }
+    segno_prima(segno, sizeof(segno), nome);
+    da = at;
+    if (at >= (int)strlen(segno)) {
+        int p = at - (int)strlen(segno);
+        if ((p == 0 || b[p - 1] == '\n') && strncmp(b + p, segno, strlen(segno)) == 0) da = p;
+    }
+    memcpy(nuovo, b, (unsigned int)da);
+    k = da;
+    if (da == at) {                 /* hwconfig's: commented out, not deleted */
+        k += snprintf(nuovo + k, 128, "# tolto da `%s -remove`: ", nome);
+        memcpy(nuovo + k, b + at, n - (unsigned int)at);
+        k += (int)n - at;
+    } else {
+        const char *f = b + at;
+        while (*f && *f != '\n') f++;
+        if (*f) f++;
+        memcpy(nuovo + k, f, n - (unsigned int)(f - b));
+        k += (int)(n - (unsigned int)(f - b));
+    }
+    free(b);
+    k = file_sostituisci(AVVIO_SH, nuovo, (unsigned int)k);
+    free(nuovo);
+    return k;
+}
+
+int driver_installa(const char *nome, const char *righe, int togli)
+{
+    unsigned int n, num = 0;
+    char *b;
+    int   rc;
+
+    if (getuid() != 0) { printf("%s: -install e -remove solo da root\n", nome); return 1; }
+    rc = avvio_blocco(nome, NULL);
+    if (rc < 0) goto guasto;
+    if (togli) {
+        int r2 = togli_riga(nome);
+        if (r2 < 0) goto guasto;
+        if (rc == 0 && r2 == 0) printf("%s: non era in /boot/avvio.sh\n", nome);
+        else printf("%s: tolto da /boot/avvio.sh, dal prossimo avvio\n", nome);
+        return 0;
+    }
+    b = avvio_leggi(&n);
+    if (b && riga_di(b, nome, &num) >= 0) {
+        free(b);
+        printf("%s: gia' in /boot/avvio.sh (riga %u, scritta da hwconfig o a mano)\n", nome, num);
+        return 0;
+    }
+    free(b);
+    if (avvio_blocco(nome, righe) < 0) goto guasto;
+    printf("%s: in /boot/avvio.sh, dal prossimo avvio. `%s -remove` lo toglie.\n", nome, nome);
+    return 0;
+guasto:
+    printf("%s: non riesco a scrivere /boot/avvio.sh (errno %d)\n", nome, errno);
     return 1;
+}
+
+int driver_installa_prima(const char *nome, const char *comando, const char *prima_di,
+                          const char *senza, int togli)
+{
+    unsigned int n, num = 0, k;
+    char *b, *nuovo, segno[160];
+    int   at;
+
+    if (togli || getuid() != 0) return driver_installa(nome, NULL, togli);
+    if (avvio_blocco(nome, NULL) < 0) goto guasto;
+    b = avvio_leggi(&n);
+    if (!b) goto guasto;
+    if (riga_di(b, nome, &num) >= 0) {
+        free(b);
+        printf("%s: gia' in /boot/avvio.sh (riga %u, scritta da hwconfig o a mano)\n", nome, num);
+        return 0;
+    }
+    at = riga_di(b, prima_di, NULL);
+    if (at < 0) {                   /* no chain yet: a block with all of it */
+        free(b);
+        return driver_installa(nome, senza, 0);
+    }
+    segno_prima(segno, sizeof(segno), nome);
+    nuovo = malloc(n + strlen(segno) + strlen(comando) + 2);
+    if (!nuovo) { free(b); errno = ENOMEM; goto guasto; }
+    memcpy(nuovo, b, (unsigned int)at);
+    k = (unsigned int)at;
+    k += (unsigned int)sprintf(nuovo + k, "%s%s\n", segno, comando);
+    memcpy(nuovo + k, b + at, n - (unsigned int)at);
+    k += n - (unsigned int)at;
+    free(b);
+    at = file_sostituisci(AVVIO_SH, nuovo, k);
+    free(nuovo);
+    if (at < 0) goto guasto;
+    printf("%s: in /boot/avvio.sh prima di %s, dal prossimo avvio. `%s -remove` lo toglie.\n",
+           nome, prima_di, nome);
+    return 0;
+guasto:
+    printf("%s: non riesco a scrivere /boot/avvio.sh (errno %d)\n", nome, errno);
+    return 1;
+}
+
+int driver_installa_rete(const char *nome, int togli)
+{
+    char comando[64], senza[640];
+
+    snprintf(comando, sizeof(comando), "%s &", nome);
+    /* ! ONE CARD AT A TIME, TODAY: every card registers "rete0" and ip.drv
+     * has one link. A second card's driver says the name is taken and exits;
+     * several cards together are voce 101. */
+    snprintf(senza, sizeof(senza),
+             "# La rete su questa scheda: il driver, lo stack, l'indirizzo dal\n"
+             "# DHCP. `%s -remove` toglie questo blocco.\n"
+             "%s"
+             "%s &\n"
+             "ip.drv &\n"
+             "dhcp\n",
+             nome, (avvio_ha_riga("pci.drv") || avvio_ha_riga("/dev/pci.drv")) ? "" : "pci.drv &\n",
+             nome);
+    return driver_installa_prima(nome, comando, "ip.drv", senza, togli);
+}
+
+#define KERNEL_CFG      "/boot/kernel.cfg"
+
+/* 1 if the line at t (blanks skipped) is the key chiave: then '=' or a blank */
+static int e_chiave(const char *t, const char *chiave)
+{
+    unsigned int l = (unsigned int)strlen(chiave);
+
+    if (strncmp(t, chiave, l) != 0) return 0;
+    return t[l] == ' ' || t[l] == '\t' || t[l] == '=';
+}
+
+/* 1 if pat is in [s, f) */
+static int in_riga(const char *s, const char *f, const char *pat)
+{
+    unsigned int l = (unsigned int)strlen(pat);
+
+    for (; s + l <= f; s++) if (strncmp(s, pat, l) == 0) return 1;
+    return 0;
+}
+
+int driver_installa_modulo(const char *nome, const char *chiave, const char *valore, int togli)
+{
+    int   fd, in_mod = 0, fatto = 0, ha_mod = 0, prima_c = 0;
+    long  r;
+    char *b, *nuovo, *t;
+    unsigned int n, k = 0, extra, prima = 0;
+
+    if (getuid() != 0) { printf("%s: -install e -remove solo da root\n", nome); return 1; }
+    fd = open(KERNEL_CFG, O_RDONLY);
+    if (fd < 0) { printf("%s: non riesco a leggere %s\n", nome, KERNEL_CFG); return 1; }
+    b = malloc(AVVIO_MAX + 1);
+    if (!b) { close(fd); printf("%s: memoria finita\n", nome); return 1; }
+    r = read(fd, b, AVVIO_MAX);
+    close(fd);
+    if (r < 0) { free(b); printf("%s: non riesco a leggere %s\n", nome, KERNEL_CFG); return 1; }
+    n = (unsigned int)r;
+    b[n] = '\0';
+    extra = 256 + (unsigned int)strlen(chiave) + (valore ? (unsigned int)strlen(valore) : 0);
+    nuovo = malloc(n + extra + 1);
+    if (!nuovo) { free(b); printf("%s: memoria finita\n", nome); return 1; }
+
+    for (t = b; *t; ) {
+        char       *f = t, *s = t;
+        unsigned int l;
+
+        while (*f && *f != '\n') f++;
+        if (*f) f++;
+        l = (unsigned int)(f - t);
+        while (*s == ' ' || *s == '\t') s++;
+        if (*s == '[') {
+            in_mod = strncmp(s, "[modules]", 9) == 0;
+            if (in_mod) ha_mod = 1;
+            memcpy(nuovo + k, t, l); k += l;
+            if (in_mod && !togli && !fatto) {   /* right under the header */
+                if (k && nuovo[k - 1] != '\n') nuovo[k++] = '\n';
+                k += (unsigned int)sprintf(nuovo + k,
+                        "# Lo ha scritto `%s -install`; `%s -remove` lo toglie.\n"
+                        "%-11s = %s\n", nome, nome, chiave, valore);
+                fatto = 1;
+            }
+        } else if (in_mod && e_chiave(s, chiave) && !(togli && valore && !in_riga(s, f, valore))) {
+            /* -remove takes only its own value: hdaudio does not take the sb */
+            /* the old one goes, with the comment that wrote it */
+            if (prima_c) k = prima;
+            fatto = 1;
+        } else {
+            prima = k;
+            prima_c = s[0] == '#' && (in_riga(s, f, "-install`") || in_riga(s, f, "`audio -i`"));
+            memcpy(nuovo + k, t, l); k += l;
+        }
+        t = f;
+    }
+    if (!togli && !fatto) {
+        if (k && nuovo[k - 1] != '\n') nuovo[k++] = '\n';
+        k += (unsigned int)sprintf(nuovo + k, "%s"
+                "# Lo ha scritto `%s -install`; `%s -remove` lo toglie.\n"
+                "%-11s = %s\n", ha_mod ? "" : "\n[modules]\n", nome, nome, chiave, valore);
+    }
+    if (togli && !fatto) {
+        free(b); free(nuovo);
+        printf("%s: non era in %s\n", nome, KERNEL_CFG);
+        return 0;
+    }
+    /* ! THE OLD FILE IS KEPT, the rule of hwconfig and audio -i */
+    fd = open(KERNEL_CFG ".bak", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd >= 0) { if (write(fd, b, n) != (long)n) { /* the .bak is a courtesy */ } close(fd); }
+    free(b);
+    r = file_sostituisci(KERNEL_CFG, nuovo, k);
+    free(nuovo);
+    if (r < 0) {
+        printf("%s: non riesco a scrivere %s (errno %d): da CD o floppy la radice\n"
+               "       e' in sola lettura, si installa sul sistema installato\n", nome, KERNEL_CFG, errno);
+        return 1;
+    }
+    if (togli) printf("%s: tolto da [modules] di %s, dal prossimo avvio\n", nome, KERNEL_CFG);
+    else       printf("%s: in [modules] di %s (%s = %s), dal prossimo avvio\n",
+                      nome, KERNEL_CFG, chiave, valore);
+    return 0;
+}
+
+int driver_chi_accende(const char *nome, const char *chi)
+{
+    printf("%s: niente da installare: %s\n", nome, chi);
+    return 0;
 }
 
 #ifdef EXOS_LIBC_SO

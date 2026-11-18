@@ -883,7 +883,9 @@ static void prova_esegui(const AudioProva *p, AudioProvaEsito *e)
 static void uso(void)
 {
     printf("uso: /dev/%s.drv [-i] [opzioni della scheda]\n", D->nome);
-    printf("     -i   sonda e basta: dice cosa ha trovato ed esce\n");
+    printf("     -i         sonda e basta: dice cosa ha trovato ed esce\n");
+    printf("     -install   audio = /dev/%s.drv in [modules] di /boot/kernel.cfg\n", D->nome);
+    printf("     -remove    lo toglie (come `audio -i`, senza il collaudo)\n");
 }
 
 int main(int argc, char **argv)
@@ -893,6 +895,24 @@ int main(int argc, char **argv)
     int  rc, sonda_e_basta = 0, i;
 
     D = audio_dorso_questo();
+
+    /* voce 24: the sound starts from [modules], the same key `audio -i` writes.
+     * -install only where the probe finds the card. */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0)) {
+        char nome[40], via[48];
+
+        snprintf(nome, sizeof(nome), "%s.drv", D->nome);
+        snprintf(via, sizeof(via), "/dev/%s.drv", D->nome);
+        if (argv[1][1] == 'i') {
+            memset(&g_info, 0, sizeof(g_info));
+            g_info.dma8 = g_info.dma16 = AUDIO_DMA_NESSUNO;
+            if (D->sonda(&g_info) < 0) {
+                printf("%s: nessuna scheda trovata: non lo installo\n", nome);
+                return 1;
+            }
+        }
+        return driver_installa_modulo(nome, "audio", via, argv[1][1] == 'r');
+    }
 
     for (i = 1; i < argc; i++) {
         const char *a = argv[i];

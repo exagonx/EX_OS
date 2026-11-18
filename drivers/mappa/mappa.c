@@ -67,7 +67,7 @@
 
 /* +0.001 a ogni modifica: `mappa.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("mappa.drv", "0.003");
+EX_VERSIONE("mappa.drv", "0.004");
 
 #define PCI_INDIRIZZO 0xCF8
 #define PCI_DATO      0xCFC
@@ -720,6 +720,7 @@ static void aiuto(void)
     printf("  l'inventario di cio' che la macchina puo' dire da sola. Per un\n");
     printf("  dispositivo di classe standard - USB, IDE, audio, rete - quello\n");
     printf("  piu' la specifica pubblica bastano a scrivere il driver.\n");
+    printf("  -install    dice chi lo accende all'avvio\n");
 }
 
 static int leggi_bdf(const char *s, int *b, int *sl, int *f)
@@ -750,6 +751,10 @@ int main(int argc, char **argv)
     int   giri = GIRI_PRED, misura = 0, tutto = 0, forza = 0, i;
     int   b_v = -1, s_v = 0, f_v = 0;
     struct stat st;
+
+    /* voce 24: nothing to install, says who starts it */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_chi_accende("mappa.drv", "e' un attrezzo di prova, si lancia a mano quando serve");
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-i") == 0) {

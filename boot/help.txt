@@ -663,8 +663,31 @@ far partire un driver a ogni avvio
 
 Il blocco comincia con "# -install <driver>" e finisce alla prima
 riga vuota. hwconfig, che riscrive avvio.sh per intero, lo riporta
-avanti. Oggi lo hanno nv50.drv, cpufreq.drv, dpms.drv e lpt.drv; gli altri
-driver si aggiungono man mano.
+avanti. Dalla voce 24 (17/11) lo hanno tutti i driver, ognuno nel
+suo posto:
+
+  ehci, ohci, uhci, xhci, cardbus, sis, ar5k, mouseser [com1|com2],
+  nv40, nv50, cpufreq, dpms, lpt     un blocco in /boot/avvio.sh
+  e1000, ne2k, pcnet, rtl8169, sis900, nforce
+                         la riga del driver PRIMA di ip.drv nella catena
+                         della rete; senza catena, un blocco con pci,
+                         scheda, ip.drv e dhcp
+  ac97, es1371, hdaudio, sb
+                         audio = /dev/<driver> in [modules] di
+                         /boot/kernel.cfg, come `audio -i` ma senza il
+                         collaudo; solo se la sonda trova la scheda.
+                         -remove toglie solo la voce che e' sua
+  pci, ip, kbd, svga     dicono chi li accende gia' (nessun file toccato)
+  ramdisk, mappa, fetta, sonda, vgaprova, wifisim
+                         attrezzi di prova: si lanciano a mano
+  floppy                 e' un modulo del kernel, non un programma:
+                         sta in [modules] di /boot/kernel.cfg
+
+Una riga che hwconfig ha gia' scritto vale: -install dice "gia' in
+/boot/avvio.sh (riga N)" e non lo accende due volte; -remove la
+commenta ("# tolto da `ehci.drv -remove`: ..."). Da root soltanto.
+Una seconda scheda di rete oggi non va: ogni driver si chiama rete0
+(voce 101).
 
 [mem]
 quanta memoria c'e' e quanta se ne usa

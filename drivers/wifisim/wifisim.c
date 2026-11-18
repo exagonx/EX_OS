@@ -40,7 +40,7 @@
 #include "wifi_proto.h"
 #include "excrypt.h"
 
-EX_VERSIONE("wifisim.drv", "0.001");
+EX_VERSIONE("wifisim.drv", "0.002");
 
 #define WIFISIM_MSG_CADI   99      /* simulation only: drop the link now */
 
@@ -290,6 +290,10 @@ static void servi(void)
 
 int main(int argc, char **argv)
 {
+    /* voce 24: nothing to install, says who starts it */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_chi_accende("wifisim.drv", "e' un attrezzo di prova, si lancia a mano quando serve");
+
     if (argc > 1 && strcmp(argv[1], "-cadi") == 0) {
         int pid = ipc_lookup(WIFI_SERVIZIO_0);
 

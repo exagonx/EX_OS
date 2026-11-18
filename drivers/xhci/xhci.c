@@ -80,7 +80,7 @@
 
 /* +0.001 a ogni modifica: `xhci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("xhci.drv", "0.004");
+EX_VERSIONE("xhci.drv", "0.005");
 
 /* --- Registri di CAPACITA', dall'inizio della finestra -------------------- */
 #define C_CAPLENGTH     0x00    /* 8 bit: quanto sono lunghi questi registri */
@@ -1795,11 +1795,17 @@ int main(int argc, char **argv)
     DmaZona  z;
     int i;
 
+    /* voce 24: -install / -remove (driver_installa in libc) */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_installa("xhci.drv", "# L'USB 3 (xHCI): mouse, tastiere e chiavette sulle sue prese.\n"
+                               "# `xhci.drv -remove` toglie questo blocco.\n"
+                               "xhci.drv &\n", argv[1][1] == 'r');
+
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-v") == 0) g_verboso = 1;
         else if (strcmp(argv[i], "-i") == 0) solo_sonda = 1;
         else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            printf("uso: xhci.drv [-v] [-i]\n");
+            printf("uso: xhci.drv [-v] [-i] [-install] [-remove]\n");
             printf("  -v  dice tutto quello che vede\n");
             printf("  -i  dice se c'e' un xHCI ed esce\n");
             return 0;

@@ -111,7 +111,30 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
-### A telnet session takes away what it started (telnetd 0.016, voci 21 and 100) — tested in QEMU
+### Every driver has -install and -remove (voce 24) — tested in QEMU
+
+- **Each driver writes its start in the right place** (the user's choice of 17/11): USB
+  (ehci, ohci, uhci, xhci), cardbus, sis, ar5k, mouseser `[com1|com2]` write a block in
+  `/boot/avvio.sh`, headed `# -install <driver>`, that hwconfig carries over; the network
+  cards (e1000, ne2k, pcnet, rtl8169, sis900, nforce) put their line right before
+  `ip.drv &` in the network chain, or write the whole chain (card, ip.drv, dhcp) when there
+  is none; the sound cards (ac97, es1371, hdaudio, sb) write `audio = /dev/<driver>` in
+  `[modules]` of `/boot/kernel.cfg`, as `audio -i` but without the test, only if the probe
+  finds the card, and `-remove` takes only their own value.
+- **A line hwconfig already wrote counts**: `-install` says "gia' in /boot/avvio.sh (riga
+  N)" instead of starting the driver twice, `-remove` comments it out.
+- **The parts of the system say who starts them**: pci, ip, kbd, svga; the test tools
+  (ramdisk, mappa, fetta, sonda, vgaprova, wifisim) are started by hand.
+- The code is in libc (`driver_installa`, `driver_installa_rete`, `driver_installa_modulo`,
+  `driver_chi_accende`, `file_sostituisci`): every file is written through `.nuovo` and a
+  rename. 28 drivers moved +0.001.
+- **Tested:** new `tools/prova_install.sh`, 32 and 64 bit: a disk installed from the CD, the
+  missing drivers added with debugfs, an Intel HDA: 40/40.
+- **Not yet:** several network cards together — every driver registers as "rete0" and
+  ip.drv has one link (voce 101, the user's request: one driver per card, all cards of a
+  model served).
+
+### A telnet session takes away what it started (telnetd 0.016, voci 21 and 100) — tested in QEMU and on the bench PC
 
 - **At the end of a session telnetd stops the whole tree, not only the shell**, as SIGHUP
   does on Unix (the user's choice of 2/11). A `dmesg -segui` or a job started with `&` used
@@ -125,6 +148,8 @@ the one on real hardware or on the real case — has not been done yet.
   session that ps has no dmesg left: 8/8. `tools/prova_telnet.sh`: all fine at 32 and 64 bit.
 - **Measured, still open:** with those jobs running the session is seen closed after about
   22 s, not the 2-4 s of an idle session: the loop does not count as idle (voce 100).
+- **On the bench PC (.253, 64 bit, 17/11):** telnetd 0.016 through netupdate; the same test
+  against the machine: 8/8, the session's dmesg gone after 22 s there too.
 
 ### ATA: a failed FLUSH CACHE is tried again, BSY and DMA wait 30 s (kernel 0.345, voci 40 and 70) — tested in QEMU and on the bench PC
 

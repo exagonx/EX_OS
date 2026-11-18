@@ -3655,6 +3655,27 @@ int     video_cambia(const VideoCambio *v);
 int     avvio_blocco(const char *nome, const char *righe);
 int     avvio_ha_riga(const char *inizio);
 
+/* driver_installa & co. (voce 24): what `<driver> -install` / `-remove` call.
+ * They check root, print one line and return the exit code (0 / 1).
+ *   driver_installa        a block in avvio.sh (righe), or says that a line of
+ *                          hwconfig already starts it; -remove comments that out
+ *   driver_installa_prima  comando as one line before the first live line
+ *                          starting prima_di (the card before `ip.drv`); with
+ *                          no such line, the block senza
+ *   driver_installa_modulo chiave = valore in [modules] of /boot/kernel.cfg
+ *                          (kernel.cfg.bak keeps the old one); -remove only
+ *                          if the key has that value
+ *   driver_chi_accende     a part of the system: says who starts it
+ * file_sostituisci: testo in place of path through path.nuovo; 1 or -1. */
+int     driver_installa(const char *nome, const char *righe, int togli);
+int     driver_installa_prima(const char *nome, const char *comando, const char *prima_di,
+                              const char *senza, int togli);
+/* driver_installa_rete: a network card, `nome &` before `ip.drv &` */
+int     driver_installa_rete(const char *nome, int togli);
+int     driver_installa_modulo(const char *nome, const char *chiave, const char *valore, int togli);
+int     driver_chi_accende(const char *nome, const char *chi);
+int     file_sostituisci(const char *path, const char *testo, unsigned int k);
+
 /* modulo_kernel — kernel modules (kernel 0.263, SYS_MODULO 28).
  *   modulo_kernel(0, (uintptr_t)buf, size)   the loaded modules' names, one
  *                                            per line; returns how many

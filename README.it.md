@@ -113,7 +113,31 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
-### Una sessione telnet si porta via quello che ha lanciato (telnetd 0.016, voci 21 e 100) — testato in QEMU
+### Ogni driver ha -install e -remove (voce 24) — testato in QEMU
+
+- **Ogni driver scrive il proprio avvio nel posto giusto** (la scelta dell'utente del
+  17/11): l'USB (ehci, ohci, uhci, xhci), cardbus, sis, ar5k e mouseser `[com1|com2]`
+  scrivono un blocco in `/boot/avvio.sh` che comincia con `# -install <driver>` e che hwconfig
+  riporta avanti. Le schede di rete (e1000, ne2k, pcnet, rtl8169, sis900, nforce) mettono la
+  loro riga subito prima di `ip.drv &` nella catena della rete, oppure scrivono la catena
+  intera (scheda, ip.drv, dhcp) se manca. Le schede audio (ac97, es1371, hdaudio, sb)
+  scrivono `audio = /dev/<driver>` in `[modules]` di `/boot/kernel.cfg`, come `audio -i` ma
+  senza il collaudo: solo se la sonda trova la scheda, e `-remove` toglie solo la voce che è
+  la loro.
+- **Una riga già scritta da hwconfig vale**: `-install` dice "gia' in /boot/avvio.sh (riga
+  N)" invece di accendere il driver due volte; `-remove` la commenta.
+- **I pezzi del sistema dicono chi li accende**: pci, ip, kbd, svga. Gli attrezzi di prova
+  (ramdisk, mappa, fetta, sonda, vgaprova, wifisim) si lanciano a mano.
+- Il codice sta nella libc (`driver_installa`, `driver_installa_rete`,
+  `driver_installa_modulo`, `driver_chi_accende`, `file_sostituisci`): ogni file si scrive in
+  `.nuovo` e poi si rinomina. 28 driver salgono di 0.001.
+- **Provato:** il nuovo `tools/prova_install.sh`, a 32 e 64 bit, con un disco installato dal
+  CD, i driver mancanti messi con debugfs e una Intel HDA: 40 su 40.
+- **Non ancora:** più schede di rete insieme, perché ogni driver si registra come "rete0" e
+  ip.drv ha un solo collegamento (voce 101, la richiesta dell'utente: un driver per ogni
+  scheda, tutte le schede di un modello servite).
+
+### Una sessione telnet si porta via quello che ha lanciato (telnetd 0.016, voci 21 e 100) — testato in QEMU e sul PC di prova
 
 - **A fine sessione telnetd ferma tutto l'albero, non solo la shell**, come SIGHUP su Unix
   (la scelta dell'utente del 2/11). Un `dmesg -segui` o un lavoro lanciato con `&` restava
@@ -128,6 +152,8 @@ quella sull'hardware o sul caso reale — non è ancora stata fatta.
   a posto a 32 e 64 bit.
 - **Misurato, ancora aperto:** con quei lavori in corso la sessione risulta chiusa dopo
   circa 22 s, non i 2-4 s di una sessione ferma: il ciclo non conta come riposo (voce 100).
+- **Sul PC di prova (.253, 64 bit, 17/11):** telnetd 0.016 con netupdate; la stessa prova
+  contro la macchina: 8 su 8, i dmesg della sessione spariti dopo 22 s anche li'.
 
 ### ATA: un FLUSH CACHE fallito si ritenta, BSY e DMA aspettano 30 s (kernel 0.345, voci 40 e 70) — testato in QEMU e sul PC di prova
 

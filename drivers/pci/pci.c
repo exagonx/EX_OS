@@ -66,7 +66,7 @@
 
 /* +0.001 a ogni modifica: `pci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("pci.drv", "0.001");
+EX_VERSIONE("pci.drv", "0.002");
 
 /* =============================================================================
  * Porte del meccanismo di configurazione #1
@@ -533,6 +533,10 @@ int main(int argc, char **argv)
     int sonda          = (argc > 1 && strcmp(argv[1], "-i") == 0);
     int elenca_ed_esci = (argc > 1 && strcmp(argv[1], "-l") == 0) || sonda;
     int rc;
+
+    /* voce 24: nothing to install, says who starts it */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_chi_accende("pci.drv", "lo accende /boot/avvio.sh (la riga `pci.drv &` di hwconfig): serve alla rete e all'USB");
 
     if (argc > 1 && !elenca_ed_esci) {
         printf("uso: pci.drv        avvia il servizio PCI\n");

@@ -122,7 +122,7 @@
 
 /* +0.001 a ogni modifica: `sonda.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("sonda.drv", "0.009");
+EX_VERSIONE("sonda.drv", "0.010");
 
 #define FILE_PRED     "/SONDA.TXT"
 
@@ -1234,6 +1234,7 @@ static void aiuto(void)
     printf("  -motore   come -mmio, ma prima ACCENDE il modulo 2D (SR1E bit\n");
     printf("            40). Serve perche' da spento quella finestra si\n");
     printf("            rilegge tutta ff. Non cambia la modalita' video.\n");
+    printf("  -install    dice chi lo accende all'avvio\n");
 }
 
 int main(int argc, char **argv)
@@ -1243,6 +1244,10 @@ int main(int argc, char **argv)
     int          forza = 0, ponte = 0, mmio = 0, motore = 0, rom = 0;
     int          autom = 0, i;
     struct stat  st;
+
+    /* voce 24: nothing to install, says who starts it */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_chi_accende("sonda.drv", "e' un attrezzo di prova, si lancia a mano quando serve");
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-i") == 0) {

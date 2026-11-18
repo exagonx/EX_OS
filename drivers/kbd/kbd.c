@@ -129,7 +129,7 @@
 
 /* +0.001 a ogni modifica: `kbd.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("kbd.drv", "0.010");
+EX_VERSIONE("kbd.drv", "0.011");
 
 static const Keymap *g_map = &g_keymaps[0];   /* us */
 
@@ -2165,6 +2165,10 @@ int main(int argc, char **argv)
      * ===================================================================== */
     scelta[0] = '\0';
     if (getconf("keymap", scelta, sizeof(scelta)) < 0) scelta[0] = '\0';
+
+    /* voce 24: nothing to install, says who starts it */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_chi_accende("kbd.drv", "lo carica il kernel da [modules] di /boot/kernel.cfg (kbd = /dev/kbd.drv, scritto da hwconfig)");
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-k") == 0 && i + 1 < argc) {

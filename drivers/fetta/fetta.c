@@ -44,7 +44,7 @@
  * ============================================================================= */
 #include "libc.h"
 
-EX_VERSIONE("fetta.drv", "0.001");
+EX_VERSIONE("fetta.drv", "0.002");
 
 #define SETTORE 512
 
@@ -88,6 +88,10 @@ int main(int argc, char **argv)
     const char  *disco = NULL, *punto = NULL;
     unsigned int primo = 0, tutti = 0, aspetta = 0, verboso = 0;
     int          i, rc, ha_primo = 0;
+
+    /* voce 24: nothing to install, says who starts it */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_chi_accende("fetta.drv", "e' un attrezzo di prova, si lancia a mano quando serve");
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0) {

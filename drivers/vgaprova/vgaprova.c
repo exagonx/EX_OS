@@ -38,7 +38,7 @@
 
 /* +0.001 a ogni modifica: `vgaprova.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("vgaprova.drv", "0.001");
+EX_VERSIONE("vgaprova.drv", "0.002");
 
 #define VGA_MISC_W      0x3C2
 #define VGA_SEQ_IDX     0x3C4
@@ -88,6 +88,10 @@ int main(int argc, char **argv)
 {
     int rc;
     unsigned int i;
+
+    /* voce 24: nothing to install, says who starts it */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_chi_accende("vgaprova.drv", "e' un attrezzo di prova, si lancia a mano quando serve");
 
     /* =====================================================================
      * ! `-i` DICE DI NO, E DEVE DIRLO SENZA TOCCARE NIENTE.

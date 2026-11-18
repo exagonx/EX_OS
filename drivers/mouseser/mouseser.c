@@ -57,7 +57,7 @@
 
 /* +0.001 a ogni modifica: `mouseser.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("mouseser.drv", "0.002");
+EX_VERSIONE("mouseser.drv", "0.003");
 
 /* --- UART 16550, spiazzamenti dalla base --------------------------------- */
 #define U_DATI      0   /* RBR/THR (e DLL quando DLAB e' acceso) */
@@ -230,6 +230,22 @@ int main(int argc, char **argv)
     IpcMessage   meta;
     unsigned char payload[64];
     int rc, sonda = 0, i;
+
+    /* voce 24: -install [com1|com2]. Before the loop: "-install" starts
+     * with -i, the probe. */
+    if (argc >= 2 && argc <= 3 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0)) {
+        char righe[256];
+        const char *porta = argc == 3 ? argv[2] : "";
+
+        if (argc == 3 && strcmp(porta, "com1") != 0 && strcmp(porta, "com2") != 0) {
+            printf("mouseser: -install com1 o com2 (senza: COM2)\n");
+            return 1;
+        }
+        snprintf(righe, sizeof(righe),
+                 "# Il mouse seriale su %s. `mouseser.drv -remove` toglie questo blocco.\n"
+                 "mouseser.drv%s%s &\n", argc == 3 ? porta : "COM2", argc == 3 ? " " : "", porta);
+        return driver_installa("mouseser.drv", righe, argv[1][1] == 'r');
+    }
 
     for (i = 1; i < argc; i++) {
         if (argv[i][0] == '-' && argv[i][1] == 'i') sonda = 1;

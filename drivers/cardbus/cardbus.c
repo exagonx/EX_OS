@@ -62,7 +62,7 @@
 
 /* +0.001 a ogni modifica: `cardbus.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("cardbus.drv", "0.001");
+EX_VERSIONE("cardbus.drv", "0.002");
 
 #define PCI_INDIRIZZO   0xCF8
 #define PCI_DATO        0xCFC
@@ -539,11 +539,18 @@ static void uso(void)
     printf("! UNA SCHEDA CARDBUS (32 bit) diventa un normale dispositivo PCI\n");
     printf("  e la vede netdetect. Una PC Card a 16 bit no: quello e' il\n");
     printf("  PCMCIA vecchio, e questo driver dice che c'e' e si ferma.\n");
+    printf("  -install    a ogni avvio (/boot/avvio.sh); -remove lo toglie\n");
 }
 
 int main(int argc, char **argv)
 {
     int sonda = 0, acc = 0, i, rc, pid = 0;
+
+    /* voce 24: -install / -remove (driver_installa in libc) */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_installa("cardbus.drv", "# Lo slot PC Card / CardBus: configurato e guardato a ogni avvio.\n"
+                               "# `cardbus.drv -remove` toglie questo blocco.\n"
+                               "cardbus.drv -accendi\n", argv[1][1] == 'r');
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-i") == 0)       { sonda = 1; continue; }

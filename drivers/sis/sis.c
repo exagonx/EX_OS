@@ -95,7 +95,7 @@
 
 /* +0.001 a ogni modifica: `sis.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("sis.drv", "0.013");
+EX_VERSIONE("sis.drv", "0.014");
 
 #define VGA_BASE      0x3B0
 #define VGA_PORTE     0x30
@@ -902,12 +902,19 @@ static void aiuto(void)
     printf("! I VALORI SONO LETTI DA UNA MACCHINA VERA, non calcolati: la\n");
     printf("  differenza fra due referti di sonda.drv. Valgono per QUELLA\n");
     printf("  scheda e QUEL pannello.\n");
+    printf("  -install    a ogni avvio (/boot/avvio.sh); -remove lo toglie\n");
 }
 
 int main(int argc, char **argv)
 {
     int testo = 0, grafica = 0, statoq = 0, provaq = 0, i;
     const char *perc = NULL;
+
+    /* voce 24: -install / -remove (driver_installa in libc) */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_installa("sis.drv", "# Il motore 2D della SiS per la scrivania (wserver lo cerca).\n"
+                               "# `sis.drv -remove` toglie questo blocco.\n"
+                               "sis.drv -2dservizio &\n", argv[1][1] == 'r');
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-i") == 0) {

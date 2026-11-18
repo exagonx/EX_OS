@@ -182,6 +182,7 @@ GRUPPO  VOCI             COSA
   7     49 47 60 67 3 4  attrezzi di aggiornamento e pubblicazione
                          17/11: 49 47 FATTE, 60 quasi (resta -yes), 3 4 gia' fatte; 67 da decidere
   8     25 24 57 55 56   2D hardware, -install, AHCI
+                         18/11: 24 FATTA (prova_install.sh 40/40); 25 vuole il CQ60, 55-57 il .253 con l'utente
   9     33 37 35 31      fork, EINTR, tetti, file oltre 2 GB
  10     72 42 48 36 34   grandi porting; 72 dopo 33 e 37
  --     40 21            decise il 2/11: BSY e DMA a 30 s; telnetd chiude i discendenti
@@ -8257,6 +8258,17 @@ tools/netinst/velocita tolto da netinst.
       (avvio.sh per chi vuole un ordine, [modules] di kernel.cfg per chi
       deve esserci prima di tutto, come kbd/pci/uhci senza 8042), con
       -remove per toglierlo.
+      FATTO 18/11 (scelte dell'utente del 17/11): blocco in avvio.sh per USB,
+      cardbus, sis, ar5k, mouseser; la scheda di rete prima di ip.drv nella
+      catena (senza catena: blocco con scheda, ip.drv, dhcp); l'audio scrive
+      audio = in [modules] di kernel.cfg (solo se la sonda trova la scheda,
+      -remove solo la voce sua); pci, ip, kbd, svga dicono chi li accende;
+      gli attrezzi di prova si lanciano a mano. Una riga di hwconfig vale
+      (-install "gia'", -remove la commenta). In libc: driver_installa,
+      driver_installa_rete, driver_installa_modulo, driver_chi_accende,
+      file_sostituisci. tools/prova_install.sh 40/40 a 32 e 64. Restano senza
+      -install i non-programmi (floppy e' un modulo del kernel; tty, usb,
+      audio, net, accel sono codice comune). Piu' schede di rete: voce 101.
 
   25. EXWIN A SCATTI SUL CQ60 (l'utente, 23/10): "il 2D che con Linux e
       windows e' fluido con exwin opera a scatti, non e' piu' una questione
@@ -10402,6 +10414,45 @@ tools/netinst/velocita tolto da netinst.
       17/11, DOPO IL RIAVVIO NELLA 0.343: il telnetd 0.015 dell'avvio, porta
       23, telnet_piu_prova.py 6 su 6.
 
+  102. shutdown NON SPEGNE IL .253 (l'utente, 17/11 notte: "shutdown non spegne
+      la macchina 253"). Da guardare: lo spegnimento ACPI (S5, SLP_TYP dal
+      \_S5 del DSDT, PM1a/PM1b) sull'MCP73; cosa scrive il kernel in dmesg
+      quando lo si chiede. ! ERRORE MIO DELLA STESSA SERA: per spegnerlo ho
+      dato via telnet `sync` e poi `shutdown -h` credendolo l'aiuto: -h FERMA
+      senza togliere corrente. Il .253 e' rimasto fermo e acceso (non risponde
+      al ping dalle 22:49, non si e' riavviato): va spento a mano col pulsante.
+      Il disco era sincronizzato.
+      18/11, GUARDATO SUL .253 RIACCESO: dmesg dice FADT PM1a_CNT 0x4004,
+      SMI_CMD 0x442e/e1, S5 SLP_TYP a=7, e "PM1a_CNT ora 0x0" (SCI_EN spento:
+      il BIOS lascia il chipset in modo legacy). acpi_spegni (kernel/arch/x86/
+      acpi.c, dalla 0.329) fa gia' come ACPICA: chiede ACPI_ENABLE a SMI_CMD,
+      spegne i GPE, azzera gli stati, SLP_TYP poi SLP_EN. Quello che NON fa
+      e' eseguire il metodo AML \_PTS(5) del DSDT, che Linux chiama prima di
+      S5: su molte schede nForce e' li' che il firmware prepara lo
+      spegnimento (serve un interprete AML, o almeno leggere cosa fa il _PTS
+      di questa scheda: estrarre il DSDT e disassemblarlo con iasl). Se S5
+      fallisce il kernel scrive sullo schermo "ACPI: S5 non riuscito:
+      PM1a_CNT ... prima, ... ora, PM1a_STS ..., GPE0 ...": la riga che
+      l'utente vede al prossimo shutdown dice cosa ha visto il chipset.
+
+  101. PIU' SCHEDE DI RETE INSIEME, OGNUNA COL SUO DRIVER (l'utente, 17/11, alla
+      domanda sulla rete nella voce 24: "hwconfig deve rilevare l'hardware
+      installato e per ogni hardware installare il driver: se ha 2 o 10 schede
+      di rete deve installare il driver per ogni scheda, e se 3 schede sono
+      uguali il driver le deve riconoscere tutte e 3 e renderle operative. Gli
+      unici driver che devono essere commentati sono quelli dove l'hardware non
+      c'e'"). OGGI NON SI PUO': ogni driver di rete si registra come "rete0"
+      (NET_SERVIZIO_0) e prende la prima scheda che trova; ip.drv ha un solo
+      collegamento (g_link) e una sola tabella ARP; hwconfig sceglie una sola
+      scheda (g_t.rete_driver). Da fare, a passi: 1 i driver di rete guidano
+      tutte le schede del loro modello (rete0, rete1, ... in ordine di bus);
+      2 ip.drv con piu' interfacce (indirizzo, maschera, ARP per ognuna; la
+      rotta scelta dalla rete di destinazione, un solo gateway predefinito);
+      3 dhcp e ipcfg per interfaccia; 4 hwconfig scrive un driver per ogni
+      modello trovato e commenta quelli senza scheda. Prova: QEMU con due
+      ne2k e una e1000. Fino ad allora `-install` di una seconda scheda la
+      scrive nella catena, ma il suo driver trova "rete0" preso ed esce.
+
   100. I NIPOTI DI UNA SESSIONE TELNET RESTANO VIVI (17/11, sul .253): chiusa
       la connessione di dmesg-pc.py, telnetd ferma la sua shell ma dmesg -segui,
       figlio della shell, resta in "dorme" per sempre, col padre morto. dmesg
@@ -10420,6 +10471,14 @@ tools/netinst/velocita tolto da netinst.
       posto a 32 e 64. MISURATO: la fine si vede dopo ~22 s, non 2-4: con
       quei lavori il ciclo della sessione non va a riposo (domanda allo
       stack ogni 15 s invece di 2). Perche': da guardare.
+      SUL .253 (17/11 sera): telnetd 0.016 con netupdate -check -yes (kernel
+      invariato, 517448e1). La stessa prova contro la macchina: 8/8, 22 s
+      anche li'. ! SUBITO DOPO IL netupdate IL .253 SI E' RIAVVIATO (uptime
+      128 s alle 21:43:58; niente ping per circa un minuto). In dmesg nessun
+      errore, nessuna guardia, giornale ext3 pulito; netupdate.reg delle
+      21:34, nessuno ha chiesto un riavvio. Non si sa se l'ha riavviato
+      l'utente: chiesto. Se no, e' da cercare (nessun registro sopravvive
+      al riavvio: servirebbe dmesg su disco).
 
   61. IL LOGIN SI RIPETE DA SOLO SULLA CONSOLE (l'utente, 1/11, foto
       20261101_100408, portatile, 0.299): "EX-OS - accesso / utente:" a catena,

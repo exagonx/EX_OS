@@ -48,7 +48,7 @@
 
 /* +0.001 a ogni modifica: `ramdisk.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ramdisk.drv", "0.001");
+EX_VERSIONE("ramdisk.drv", "0.002");
 
 #define KB_PRED       1024          /* 1 MB: ci sta una FAT16 con dentro qualcosa */
 #define KB_MAX        16384         /* 16 MB: oltre, e' la RAM della macchina */
@@ -144,6 +144,7 @@ static void aiuto(void)
     printf("\n! SI LANCIA IN SECONDO PIANO con '&': finche' gira, il disco\n");
     printf("  esiste; quando muore, sparisce - e chi lo teneva montato se lo\n");
     printf("  ritrova guasto, che e' il caso che questa prova deve mostrare.\n");
+    printf("  -install    dice chi lo accende all'avvio\n");
 }
 
 int main(int argc, char **argv)
@@ -152,6 +153,10 @@ int main(int argc, char **argv)
     BlkRichiesta r;
     unsigned int kb = KB_PRED;
     int          i, rc;
+
+    /* voce 24: nothing to install, says who starts it */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_chi_accende("ramdisk.drv", "e' un attrezzo di prova, si lancia a mano quando serve");
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-i") == 0) {

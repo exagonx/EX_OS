@@ -66,7 +66,7 @@
 
 /* +0.001 a ogni modifica: `svga.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("svga.drv", "0.005");
+EX_VERSIONE("svga.drv", "0.006");
 
 #define PERC_MAX  256
 #define S2_MAX    65536
@@ -627,6 +627,7 @@ static void uso(void)
     printf("SERVE UN RIAVVIO perche' abbia effetto. Se la scheda non offre\n");
     printf("la risoluzione chiesta, Stage 2 ripiega sul testo invece di\n");
     printf("lasciare uno schermo nero.\n");
+    printf("  -install    dice chi lo accende all'avvio\n");
 }
 
 /* La radice sta in RAM? Rende 1 se si', 0 se no o se non si sa.
@@ -803,6 +804,10 @@ int main(int argc, char **argv)
     const char *voluto = NULL;
     int i, modo, prova = 0, opt_lista = 0;
     unsigned int w = 0, h = 0;
+
+    /* voce 24: nothing to install, says who starts it */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_chi_accende("svga.drv", "il modo scelto con `svga.drv LxA` sta gia' in /boot/kernel.cfg e vale a ogni avvio");
 
     for (i = 1; i < argc; i++) {
         /* La convenzione comune a tutti i driver: sonda, di' cosa hai

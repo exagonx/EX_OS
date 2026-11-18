@@ -56,7 +56,7 @@
 
 /* +0.001 a ogni modifica: `uhci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("uhci.drv", "0.005");
+EX_VERSIONE("uhci.drv", "0.006");
 
 /* --- Registri UHCI, spiazzamenti dalla base I/O --------------------------- */
 #define R_CMD       0x00    /* USBCMD  (16 bit) */
@@ -924,13 +924,19 @@ int main(int argc, char **argv)
     unsigned int irq = 0;
     int rc, i, sonda = 0, avvio = 0;
 
+    /* voce 24: -install / -remove (driver_installa in libc) */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_installa("uhci.drv", "# Le chiavette su USB 1.1 Intel (UHCI): con -avvio lascia stare mouse\n"
+                               "# e tastiere. `uhci.drv -remove` toglie questo blocco.\n"
+                               "uhci.drv -avvio &\n", argv[1][1] == 'r');
+
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-v") == 0) g_verboso = 1;
         else if (strcmp(argv[i], "-i") == 0) sonda = 1;
         else if (strcmp(argv[i], "-massa") == 0) g_solo_massa = 1;
         else if (strcmp(argv[i], "-avvio") == 0) { g_solo_massa = 1; avvio = 1; }
         else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            printf("uso: uhci.drv [-v] [-i] [-massa] [-avvio]\n");
+            printf("uso: uhci.drv [-v] [-i] [-massa] [-avvio] [-install] [-remove]\n");
             printf("  -v      dice tutto quello che vede\n");
             printf("  -i      dice se c'e' un UHCI ed esce\n");
             printf("  -massa  ignora mouse e tastiere: serve solo le\n");

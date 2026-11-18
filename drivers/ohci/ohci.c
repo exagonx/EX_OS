@@ -57,7 +57,7 @@
 
 /* +0.001 a ogni modifica: `ohci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ohci.drv", "0.009");
+EX_VERSIONE("ohci.drv", "0.010");
 
 /* --- I registri, a spiazzamenti fissi (qui non si legge nessun CAPLENGTH) -- */
 #define R_REVISION      0x00
@@ -1108,12 +1108,18 @@ int main(int argc, char **argv)
     DmaZona  z;
     int i;
 
+    /* voce 24: -install / -remove (driver_installa in libc) */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_installa("ohci.drv", "# Le chiavette su USB 1.1 (OHCI). Con -avvio esce zitto se il\n"
+                               "# controller non c'e'. `ohci.drv -remove` toglie questo blocco.\n"
+                               "ohci.drv -avvio &\n", argv[1][1] == 'r');
+
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-v") == 0) g_verboso = 1;
         else if (strcmp(argv[i], "-i") == 0) solo_sonda = 1;
         else if (strcmp(argv[i], "-avvio") == 0) g_avvio = 1;
         else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            printf("uso: ohci.drv [-v] [-i] [-avvio]\n");
+            printf("uso: ohci.drv [-v] [-i] [-avvio] [-install] [-remove]\n");
             printf("  -v      dice tutto quello che vede\n");
             printf("  -i      dice se c'e' un OHCI ed esce\n");
             printf("  -d      i registri dei controller e le porte, senza toccarli\n");

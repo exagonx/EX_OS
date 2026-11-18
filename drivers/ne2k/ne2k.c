@@ -85,7 +85,7 @@
 
 /* +0.001 a ogni modifica: `ne2k.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ne2k.drv", "0.004");
+EX_VERSIONE("ne2k.drv", "0.005");
 
 /* =============================================================================
  * Registri DP8390. Gli offset 0x00-0x0F cambiano significato secondo la
@@ -816,6 +816,7 @@ static void uso(void)
     printf("Una NE2000 ISA non si cerca da sola: per trovarla bisognerebbe\n");
     printf("scrivere sulle porte dove stanno di solito, e se li' c'e'\n");
     printf("un'altra scheda le si scrive addosso. L'indirizzo va detto.\n");
+    printf("  -install    a ogni avvio, prima di ip.drv in /boot/avvio.sh; -remove lo toglie\n");
 }
 
 int main(int argc, char **argv)
@@ -825,6 +826,10 @@ int main(int argc, char **argv)
     g_base = 0;
     g_irq  = 0xFFFFFFFF;
     strncpy(g_modello, "NE2000 compatibile", sizeof(g_modello) - 1);
+
+    /* voce 24: -install puts the card before ip.drv in avvio.sh */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_installa_rete("ne2k.drv", argv[1][1] == 'r');
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-i") == 0) {

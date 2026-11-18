@@ -42,7 +42,7 @@
 #include "net_anelli.h"
 
 /* +0.001 a ogni modifica: `rtl8169.drv -version` la stampa. */
-EX_VERSIONE("rtl8169.drv", "0.004");
+EX_VERSIONE("rtl8169.drv", "0.005");
 
 #define RTL_MMIO_BYTE     0x100u
 
@@ -732,6 +732,7 @@ static void uso(void)
     printf("  -v                 racconta ogni passo dell'accensione\n");
     printf("  -l                 dice se il cavo c'e' (esce con 0) o no (1), e basta:\n");
     printf("                     lo usa netdetect per scegliere fra due schede\n");
+    printf("  -install    a ogni avvio, prima di ip.drv in /boot/avvio.sh; -remove lo toglie\n");
 }
 
 int main(int argc, char **argv)
@@ -740,6 +741,10 @@ int main(int argc, char **argv)
     unsigned int riga_rx = 0, riga_tx = 0;
     DmaZona z;
     MmioZona m;
+
+    /* voce 24: -install puts the card before ip.drv in avvio.sh */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_installa_rete("rtl8169.drv", argv[1][1] == 'r');
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-i") == 0)      sonda = 1;

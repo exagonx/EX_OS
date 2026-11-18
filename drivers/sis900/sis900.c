@@ -67,7 +67,7 @@
 
 /* +0.001 a ogni modifica: `sis900.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("sis900.drv", "0.020");
+EX_VERSIONE("sis900.drv", "0.021");
 
 #define SIS_VENDITORE   0x1039
 #define SIS_900         0x0900
@@ -2705,6 +2705,7 @@ static void uso(void)
     printf("! LA MAPPA DEI REGISTRI E' MISURATA, non presa da un documento:\n");
     printf("  SiS non ne ha mai pubblicato uno. Viene dal driver del\n");
     printf("  costruttore, letto con tools/scava.py.\n");
+    printf("  -install    a ogni avvio, prima di ip.drv in /boot/avvio.sh; -remove lo toglie\n");
 }
 
 int main(int argc, char **argv)
@@ -2714,6 +2715,10 @@ int main(int argc, char **argv)
     const char *percorso = REFERTO_PREDEFINITO;
     int i, rc;
     DmaZona z;
+
+    /* voce 24: -install puts the card before ip.drv in avvio.sh */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_installa_rete("sis900.drv", argv[1][1] == 'r');
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-i") == 0) { sonda = 1; continue; }

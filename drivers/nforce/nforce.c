@@ -57,7 +57,7 @@
 #include "net_anelli.h"
 
 /* +0.001 a ogni modifica: `nforce.drv -version` la stampa. */
-EX_VERSIONE("nforce.drv", "0.015");
+EX_VERSIONE("nforce.drv", "0.016");
 
 #define NV_VENDITORE      0x10DE
 #define NV_MMIO_BYTE      0x1000u
@@ -1261,6 +1261,7 @@ static void uso(void)
     printf("  -q                 niente interrupt: guarda la scheda ogni %d ms\n", PERIODO_MS);
     printf("  -w REG=VAL         scrive un registro (esadecimali) prima di avviare\n");
     printf("  -y REG=VAL         scrive un registro del PHY (esadecimali)\n");
+    printf("  -install    a ogni avvio, prima di ip.drv in /boot/avvio.sh; -remove lo toglie\n");
 }
 
 int main(int argc, char **argv)
@@ -1271,6 +1272,10 @@ int main(int argc, char **argv)
     int forza_pieno = 0;
     DmaZona z;
     MmioZona m;
+
+    /* voce 24: -install puts the card before ip.drv in avvio.sh */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_installa_rete("nforce.drv", argv[1][1] == 'r');
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-i") == 0)      sonda = 1;

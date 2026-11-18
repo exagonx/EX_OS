@@ -30,7 +30,7 @@
 #include "libc.h"
 #include "pci_proto.h"
 
-EX_VERSIONE("ar5k.drv", "0.004");
+EX_VERSIONE("ar5k.drv", "0.005");
 
 #define AR5K_VENDITORE      0x168c
 #define AR5K_MMIO_BYTE      0x10000
@@ -352,12 +352,19 @@ static void uso(void)
     printf("     ar5k.drv -led:ec    il colore della spia per ogni combinazione di\n");
     printf("                         GPIO 3 e LED dell'EC (chiede che cosa vedi)\n");
     printf("     ar5k.drv -tasto     per 60 secondi fa funzionare il tasto WiFi\n");
+    printf("  -install    a ogni avvio (/boot/avvio.sh); -remove lo toglie\n");
 }
 
 int main(int argc, char **argv)
 {
     PciDispositivo d;
     MmioZona       m;
+
+    /* voce 24: -install / -remove (driver_installa in libc) */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_installa("ar5k.drv", "# La scheda WiFi Atheros AR5xxx: il servizio wifi0, che wifid usa.\n"
+                               "# `ar5k.drv -remove` toglie questo blocco.\n"
+                               "ar5k.drv &\n", argv[1][1] == 'r');
 
     if (argc > 2 || (argc == 2 && strcmp(argv[1], "-i") != 0 && strcmp(argv[1], "-s") != 0 &&
                       strcmp(argv[1], "-radio") != 0 && strcmp(argv[1], "-radio:on") != 0 &&

@@ -71,7 +71,7 @@
 
 /* +0.001 a ogni modifica: `e1000.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("e1000.drv", "0.005");
+EX_VERSIONE("e1000.drv", "0.006");
 
 /* -----------------------------------------------------------------------------
  * La scheda
@@ -933,6 +933,7 @@ static void uso(void)
     printf("                     nettx di kernel.cfg, o uno per MB di RAM e un quarto)\n");
     printf("  -i                 la sonda: dice se c'e' e basta\n");
     printf("  -v                 dice cosa vede, registro per registro\n");
+    printf("  -install    a ogni avvio, prima di ip.drv in /boot/avvio.sh; -remove lo toglie\n");
 }
 
 int main(int argc, char **argv)
@@ -940,6 +941,10 @@ int main(int argc, char **argv)
     int sonda = 0, i, rc;
     unsigned int riga_rx = 0, riga_tx = 0;
     DmaZona z;
+
+    /* voce 24: -install puts the card before ip.drv in avvio.sh */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_installa_rete("e1000.drv", argv[1][1] == 'r');
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-i") == 0)      sonda = 1;

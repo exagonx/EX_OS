@@ -58,7 +58,7 @@
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.024");
+EX_VERSIONE("ip.drv", "0.025");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -4343,6 +4343,7 @@ static void uso(void)
     printf("  /bin/dhcp, oppure -a. Un indirizzo predefinito che non\n");
     printf("  appartiene alla rete a cui si e' attaccati sembra una\n");
     printf("  configurazione riuscita, e manda a cercare il guasto altrove.\n");
+    printf("  -install    dice chi lo accende all'avvio\n");
 }
 
 int main(int argc, char **argv)
@@ -4377,6 +4378,10 @@ int main(int argc, char **argv)
      * pacchetti mandati a un indirizzo che nessuno ascolta, e sembra che sia
      * la rete a non funzionare. */
     memset(g_cfg.gateway, 0, 4);
+
+    /* voce 24: nothing to install, says who starts it */
+    if (argc == 2 && (strcmp(argv[1], "-install") == 0 || strcmp(argv[1], "-remove") == 0))
+        return driver_chi_accende("ip.drv", "lo accende la catena della rete in /boot/avvio.sh (hwconfig); si installa la scheda, per esempio `e1000.drv -install`");
 
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-i") == 0) {
