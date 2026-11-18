@@ -78,16 +78,17 @@ typedef long long           off_t;
 #define EXOS_LFS(nome)
 typedef long                off_t;
 #endif
-/* ! stat, lstat, fstat AND THEIR *64 HAVE A SECOND SYMBOL since 7 November
- * 2026: struct stat grew st_rdev at the end (exos_stat.h), and code compiled
- * before passes the shorter struct to the old names, which keep filling only
- * that. New code is sent here to __exos_stat2, __exos_stat64_2 & c. (with
+/* ! stat, lstat, fstat AND THEIR *64 HAVE THREE SYMBOLS: struct stat grew
+ * st_rdev at the end on 7 November 2026, st_atim, st_mtim, st_ctim on 18
+ * November (exos_stat.h), and code compiled before passes the shorter struct
+ * to the old names (stat, then __exos_stat2), which keep filling only that.
+ * New code is sent here to __exos_stat3, __exos_stat64_3 & c. (with
  * _FILE_OFFSET_BITS=64 at 32 bit, to the *64 ones). See the end of
  * lib/libc.c. */
 #if defined(EXOS_OFF64)
-#define EXOS_STAT2(nome)    __asm__("__exos_" #nome "64_2")
+#define EXOS_STAT2(nome)    __asm__("__exos_" #nome "64_3")
 #else
-#define EXOS_STAT2(nome)    __asm__("__exos_" #nome "2")
+#define EXOS_STAT2(nome)    __asm__("__exos_" #nome "3")
 #endif
 /* the type of int64_t, as glibc: long at 64 bit, long long at 32 (libgit2
  * says typedef int64_t off64_t, and two names of one size are not one type) */
@@ -2116,9 +2117,9 @@ int     fstat(int fd, struct stat *st) EXOS_STAT2(fstat);
 /* the same with a 64-bit st_size (struct stat64, exos_stat.h): what stat,
  * lstat, fstat are with _FILE_OFFSET_BITS=64 on the 32-bit system */
 struct stat64;
-int     stat64(const char *path, struct stat64 *st) __asm__("__exos_stat64_2");
-int     lstat64(const char *path, struct stat64 *st) __asm__("__exos_lstat64_2");
-int     fstat64(int fd, struct stat64 *st) __asm__("__exos_fstat64_2");
+int     stat64(const char *path, struct stat64 *st) __asm__("__exos_stat64_3");
+int     lstat64(const char *path, struct stat64 *st) __asm__("__exos_lstat64_3");
+int     fstat64(int fd, struct stat64 *st) __asm__("__exos_fstat64_3");
 /* Dimensione di un file APERTO, lasciando la posizione dov'era.
  * Non c'e' una syscall fstat: si compone di due lseek. */
 long    fsize(int fd);
@@ -2960,9 +2961,13 @@ int     mprotect(void *addr, size_t lung, int prot);
  * chi verifica se un nome ci sta. Vedi lib/libc.c. */
 #define _PC_LINK_MAX            0
 #define _PC_NAME_MAX            3
+#define _PC_MAX_CANON           1   /* (18/11/2026, GNU nano) */
+#define _PC_MAX_INPUT           2
 #define _PC_PATH_MAX            4
+#define _PC_PIPE_BUF            5
 #define _PC_CHOWN_RESTRICTED    6
 #define _PC_NO_TRUNC            7
+#define _PC_VDISABLE            8
 
 long    pathconf(const char *path, int nome);
 long    fpathconf(int fd, int nome);

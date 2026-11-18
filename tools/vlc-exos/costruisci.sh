@@ -55,12 +55,12 @@ collega() {
     # Vorbis, Ogg and zlib are shared libraries, found at start in /exos/lib
     # (lib/libc_dl.c); VLC's own plugins stay inside, there is no dlopen of
     # VLC modules
-    $CXX -o "$B/vlc" "$B/obj/bin/vlc-vlc.o" "$B/obj/bin/vlc-override.o" "$B/moduli.o" $propri \
+    $CXX -L"$B/libc" -o "$B/vlc" "$B/obj/bin/vlc-vlc.o" "$B/obj/bin/vlc-override.o" "$B/moduli.o" $propri \
         -Wl,--start-group "$P"/lib*_plugin.a $(ls "$B"/obj/modules/.libs/lib*.a | grep -v _plugin.a) \
         "$B/obj/lib/.libs/libvlc.a" "$B/obj/src/.libs/libvlccore.a" \
         $(ls "$B"/obj/compat/.libs/libcompat.a 2>/dev/null) \
         -lavformat -lavcodec -lswscale -lswresample -lavutil -lvpx -ldav1d \
-        -lFLAC -lopus -lvorbisenc -lvorbis -logg -lz -lm -lpthread -Wl,--end-group \
+        -lFLAC -lopus -lvorbisenc -lvorbis -logg -lz -lncurses -lm -lpthread -Wl,--end-group \
         > "$B/collega.log" 2>&1 || { grep -a -E "undefined reference|multiple definition" "$B/collega.log" \
             | sed -E 's/.*(undefined reference to .*|multiple definition of [^;]*).*/\1/' | sort | uniq -c | sort -rn | head -30; exit 1; }
     mkdir -p "$DEST/bin"
@@ -76,12 +76,18 @@ costruisci() {
     # already configured and built (minutes instead of the whole VLC)
     if [ "${VLC_SOLO_COLLEGA:-}" = 1 ] && [ -f "$B/obj/src/.libs/libvlccore.a" ]; then
         SRC=$(ls -d "$B"/src/*/ | head -1); SRC=${SRC%/}
+        lib_libc_di_oggi
         collega
         lib_fine "$R"/tools/vlc-exos/src/*.c
         return
     fi
     lib_sorgente
     lib_config_sub
+    # ! the libc of today (comune.sh): wcswidth for the ncurses interface
+    # came on 18 November 2026, after the sysroots. C only: the C++ headers
+    # of libstdc++ must stay in front of the libc's (<cstdlib> and
+    # #include_next <stdlib.h>), so the C++ files see the sysroot's
+    lib_libc_di_oggi
     # ! no shared objects here: the plugins come out as static archives and
     # are joined in one program, as VLC's mobile builds do
     sed -i -E '/VLC is based on plugins/ s/as_fn_error .*/:/' "$SRC/configure"
@@ -115,10 +121,16 @@ costruisci() {
     pc libavformat 62.0.0 "-lavformat -lavcodec -lvpx -ldav1d -lopus -lvorbisenc -lvorbis -logg -lz -lswresample -lavutil -lm -lpthread"
     pc libswscale 9.0.0 "-lswscale -lavutil -lm"
     pc libswresample 6.0.0 "-lswresample -lavutil -lm"
+    # ! the ncurses interface (vlc -I ncurses, nvlc) asks for ncursesw, but
+    # only for the name: it calls no wide curses function, only mbstowcs,
+    # wcwidth and wcswidth of the libc. Ours is the byte libncurses
+    # (tools/ncurses-exos, voce 30): a UTF-8 title shows its accents as two
+    # signs, as in nano
+    pc ncursesw 6.6 "-lncurses"
     ( cd "$B/obj" && PKG_CONFIG_LIBDIR="$B/pc" "$SRC/configure" --host=$T --build=x86_64-pc-linux-gnu \
         --prefix=/exos/vlc CC=$CC CXX=$CXX AR=$AR RANLIB=$RANLIB \
-        CFLAGS="$CFLAGS -D__unix__ -DEXOS_SOLO_POSIX -D_GNU_SOURCE -std=gnu11 -Wno-error=incompatible-pointer-types" \
-        CXXFLAGS="$CFLAGS -D__unix__ -DEXOS_SOLO_POSIX -D_GNU_SOURCE" LDFLAGS=-static \
+        CFLAGS="$CFLAGS -I$B/libc/include -D__unix__ -DEXOS_SOLO_POSIX -D_GNU_SOURCE -std=gnu11 -Wno-error=incompatible-pointer-types" \
+        CXXFLAGS="$CFLAGS -D__unix__ -DEXOS_SOLO_POSIX -D_GNU_SOURCE" LDFLAGS="-static -L$B/libc" \
         --disable-shared --enable-static --disable-nls --disable-lua --disable-qt --disable-skins2 \
         --disable-xcb --disable-xvideo --disable-alsa --disable-pulse --disable-jack --disable-oss \
         --disable-dbus --disable-a52 --disable-mad --disable-libgcrypt --disable-gnutls --disable-vlm \
@@ -131,7 +143,7 @@ costruisci() {
         --disable-libass --disable-aribsub --disable-opencv --disable-goom --disable-projectm \
         --disable-vsxu --disable-postproc --disable-libmpeg2 \
         --enable-avcodec --enable-avformat --enable-swscale --enable-ogg --enable-opus --enable-vorbis \
-        --enable-flac --enable-run-as-root \
+        --enable-flac --enable-run-as-root --enable-ncurses \
         ) > "$B/configura.log" 2>&1 || { tail -20 "$B/configura.log"; exit 1; }
     make -C "$B/obj" -k -j8 > "$B/costruisci.log" 2>&1 || true
     collega

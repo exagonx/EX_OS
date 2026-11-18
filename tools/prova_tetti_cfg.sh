@@ -66,9 +66,11 @@ giro() {    # $1 = 32|64
     L=$(tr -d '\r' < "$log")
     echo "$L" | grep -aq "EX-OS .*0\.34[7-9]" && si "$bit: gira il kernel 0.347" || no "$bit: non gira la 0.347 (uname)"
     tratto() { echo "$L" | awk 'index($0,"echo CFG-INIZIO") && /ex-os/ {s=1; next} s && /echo CFG-FINE/ {exit} s'; }
-    tratto | grep -a -A1 "grep -c \"LETTO SOLO\"" | tail -1 | grep -aqx "0" \
+    # the first non-empty line after the prompt with that command
+    dopo() { tratto | awk -v c="$1" 'index($0,c) && /ex-os/ {s=1; next} s && $0 != "" {print; exit}'; }
+    [ "$(dopo 'grep -c "LETTO SOLO"')" = 0 ] \
         && si "$bit: kernel.cfg letto tutto (niente LETTO SOLO L'INIZIO)" || no "$bit: kernel.cfg letto a meta'"
-    tratto | grep -a -A1 "grep -c tettofinto20" | tail -1 | grep -aq "^[1-9]" \
+    dopo "grep -c tettofinto20" | grep -aq "^[1-9]" \
         && si "$bit: il ventesimo modulo in piu' e' stato tentato" || no "$bit: [modules] tagliato"
     tratto | grep -aq "env\[[0-9]*\]: TETTO_ULTIMA = si" \
         && si "$bit: [env] arriva alla quarantesima variabile in piu'" || no "$bit: [env] tagliato"

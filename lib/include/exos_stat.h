@@ -31,6 +31,12 @@ struct stat {
     /* (7/11/2026, Mesa) at the end, so the fields before keep their place:
      * the identity of a character device (st_ino), 0 for every other file */
     dev_t           st_rdev;
+    /* (18/11/2026, GNU nano) the times as POSIX 2008 has them, after
+     * st_rdev for the same reason; st_atime & c. stay and say the same
+     * seconds. tv_nsec is 0: no filesystem here keeps nanoseconds. */
+    struct timespec st_atim;
+    struct timespec st_mtim;
+    struct timespec st_ctim;
 };
 
 /* The same with a 64-bit st_size: stat64() and the others fill it; with
@@ -50,6 +56,9 @@ struct stat64 {
     time_t          st_mtime;
     time_t          st_ctime;
     dev_t           st_rdev;
+    struct timespec st_atim;
+    struct timespec st_mtim;
+    struct timespec st_ctim;
 };
 
 #endif /* EXOS_STAT_H */

@@ -185,6 +185,7 @@ GRUPPO  VOCI             COSA
                          18/11: 24 FATTA (prova_install.sh 40/40); 25 vuole il CQ60, 55-57 il .253 con l'utente
   9     33 37 35 31      fork, EINTR, tetti, file oltre 2 GB
                          18/11: 37 FATTA in QEMU (kernel 0.346, ip.drv 0.026, prova_eintr.sh 8/8); 33 resta l'ab che a volte trova chiuso
+                         18/11: 35 FATTA in QEMU per quel che non tocca l'ABI (kernel 0.347): restano le voci da decidere
  10     72 42 48 36 34   grandi porting; 72 dopo 33 e 37
  --     40 21            decise il 2/11: BSY e DMA a 30 s; telnetd chiude i discendenti
                          17/11: 40 FATTA (kernel 0.345, anche il FLUSH ritentato); 21 FATTA (telnetd 0.016, voce 100)
@@ -9094,6 +9095,14 @@ tools/netinst/velocita tolto da netinst.
         EX-OS non ha fork (voce 33). L'utente, 4/11 notte: "Prima fork, poi
         Qt": si fa la voce 33 adesso, poi si riprende da qui.
       Stato: in pausa per la voce 33 (fork), poi punto 2 e l'elenco qui sopra.
+      18/11, l'utente: "vlc non ha il menu e solo una finestra con il video
+      senza strumenti cosa ci vuole qt gtk o cosa ?". Risposta: Qt 5 (questa
+      voce): VLC 3 e' costruito con --disable-qt --disable-skins2, e
+      l'interfaccia grafica di VLC 3 e' solo Qt (skins2 vuole X11 o Win32,
+      GTK non c'entra). La fork c'e' dalla 0.313: la pausa e' finita. Nel
+      frattempo, con ncurses gia' qui, si puo' costruire l'interfaccia di
+      testo (--enable-ncurses, vlc -I ncurses: comandi da tastiera in un
+      terminale), se l'utente la vuole.
 
   86. CONSOLIDARE IL SISTEMA SUL FERRO (l'utente, 5/11: "restano da
       consolidare la gestione ACPI, il Plug and Play, il parallelismo SMP
@@ -10417,6 +10426,24 @@ tools/netinst/velocita tolto da netinst.
       17/11, DOPO IL RIAVVIO NELLA 0.343: il telnetd 0.015 dell'avvio, porta
       23, telnet_piu_prova.py 6 su 6.
 
+  104. GNU NANO (l'utente, 18/11: "potresti fare il porting di Nano l'editor di
+      testo linux con stessa procedura di apache e mariadb"). FATTA in QEMU:
+      nano 9.3 (ftp.gnu.org, firma di Benno Schulenberg 168E6F42...B8E1961F,
+      la chiave in cross_build/terze-parti/nano), tools/nano-exos/
+      costruisci.sh e prova.sh (6 su 6 a 32 e 64), riga in
+      sorgenti-terzi.txt (savannah solo con git://), gruppo [nano] del
+      catalogo, su-cd.sh, verifiche/nano.sh. Senza UTF-8 (voce 30).
+      ALLA LIBC: <stdio_ext.h> (__fseterr & c.: il fseterr.c di gnulib e'
+      un #error senza), st_atim/st_mtim/st_ctim in struct stat con un
+      TERZO NOME di stat (__exos_stat3; l'utente ha scelto cosi': i
+      programmi gia' compilati non se ne accorgono), _PC_PIPE_BUF & c. e
+      fpathconf su una pipe. lib/libc_esportati.h rifatto.
+      ! Il pkg-config dell'host rispondeva per ncurses (-ltinfo di Debian):
+      spento nello script. nano si collega alla libc di oggi, non a quella
+      del sysroot (15/11): quando l'utente rifa' i sysroot non cambia niente.
+      DA FARE: rifare le ISO (make iso / mktools64.sh) perche' [nano] ci
+      sia, e ripassare le prove con la libc nuova dentro i programmi.
+
   103. PORTING DI THUNDERBIRD (l'utente, 18/11: "metti in lista il porting di
       thunderbird con la solita procedura script per scaricare gli ultimi
       sorgenti e adattamento"). In coda, non iniziato. La procedura: uno
@@ -11641,6 +11668,24 @@ tools/netinst/velocita tolto da netinst.
       buffer fisso di 8192 byte (CFG_BUF_SIZE in kernel/fs/cfg.c): oltre,
       le sezioni finali (il driver di tastiera) spariscono. Stesso rimedio:
       leggere il file a blocchi o allocare quanto e' grande.
+      18/11 (kernel 0.347), IN QEMU: crescono BLK (16 dispositivi), BLKR3
+      (8 chiavette), MBR (16 partizioni per disco, padre e numero a 16 bit),
+      FAT12 del floppy (64 aperti; FAT_MAX_OPEN era morto), kernel.cfg
+      (8 KB, [modules] 16, [env] 32), spawn/exec (512 argomenti, 32 KB, e
+      MAX_SPAWN_ENV 32 che TAGLIAVA L'AMBIENTE SENZA DIRLO: ora misura e
+      alloca quanto serve), shm_open della libc (1024 zone), dup e
+      F_DUPFD di un socket (conteggio dei descrittori sulla Presa, la fork
+      la passa una volta sola). Tolta la tabella env del PCB (32 x 128,
+      mai usata: 4 KB per processo). UDP_PORTE e PID_TRACCIATI non c'erano
+      piu'. "testo" non e' un editor (rimette il modo testo). Prove nuove:
+      tools/prova_tetti.sh 8/8 e tools/prova_tetti_cfg.sh, 32 e 64.
+      RESTANO: PROC_MAX_VMA 4 (oltre si carica residente: lento, giusto),
+      gfedit 512 righe x 200 colonne (rifiuta di salvare un file troncato;
+      rifarlo e' riscrivere gf_buffer: da chiedere all'utente), dup2 di un
+      socket, SPAWN_MAX_AZIONI 4 (redirezioni oltre la quarta TAGLIATE in
+      spawn_completo: ABI, da decidere), DiskInfo 16 partizioni (ABI, disk
+      lo dice), e le pile kernel da 128 KB nei primi 64 MB (~450 compiti:
+      la scelta grossa, con l'utente).
 
   34. PERCHE' MARIADB SU EX-OS E' LENTO RISPETTO A LINUX (l'utente, 26/10
       durante le 8 ore: «troppo lento in proporzione a linux su stesso

@@ -111,6 +111,61 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### GNU nano 9.3 (tools/nano-exos) — tested in QEMU
+
+The text editor of every Linux, at 32 and 64 bit, on the ncurses of tools/ncurses-exos:
+`/exos/bin/nano`, the system nanorc in `/exos/nano/nanorc` with the syntax colouring of
+`/exos/nano/share/nano` (C, sh, Python, HTML, Makefile...). Group `[nano]` of the tools CD,
+`netupdate -install:nano`, and a check for netupdate (`tools/netinst/verifiche/nano.sh`).
+- **Sources:** nano 9.3 from ftp.gnu.org, signed by Benno Schulenberg (key
+  `168E6F4297BFD7A79AFD4496514BBE2EB8E1961F`, from the GNU keyring), in
+  `tools/sorgenti-terzi.txt`: `tools/aggiorna-sorgenti.sh -scarica nano` takes the newest.
+- **No UTF-8:** libncurses is the byte library, the libc has no UTF-8 locale, the console is
+  CP437 (voce 30).
+- **What the libc lacked, now there (18 November):** `<stdio_ext.h>` (`__fseterr`, `__fpending`,
+  `__freading`, `__fpurge`... as musl: gnulib's fseterr.c is an `#error` without them);
+  `st_atim`, `st_mtim`, `st_ctim` in `struct stat` (POSIX 2008; the seconds of `st_mtime`,
+  `tv_nsec` 0); `pathconf`/`fpathconf` with `_PC_PIPE_BUF`, `_PC_MAX_CANON`, `_PC_MAX_INPUT`,
+  `_PC_VDISABLE`, and `fpathconf` on a pipe (it answered EBADF: a pipe has no size).
+- **struct stat grew again, without breaking anything:** as for `st_rdev` on 7 November, stat,
+  lstat, fstat and their `*64` get a third symbol (`__exos_stat3`, `__exos_stat64_3`...) for new
+  code; `__exos_stat2` and the old names stay and fill only the struct they knew (the user's
+  choice).
+- nano is linked to the libc of today (`libc_di_oggi` in its script), not to the older one of
+  the sysroots.
+- **Tested:** `tools/nano-exos/prova.sh` 6/6 at 32 and 64 bit: `nano -V`, the title bar and
+  the help lines read back from the screen, a line typed and saved with ^O, `cat` reads it,
+  the system nanorc with the syntax files opens a `.c`, no FAULT.
+
+### The fixed ceilings that were left go (kernel 0.347, voce 35) — tested in QEMU
+
+Fixed numbers in the code, against the rule that a ceiling comes from the configuration or
+the hardware. They all grow now, as the process and file tables have done since 0.282:
+- **spawn and exec:** up to 0.346 at most 512 arguments and 32 KB of strings, and **the
+  environment variables after the 32nd were dropped without a word** (a make or a mach has
+  more). Now the kernel measures what the caller passes and allocates exactly that; the
+  ceiling is the kernel heap (and 1 GB for one command line);
+- **disks:** 16 block devices in all, 16 partitions per disk, 8 disks served by a process
+  (USB sticks): now as many as there are. `disk` still shows 16 per disk (the `DiskInfo`
+  ABI) and says when there are more;
+- **kernel.cfg:** read in 8 KB (beyond, the last sections were lost), 16 `[modules]`, 32
+  `[env]`: now the whole file and every line;
+- **the floppy:** 64 open files; **shm_open:** 1024 zones per process (libc);
+- **`dup()` and `fcntl(F_DUPFD)` of a socket** answered EOPNOTSUPP: now they work, the
+  socket closes with its last descriptor and a fork hands it to the child once. `dup2` of a
+  socket is still EOPNOTSUPP;
+- the environment table in every process control block (32 × 128 bytes) was never used:
+  gone, 4 KB less per process in the kernel band.
+- **Tested:** new `tools/prova_tetti.sh` (3000 arguments and 200 variables through
+  `spawn_ex` and `fork`+`execve`, 1500 shm zones, socket `dup` across a fork, a disk with 22
+  logical partitions where the last one mounts and reads) and `tools/prova_tetti_cfg.sh` (a
+  13.6 KB kernel.cfg with 20 more modules and 40 more variables, installed on disk), 32 and
+  64 bit.
+- **Still there:** an ELF with more than 4 segments is loaded whole instead of on demand
+  (slower, correct); `gfedit` keeps 512 lines and 200 columns (it refuses to save a file it
+  could not open whole); at most 4 redirections per spawn (`SPAWN_MAX_AZIONI`, an ABI); the
+  128 KB kernel stacks in the first 64 MB (about 450 tasks, a decision to take with the user).
+
 ### A signal cuts a wait on a socket short (kernel 0.346, ip.drv 0.026, voce 37) — tested in QEMU and on the bench PC
 
 - **poll, epoll_wait, recv and send on a socket return EINTR** when a caught signal arrives,

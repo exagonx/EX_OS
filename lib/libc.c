@@ -602,12 +602,15 @@ typedef struct __dir DIR;
  * struct; the old names stay, at the end of this file, and copy only the
  * fields that were there before. Inside the libc every call and definition
  * below goes to the new names through these macros. */
-#define stat(p, s)      __exos_stat2(p, s)
-#define lstat(p, s)     __exos_lstat2(p, s)
-#define fstat(f, s)     __exos_fstat2(f, s)
-#define stat64(p, s)    __exos_stat64_2(p, s)
-#define lstat64(p, s)   __exos_lstat64_2(p, s)
-#define fstat64(f, s)   __exos_fstat64_2(f, s)
+/* (18 November 2026) a third generation, __exos_stat3 & c.: st_atim,
+ * st_mtim, st_ctim at the end; __exos_stat2 & c. stay for code compiled
+ * between the two, at the end of the file as well. */
+#define stat(p, s)      __exos_stat3(p, s)
+#define lstat(p, s)     __exos_lstat3(p, s)
+#define fstat(f, s)     __exos_fstat3(f, s)
+#define stat64(p, s)    __exos_stat64_3(p, s)
+#define lstat64(p, s)   __exos_lstat64_3(p, s)
+#define fstat64(f, s)   __exos_fstat64_3(f, s)
 extern char **environ;
 struct stat;
 int         stat(const char *path, struct stat *st);
@@ -712,9 +715,13 @@ void longjmp(jmp_parola *env, int val) __attribute__((noreturn));
 /* pathconf: duplicati da lib/include/libc.h come tutto il resto. */
 #define _PC_LINK_MAX            0
 #define _PC_NAME_MAX            3
+#define _PC_MAX_CANON           1   /* (18/11/2026, GNU nano) */
+#define _PC_MAX_INPUT           2
 #define _PC_PATH_MAX            4
+#define _PC_PIPE_BUF            5
 #define _PC_CHOWN_RESTRICTED    6
 #define _PC_NO_TRUNC            7
+#define _PC_VDISABLE            8
 #define _SC_CLK_TCK             2
 #define _SC_NPROCESSORS_ONLN   84
 #define _SC_PHYS_PAGES         85
@@ -1097,6 +1104,9 @@ struct stat {
     time_t          st_mtime;
     time_t          st_ctime;
     dev_t           st_rdev;    /* (7/11/2026) lib/include/exos_stat.h */
+    struct timespec st_atim;    /* (18/11/2026) lib/include/exos_stat.h */
+    struct timespec st_mtim;
+    struct timespec st_ctim;
 };
 
 /* struct stat with a 64-bit st_size: stat64 & c. (lib/include/exos_stat.h) */
@@ -1114,6 +1124,9 @@ struct stat64 {
     time_t          st_mtime;
     time_t          st_ctime;
     dev_t           st_rdev;    /* (7/11/2026) lib/include/exos_stat.h */
+    struct timespec st_atim;    /* (18/11/2026) lib/include/exos_stat.h */
+    struct timespec st_mtim;
+    struct timespec st_ctim;
 };
 
 /* Console virtuali — deve restare identica a kernel/include/syscall.h
@@ -2269,6 +2282,49 @@ void clearerr(FILE *f)
     funlockfile(f);
 }
 int fileno(FILE *f)    { return f ? f->fd : -1; }
+
+/* <stdio_ext.h> (18 November 2026, GNU nano): gnulib asks these instead of
+ * touching the fields itself; without __fseterr its fseterr.c is an #error */
+size_t __fbufsize(FILE *f)   { return f ? f->dim : 0; }
+size_t __fpending(FILE *f)   { return (f && (f->flag & _F_INSCRIT)) ? f->pos : 0; }
+size_t __freadahead(FILE *f)
+{
+    if (!f || (f->flag & _F_INSCRIT)) return 0;
+    return (f->fine > f->pos ? f->fine - f->pos : 0) + (size_t)f->rimessi;
+}
+int __freadable(FILE *f)     { return (f && (f->flag & _F_LETT))  ? 1 : 0; }
+int __fwritable(FILE *f)     { return (f && (f->flag & _F_SCRIT)) ? 1 : 0; }
+int __freading(FILE *f)
+{
+    if (!f) return 0;
+    if (!(f->flag & _F_SCRIT)) return (f->flag & _F_LETT) ? 1 : 0;
+    return (f->flag & _F_LETT) && !(f->flag & _F_INSCRIT) && (f->fine > 0 || f->rimessi);
+}
+int __fwriting(FILE *f)
+{
+    if (!f) return 0;
+    if (!(f->flag & _F_LETT)) return (f->flag & _F_SCRIT) ? 1 : 0;
+    return (f->flag & _F_INSCRIT) ? 1 : 0;
+}
+int __flbf(FILE *f)          { return (f && (f->flag & _F_AUTO)) ? 1 : 0; }
+void __fpurge(FILE *f)
+{
+    if (!f) return;
+    flockfile(f);
+    f->pos = 0; f->fine = 0; f->rimessi = 0;
+    f->flag &= ~(unsigned)_F_INSCRIT;
+    funlockfile(f);
+}
+void __fseterr(FILE *f)
+{
+    if (!f) return;
+    flockfile(f);
+    f->flag |= _F_ERR;
+    funlockfile(f);
+}
+int __fsetlocking(FILE *f, int tipo) { (void)f; (void)tipo; return 1; /* INTERNAL */ }
+void _flushlbf(void)         { fflush(NULL); }
+
 
 FILE *fdopen(int fd, const char *modo)
 {
@@ -8302,13 +8358,19 @@ long pathconf(const char *path, int nome)
         case _PC_LINK_MAX:      return 1;           /* nessun collegamento */
         case _PC_NO_TRUNC:      return 0;           /* su FAT i nomi si troncano */
         case _PC_CHOWN_RESTRICTED: return 1;        /* non ci sono utenti */
+        /* (18/11/2026) GNU nano sizes the pipe of ^T and the formatter on it */
+        case _PC_PIPE_BUF:      return 4096;        /* = PIPE_DIM, kernel/include/pipe.h */
+        case _PC_MAX_CANON:
+        case _PC_MAX_INPUT:     return 4096;        /* the line of the tty */
+        case _PC_VDISABLE:      return 0;           /* c_cc[x] = 0 turns x off */
         default:                errno = EINVAL; return -1;
     }
 }
 
 long fpathconf(int fd, int nome)
 {
-    if (fsize(fd) < 0) { errno = EBADF; return -1; }
+    /* ! fcntl, not fsize: a pipe has no size, and nano asks about a pipe */
+    if (fcntl(fd, 1 /* F_GETFD */) < 0) { errno = EBADF; return -1; }
     return pathconf(NULL, nome);
 }
 
@@ -12370,6 +12432,9 @@ static void stat_da_grezzo(const Stat *g, struct stat *st)
     st->st_atime   = (time_t)g->st_atime;
     st->st_ctime   = (time_t)g->st_ctime;
     st->st_rdev    = (g->st_attr & 0x40) ? (dev_t)g->st_ident : 0;
+    st->st_atim.tv_sec = st->st_atime;      /* tv_nsec 0, from the memset */
+    st->st_mtim.tv_sec = st->st_mtime;
+    st->st_ctim.tv_sec = st->st_ctime;
 }
 
 int stat(const char *path, struct stat *st)
@@ -12446,6 +12511,7 @@ int fstat(int fd, struct stat *st)
 
     dim = fsize(fd);
     if (dim < 0) return -1;
+    memset(st, 0, sizeof(*st));
 
     /* Il resto (console, pipe, un kernel piu' vecchio del 0.228) e' quello
      * che si puo' dire di un descrittore senza SYS_FSTAT: la dimensione e'
@@ -14504,6 +14570,19 @@ int wcwidth(wchar_t c)
         (u >= 0xFFE0 && u <= 0xFFE6) || (u >= 0x1F300 && u <= 0x1FAFF) ||
         (u >= 0x20000 && u <= 0x3FFFD)) return 2;
     return 1;
+}
+
+/* (18/11/2026, VLC's ncurses interface) the columns of n characters, or -1
+ * if one of them cannot be printed */
+int wcswidth(const wchar_t *s, size_t n)
+{
+    int t = 0, w;
+
+    for (; s && n > 0 && *s; s++, n--) {
+        if ((w = wcwidth(*s)) < 0) return -1;
+        t += w;
+    }
+    return t;
 }
 
 /* =============================================================================
@@ -17936,6 +18015,9 @@ static void stat_a_64(const struct stat *s, struct stat64 *d)
     d->st_mtime   = s->st_mtime;
     d->st_ctime   = s->st_ctime;
     d->st_rdev    = s->st_rdev;
+    d->st_atim    = s->st_atim;
+    d->st_mtim    = s->st_mtim;
+    d->st_ctim    = s->st_ctim;
 }
 
 int stat64(const char *path, struct stat64 *st)
@@ -18025,21 +18107,21 @@ void bzero(void *p, size_t n) { memset(p, 0, n); }
 int stat(const char *path, struct stat *st)
 {
     struct stat n;
-    int r = __exos_stat2(path, &n);
+    int r = __exos_stat3(path, &n);
     if (r == 0) memcpy(st, &n, STAT_VECCHIA);
     return r;
 }
 int lstat(const char *path, struct stat *st)
 {
     struct stat n;
-    int r = __exos_lstat2(path, &n);
+    int r = __exos_lstat3(path, &n);
     if (r == 0) memcpy(st, &n, STAT_VECCHIA);
     return r;
 }
 int fstat(int fd, struct stat *st)
 {
     struct stat n;
-    int r = __exos_fstat2(fd, &n);
+    int r = __exos_fstat3(fd, &n);
     if (r == 0) memcpy(st, &n, STAT_VECCHIA);
     return r;
 }
@@ -18047,22 +18129,77 @@ int fstat(int fd, struct stat *st)
 int stat64(const char *path, struct stat64 *st)
 {
     struct stat64 n;
-    int r = __exos_stat64_2(path, &n);
+    int r = __exos_stat64_3(path, &n);
     if (r == 0) memcpy(st, &n, STAT64_VECCHIA);
     return r;
 }
 int lstat64(const char *path, struct stat64 *st)
 {
     struct stat64 n;
-    int r = __exos_lstat64_2(path, &n);
+    int r = __exos_lstat64_3(path, &n);
     if (r == 0) memcpy(st, &n, STAT64_VECCHIA);
     return r;
 }
 int fstat64(int fd, struct stat64 *st)
 {
     struct stat64 n;
-    int r = __exos_fstat64_2(fd, &n);
+    int r = __exos_fstat64_3(fd, &n);
     if (r == 0) memcpy(st, &n, STAT64_VECCHIA);
+    return r;
+}
+#endif
+
+/* The second names (7 to 18 November 2026), for code compiled with st_rdev
+ * and without st_atim & c.: the struct it passes ends at st_rdev. */
+#define STAT_SECONDA    __builtin_offsetof(struct stat, st_atim)
+#define STAT64_SECONDA  __builtin_offsetof(struct stat64, st_atim)
+int __exos_stat2(const char *path, struct stat *st);
+int __exos_lstat2(const char *path, struct stat *st);
+int __exos_fstat2(int fd, struct stat *st);
+int __exos_stat2(const char *path, struct stat *st)
+{
+    struct stat n;
+    int r = __exos_stat3(path, &n);
+    if (r == 0) memcpy(st, &n, STAT_SECONDA);
+    return r;
+}
+int __exos_lstat2(const char *path, struct stat *st)
+{
+    struct stat n;
+    int r = __exos_lstat3(path, &n);
+    if (r == 0) memcpy(st, &n, STAT_SECONDA);
+    return r;
+}
+int __exos_fstat2(int fd, struct stat *st)
+{
+    struct stat n;
+    int r = __exos_fstat3(fd, &n);
+    if (r == 0) memcpy(st, &n, STAT_SECONDA);
+    return r;
+}
+#ifndef EXOS_LIBC_SO
+int __exos_stat64_2(const char *path, struct stat64 *st);
+int __exos_lstat64_2(const char *path, struct stat64 *st);
+int __exos_fstat64_2(int fd, struct stat64 *st);
+int __exos_stat64_2(const char *path, struct stat64 *st)
+{
+    struct stat64 n;
+    int r = __exos_stat64_3(path, &n);
+    if (r == 0) memcpy(st, &n, STAT64_SECONDA);
+    return r;
+}
+int __exos_lstat64_2(const char *path, struct stat64 *st)
+{
+    struct stat64 n;
+    int r = __exos_lstat64_3(path, &n);
+    if (r == 0) memcpy(st, &n, STAT64_SECONDA);
+    return r;
+}
+int __exos_fstat64_2(int fd, struct stat64 *st)
+{
+    struct stat64 n;
+    int r = __exos_fstat64_3(fd, &n);
+    if (r == 0) memcpy(st, &n, STAT64_SECONDA);
     return r;
 }
 #endif

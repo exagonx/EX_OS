@@ -100,6 +100,30 @@ lib_per() {
     echo "=== $NOME $VER per $T ==="
 }
 
+# ! THE LIBC OF TODAY, NOT THE SYSROOT'S (18 November 2026, nano and VLC):
+# lib/libc.c compiled here as the ported software's libc.a (the flags of
+# prepara-cross.sh and cross64.sh), in $B/libc/libc.a, and lib/include
+# copied to $B/libc/include, all but <limits.h>, which must come after GCC's
+# (#include_next); the sysroot has the same one. A port that needs what the
+# libc got after the sysroots were made puts -I$B/libc/include in CPPFLAGS
+# and -L$B/libc in LDFLAGS. When the sysroots are rebuilt it changes nothing.
+lib_libc_di_oggi() {
+    local F
+    case $BIT in
+        64) F="-m64" ;;
+        32) F="-m32 -march=pentium-mmx -mtune=pentium-mmx -fno-asynchronous-unwind-tables" ;;
+    esac
+    mkdir -p "$B/libc"
+    # shellcheck disable=SC2086
+    gcc $F -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie -Wall -O2 -std=c11 \
+        -ffunction-sections -fdata-sections -DEXOS_LIBC_PORTATI -I"$R/lib/include" \
+        -c "$R/lib/libc.c" -o "$B/libc/libc.o" 2> "$B/libc/libc.log" || { tail "$B/libc/libc.log"; exit 1; }
+    rm -f "$B/libc/libc.a"; ar rcs "$B/libc/libc.a" "$B/libc/libc.o"
+    rm -rf "$B/libc/include"
+    cp -r "$R/lib/include" "$B/libc/include"
+    rm -f "$B/libc/include/limits.h"
+}
+
 # libm.so (openlibm, from the sysroot's libm.a, whose objects are already
 # PIC): a library that needs sin or pow names it, and a program that opens
 # that library with dlopen has no math of its own to lend it. Made once per

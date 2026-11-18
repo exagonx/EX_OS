@@ -917,6 +917,17 @@ TELNET: DOPO UNA SESSIONE CHIUSA RESTANO PROCESSI in ps (un dmesg -segui,
 TELNET: LA SECONDA SESSIONE NON RISPONDE finche' la prima non esce: e'
   telnetd fino alla 0.014. Aggiorna con netupdate. Se la console dice "non
   passa alla copia", ip.drv e' piu' vecchio della 0.021: aggiorna anche quello.
+UN PROGRAMMA NON TROVA UNA VARIABILE D'AMBIENTE che il padre gli ha dato,
+  e il padre ne aveva piu' di 32: e' il kernel fino alla 0.346, che ne
+  passava solo le prime 32 senza dirlo (e non piu' di 512 argomenti, 32 KB
+  in tutto). Aggiorna con netupdate.
+KERNEL.CFG: LE ULTIME RIGHE NON CONTANO ([env] o [modules] in fondo, o
+  dopo la sedicesima voce di [modules] e la trentaduesima di [env]): e' il
+  kernel fino alla 0.346, che leggeva 8 KB del file. Aggiorna con netupdate.
+UN DISCO CON PIU' DI 16 PARTIZIONI: dalla diciassettesima non ci sono i
+  dispositivi hdNpM: e' il kernel fino alla 0.346. Aggiorna con netupdate.
+  `disk` ne mostra 16 e dice "piu' partizioni di quante ne possa mostrare":
+  le altre ci sono lo stesso, si montano col loro nome.
 MOUNT DICE "nessuno slot di montaggio libero" (errore -24) al quarto
   volume ext o FAT, o al settimo montaggio: e' il kernel fino alla 0.342.
   Aggiorna con netupdate; intanto smonta un volume che non serve.
@@ -1767,6 +1778,15 @@ scrittura). Servono a Redis (BGSAVE), al prefork di Apache, a QProcess.
     EINTR; recv e send ripartono con SA_RESTART, poll ed epoll_wait mai
     (come Linux). Prima un filo in poll su un socket non si svegliava con
     pthread_kill, e Apache e MariaDB guardavano ogni 100 ms;
+  - dup() e fcntl(F_DUPFD) di un socket (libc, voce 35): il socket si
+    chiude con l'ultimo descrittore; dup2 di un socket ancora no;
+  - struct stat ha st_atim, st_mtim, st_ctim (POSIX 2008, i secondi di
+    st_mtime con tv_nsec 0); <stdio_ext.h> con __fseterr, __fpending &c.;
+    fpathconf(_PC_PIPE_BUF) su una pipe (libc del 18/11, per nano). I
+    programmi gia' compilati non cambiano: stat ha un terzo nome;
+  - spawn ed exec senza tetti: argomenti e variabili quanti ne servono
+    (kernel 0.347; prima 512 argomenti, 32 KB, e le variabili oltre la
+    trentaduesima sparivano);
   - una pipe con O_NONBLOCK dice EAGAIN invece di aspettare (kernel
     0.317; prima il flag restava ignorato e Valkey si fermava dopo BGSAVE);
   - Apache come demone (httpd senza -X): il padre va sullo sfondo e il
@@ -1777,6 +1797,19 @@ scrittura). Servono a Redis (BGSAVE), al prefork di Apache, a QProcess.
     coppia nuova, /dev/pts/N e' lo slave della coppia N dopo unlockpt;
     posix_openpt, grantpt, unlockpt, ptsname; ttyname dice /dev/pts/N.
     Se un terminale non apre /dev/pts/N il kernel e' piu' vecchio: netupdate.
+
+GNU nano, 9.3, in /exos/bin/nano (gruppo [nano] del CD strumenti, o
+netupdate -install:nano):
+
+  nano file.txt        ^O salva, ^X esce, ^G l'aiuto, ^W cerca,
+                       ^K taglia la riga, ^U la incolla, M-U annulla
+
+Il nanorc di sistema e' /exos/nano/nanorc e include la colorazione di
+/exos/nano/share/nano (C, sh, Python, HTML, Makefile...); il proprio in
+~/.nanorc. Niente UTF-8: la console e' CP437, un file UTF-8 mostra i
+caratteri accentati come due segni (voce 30). "Error opening terminal":
+il TERM del client telnet non e' fra quelli dentro nano (vga, linux,
+xterm, vt100, screen): installa [curses], che porta la terminfo.
 
 Valkey (il Redis BSD), 9.1.3, in /exos/valkey:
 

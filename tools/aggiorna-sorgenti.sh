@@ -37,6 +37,12 @@ campi() {   # NOME: NOME GIT REGEX SED ARCH CLONE
 }
 
 ver_nostra() {
+    # a part built by another port's script says VER_<name>= there (qtsvg in
+    # tools/qt5-exos/costruisci.sh)
+    if [ ! -f "tools/$1-exos/costruisci.sh" ]; then
+        sed -n "s/^VER_$1=//p" tools/*-exos/costruisci.sh | head -1 | tr -d "\"'"
+        return
+    fi
     sed -n 's/^VER=//p' "tools/$1-exos/costruisci.sh" | head -1 | tr -d "\"'"
 }
 
@@ -70,6 +76,18 @@ elenco() {
 verifica_firma() {
     local dir=$1 file=$2 g f firma= sha
     for f in "$file.asc" "$file.sig"; do [ -s "$dir/$f" ] && firma=$dir/$f; done
+    # ! A PROJECT THAT DOES NOT SIGN (18 November 2026, Qt): download.qt.io
+    # publishes only <archive>.sha256. Weaker than a signature (it comes from
+    # the same server), so it is said, and only for the names in SOLO_SHA256
+    if [ -z "$firma" ] && [ -s "$dir/$file.sha256" ] && [[ " $SOLO_SHA256 " == *" $NOME_CORRENTE "* ]]; then
+        sha=$(sha256sum "$dir/$file" | cut -d' ' -f1)
+        if [ "$(awk '{print $1; exit}' "$dir/$file.sha256")" = "$sha" ]; then
+            echo "sha256 uguale a quello pubblicato ($file.sha256): il progetto non firma"
+            return 0
+        fi
+        echo "! sha256 DIVERSO da $file.sha256"
+        return 1
+    fi
     [ -n "$firma" ] || { echo "! nessuna firma per $file"; return 1; }
     g=$(mktemp -d)
     chmod 700 "$g"
@@ -88,8 +106,11 @@ verifica_firma() {
 
 # ! INTO A FOLDER OF ITS OWN, moved next to the others only when the signature
 # is good: a failed download must not touch the archive already there.
+# the projects that publish a sha256 and no signature (see verifica_firma)
+SOLO_SHA256="qt5 qtsvg"
 scarica() {
     local v url file dir t e f
+    NOME_CORRENTE=$1
     campi "$1"
     [ "$ARCH" != - ] || { echo "! $1: l'indirizzo cambia a ogni versione, va scaricato a mano"; exit 1; }
     v=$(ver_ufficiale)

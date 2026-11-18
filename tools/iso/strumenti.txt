@@ -755,6 +755,21 @@ nota  = valkey-check-rdb, valkey-check-aof, valkey-sentinel sono copie del serve
 nota  = Vuole il kernel 0.317 o piu' nuovo (le pipe non bloccanti).
 
 
+[nano]
+nome  = GNU nano
+dice  = GNU nano 9.3: l'editor di testo dei Linux, con la colorazione della sintassi
+prova = bin/nano
+mbyte = 3
+solo  = bin/nano
+solo  = nano
+solo  = src/nano
+
+nota  = nano file.txt   (^O salva, ^X esce, ^G l'aiuto; ^K/^U taglia e incolla)
+nota  = Il nanorc di sistema e' /exos/nano/nanorc: include la sintassi di
+nota  = /exos/nano/share/nano (C, sh, Python, HTML, Makefile...); il proprio
+nota  = in ~/.nanorc. Niente UTF-8: la console e' CP437 (voce 30).
+
+
 [apache]
 nome  = Apache httpd
 dice  = Apache HTTP Server 2.4.69: httpd con i moduli dentro (anche PHP), ab, htpasswd

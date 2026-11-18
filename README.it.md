@@ -113,6 +113,61 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### GNU nano 9.3 (tools/nano-exos) — testato in QEMU
+
+L'editor di testo di tutti i Linux, a 32 e 64 bit, sopra il ncurses di tools/ncurses-exos:
+`/exos/bin/nano`, il nanorc di sistema in `/exos/nano/nanorc` con la colorazione della sintassi
+di `/exos/nano/share/nano` (C, sh, Python, HTML, Makefile...). Gruppo `[nano]` del CD
+strumenti, `netupdate -install:nano`, e una verifica per netupdate
+(`tools/netinst/verifiche/nano.sh`).
+- **Sorgenti:** nano 9.3 da ftp.gnu.org, firmato da Benno Schulenberg (chiave
+  `168E6F4297BFD7A79AFD4496514BBE2EB8E1961F`, dal portachiavi GNU), in
+  `tools/sorgenti-terzi.txt`: `tools/aggiorna-sorgenti.sh -scarica nano` prende l'ultimo.
+- **Niente UTF-8:** libncurses è la libreria a byte, la libc non ha una localizzazione UTF-8, la
+  console è CP437 (voce 30).
+- **Cosa mancava alla libc, ora c'è (18 novembre):** `<stdio_ext.h>` (`__fseterr`, `__fpending`,
+  `__freading`, `__fpurge`... come musl: senza, il fseterr.c di gnulib è un `#error`);
+  `st_atim`, `st_mtim`, `st_ctim` in `struct stat` (POSIX 2008; i secondi di `st_mtime`,
+  `tv_nsec` 0); `pathconf`/`fpathconf` con `_PC_PIPE_BUF`, `_PC_MAX_CANON`, `_PC_MAX_INPUT`,
+  `_PC_VDISABLE`, e `fpathconf` su una pipe (rispondeva EBADF: una pipe non ha misura).
+- **struct stat è cresciuta ancora, senza rompere niente:** come per `st_rdev` il 7 novembre,
+  stat, lstat, fstat e le loro `*64` hanno un terzo simbolo (`__exos_stat3`, `__exos_stat64_3`...)
+  per il codice nuovo; `__exos_stat2` e i nomi vecchi restano e riempiono solo la struct che
+  conoscevano (scelta dell'utente).
+- nano si collega alla libc di oggi (`libc_di_oggi` nel suo script), non a quella più vecchia
+  dei sysroot.
+- **Provato:** `tools/nano-exos/prova.sh` 6 su 6 a 32 e 64 bit: `nano -V`, la barra del titolo e
+  le righe d'aiuto rilette dallo schermo, una riga scritta e salvata con ^O, `cat` la rilegge, il
+  nanorc di sistema con la sintassi apre un `.c`, nessun FAULT.
+
+### Via i tetti fissi che restavano (kernel 0.347, voce 35) — testato in QEMU
+
+Numeri fissi nel codice, contro la regola che un tetto viene dalla configurazione o
+dall'hardware. Adesso crescono tutti, come le tabelle dei processi e dei file dalla 0.282:
+- **spawn ed exec:** fino alla 0.346 al massimo 512 argomenti e 32 KB di stringhe, e **le
+  variabili d'ambiente dopo la trentaduesima sparivano senza dire niente** (un make o un mach
+  ne hanno di più). Ora il kernel misura quello che gli si passa e alloca esattamente quello;
+  il tetto è lo heap del kernel (e 1 GB per una riga di comando);
+- **dischi:** 16 dispositivi a blocchi in tutto, 16 partizioni per disco, 8 dischi serviti da
+  un processo (le chiavette USB): ora quanti ce ne sono. `disk` ne mostra ancora 16 per disco
+  (l'ABI di `DiskInfo`) e dice quando sono di più;
+- **kernel.cfg:** letto in 8 KB (oltre, le ultime sezioni si perdevano), 16 `[modules]`, 32
+  `[env]`: ora tutto il file e ogni riga;
+- **il floppy:** 64 file aperti; **shm_open:** 1024 zone per processo (libc);
+- **`dup()` e `fcntl(F_DUPFD)` di un socket** rispondevano EOPNOTSUPP: ora funzionano, il
+  socket si chiude con l'ultimo descrittore e una fork lo passa al figlio una volta sola.
+  `dup2` di un socket resta EOPNOTSUPP;
+- la tabella dell'ambiente in ogni descrittore di processo (32 × 128 byte) non la usava
+  nessuno: tolta, 4 KB in meno per processo nella fascia del kernel.
+- **Provato:** i nuovi `tools/prova_tetti.sh` (3000 argomenti e 200 variabili con `spawn_ex`
+  e con `fork`+`execve`, 1500 zone shm, il `dup` di un socket attraverso una fork, un disco con
+  22 partizioni logiche di cui l'ultima si monta e si legge) e `tools/prova_tetti_cfg.sh` (un
+  kernel.cfg da 13,6 KB con 20 moduli e 40 variabili in più, installato su disco), a 32 e 64 bit.
+- **Restano:** un ELF con più di 4 segmenti si carica tutto invece che su richiesta (più
+  lento, giusto); `gfedit` tiene 512 righe e 200 colonne (rifiuta di salvare un file che non ha
+  potuto aprire intero); al massimo 4 redirezioni per spawn (`SPAWN_MAX_AZIONI`, un'ABI); le
+  pile del kernel da 128 KB nei primi 64 MB (circa 450 compiti, una scelta da fare con l'utente).
+
 ### Un segnale interrompe un'attesa su un socket (kernel 0.346, ip.drv 0.026, voce 37) — testato in QEMU e sul PC di prova
 
 - **poll, epoll_wait, recv e send su un socket rendono EINTR** quando arriva un segnale

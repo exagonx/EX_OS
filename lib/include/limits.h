@@ -37,7 +37,7 @@
 #define SSIZE_MAX __PTRDIFF_MAX__  /* ssize_t is __PTRDIFF_TYPE__ (libc.h); libgit2 */
 #endif
 #define LINK_MAX          1     /* non ci sono collegamenti: ogni file ha un nome */
-#define PIPE_BUF       4096     /* dichiarato: le pipe non ci sono ancora */
+#define PIPE_BUF       4096     /* = PIPE_DIM of kernel/include/pipe.h */
 #define SYMLINK_MAX       0     /* nessun collegamento simbolico */
 #define HOST_NAME_MAX    64
 #define _POSIX_PATH_MAX 256     /* the POSIX minimum, not PATH_MAX (MariaDB) */
