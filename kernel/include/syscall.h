@@ -1404,6 +1404,9 @@ typedef struct {
  * passa solo due registri lascia in edx un valore qualunque: tutti i
  * wrapper devono usare la forma a tre argomenti con options=0. */
 #define WNOHANG     0x0001  /* non bloccare se nessun figlio e' finito */
+/* 0.348 (18/11/2026, Qt's forkfd): say who ended and leave it a zombie, the
+ * next wait takes it (waitid's WNOWAIT, Linux's number) */
+#define WNOWAIT     0x01000000
 
 /* DUPLICATA A MANO in lib/include/libc.h e lib/libc.c. */
 typedef struct {

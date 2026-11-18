@@ -13,6 +13,10 @@
 # https://download.videolan.org/pub/videolan/vlc/3.0.24/
 # VLC decodes through tools/ffmpeg-exos. EX-OS has no dlopen: every plugin is
 # linked into one program.
+# (18 November 2026, voce 85) The Qt interface: Qt 5 from tools/qt5-exos
+# (cross_build/qt5-exos<bit>, built first), shared, linked to bin/vlc. The
+# video keeps its own ExWin window (vout_exos): VLC 3 puts it inside the
+# interface only on X11, Windows and macOS.
 # =============================================================================
 NOME=vlc
 VER=3.0.24
@@ -27,6 +31,11 @@ collega() {
         || { grep -a -E " error:" "$B/costruisci.log" | sort -u | head -30; exit 1; }
     # --- one program: every plugin, listed by its entry point -------------
     local P=$B/obj/modules/.libs nomi
+    # the Qt interface, when it was built: Qt's shared libraries, and where
+    # the linker finds what they need in turn
+    local Q=$TC/qt5-exos$BIT/exos/qt5 QTLIB=""
+    # (-rpath: on the disk Qt is in /exos/qt5/lib, not in /exos/lib)
+    [ -f "$P/libqt_plugin.a" ] && QTLIB="-L$Q/lib -lQt5Widgets -lQt5Svg -lQt5Gui -lQt5Core -Wl,-rpath,/exos/qt5/lib -Wl,-rpath-link,$Q/lib -Wl,-rpath-link,$CROSS/$T/lib"
     # Mesa installs GL/gl.h, so configure says HAVE_GL; but EX-OS has only
     # EGL and GLES2, no libGL: glspectrum (glPushMatrix...) cannot link
     rm -f "$P"/libglspectrum_plugin.a
@@ -60,7 +69,7 @@ collega() {
         "$B/obj/lib/.libs/libvlc.a" "$B/obj/src/.libs/libvlccore.a" \
         $(ls "$B"/obj/compat/.libs/libcompat.a 2>/dev/null) \
         -lavformat -lavcodec -lswscale -lswresample -lavutil -lvpx -ldav1d \
-        -lFLAC -lopus -lvorbisenc -lvorbis -logg -lz -lncurses -lm -lpthread -Wl,--end-group \
+        -lFLAC -lopus -lvorbisenc -lvorbis -logg -lz -lncurses $QTLIB -lm -lpthread -Wl,--end-group \
         > "$B/collega.log" 2>&1 || { grep -a -E "undefined reference|multiple definition" "$B/collega.log" \
             | sed -E 's/.*(undefined reference to .*|multiple definition of [^;]*).*/\1/' | sort | uniq -c | sort -rn | head -30; exit 1; }
     mkdir -p "$DEST/bin"
@@ -72,6 +81,9 @@ collega() {
 
 costruisci() {
     lib_per "$1"
+    BIT=$1
+    local Q=$TC/qt5-exos$BIT/exos/qt5
+    [ -f "$Q/lib/pkgconfig/Qt5Widgets.pc" ] || manca "$Q" "tools/qt5-exos/costruisci.sh $BIT (the Qt interface)"
     # ! VLC_SOLO_COLLEGA=1: only aout_exos/vout_exos and the link, on a tree
     # already configured and built (minutes instead of the whole VLC)
     if [ "${VLC_SOLO_COLLEGA:-}" = 1 ] && [ -f "$B/obj/src/.libs/libvlccore.a" ]; then
@@ -103,6 +115,11 @@ costruisci() {
     # override.c wraps libc functions that are not thread-safe on Linux: in one
     # static program they are two definitions of the same name
     echo '/* EX-OS: nothing to override in a static program */ void vlc_enable_override(void) {}' > "$SRC/bin/override.c"
+    # ! THE VIDEO IN ITS OWN WINDOW (18 November 2026): VLC 3 puts it inside
+    # the Qt interface only on X11, Windows and macOS; here the interface
+    # kept an empty black box for it. embedded-video defaults to off
+    sed -i 's/^    add_bool( "embedded-video", 1, EMBEDDED_TEXT, EMBEDDED_LONGTEXT,/    add_bool( "embedded-video", 0, EMBEDDED_TEXT, EMBEDDED_LONGTEXT,/' "$SRC/src/libvlc-module.c"
+    grep -q 'add_bool( "embedded-video", 0' "$SRC/src/libvlc-module.c" || { echo "libvlc-module.c: embedded-video non trovato"; exit 1; }
     # two plugins export the same table name: in one program it must be local
     sed -i 's/^const char \*const ppsz_mode_descriptions\[\]/static &/' \
         "$SRC/modules/video_chroma/swscale.c" "$SRC/modules/video_filter/puzzle.c"
@@ -127,11 +144,11 @@ costruisci() {
     # (tools/ncurses-exos, voce 30): a UTF-8 title shows its accents as two
     # signs, as in nano
     pc ncursesw 6.6 "-lncurses"
-    ( cd "$B/obj" && PKG_CONFIG_LIBDIR="$B/pc" "$SRC/configure" --host=$T --build=x86_64-pc-linux-gnu \
+    ( cd "$B/obj" && PKG_CONFIG_LIBDIR="$B/pc:$Q/lib/pkgconfig" "$SRC/configure" --host=$T --build=x86_64-pc-linux-gnu \
         --prefix=/exos/vlc CC=$CC CXX=$CXX AR=$AR RANLIB=$RANLIB \
         CFLAGS="$CFLAGS -I$B/libc/include -D__unix__ -DEXOS_SOLO_POSIX -D_GNU_SOURCE -std=gnu11 -Wno-error=incompatible-pointer-types" \
-        CXXFLAGS="$CFLAGS -D__unix__ -DEXOS_SOLO_POSIX -D_GNU_SOURCE" LDFLAGS="-static -L$B/libc" \
-        --disable-shared --enable-static --disable-nls --disable-lua --disable-qt --disable-skins2 \
+        CXXFLAGS="$CFLAGS -fPIC -D__unix__ -DEXOS_SOLO_POSIX -D_GNU_SOURCE" LDFLAGS="-static -L$B/libc" \
+        --disable-shared --enable-static --disable-nls --disable-lua --enable-qt --disable-skins2 \
         --disable-xcb --disable-xvideo --disable-alsa --disable-pulse --disable-jack --disable-oss \
         --disable-dbus --disable-a52 --disable-mad --disable-libgcrypt --disable-gnutls --disable-vlm \
         --disable-sout --disable-addonmanagermodules --disable-avahi --disable-udev --disable-mtp \
@@ -145,7 +162,9 @@ costruisci() {
         --enable-avcodec --enable-avformat --enable-swscale --enable-ogg --enable-opus --enable-vorbis \
         --enable-flac --enable-run-as-root --enable-ncurses \
         ) > "$B/configura.log" 2>&1 || { tail -20 "$B/configura.log"; exit 1; }
+    grep -q "^QT_LIBS = .*Qt5Widgets" "$B/obj/Makefile" || { echo "vlc: configure non ha trovato Qt"; grep -a -A3 "Qt5Core" "$B/configura.log" | tail -8; exit 1; }
     make -C "$B/obj" -k -j8 > "$B/costruisci.log" 2>&1 || true
+    [ -f "$B/obj/modules/.libs/libqt_plugin.a" ] || { echo "vlc: l'interfaccia Qt non si e' costruita"; grep -a " error" "$B/costruisci.log" | grep -a "gui/qt" | sort -u | head -20; exit 1; }
     collega
     lib_fine "$R"/tools/vlc-exos/src/*.c
 }

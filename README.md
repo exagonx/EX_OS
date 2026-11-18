@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.347
+**Version:** 0.348
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -110,6 +110,49 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### Qt 5 on EX-OS, and VLC with its menus (tools/qt5-exos, kernel 0.348, voce 85) — tested in QEMU
+
+VLC's window had no menu and no controls: in VLC 3 those are the Qt interface, and Qt was not
+on EX-OS. Now it is, built the same way as Apache, PHP and MariaDB: a script, the newest sources,
+a group on the tools CD, a check for netupdate, the tests at 32 and 64 bit.
+- **Qt 5.15.19** (qtbase and qtsvg, the last public Qt 5), `tools/qt5-exos/costruisci.sh [32|64]`:
+  Core, Gui, Widgets, Network with SSL (the OpenSSL 4.1 of the sysroot), Sql with SQLite, Xml,
+  Svg, PrintSupport, Concurrent, Test, all shared, in `/exos/qt5`. The fonts are DejaVu 2.37 in
+  `/exos/qt5/lib/fonts` (there is no fontconfig). The sources go in `tools/sorgenti-terzi.txt`;
+  Qt signs nothing, so `aggiorna-sorgenti.sh` takes its published `.sha256` for these two only.
+- **The platform plugin "exwin"** (`tools/qt5-exos/qpa-exwin`): every Qt window is an ExWin
+  window, painted through the server's shared zone; keyboard, mouse, wheel, right button, close
+  box, menus and tooltips (popup windows of the server). The mkspec is `exos-g++`.
+- **What it took in the libc** (in the sysroots with the new
+  `tools/librerie-exos/aggiorna-sysroot.sh`): `nfds_t`, `<byteswap.h>`, `O_LARGEFILE`,
+  `_SC_SYMLOOP_MAX`, `statvfs64`, `CLD_*`, `waitid()` with `WEXITED`/`WNOWAIT`, `<resolv.h>`
+  (`res_init`), `struct ifreq`/`ifconf` and the `SIOCGIF*` numbers (the interface list is empty
+  until interfaces have names, voce 101), the IPv6 socket options and `struct ipv6_mreq`.
+- **Kernel 0.348:** `waitpid` with `WNOWAIT` leaves the zombie (for `waitid`), and **a thread can
+  read the console**: the foreground check compared the thread's own pid, so every thread but
+  the first got "end of input" and the keys went to the shell. VLC's text interface reads the
+  keyboard from a thread: `q` did not quit it. `tools/prova_curses.sh` now tests it
+  (`tools/prove/cursesfilo.c`).
+- **Every port rebuilt** on the new libc: `tools/librerie-exos/ricostruisci-tutto.sh` (new) does
+  every `tools/<name>-exos/costruisci.sh` in order at 32 and 64 bit; Qt goes before VLC.
+- **VLC:** `vlc -I qt film.mp4` opens VLC's window with its menus, the time bar, the buttons and
+  the volume; the video stays in its own window (`embedded-video` off: VLC 3 puts it inside the
+  interface only on X11, Windows and macOS). `vlc -I ncurses` is the text interface. The `[vlc]`
+  group now wants `[qt5]`; VLC finds Qt through its RUNPATH `/exos/qt5/lib`.
+- **Not yet in Qt:** QSharedMemory and QSystemSemaphore (no named semaphores or IPC between
+  processes), QDnsLookup, QNetworkInterface (empty), file times (`futimens`), inotify. moc, rcc
+  and uic run on the build machine only.
+- **At 32 bit Qt is built with `-no-sse2`:** Qt 5 turns SSE2 on in all its libraries on its own
+  and refuses to start without it; EX-OS at 32 bit runs on a Pentium MMX.
+- **Tested in QEMU at 32 and 64 bit:** `tools/qt5-exos/prova.sh` 9/9 (`ciaoqt`: the window,
+  typing in a line edit, a button, the File menu and its Esci, a property animation, a PNG
+  written and read back, no FAULT); `tools/vlc-exos/prova.sh` with `vlc -I qt` (VLC's log says
+  the "qt" interface is in use, its window on the screen) and `vlc -I ncurses` (the screen read
+  back, `q` quits), the audio and the three videos as before; `tools/prova_curses.sh`,
+  `tools/prova_tetti.sh`, `tools/prova_segnali.sh` and `tools/prova_telnet_piu.sh` for kernel
+  0.348. Still open: the middle of VLC's window is black, without the cone (animations, PNG and
+  VLC's resources work: to be found), and the volume reads 0%.
 
 ### GNU nano 9.3 (tools/nano-exos) — tested in QEMU
 
@@ -901,7 +944,7 @@ and the two left still answer (6 of 6). `prova_telnet.sh` and
   only (about two minutes) after changing a module of ours.
 - **The window has no menu and no controls**: they are VLC's Qt interface, and Qt is not on EX-OS
   yet. The port of Qt 5 (libstdc++ shared, FreeType, HarfBuzz, libpng, Qt 5.15 with an ExWin QPA
-  plugin, then VLC with `--enable-qt`) is voce 85 of the queue.
+  plugin, then VLC with `--enable-qt`) is voce 85 of the queue. (18 November: done, `vlc -I qt`.)
   ! `toolinst` (installing from the tools CD) does not read the `menu` key yet.
 
 ### The screen switches off when nobody uses it (kernel 0.312, dpms.drv 0.002, voce 78 b)

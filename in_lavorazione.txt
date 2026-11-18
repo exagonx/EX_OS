@@ -9078,7 +9078,7 @@ tools/netinst/velocita tolto da netinst.
         applica.py con AGGIORNAMENTI per gli alberi vecchi). Toolchain coi
         fili in ricostruzione. DejaVu 2.37 scaricato.
       - Qt 5.15.19 (l'ultima pubblica) qtbase e qtsvg in
-        cross_build/terze-parti/qt, sha256 uguale a quello di Qt.
+        cross_build/terze-parti/qt5 e qtsvg, sha256 uguale a quello di Qt.
         tools/qt5-exos/applica.py (Q_OS_EXOS) e la mkspec exos-g++.
       - COSA QT CHIEDE A EX-OS (primo elenco, da completare col configure):
         header mancanti: langinfo.h, ifaddrs.h; funzioni: nl_langinfo,
@@ -9103,6 +9103,70 @@ tools/netinst/velocita tolto da netinst.
       frattempo, con ncurses gia' qui, si puo' costruire l'interfaccia di
       testo (--enable-ncurses, vlc -I ncurses: comandi da tastiera in un
       terminale), se l'utente la vuole.
+      18/11, l'utente: "procedi con ncurses e poi passa a qt con la
+      procedura php apache mariadb".
+      - VLC -I ncurses: --enable-ncurses, ncursesw.pc che dice -lncurses
+        (il modulo chiede il nome, ma usa solo mbstowcs/wcwidth/wcswidth),
+        wcswidth nuova nella libc; prova in tools/vlc-exos/prova.sh.
+      - SYSROOT RIFATTI con la libc del 18/11 (l'utente: "aggiorna la
+        sysroot e se e' necessario ricompila tutti i programmi che ne
+        dipendono"): le quattro toolchain, libc.a vecchie in
+        libc.a.prima-18-11; tools/librerie-exos/ricostruisci-tutto.sh
+        (nuovo) rifa' ogni porting in ordine a 32 e 64. Fuori: Exilla, i
+        compilatori per EX-OS, libgit2.
+      - Qt: tools/qt5-exos/costruisci.sh (nuovo), qt5 e qtsvg in
+        sorgenti-terzi.txt (archivi spostati in terze-parti/qt5 e qtsvg;
+        Qt non firma: aggiorna-sorgenti.sh accetta il .sha256 pubblicato
+        solo per loro, SOLO_SHA256), il plugin QPA "exwin"
+        (tools/qt5-exos/qpa-exwin: finestra = zona shm del server,
+        QSocketNotifier su FD_IPC, WIN_MSG_TASTI e PASSAGGIO, comparse per
+        menu e suggerimenti), DejaVu in /exos/qt5/lib/fonts.
+        ! La mkspec exos-g++ non includeva common/unix.conf: configure
+        saltava i test di config.unix, e QLibrary (i plugin) era SPENTO.
+      - COSA QT NON TROVA ANCORA IN EX-OS (configure del 18/11):
+        futimens/futimes (e utime/utimes NON cambiano le date: il kernel
+        non ha una syscall per scriverle -> da fare nel VFS, ext2 e FAT);
+        semafori fra processi (sem_open, pshared) e IPC SysV o POSIX con
+        nome -> QSharedMemory e QSystemSemaphore spenti (l'attesa del
+        kernel vale dentro un gruppo di fili); inotify (Qt guarda a
+        intervalli); ppoll (usa poll); getifaddrs (QNetworkInterface).
+      - AGGIUNTI DOPO quel configure (libc nei sysroot con
+        tools/librerie-exos/aggiorna-sysroot.sh): waitid (con WNOWAIT nel
+        kernel 0.348), resolv.h/res_init, struct ifreq/ifconf e SIOCGIF*
+        (SIOCGIFCONF da' un elenco vuoto: voce 101), opzioni IPv6. Qt con
+        -no-feature-dnslookup (QDnsLookup vuole res_nquery, che non c'e').
+        OpenSSL 4.1: applica.py corregge le macro DEFINEFUNC collegate e
+        gli accessi diretti agli ASN1_STRING.
+      - KERNEL 0.348: un filo che legge la console riceveva EOF (il
+        controllo del primo piano guardava il pid del filo, non il tgid):
+        VLC -I ncurses non sentiva q. Prova in tools/prova_curses.sh
+        (tools/prove/cursesfilo.c), ok a 32 e 64.
+      - FATTO IN QEMU: tools/qt5-exos/prova.sh (ciaoqt: finestra, riga,
+        bottone, menu, Esci) 7/7 a 64 bit; tools/vlc-exos/prova.sh col
+        passo "vlc -I qt" (registro -vv: modulo "qt" in uso, finestra con
+        menu e controlli) e "vlc -I ncurses" ok a 64 bit. Il video resta
+        nella sua finestra: embedded-video spento (VLC 3 lo incassa solo su
+        X11, Windows, macOS). Il plugin exwin tiene la barra del titolo
+        sullo schermo (il primo dialogo di VLC usciva a y negativa).
+      - 32 BIT: Qt partiva con "Incompatible processor ... sse2" e poi
+        finiva la pila. Qt 5 accende SSE2 da solo in tutte le librerie:
+        configure con -no-sse2 a 32 bit (EX-OS a 32 bit = Pentium MMX).
+      - PACCHETTO: gruppo [qt5] in tools/iso/strumenti.txt (vuole ssl),
+        [vlc] vuole qt5, su-cd.sh mette exos/qt5 e exos/src/qt5,
+        tools/netinst/verifiche/qt5.sh, qt5 in ricostruisci-tutto.sh prima
+        di vlc. VLC ha RUNPATH /exos/qt5/lib.
+      - 32 BIT FATTO: Qt 9/9, VLC con -I qt e -I ncurses ok; regressioni
+        di 0.348 ok (prova_curses, prova_tetti, prova_segnali,
+        prova_telnet_piu a 32 e 64). ciaoqt prova anche un'animazione e
+        un PNG (scritto e riletto in memoria).
+      - APERTO: il centro della finestra di VLC (-I qt) e' nero, il cono
+        non c'e'. Misurato: animazioni (QT-ANIMA 1), PNG e risorse di VLC
+        (qInitResources_vlc collegata) vanno; da capire in BackgroundWidget
+        / MainInterface di VLC. Il volume segna 0% (aout_exos non dice il
+        volume?).
+      - RESTA: provarlo sul portatile (dopo il CD strumenti e netupdate);
+        QSharedMemory/QSystemSemaphore, QNetworkInterface, futimens,
+        inotify (vedi sopra).
 
   86. CONSOLIDARE IL SISTEMA SUL FERRO (l'utente, 5/11: "restano da
       consolidare la gestione ACPI, il Plug and Play, il parallelismo SMP

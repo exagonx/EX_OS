@@ -105,6 +105,7 @@ typedef long                suseconds_t;  /* struct timeval's tv_usec (MariaDB) 
  * ha i campi (a zero) e chi li stampa deve poterli dichiarare. */
 typedef unsigned int        uid_t;
 typedef unsigned int        gid_t;
+typedef unsigned int        id_t;      /* waitid (18/11/2026) */
 
 /* =============================================================================
  * ! DA QUI IN GIU' E' TUTTO extern "C" QUANDO CI PASSA UN COMPILATORE C++
@@ -1834,6 +1835,9 @@ int truncate64(const char *path, off64_t size);
 #define O_NOCTTY    0x100
 #define O_NOFOLLOW  0x20000
 #define O_CLOEXEC   0x80000
+/* (18/11/2026, Qt) every open is already large (lseek64 at 32 bit): 0 as on
+ * x86_64 Linux and musl */
+#define O_LARGEFILE 0
 #define O_ACCMODE   3
 
 /* =============================================================================
@@ -2656,6 +2660,7 @@ typedef struct {
         struct {
             int          si_pid;
             unsigned int si_uid;
+            int          si_status;     /* SIGCHLD and waitid: the exit code */
         } _mandato;
         int _resto[29];
     } _campi;
@@ -2663,11 +2668,30 @@ typedef struct {
 #define si_addr  _campi.si_addr
 #define si_pid   _campi._mandato.si_pid
 #define si_uid   _campi._mandato.si_uid
+#define si_status _campi._mandato.si_status
+
+/* waitid (18/11/2026, kernel 0.348, Qt's forkfd). Only WEXITED reports
+ * anything: no process stops or continues on EX-OS. A child killed by a
+ * signal ended with 128 + the signal, as waitpid says: CLD_EXITED with that
+ * code. P_PGID is every child (there are no process groups, as waitpid). */
+typedef enum { P_ALL = 0, P_PID = 1, P_PGID = 2 } idtype_t;
+#define WSTOPPED        0x0002
+#define WEXITED         0x0004
+#define WCONTINUED      0x0008
+#define WNOWAIT         0x01000000      /* = kernel/include/syscall.h */
+int     waitid(idtype_t tipo, id_t id, siginfo_t *info, int opzioni);
 
 /* si_code */
 #define SI_USER      0
 #define SI_KERNEL    0x80
 #define SI_TKILL     (-6)
+/* SIGCHLD's codes, Linux numbers (18/11/2026, Qt's forkfd and QProcess) */
+#define CLD_EXITED    1
+#define CLD_KILLED    2
+#define CLD_DUMPED    3
+#define CLD_TRAPPED   4
+#define CLD_STOPPED   5
+#define CLD_CONTINUED 6
 #define SEGV_MAPERR  1
 #define SEGV_ACCERR  2
 #define BUS_ADRALN   1
@@ -2873,6 +2897,8 @@ struct lconv *localeconv(void);
 #define _SC_PAGE_SIZE           _SC_PAGESIZE
 /* Quanto buffer chiede getpwuid_r (vedi <pwd.h>): 64 + 256. */
 #define _SC_GETPW_R_SIZE_MAX    70
+/* No symlinks on EX-OS: the POSIX minimum, 8 (18/11/2026, Qt's time zones) */
+#define _SC_SYMLOOP_MAX         173
 
 long    sysconf(int nome);
 
@@ -3966,7 +3992,9 @@ struct pollfd {
     short revents;      /* out: cosa e' successo */
 };
 
-int     poll(struct pollfd *fds, unsigned int nfds, int timeout);
+/* nfds_t (18/11/2026, Qt): the type POSIX gives the count, the same width */
+typedef unsigned int nfds_t;
+int     poll(struct pollfd *fds, nfds_t nfds, int timeout);
 
 /* fd_set: one bit per descriptor, FD_SETSIZE of them (25 October 2026, the
  * openssl program's s_client). Since kernel 0.281 files, pipes and sockets
@@ -4245,6 +4273,22 @@ typedef unsigned int    in_addr_t;
 #define IP_ADD_MEMBERSHIP  35
 #define IP_DROP_MEMBERSHIP 36
 #define IPV6_V6ONLY     26
+/* The IPv6 ones, same rule (18/11/2026, Qt's socket engine): Linux numbers,
+ * accepted at level IPPROTO_IPV6 and changing nothing. */
+#define IPV6_UNICAST_HOPS   16
+#define IPV6_MULTICAST_IF   17
+#define IPV6_MULTICAST_HOPS 18
+#define IPV6_MULTICAST_LOOP 19
+#define IPV6_JOIN_GROUP     20
+#define IPV6_LEAVE_GROUP    21
+#define IPV6_ADD_MEMBERSHIP IPV6_JOIN_GROUP
+#define IPV6_DROP_MEMBERSHIP IPV6_LEAVE_GROUP
+#define IPV6_RECVPKTINFO    49
+#define IPV6_PKTINFO        50
+#define IPV6_RECVHOPLIMIT   51
+#define IPV6_HOPLIMIT       52
+#define IPV6_RECVTCLASS     66
+#define IPV6_TCLASS         67
 
 #define MSG_OOB         0x1
 #define MSG_PEEK        0x2
@@ -4331,6 +4375,16 @@ struct linger { int l_onoff; int l_linger; };
 struct ip_mreq {
     struct in_addr imr_multiaddr;
     struct in_addr imr_interface;
+};
+
+struct ipv6_mreq {                      /* (18/11/2026, Qt) */
+    struct in6_addr ipv6mr_multiaddr;
+    unsigned int    ipv6mr_interface;
+};
+
+struct in6_pktinfo {                    /* IPV6_PKTINFO's ancillary data */
+    struct in6_addr ipi6_addr;
+    unsigned int    ipi6_ifindex;
 };
 
 struct iovec { void *iov_base; size_t iov_len; };

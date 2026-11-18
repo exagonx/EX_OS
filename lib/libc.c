@@ -655,7 +655,7 @@ typedef struct {
     int si_code;
     union {
         void *si_addr;
-        struct { int si_pid; unsigned int si_uid; } _mandato;
+        struct { int si_pid; unsigned int si_uid; int si_status; } _mandato;
         int _resto[29];
     } _campi;
 } siginfo_t;
@@ -727,6 +727,7 @@ void longjmp(jmp_parola *env, int val) __attribute__((noreturn));
 #define _SC_PHYS_PAGES         85
 #define _SC_GETPW_R_SIZE_MAX   70
 #define _SC_AVPHYS_PAGES       86
+#define _SC_SYMLOOP_MAX       173   /* (18/11/2026, Qt) */
 
 typedef long clock_t;
 struct tms { clock_t tms_utime, tms_stime, tms_cutime, tms_cstime; };
@@ -6895,6 +6896,40 @@ int wait(int *stato)
     return waitpid(-1, stato, 0);
 }
 
+/* waitid (18/11/2026, kernel 0.348): waitpid with the answer in a siginfo_t.
+ * The numbers are the ones of lib/include/libc.h. */
+int waitid(unsigned int tipo, unsigned int id, siginfo_t *info, int opzioni)  /* idtype_t: an unsigned enum for GCC */
+{
+    int pid, stato = 0, r;
+
+    if (!info) { errno = EFAULT; return -1; }
+    /* WEXITED, WSTOPPED, WCONTINUED, WNOHANG, WNOWAIT and nothing else */
+    if ((opzioni & ~(0x0002 | 0x0004 | 0x0008 | 0x0001 | 0x01000000)) != 0
+        || (opzioni & (0x0002 | 0x0004 | 0x0008)) == 0) { errno = EINVAL; return -1; }
+    switch (tipo) {
+        case 0 /* P_ALL */:  pid = -1; break;
+        case 1 /* P_PID */:  if ((int)id <= 0) { errno = EINVAL; return -1; }
+                             pid = (int)id; break;
+        case 2 /* P_PGID */: pid = -1; break;    /* every child is in our group */
+        default:             errno = EINVAL; return -1;
+    }
+    memset(info, 0, sizeof(*info));
+    /* ! NOTHING STOPS ON EX-OS: without WEXITED there is never an answer,
+     * and blocking would be for ever */
+    if (!(opzioni & 0x0004)) {
+        if (opzioni & 0x0001) return 0;
+        errno = ECHILD; return -1;
+    }
+    r = waitpid(pid, &stato, opzioni & (0x0001 | 0x01000000));
+    if (r < 0) return -1;
+    if (r == 0) return 0;               /* WNOHANG, nobody ended: si_pid 0 */
+    info->si_signo = 17;                /* SIGCHLD */
+    info->si_code = 1;                  /* CLD_EXITED, see libc.h */
+    info->_campi._mandato.si_pid = r;
+    info->_campi._mandato.si_status = stato & 0xFF;
+    return 0;
+}
+
 /* =============================================================================
  * DIRECTORY nella forma POSIX
  *
@@ -8334,6 +8369,7 @@ long sysconf(int nome)
             return (long)((nome == _SC_PHYS_PAGES ? mi.total_kb : mi.free_kb) / 4u);
         }
         case _SC_ARG_MAX:           return 16 * 320;
+        case _SC_SYMLOOP_MAX:       return 8;     /* _POSIX_SYMLOOP_MAX: there are no symlinks */
         default:                    errno = EINVAL; return -1;
     }
 }
@@ -17091,6 +17127,16 @@ static int presa_ioctl(int fd, unsigned int req, void *arg)
         *(int *)arg = 0;
         return 0;
     }
+    /* (18/11/2026, Qt) the interfaces by name: there are none with a name
+     * (lib/include/net/if.h), so SIOCGIFCONF lists nothing and the rest of
+     * SIOCGIF* (0x8910..0x8933) finds no such device. ifc_len is the first
+     * field of struct ifconf. */
+    if (req == 0x8912 /* SIOCGIFCONF */) {
+        if (!arg) return presa_errore(EFAULT);
+        *(int *)arg = 0;
+        return 0;
+    }
+    if (req >= 0x8910 && req <= 0x8933) return presa_errore(ENXIO);
     return presa_errore(ENOTTY);
 }
 
@@ -17760,6 +17806,13 @@ struct hostent *gethostbyaddr(const void *ind, unsigned int len, int famiglia)
     h.h_name = nome; h.h_aliases = alias; h.h_addrtype = S_AF_INET;
     h.h_length = 4; h.h_addr_list = lista;
     return &h;
+}
+
+/* res_init (18/11/2026, Qt): the DNS server is read at every question
+ * (dns_chiedi), there is nothing to load again. See lib/include/resolv.h. */
+int res_init(void)
+{
+    return 0;
 }
 
 struct hostent *gethostbyname(const char *nome)

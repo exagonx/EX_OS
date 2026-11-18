@@ -473,7 +473,11 @@ int32_t sys_read(InterruptFrame *frame)
          * perche' il sistema funzioni anche prima che una shell abbia
          * detto la sua.
          * ================================================================= */
-        if (fg != 0 && fg != proc->pid) return 0;
+        /* ! THE PROCESS, NOT THE THREAD (0.348, 18/11/2026): fg is the pid
+         * of a process, and a thread's pid is its own. VLC's text interface
+         * reads the keyboard from a thread of its own: poll said ready, the
+         * read said end of input, and the keys stayed for the shell. */
+        if (fg != 0 && fg != proc->pid && fg != proc->tgid) return 0;
 
         int32_t n = drv_read(buf, count);
         return n;
@@ -1269,7 +1273,7 @@ int32_t sys_fcntl(InterruptFrame *frame)
  *
  * ebx = pid  (-1 = qualsiasi figlio)
  * ecx = status* (puntatore dove scrivere exit code, può essere NULL)
- * edx = options (non usate per ora)
+ * edx = options: WNOHANG, WNOWAIT (0.348: the zombie stays, for waitid)
  *
  * Ritorna: pid del figlio terminato, o errore
  * ============================================================================= */
@@ -1333,6 +1337,9 @@ int32_t sys_waitpid(InterruptFrame *frame)
             if (fl & 0x200u) interrupts_enable();
             if (status) *status = child_exit;
 
+            /* ! WNOWAIT ONLY LOOKS: forkfd asks which child ended before it
+             * knows whose it is, and the owner reaps it afterwards */
+            if (options & WNOWAIT) return (int32_t)child_pid;
             proc_reap_zombie(p);
 
             klog(LOG_DEBUG, "SYSCALL waitpid: raccolto PID %u, code=%d",

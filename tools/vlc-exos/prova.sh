@@ -12,6 +12,11 @@
 # MP3 through the "audio" service (aout_exos); then ExWin starts and VLC
 # plays three videos, H.264 with AAC, VP9 and AV1, in a window (vout_exos),
 # with a screenshot during each one. Run after tools/vlc-exos/costruisci.sh.
+# Between the two, the text interface (vlc -I ncurses, 18 November 2026): its
+# screen read back while it plays, then q. At the end the Qt interface
+# (vlc -I qt, same day): its window on the screen, and VLC's own log (-vv,
+# on the disk, read back with debugfs) says the "qt" interface module is in
+# use.
 # What is [OK]: the card played at least as many seconds as the audio files
 # last, VLC wrote no error for the audio, and every screenshot of a video has
 # a picture in it (at least 2% of the screen differs from the empty desktop: the AV1 file is 160x90).
@@ -32,6 +37,33 @@ mkdir -p "$S/lib"
 for l in ffmpeg libvpx dav1d opus vorbis ogg flac zlib; do
     cp "$TC"/$l-exos$BIT/exos/lib/lib*.so.[0-9]* "$S/lib/" 2>/dev/null
 done
+# Qt for the Qt interface (tools/qt5-exos), and every library the program and
+# Qt's plugins need that is not there yet, from the sysroot
+Q="$TC/qt5-exos$BIT/exos/qt5"
+case $BIT in 64) TRIPLA=x86_64-exos; CROSS=$TC/$MACCHINA/exos-cross64 ;; *) TRIPLA=i386-exos; CROSS=$TC/$MACCHINA/exos-cross ;; esac
+[ -f "$Q/lib/libQt5Widgets.so.5" ] || { echo "manca $Q: prima tools/qt5-exos/costruisci.sh $BIT" >&2; exit 1; }
+cp -a "$Q" "$S/qt5"
+rm -rf "$S/qt5/include" "$S/qt5/mkspecs" "$S/qt5/bin" "$S/qt5/lib/cmake" "$S/qt5/lib/pkgconfig" "$S"/qt5/lib/*.a "$S"/qt5/lib/*.la "$S"/qt5/lib/*.prl
+python3 - "$CROSS/bin/$TRIPLA-readelf" "$S" "$CROSS/$TRIPLA/lib" <<'PY' || exit 1
+import glob, os, re, shutil, subprocess, sys
+readelf, disco, sysroot = sys.argv[1:4]
+qui = {os.path.basename(f): f for f in glob.glob(disco + "/lib/*") + glob.glob(disco + "/qt5/lib/*.so.*")}
+da_fare = [disco + "/vlc"] + glob.glob(disco + "/qt5/plugins/*/*.so")
+visti, mancano = set(), set()
+while da_fare:
+    d = subprocess.run([readelf, "-d", da_fare.pop()], capture_output=True, text=True).stdout
+    for n in re.findall(r"\(NEEDED\).*\[(.*)\]", d):
+        if n in visti: continue
+        visti.add(n)
+        if n in qui: da_fare.append(qui[n]); continue
+        p = os.path.join(sysroot, n)
+        if os.path.exists(p):
+            shutil.copy(os.path.realpath(p), os.path.join(disco, "lib", n)); da_fare.append(p)
+        else:
+            mancano.add(n)
+if mancano:
+    print("  [NO] librerie non trovate: %s" % " ".join(sorted(mancano))); sys.exit(1)
+PY
 AUDIO="sound.ogg small-shot.flac small-shot.mp3"
 VIDEO="gizmo.mp4 vp9cake.webm av1.mp4"
 for f in $AUDIO $VIDEO; do cp "firefox-main/dom/media/test/$f" "$S/m/"; done
@@ -65,12 +97,18 @@ T=/tmp/exos/foto-vlc$BIT; rm -rf "$T"; mkdir -p "$T"
     echo "echo attendo la fine dei lavori di avvio@25"
     echo "audio -i@40"
     echo "export HOME=/disk/casa@1"
-    echo "export LD_LIBRARY_PATH=/disk/lib@1"
+    echo "export LD_LIBRARY_PATH=/disk/lib:/disk/qt5/lib@1"
+    echo "export QT_PLUGIN_PATH=/disk/qt5/plugins@1"
+    echo "export QT_QPA_FONTDIR=/disk/qt5/lib/fonts@1"
     for f in $AUDIO; do
         echo "echo VLC-AUDIO $f@1"
         echo "/disk/vlc -I dummy --aout exos --no-video --play-and-exit /disk/m/$f@${PAUSA_AUDIO:-20}"
     done
     echo "echo VLC-AUDIO-FINE@1"
+    echo "/disk/vlc -I ncurses --aout exos --no-video /disk/m/sound.ogg@8"
+    echo "foto:$T/ncurses.ppm@1"
+    echo "q@n4"
+    echo "echo VLC-NCURSES-FINE@1"
     echo "exwin@14"
     echo "key:alt-f5@4"
     echo "foto:$T/fondo.ppm@2"
@@ -84,6 +122,13 @@ T=/tmp/exos/foto-vlc$BIT; rm -rf "$T"; mkdir -p "$T"
         echo "foto:$T/${f%%.*}.ppm@${PAUSA_VIDEO:-20}"
         echo "key:alt-f1@2"
     done
+    # the Qt interface, with a video it plays in its own window
+    echo "echo VLC-QT@1"
+    echo "/disk/vlc -I qt -vv --aout exos --vout exos --input-repeat=8 /disk/m/gizmo.mp4 > /disk/casa/qt.log 2>&1 &@1"
+    echo "key:alt-f5@${PAUSA_QT:-30}"
+    echo "foto:$T/qt.ppm@2"
+    echo "key:alt-f1@2"
+    echo "sync@3"
     echo "echo FINE-VLC@2"
 } > "$D/passi.txt"
 mapfile -t A < "$D/passi.txt"
@@ -120,6 +165,15 @@ else
     echo "  [NO] audio: la scheda ha suonato meno dei file"; esito=1
 fi
 
+# --- the text interface -----------------------------------------------------
+python3 tools/schermo_testo.py -i "$T/ncurses.ppm" > "$D/ncurses.txt" 2>&1
+if grep -q "VLC media player" "$D/ncurses.txt" && grep -q "sound.ogg" "$D/ncurses.txt"; then
+    echo "  [OK] vlc -I ncurses: l'intestazione e il file sullo schermo"
+else
+    echo "  [NO] vlc -I ncurses: lo schermo non lo mostra ($D/ncurses.txt)"; esito=1
+fi
+grep -aq "VLC-NCURSES-FINE" "$D/seriale.txt" || { echo "  [NO] vlc -I ncurses: q non l'ha chiuso"; esito=1; }
+
 # --- video --------------------------------------------------------------------
 for f in $VIDEO; do
     p="$T/${f%%.*}.ppm"; q="$D/foto/${f%%.*}.png"
@@ -144,5 +198,32 @@ E
         echo "  [NO] $f: ${cambiati:-0}% dello schermo cambiato, $q"; esito=1
     fi
 done
+# --- the Qt interface -------------------------------------------------------
+P1=$(/sbin/sfdisk -d "$IMG" 2>/dev/null | sed -n 's/.*start= *\([0-9]*\).*/\1/p' | head -1)
+dd if="$IMG" of="$D/p1.img" bs=512 skip="${P1:-2048}" status=none
+/sbin/debugfs -R "dump /casa/qt.log $D/qt.log" "$D/p1.img" > /dev/null 2>&1; rm -f "$D/p1.img"
+if grep -aq 'using interface module "qt"' "$D/qt.log" 2>/dev/null; then
+    c=$(python3 - "$T/fondo.ppm" "$T/qt.ppm" <<'E'
+import sys
+def pixel(n):
+    return open(n, 'rb').read().split(maxsplit=4)[4]
+try:
+    a, b = pixel(sys.argv[1]), pixel(sys.argv[2])
+except (OSError, IndexError):
+    print(0); sys.exit()
+n = min(len(a), len(b)) // 3
+print(sum(1 for i in range(0, n, 5) if a[3 * i:3 * i + 3] != b[3 * i:3 * i + 3]) * 5 * 100 // max(n, 1))
+E
+)
+    python3 tools/ppm2png.py "$T/qt.ppm" "$D/foto/qt.png" > /dev/null 2>&1
+    if [ "${c:-0}" -ge 10 ]; then
+        echo "  [OK] vlc -I qt: l'interfaccia Qt e' in uso, $c% dello schermo cambiato, $D/foto/qt.png"
+    else
+        echo "  [NO] vlc -I qt: in uso ma ${c:-0}% dello schermo cambiato, $D/foto/qt.png"; esito=1
+    fi
+else
+    echo "  [NO] vlc -I qt: il registro non dice 'using interface module \"qt\"' ($D/qt.log)"; esito=1
+    grep -a -i "qt\|interface" "$D/qt.log" 2>/dev/null | head -8 | sed 's/^/        /'
+fi
 grep -a -i -E "vlc|exos|FAULT|PF:" "$D/seriale.txt" | grep -a -v "^/disk/vlc\|VLC-" | head -20
 exit $esito

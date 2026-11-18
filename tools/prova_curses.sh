@@ -10,7 +10,8 @@
 # On the console (TERM=vga): the screen is read back while it waits for keys
 # (tools/schermo_testo.py: box, reverse video, colour, deleteln, a window),
 # then Up, F1, Delete, Page Down and q are typed and it must print their
-# KEY_ names on the serial line.
+# KEY_ names on the serial line. Then tools/prove/cursesfilo.c: x and q read
+# by a second thread with timeout() (kernel 0.348, VLC -I ncurses).
 #
 # Then, if the tools CD is there (make iso / tools/mktools64.sh), the same
 # program is compiled INSIDE EX-OS from /cdrom/prova-curses.c with the CD's
@@ -37,7 +38,8 @@ T="$D/albero"
 mkdir -p "$T"
 $GCC -O2 tools/prove/cursesprova.c -o "$T/cursesprova" -lncurses || {
     echo "  (manca ncurses nel sysroot? tools/ncurses-exos/costruisci.sh)"; exit 1; }
-fakeroot sh -c "chown -R 0:0 '$T'; chmod 755 '$T'/cursesprova;
+$GCC -O2 tools/prove/cursesfilo.c -o "$T/cursesfilo" -lncurses -lpthread || exit 1
+fakeroot sh -c "chown -R 0:0 '$T'; chmod 755 '$T'/cursesprova '$T'/cursesfilo;
     $SBIN/mke2fs -q -F -t ext2 -b 1024 -m 0 -L curses -d '$T' '$D/p1.img' 32768" \
     > "$D/mke2fs.log" 2>&1 || { cat "$D/mke2fs.log"; exit 1; }
 qemu-img create -f raw "$IMG" 40M > /dev/null
@@ -48,6 +50,7 @@ echo "=== $ARCH ==="
 EXOS_ISTANZA=cu$ARCH EXOS_NO_FLOPPY=1 EXOS_CDROM="$ISO" \
     timeout 300 python3 tools/qemu_drive.py "mount hd0p1 /a@5" \
     "/a/cursesprova@5" "foto:$D/curses.ppm@1" "key:up,f1,delete,pgdn@1" "q@n3" \
+    "/a/cursesfilo@4" "x@n2" "q@n4" \
     "umount /a@3" > "$D/qemu.log" 2>&1
 S="$D/seriale.txt"
 cp "/tmp/exos/serialcu$ARCH.txt" "$S" 2>/dev/null
@@ -69,6 +72,9 @@ case "$(riga 8)" in "|         +------------------+"*) si "newwin con il suo riq
 grep -q "| FINESTRA" "$D/schermo.txt" && si "la finestra scrive dentro di se'" || no "manca FINESTRA"
 L=$(grep -a "^CURSES tasti:" "$S" | tail -1 | tr -d '\r')
 [ "$L" = "CURSES tasti: KEY_UP KEY_F(1) KEY_DC KEY_NPAGE q" ] && si "$L" || no "tasti: '$L'"
+# getch() with timeout() from a second thread, as VLC's text interface (0.348)
+L=$(grep -a "^CURSES filo:" "$S" | tail -1 | tr -d '\r')
+[ "$L" = "CURSES filo: 120 113" ] && si "un filo legge la tastiera ($L: x e q)" || no "filo: '$L'"
 # --- the same, compiled inside EX-OS ------------------------------------------
 if [ -f "$STRUMENTI" ]; then
     export EXOS_QEMU_EXTRA="$EXTRA -drive file=$IMG,format=raw,if=ide,index=0 -drive file=$STRUMENTI,media=cdrom,if=ide,index=3,readonly=on"

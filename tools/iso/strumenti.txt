@@ -540,6 +540,7 @@ dice  = VLC 3.0.24: lettore audio e video, suono e finestra di EX-OS
 prova = bin/vlc
 vuole = ffmpeg
 vuole = flac
+vuole = qt5
 mbyte = 60
 solo  = bin/vlc
 solo  = bin/vlcapri
@@ -549,6 +550,22 @@ menu  = Multimedia/VLC | /exos/bin/vlcapri | /exos/share/vlc/vlc_64.ico
 
 nota  = vlc film.mp4  (vlc -I dummy --no-video brano.ogg senza ExWin)
 nota  = Dalla scrivania: Avvio > Multimedia > VLC sceglie il file (vlcapri)
+nota  = vlc -I qt film.mp4: l'interfaccia con i menu (Qt 5); il video sta
+nota  = nella sua finestra. vlc -I ncurses brano.ogg: quella di testo.
+
+
+[qt5]
+nome  = Qt 5
+dice  = Qt 5.15.19: Core, Gui, Widgets, Network, Sql, Xml, Svg; il plugin exwin
+prova = qt5/lib/libQt5Core.so.5
+vuole = ssl
+mbyte = 60
+solo  = qt5
+solo  = src/qt5
+
+nota  = Qt sta in /exos/qt5: librerie, plugin (platforms/libqexwin.so per
+nota  = ExWin) e i caratteri DejaVu in /exos/qt5/lib/fonts. I programmi si
+nota  = compilano fuori (tools/qt5-exos): moc, rcc e uic non girano su EX-OS.
 
 
 [mesa]

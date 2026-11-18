@@ -24,11 +24,14 @@
 # the server and its share), [expat], [apr] (APR and APR-util), [apache]
 # (tools/httpd-exos: exos/apache2, httpd and its tree, mod_php inside), [php]
 # (tools/php-exos: exos/php, the CLI, php.ini, libphp.a), [valkey]
-# (tools/valkey-exos: exos/valkey, the server, valkey-cli, the config), [nano]
+# (tools/valkey-exos: exos/valkey, the server, valkey-cli, the config), [qt5], [nano]
 # (tools/nano-exos: exos/bin/nano, exos/nano with nanorc and the syntax), [mesa] (tools/mesa-exos:
 # libEGL, libGLESv2 and provaegl), and [ssl] for OpenSSL (tools/openssl-exos:
 # the Makefile and mktools64.sh also build provassl and provatls with it). A library not built is said on stderr, and the
-# CD is made without it. ncurses has its own (tools/ncurses-exos/su-cd.sh):
+# CD is made without it. [qt5] (tools/qt5-exos) is its own tree, exos/qt5:
+# the libraries, the plugins, the headers and the fonts; what is only for
+# building Qt itself (cmake, pkgconfig, .prl, .la, the support archives) stays
+# out. ncurses has its own (tools/ncurses-exos/su-cd.sh):
 # its terminfo and its links need more care.
 # =============================================================================
 CD="$1"
@@ -94,6 +97,19 @@ for NOME in zlib bzip2 xz lz4 zstd pcre2 fmt openssl mariadb-connector-c mariadb
     cp -rp "$N/src/$NOME" "$E/src/"
     fatte="$fatte $NOME"
 done
+# Qt 5: /exos/qt5 (its prefix), the sources in exos/src/qt5
+Q=cross_build/qt5-exos$BIT/exos
+if [ -f "$Q/qt5/lib/libQt5Core.so.5" ] && [ -d "$Q/src/qt5" ]; then
+    rm -rf "$E/qt5" "$E/src/qt5"
+    mkdir -p "$E/src"
+    cp -rp "$Q/qt5" "$E/"
+    rm -rf "$E/qt5/lib/cmake" "$E/qt5/lib/pkgconfig" "$E/qt5/lib/metatypes" "$E/qt5/mkspecs"
+    rm -f "$E"/qt5/lib/*.prl "$E"/qt5/lib/*.la "$E"/qt5/lib/*.a
+    cp -rp "$Q/src/qt5" "$E/src/"
+    fatte="$fatte qt5"
+else
+    manca "qt5 a $BIT bit" "tools/qt5-exos/costruisci.sh $BIT"
+fi
 # VLC from the desktop (voce 79): the launcher the menu entry starts, and the
 # icons (tools/vlc-exos/icone, from VLC's own share/icons/256x256/vlc.png).
 # Group [vlc] of the catalogue: solo = bin/vlcapri, solo = share/vlc.

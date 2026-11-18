@@ -1011,7 +1011,12 @@
  * ring-3 disks (8), partitions per disk (16), floppy open files (64), the
  * [modules] (16) and [env] (32) of kernel.cfg, and kernel.cfg itself (8 KB):
  * they all grow. */
-#define EXOS_VERSION    "0.347"
+/* 0.347 -> 0.348: waitpid takes WNOWAIT, the child stays a zombie; the
+ * libc's waitid is made on it (Qt's QProcess, 18/11/2026). A thread of the
+ * process in the foreground reads the console: the check compared the
+ * thread's own pid, and every thread but the first read end of input
+ * (VLC -I ncurses, whose keys never arrived). */
+#define EXOS_VERSION    "0.348"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

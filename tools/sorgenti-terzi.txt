@@ -24,6 +24,7 @@ mariadb-connector-c|https://github.com/mariadb-corporation/mariadb-connector-c.g
 mariadb-connector-cpp|https://github.com/mariadb-corporation/mariadb-connector-cpp.git|^[0-9]+\.[0-9]+\.[0-9]+$|s/x/x/|-
 qt5|https://code.qt.io/qt/qtbase.git|^v5\.15\.[0-9]+-lts-lgpl$|s/^v//;s/-lts-lgpl$//|https://download.qt.io/archive/qt/5.15/@V@/submodules/qtbase-everywhere-opensource-src-@V@.tar.xz
 qtsvg|https://code.qt.io/qt/qtsvg.git|^v5\.15\.[0-9]+-lts-lgpl$|s/^v//;s/-lts-lgpl$//|https://download.qt.io/archive/qt/5.15/@V@/submodules/qtsvg-everywhere-opensource-src-@V@.tar.xz
+dejavu|https://github.com/dejavu-fonts/dejavu-fonts.git|^version_[0-9]+_[0-9]+$|s/^version_//;s/_/./g|https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_@U@/dejavu-fonts-ttf-@V@.tar.bz2
 nano|git://git.savannah.gnu.org/nano.git|^v[0-9]+\.[0-9]+(\.[0-9]+)?$|s/^v//|https://ftp.gnu.org/gnu/nano/nano-@V@.tar.xz
 ncurses|https://github.com/ThomasDickey/ncurses-snapshots.git|^v[0-9]+_[0-9]+$|s/^v//;s/_/./g|https://invisible-island.net/archives/ncurses/ncurses-@V@.tar.gz
 openssl|https://github.com/openssl/openssl.git|^openssl-[0-9.]+$|s/^openssl-//|https://github.com/openssl/openssl/releases/download/openssl-@V@/openssl-@V@.tar.gz

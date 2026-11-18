@@ -37,10 +37,11 @@ campi() {   # NOME: NOME GIT REGEX SED ARCH CLONE
 }
 
 ver_nostra() {
-    # a part built by another port's script says VER_<name>= there (qtsvg in
-    # tools/qt5-exos/costruisci.sh)
+    # a part built by another port's script says VER_<name>= there (qtsvg and
+    # dejavu in tools/qt5-exos/costruisci.sh)
     if [ ! -f "tools/$1-exos/costruisci.sh" ]; then
-        sed -n "s/^VER_$1=//p" tools/*-exos/costruisci.sh | head -1 | tr -d "\"'"
+        # (only the value: the line may end with a comment)
+        sed -n "s/^VER_$1=\([^ #]*\).*/\1/p" tools/*-exos/costruisci.sh | head -1 | tr -d "\"'"
         return
     fi
     sed -n 's/^VER=//p' "tools/$1-exos/costruisci.sh" | head -1 | tr -d "\"'"
@@ -107,7 +108,7 @@ verifica_firma() {
 # ! INTO A FOLDER OF ITS OWN, moved next to the others only when the signature
 # is good: a failed download must not touch the archive already there.
 # the projects that publish a sha256 and no signature (see verifica_firma)
-SOLO_SHA256="qt5 qtsvg"
+SOLO_SHA256="qt5 qtsvg dejavu"  # dejavu: the fonts of tools/qt5-exos
 scarica() {
     local v url file dir t e f
     NOME_CORRENTE=$1

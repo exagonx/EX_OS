@@ -46,6 +46,10 @@ struct statvfs {
 
 int statvfs(const char *percorso, struct statvfs *v);
 int fstatvfs(int fd, struct statvfs *v);
+/* The LFS names (18/11/2026, Qt): the counts are in blocks, a long is enough
+ * at 32 bit too. Macros as musl, so struct statvfs64 is the same struct. */
+#define statvfs64  statvfs
+#define fstatvfs64 fstatvfs
 
 #ifdef __cplusplus
 }
