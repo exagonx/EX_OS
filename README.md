@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.345
+**Version:** 0.347
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -110,6 +110,37 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### A signal cuts a wait on a socket short (kernel 0.346, ip.drv 0.026, voce 37) — tested in QEMU and on the bench PC
+
+- **poll, epoll_wait, recv and send on a socket return EINTR** when a caught signal arrives,
+  as on Linux: recv and send start again after a handler with SA_RESTART, poll and
+  epoll_wait never do. Until 0.345 a thread in poll on a socket did not wake with
+  `pthread_kill`: Apache and MariaDB worked around it by looking every 100 ms.
+- **How:** the wait is in ip.drv, so cutting it in the libc alone would leave ip.drv's late
+  answer in the mailbox for the next call. The kernel has an IPC wait a caught signal ends
+  (SYS_IPC_RECV_SEG 272, and _SEG_R 273 that SA_RESTART restarts); then the libc sends
+  IP_MSG_RITIRA and ip.drv answers the pending wait at once — exactly one answer, so
+  nothing stale is left. A new libc on an older kernel or ip.drv falls back to the old
+  wait.
+- **Tested:** new `tools/prova_eintr.sh` (`tools/prove/eintrprova.c`, against a libc.a made
+  from today's sources), 32 and 64 bit: poll, poll with SA_RESTART, epoll_wait, the next
+  poll finds the client at once, recv with SO_RCVTIMEO cut and restarted, `pthread_kill` on
+  a thread in poll, a poll without signals waits its timeout: 8/8.
+- **On the bench PC (.253, 64 bit, 18/11):** 0.346 and ip.drv 0.026 through netupdate,
+  sha256 of the kernel checked before the reboot, `netupdate -verifica` all fine; the same
+  test on the machine: 8/8.
+- **Not yet:** a blocking recv or accept with no timeout still cannot be cut (its request
+  stays in ip.drv until data comes); the toolchain's libc.a (sysroot) is not redone, so the
+  programs built with it (Apache, MariaDB, Valkey) get this when they are linked again.
+
+### The bench PC's switch-off: what its BIOS does first (voce 102, under way)
+
+- `shutdown` does not switch the .253 off. Its ACPI tables, read with `sonda.drv -acpi` and
+  disassembled with iasl, show that the BIOS's `_PTS(5)` sets two bits of the nForce chipset
+  (ports 0x4401 and 0x4405, bit 7) that EX-OS does not touch; on the machine the second one
+  is off. Whether that is the cause is tried with the user at the machine.
+- `sonda.drv` 0.011: `-porta:IND` reads an I/O port, `-porta:IND|=VAL` sets bits in it.
 
 ### Every driver has -install and -remove (voce 24) — tested in QEMU
 
@@ -1238,8 +1269,33 @@ not the tag, and keeps it only if the signature is good with the keys already
 next to it; `-prova NOME` applies the EX-OS patches to a copy; `-applica NOME`
 changes `VER=` only after both. It does not compile: the proof stays the build
 at 32 and 64 bit and the tests in QEMU. Tried on Apache and APR at their current
-version, with a corrupted archive refused. Firefox, gcc, binutils and Rust are
-not covered.
+version, with a corrupted archive refused. Firefox has its own, `tools/exilla/sorgenti.sh`
+(below); gcc, binutils and Rust are not covered.
+
+### The Firefox sources from the latest release (tools/exilla/sorgenti.sh) — tested on Firefox 160.0.1
+
+`tools/exilla/sorgenti.sh` does for Firefox (and, voce 103, Thunderbird) what
+`tools/aggiorna-sorgenti.sh` does for the libraries: with no argument it says our version
+and Mozilla's (release, ESR, beta, from product-details.mozilla.org); `-scarica` takes
+`firefox-VER.source.tar.xz` from archive.mozilla.org, checks its signature with Mozilla's
+key and the sha512 with `SHA512SUMS`; `-prova` applies the Exilla patches in order on a copy
+in `cross_build/aggiorna` and keeps aside the originals of the files they touch, for
+`patch-crea.sh`; `-applica` refuses while a `.rej` is left, moves the old tree out of MEGA
+(not deleted) and puts the copy in its place.
+- **The key is pinned** in `tools/exilla/mozilla-chiave.txt` (Mozilla Software Releases,
+  `14F2 6682 … D98F 0353`, checked against Mozilla's published one; its subkey of August
+  2026 is the one after the rotation): a different key stops the download.
+- **A `.cargo-checksum.json` is not patched**, it is recomputed for the crates we touch: its
+  sums belong to one version of the crate.
+- **Found doing it:** three Exilla files of ours (`widget/exos/ExosPosta.cpp`, `ExosPosta.h`,
+  `nsWindow.h`) had as "original" an earlier version of ours, so their patches held only the
+  last change and a clean tree could not be rebuilt from `tools/exilla/patch`. Now they are
+  whole files, like the other new ones.
+- **Tried on 160.0.1** (our tree is the 158.0a1 nightly): signature and sha512 good, 340
+  patches exact, 42 shifted, 3 refused and adapted by hand (two because Mozilla changed the
+  lines, one no longer needed: abseil turns on mmap by itself when `<sys/mman.h>` exists).
+  The copy is ready; the switch (`-applica`), the build at 32 and 64 bit and the Exilla tests
+  are still to be done.
 
 ### The Stamp key saves the screen to a PNG (kbd.drv 0.008, wserver 0.015, pm 0.026, /bin/cattura) — tested in QEMU
 

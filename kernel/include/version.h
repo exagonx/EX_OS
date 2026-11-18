@@ -1002,7 +1002,16 @@
  * for the host to write a fresh 1.1 GB image (60 s), not the kernel.
  * A failed FLUSH CACHE is tried once more after a channel reset, as
  * Linux's libata does (the user's choice of 17/11). */
-#define EXOS_VERSION    "0.345"
+/* 0.345 -> 0.346 (voce 37): SYS_IPC_RECV_SEG (272) and _SEG_R (273), the
+ * IPC wait with a timeout that a caught signal cuts short (-EINTR, mailbox
+ * still empty); _SEG_R is restarted after a handler with SA_RESTART. The
+ * libc's poll, epoll_wait, send and recv on a socket wait with them and
+ * withdraw the request from ip.drv (IP_MSG_RITIRA, ip.drv 0.026). */
+/* 0.346 -> 0.347 (voce 35): no more fixed tables for block devices (16),
+ * ring-3 disks (8), partitions per disk (16), floppy open files (64), the
+ * [modules] (16) and [env] (32) of kernel.cfg, and kernel.cfg itself (8 KB):
+ * they all grow. */
+#define EXOS_VERSION    "0.347"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

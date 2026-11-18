@@ -22,19 +22,23 @@
 #include "tsc.h"        /* i tempi dei contatori */
 #include "cfg.h"        /* cachedisco */
 #include "paging.h"     /* la finestra sulle pagine della cache */
+#include "posti.h"      /* the device table grows */
 
 /* g_n e' il MASSIMO INDICE MAI USATO, non il numero di dispositivi vivi.
  * Da quando esiste blk_rescan() l'array puo' avere buchi: uno slot
  * liberato resta li' con usato = 0 invece di far scalare quelli dopo,
  * perche' gli indici sono in mano ai montaggi (vedi blk.h). Chiunque
  * scorra l'array DEVE saltare le voci con usato == 0. */
-static BlkDev g_dev[BLK_MAX_DEV];
+/* No ceiling (voce 35): a table of pointers that doubles, posti.h. A slot
+ * keeps its address forever, so the BlkDev * of blk_get stays good. */
+static BlkDev **volatile g_dev;
+static volatile int      g_cap;
+POSTI_CRESCI(blk_cresci, BlkDev, g_dev, g_cap, 16)
 
 /* Dove sta il volume in RAM. Uno solo: ce n'e' uno per avvio, e mettere qui
  * un array vorrebbe dire far finta che un giorno ce ne saranno due. */
 /* Where each RAM volume lives, by device index: there can be two - the
  * whole boot medium (rd0) and the base system (rdb0, @RDBOOT). */
-static uint32_t g_ram_base[BLK_MAX_DEV];
 static int    g_n = 0;
 
 /* Dichiarata qui perche' la usano blk_rescan() e blk_ripartiziona(), che
@@ -74,18 +78,19 @@ static void nome_componi(char *dst, const char *pre, int a, char sep, int b)
 
 /* Prende uno slot: prima uno liberato da un rescan, poi in coda. Il riuso
  * non e' un'ottimizzazione ma una necessita': senza, ripartizionare lo
- * stesso disco una decina di volte esaurirebbe BLK_MAX_DEV. */
+ * stesso disco una decina di volte farebbe crescere la tabella senza fine. */
 static BlkDev *nuovo(void)
 {
     BlkDev *b;
     int     i, k;
 
     for (i = 0; i < g_n; i++) {
-        if (!g_dev[i].usato) { b = &g_dev[i]; goto azzera; }
+        if (!g_dev[i]->usato) { b = g_dev[i]; goto azzera; }
     }
 
-    if (g_n >= BLK_MAX_DEV) return NULL;
-    b = &g_dev[g_n++];
+    if (g_n >= g_cap && blk_cresci() != 0) return NULL;
+    b = g_dev[g_n];
+    b->indice = g_n++;
 
 azzera:
     /* Uno slot riusato non deve portarsi dietro nulla del precedente: un
@@ -94,6 +99,7 @@ azzera:
     for (k = 0; k < BLK_NOME_MAX; k++) b->nome[k] = 0;
     b->usato = 0; b->tipo = BLK_TIPO_NESSUNO; b->disco = 0;
     b->sola_lettura = 0; b->in_uso = 0; b->primo = 0; b->settori = 0;
+    b->ram_base = 0;
     return b;
 }
 
@@ -121,7 +127,7 @@ static int registra_partizioni(int d, const AtaDevice *a)
      * finestre ricavate dall'MBR protettivo significherebbe offrire
      * un dispositivo che copre l'intero disco spacciandolo per una
      * partizione. */
-    if (tab.schema != PT_SCHEMA_MBR) return 0;
+    if (tab.schema != PT_SCHEMA_MBR) { mbr_libera(&tab); return 0; }
 
     for (p = 0; p < tab.n; p++) {
         /* Le ESTESE sono contenitori, non spazio utilizzabile:
@@ -155,6 +161,7 @@ static int registra_partizioni(int d, const AtaDevice *a)
         n++;
     }
 
+    mbr_libera(&tab);
     return n;
 }
 
@@ -253,22 +260,22 @@ int blk_rescan(int disco)
      * due cicli significherebbe aver gia' smontato mezzo disco quando si
      * scopre che la meta' successiva non si puo' toccare. */
     for (i = 0; i < g_n; i++) {
-        if (!g_dev[i].usato) continue;
-        if (g_dev[i].tipo != BLK_TIPO_PART) continue;
-        if (g_dev[i].disco != (uint8_t)disco) continue;
+        if (!g_dev[i]->usato) continue;
+        if (g_dev[i]->tipo != BLK_TIPO_PART) continue;
+        if (g_dev[i]->disco != (uint8_t)disco) continue;
 
-        if (g_dev[i].in_uso) {
+        if (g_dev[i]->in_uso) {
             klog(LOG_ERROR, "BLK: %s e' in uso: rilettura di hd%d rifiutata",
-                 g_dev[i].nome, disco);
+                 g_dev[i]->nome, disco);
             return ERR(EBUSY);
         }
     }
 
     for (i = 0; i < g_n; i++) {
-        if (!g_dev[i].usato) continue;
-        if (g_dev[i].tipo != BLK_TIPO_PART) continue;
-        if (g_dev[i].disco != (uint8_t)disco) continue;
-        g_dev[i].usato = 0;
+        if (!g_dev[i]->usato) continue;
+        if (g_dev[i]->tipo != BLK_TIPO_PART) continue;
+        if (g_dev[i]->disco != (uint8_t)disco) continue;
+        g_dev[i]->usato = 0;
     }
 
     /* Il dispositivo del disco INTERO non si tocca: la sua finestra e'
@@ -296,13 +303,13 @@ int blk_ripartiziona(int disco, const Partizione *voci, int n,
      * finestre finirebbe dentro un'altra partizione, con il livello a
      * blocchi convinto di stare facendo il suo lavoro. */
     for (i = 0; i < g_n; i++) {
-        if (!g_dev[i].usato) continue;
-        if (g_dev[i].tipo != BLK_TIPO_PART) continue;
-        if (g_dev[i].disco != (uint8_t)disco) continue;
+        if (!g_dev[i]->usato) continue;
+        if (g_dev[i]->tipo != BLK_TIPO_PART) continue;
+        if (g_dev[i]->disco != (uint8_t)disco) continue;
 
-        if (g_dev[i].in_uso) {
+        if (g_dev[i]->in_uso) {
             klog(LOG_ERROR, "BLK: %s e' montato: hd%d non si ripartiziona",
-                 g_dev[i].nome, disco);
+                 g_dev[i]->nome, disco);
             return ERR(EBUSY);
         }
     }
@@ -325,31 +332,31 @@ int blk_ripartiziona(int disco, const Partizione *voci, int n,
 
 int blk_acquisisci(int i)
 {
-    if (i < 0 || i >= g_n || !g_dev[i].usato) return ERR(ENODEV);
-    if (g_dev[i].in_uso == 0xFF)              return ERR(EBUSY);
-    g_dev[i].in_uso++;
+    if (i < 0 || i >= g_n || !g_dev[i]->usato) return ERR(ENODEV);
+    if (g_dev[i]->in_uso == 0xFF)              return ERR(EBUSY);
+    g_dev[i]->in_uso++;
     return 0;
 }
 
 int blk_rilascia(int i)
 {
-    if (i < 0 || i >= g_n || !g_dev[i].usato) return ERR(ENODEV);
+    if (i < 0 || i >= g_n || !g_dev[i]->usato) return ERR(ENODEV);
     /* Un rilascio in piu' azzererebbe il conteggio e renderebbe
      * ripartizionabile un disco ancora montato: meglio un conteggio che
      * resta alto — al massimo si nega un rescan legittimo — che uno che
      * scende sotto zero. */
-    if (g_dev[i].in_uso == 0) {
-        klog(LOG_WARN, "BLK: %s rilasciato ma non era in uso", g_dev[i].nome);
+    if (g_dev[i]->in_uso == 0) {
+        klog(LOG_WARN, "BLK: %s rilasciato ma non era in uso", g_dev[i]->nome);
         return ERR(EINVAL);
     }
-    g_dev[i].in_uso--;
+    g_dev[i]->in_uso--;
     return 0;
 }
 
 int blk_occupato(int i)
 {
-    if (i < 0 || i >= g_n || !g_dev[i].usato) return 0;
-    return g_dev[i].in_uso != 0;
+    if (i < 0 || i >= g_n || !g_dev[i]->usato) return 0;
+    return g_dev[i]->in_uso != 0;
 }
 
 int blk_conta(void) { return g_n; }
@@ -360,8 +367,8 @@ const BlkDev *blk_get(int i)
     /* Uno slot liberato da un rescan e' un dispositivo che NON esiste
      * piu': restituirlo lascerebbe leggere il nome e la finestra di una
      * partizione cancellata. */
-    if (!g_dev[i].usato)   return NULL;
-    return &g_dev[i];
+    if (!g_dev[i]->usato)   return NULL;
+    return g_dev[i];
 }
 
 int blk_trova(const char *nome)
@@ -371,9 +378,9 @@ int blk_trova(const char *nome)
     if (nome == NULL) return -1;
 
     for (i = 0; i < g_n; i++) {
-        if (!g_dev[i].usato) continue;      /* slot liberato da un rescan */
+        if (!g_dev[i]->usato) continue;      /* slot liberato da un rescan */
         for (j = 0; ; j++) {
-            if (g_dev[i].nome[j] != nome[j]) break;
+            if (g_dev[i]->nome[j] != nome[j]) break;
             if (nome[j] == '\0') return i;
         }
     }
@@ -409,26 +416,26 @@ int blk_supporto(int i)
     uint32_t blocchi = 0, dim = 0;
     int      r;
 
-    if (i < 0 || i >= g_n || !g_dev[i].usato) return ERR(ENODEV);
+    if (i < 0 || i >= g_n || !g_dev[i]->usato) return ERR(ENODEV);
 
     /* Un dispositivo fisso ha sempre il suo supporto: e' il disco stesso. */
-    if (g_dev[i].tipo != BLK_TIPO_CDROM) return 1;
+    if (g_dev[i]->tipo != BLK_TIPO_CDROM) return 1;
 
-    r = atapi_supporto(g_dev[i].disco);
+    r = atapi_supporto(g_dev[i]->disco);
     if (r != 1) {
-        g_dev[i].settori = 0;
+        g_dev[i]->settori = 0;
         return (r < 0) ? -1 : 0;
     }
 
-    if (atapi_capacita(g_dev[i].disco, &blocchi, &dim) != 0 || blocchi == 0) {
-        g_dev[i].settori = 0;
+    if (atapi_capacita(g_dev[i]->disco, &blocchi, &dim) != 0 || blocchi == 0) {
+        g_dev[i]->settori = 0;
         return 0;
     }
 
     /* La finestra e' in settori da 512, come per ogni altro dispositivo:
      * la conversione dai blocchi da 2048 sta qui e in blk_read, e da
      * nessun'altra parte. */
-    g_dev[i].settori = (uint64_t)blocchi * (ATAPI_DIM_BLOCCO / 512u);
+    g_dev[i]->settori = (uint64_t)blocchi * (ATAPI_DIM_BLOCCO / 512u);
     return 1;
 }
 
@@ -1252,7 +1259,7 @@ static int leggi(int i, uint64_t lba, uint32_t n, void *buf, int usa_cache)
      * che si scrive. Il
      * giorno che lo si spostasse piu' in alto, qui servirebbe una finestra. */
     if (b->tipo == BLK_TIPO_RAM) {
-        copia((uint8_t *)buf, (const uint8_t *)DA_FISICO(g_ram_base[i] + (uint32_t)abs * 512u),
+        copia((uint8_t *)buf, (const uint8_t *)DA_FISICO(g_dev[i]->ram_base + (uint32_t)abs * 512u),
               n * 512u);
         return 0;
     }
@@ -1319,11 +1326,11 @@ int blk_registra_ram(uint32_t fisico, uint32_t byte, const char *nome)
     b->primo        = 0;
     b->settori      = byte / 512;
 
-    g_ram_base[b - g_dev] = fisico;
+    b->ram_base = fisico;
 
     klog(LOG_INFO, "BLK: volume in RAM a 0x%08x, %u settori",
          fisico, (uint32_t)b->settori);
-    return (int)(b - g_dev);
+    return b->indice;
 }
 
 int blk_registra_ring3(const char *nome, uint64_t settori, int sola_lettura)
@@ -1353,7 +1360,7 @@ int blk_registra_ring3(const char *nome, uint64_t settori, int sola_lettura)
     b->primo        = 0;
     b->settori      = settori;
 
-    return (int)(b - g_dev);
+    return b->indice;
 }
 
 /* Il lettore che mbr_leggi_da() usa per un dispositivo servito da un
@@ -1381,20 +1388,20 @@ int blk_scansiona(int i)
      * ragione di blk_rescan() qui sotto — fondere i due cicli vuol dire aver
      * gia' smontato mezzo disco quando si scopre che il resto non si tocca. */
     for (k = 0; k < g_n; k++) {
-        if (!g_dev[k].usato) continue;
-        if (g_dev[k].tipo != BLK_TIPO_PART) continue;
-        if (g_dev[k].padre != (uint8_t)i) continue;
-        if (g_dev[k].in_uso) {
+        if (!g_dev[k]->usato) continue;
+        if (g_dev[k]->tipo != BLK_TIPO_PART) continue;
+        if (g_dev[k]->padre != (uint16_t)i) continue;
+        if (g_dev[k]->in_uso) {
             klog(LOG_ERROR, "BLK: %s e' in uso: rilettura di %s rifiutata",
-                 g_dev[k].nome, nome_padre);
+                 g_dev[k]->nome, nome_padre);
             return ERR(EBUSY);
         }
     }
     for (k = 0; k < g_n; k++) {
-        if (!g_dev[k].usato) continue;
-        if (g_dev[k].tipo != BLK_TIPO_PART) continue;
-        if (g_dev[k].padre != (uint8_t)i) continue;
-        g_dev[k].usato = 0;
+        if (!g_dev[k]->usato) continue;
+        if (g_dev[k]->tipo != BLK_TIPO_PART) continue;
+        if (g_dev[k]->padre != (uint16_t)i) continue;
+        g_dev[k]->usato = 0;
     }
 
     if (mbr_leggi_da(leggi_blk, &i, padre->settori, &tab) != 0) return ERR(EIO);
@@ -1404,7 +1411,7 @@ int blk_scansiona(int i)
      * USB lo sono sempre: li' non c'e' niente da registrare e il dispositivo
      * si monta com'e'. Rendere un errore qui vorrebbe dire che il
      * sorvegliante scarta proprio i supporti piu' comuni. */
-    if (tab.schema != PT_SCHEMA_MBR) return 0;
+    if (tab.schema != PT_SCHEMA_MBR) { mbr_libera(&tab); return 0; }
 
     for (p = 0; p < tab.n; p++) {
         BlkDev *b;
@@ -1438,7 +1445,7 @@ int blk_scansiona(int i)
         b->usato        = 1;
         b->tipo         = BLK_TIPO_PART;
         b->disco        = 0;
-        b->padre        = (uint8_t)i;
+        b->padre        = (uint16_t)i;
         b->guasto       = 0;
         b->sola_lettura = padre->sola_lettura;
         b->primo        = tab.p[p].inizio;
@@ -1456,6 +1463,7 @@ int blk_scansiona(int i)
              "e' sbagliata", nome_padre, tab.n);
 
     klog(LOG_INFO, "BLK: %s riletto, %d partizioni", nome_padre, n);
+    mbr_libera(&tab);
     return n;
 }
 
@@ -1463,39 +1471,39 @@ void blk_ritira(int i)
 {
     int k;
 
-    if (i < 0 || i >= g_n || !g_dev[i].usato) return;
+    if (i < 0 || i >= g_n || !g_dev[i]->usato) return;
 
     /* ! PRIMA LE SUE PARTIZIONI, e con la stessa regola del disco: quella
      * montata resta li' guasta, le altre spariscono. Lasciarle vive vorrebbe
      * dire finestre che descrivono un disco che non c'e' piu', e la prima
      * lettura andrebbe a cercare un servente morto. */
     for (k = 0; k < g_n; k++) {
-        if (!g_dev[k].usato) continue;
-        if (g_dev[k].tipo != BLK_TIPO_PART) continue;
-        if (g_dev[k].padre != (uint8_t)i) continue;
+        if (!g_dev[k]->usato) continue;
+        if (g_dev[k]->tipo != BLK_TIPO_PART) continue;
+        if (g_dev[k]->padre != (uint16_t)i) continue;
 
-        if (g_dev[k].in_uso) {
-            g_dev[k].guasto = 1;
+        if (g_dev[k]->in_uso) {
+            g_dev[k]->guasto = 1;
             klog(LOG_ERROR, "BLK: '%s' e' sparito mentre era montato: smontalo",
-                 g_dev[k].nome);
+                 g_dev[k]->nome);
         } else {
-            g_dev[k].usato = 0;
+            g_dev[k]->usato = 0;
         }
     }
 
-    if (g_dev[i].in_uso) {
+    if (g_dev[i]->in_uso) {
         /* Lo slot NON si libera: vedi il commento accanto a `guasto` in
          * blk.h. Chi lo teneva montato continua a vederlo, e ogni accesso
          * rende errore finche' non smonta. */
-        g_dev[i].guasto = 1;
+        g_dev[i]->guasto = 1;
         klog(LOG_ERROR, "BLK: '%s' e' sparito mentre era montato: smontalo",
-             g_dev[i].nome);
+             g_dev[i]->nome);
         return;
     }
 
-    klog(LOG_INFO, "BLK: '%s' ritirato", g_dev[i].nome);
-    g_dev[i].usato = 0;
-    g_dev[i].guasto = 0;
+    klog(LOG_INFO, "BLK: '%s' ritirato", g_dev[i]->nome);
+    g_dev[i]->usato = 0;
+    g_dev[i]->guasto = 0;
 }
 
 int blk_write(int i, uint64_t lba, uint32_t n, const void *buf)
@@ -1522,7 +1530,7 @@ int blk_write(int i, uint64_t lba, uint32_t n, const void *buf)
     if (b->tipo == BLK_TIPO_RING3) return blkr3_write(i, abs, n, buf);
 
     if (b->tipo == BLK_TIPO_RAM) {
-        copia((uint8_t *)DA_FISICO(g_ram_base[i] + (uint32_t)abs * 512u), (const uint8_t *)buf,
+        copia((uint8_t *)DA_FISICO(g_dev[i]->ram_base + (uint32_t)abs * 512u), (const uint8_t *)buf,
               n * 512u);
         return 0;
     }

@@ -1,33 +1,163 @@
 --- a/widget/exos/nsWindow.h
 +++ b/widget/exos/nsWindow.h
-@@ -21,6 +21,7 @@
- #include "mozilla/Mutex.h"
- #include "mozilla/RefPtr.h"
- #include "mozilla/TextEventDispatcherListener.h"
+@@ -0,0 +1,160 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* EX-OS (Exilla): a window of ExWin.
++ *
++ * Top-level windows, dialogs and popups are windows of the ExWin server: a
++ * shared memory zone of ARGB pixels that the server composes on the screen
++ * with its frame. WebRender (software) draws straight into the zone from its
++ * renderer thread (StartRemoteDrawingInRegion) and tells the server what
++ * changed (WIN_MSG_AGGIORNA). Mouse and keyboard come back as WIN_EV_*
++ * events through nsAppShell (see ExosPosta.h).
++ *
++ * The bookkeeping that is not about ExWin (size modes, the active window) is
++ * the one of HeadlessWidget, which this class started from.
++ */
++
++#ifndef widget_exos_nsWindow_h
++#define widget_exos_nsWindow_h
++
++#include "mozilla/Mutex.h"
++#include "mozilla/RefPtr.h"
++#include "mozilla/TextEventDispatcherListener.h"
 +#include "mozilla/UniquePtr.h"
- #include "nsIWidget.h"
- 
- namespace mozilla::widget {
-@@ -85,6 +86,9 @@
-   void OnServerResized(const void* aCreata);
-   void OnServerMoved(int32_t aX, int32_t aY);
- 
++#include "nsIWidget.h"
++
++namespace mozilla::widget {
++class ExosTastiera;
++}
++
++class nsWindow final : public nsIWidget {
++ public:
++  nsWindow();
++
++  NS_INLINE_DECL_REFCOUNTING_INHERITED(nsWindow, nsIWidget)
++
++  void* GetNativeData(uint32_t aDataType) override { return nullptr; }
++
++  nsresult Create(nsIWidget* aParent, const LayoutDeviceIntRect& aRect,
++                  const mozilla::widget::InitData&) override;
++  using nsIWidget::Create;
++
++  void Destroy() override;
++  void Show(bool aState) override;
++  bool IsVisible() const override { return mVisible; }
++  void Move(const mozilla::DesktopPoint&) override;
++  void Resize(const mozilla::DesktopSize&, bool aRepaint) override;
++  void Resize(const mozilla::DesktopRect&, bool aRepaint) override;
++  nsSizeMode SizeMode() override { return mSizeMode; }
++  void SetSizeMode(nsSizeMode aMode) override;
++  void Enable(bool aState) override { mEnabled = aState; }
++  bool IsEnabled() const override { return mEnabled; }
++  void SetFocus(Raise, mozilla::dom::CallerType aCallerType) override;
++  LayoutDeviceIntRect GetBounds() override { return mBounds; }
++  void Invalidate(const LayoutDeviceIntRect& aRect) override {}
++  nsresult SetTitle(const nsAString& aTitle) override;
++  LayoutDeviceIntPoint WidgetToScreenOffset() override;
++  void SetInputContext(const InputContext& aContext,
++                       const InputContextAction& aAction) override {
++    mInputContext = aContext;
++  }
++  InputContext GetInputContext() override { return mInputContext; }
++  TextEventDispatcherListener* GetNativeTextEventDispatcherListener() override;
++
++  void SetCompositorWidgetDelegate(CompositorWidgetDelegate* aDelegate) override {
++    mCompositorWidgetDelegate = aDelegate;
++  }
++
++  [[nodiscard]] nsresult AttachNativeKeyEvent(
++      mozilla::WidgetKeyboardEvent& aEvent) override;
++  MOZ_CAN_RUN_SCRIPT bool GetEditCommands(
++      mozilla::NativeKeyBindingsType aType,
++      const mozilla::WidgetKeyboardEvent& aEvent,
++      nsTArray<mozilla::CommandInt>& aCommands) override;
++
++  // The renderer thread draws into the zone.
++  already_AddRefed<mozilla::gfx::DrawTarget> StartRemoteDrawingInRegion(
++      const LayoutDeviceIntRegion& aInvalidRegion) override;
++  void EndRemoteDrawingInRegion(
++      mozilla::gfx::DrawTarget* aDrawTarget,
++      const LayoutDeviceIntRegion& aInvalidRegion) override;
++
++  // From the server, on the main thread (ExosPosta.cpp). The arguments are
++  // a WinEvento and a WinCreata of <exos/win_proto.h>.
++  MOZ_CAN_RUN_SCRIPT_BOUNDARY void OnServerEvent(const void* aEvento);
++  void OnServerResized(const void* aCreata);
++  void OnServerMoved(int32_t aX, int32_t aY);
++
 +  void CreateCompositor(int aWidth, int aHeight) override;
 +  using nsIWidget::CreateCompositor;
 +
-   bool Destroyed() const { return mDestroyed; }
- 
-  private:
-@@ -137,6 +141,12 @@
-   uint32_t mZonaId = 0;  // mId as the renderer sees it
-   int32_t mZonaW = 0;
-   int32_t mZonaH = 0;
++  bool Destroyed() const { return mDestroyed; }
++
++ private:
++  ~nsWindow();
++
++  bool ApriFinestra();     // ask the server for our window
++  void ChiudiFinestra();   // give it back
++  bool AttaccaZona(uint32_t aId, uint32_t aGiro, uint32_t aByte,
++                   int32_t aLarghezza, int32_t aAltezza);
++  void StaccaZona();
++  bool HaFinestraServer() const {
++    return mWindowType == mozilla::widget::WindowType::TopLevel ||
++           mWindowType == mozilla::widget::WindowType::Dialog ||
++           mWindowType == mozilla::widget::WindowType::Popup;
++  }
++
++  void MoveInternal(int32_t aX, int32_t aY);
++  void ResizeInternal(int32_t aWidth, int32_t aHeight);
++  void ApplySizeModeSideEffects();
++  void RaiseWindow();
++
++  MOZ_CAN_RUN_SCRIPT void Mouse(mozilla::EventMessage aMessaggio, int32_t aX,
++                                int32_t aY, int16_t aBottone,
++                                uint32_t aBottoni, uint32_t aModificatori);
++  MOZ_CAN_RUN_SCRIPT void MenuContestuale(int32_t aX, int32_t aY,
++                                          uint32_t aModificatori);
++  int32_t ContaClic(int32_t aX, int32_t aY, uint32_t aTempo);
++  MOZ_CAN_RUN_SCRIPT void Rotella(int32_t aX, int32_t aY, int32_t aScatti);
++  MOZ_CAN_RUN_SCRIPT void Tasto(uint32_t aCodice);
++
++  bool mEnabled = true;
++  bool mVisible = false;
++  bool mDestroyed = false;
++  bool mDentro = false;  // the pointer is over us (for enter/exit)
++  CompositorWidgetDelegate* mCompositorWidgetDelegate = nullptr;
++  nsSizeMode mSizeMode = nsSizeMode_Normal;
++  nsSizeMode mEffectiveSizeMode = nsSizeMode_Normal;
++  LayoutDeviceIntRect mRestoreBounds;
++  LayoutDeviceIntRect mBounds;
++  InputContext mInputContext;
++  char mTitolo[48] = {};  // WIN_TITOLO_LEN, in ASCII
++  RefPtr<mozilla::widget::ExosTastiera> mTastiera;
++
++  // The server's window. mId and mGiro are touched on the main thread only;
++  // the zone (pointer and size) also by the renderer, under mZonaLock.
++  uint32_t mId = 0;
++  uint32_t mGiro = 0;
++  mozilla::Mutex mZonaLock MOZ_UNANNOTATED;
++  uint32_t* mZona = nullptr;
++  uint32_t mZonaId = 0;  // mId as the renderer sees it
++  int32_t mZonaW = 0;
++  int32_t mZonaH = 0;
 +  // The back buffer (voce 95): Gecko draws here, EndRemoteDrawingInRegion
 +  // copies the finished rectangles into the zone. Under mZonaLock as well.
 +  mozilla::UniquePtr<uint8_t[]> mRetro;
 +  int32_t mRetroW = 0;
 +  int32_t mRetroH = 0;
 +  bool mZonaNuova = false;  // a zone just attached: give it the whole buffer
- 
-   // The double click: the last press.
-   uint32_t mUltimoGiuTempo = 0;
++
++  // The double click: the last press.
++  uint32_t mUltimoGiuTempo = 0;
++  int32_t mUltimoGiuX = 0;
++  int32_t mUltimoGiuY = 0;
++  int32_t mClic = 0;
++
++  friend class mozilla::widget::ExosTastiera;
++};
++
++#endif  // widget_exos_nsWindow_h

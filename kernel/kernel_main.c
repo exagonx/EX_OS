@@ -167,7 +167,26 @@ static void print_system_info(BootInfo *info)
  * il driver della tastiera.
  * ============================================================================= */
 static int     g_rimandato = 0;               /* il disco di sistema e' rimandato */
-static uint8_t g_drv_avviato[CFG_MAX_MODULES];
+/* which [modules] entry already started, by index; grows with the list
+ * (voce 35, it was CFG_MAX_MODULES = 16) */
+static uint8_t *g_drv_avviato;
+static uint32_t g_drv_posti;
+
+static int drv_avviato_posti(uint32_t n)
+{
+    uint32_t k, posti = g_drv_posti ? g_drv_posti : 16u;
+    uint8_t *nuovo;
+
+    if (n <= g_drv_posti) return 0;
+    while (posti < n) posti *= 2u;
+    nuovo = (uint8_t *)kmalloc(posti);
+    if (nuovo == NULL) return -1;
+    for (k = 0; k < posti; k++) nuovo[k] = k < g_drv_posti ? g_drv_avviato[k] : 0;
+    if (g_drv_avviato) kfree(g_drv_avviato);
+    g_drv_avviato = nuovo;
+    g_drv_posti   = posti;
+    return 0;
+}
 
 /* 0 if the path already starts with /rdboot/ */
 static int kstrncmp_rd(const char *p)
@@ -200,7 +219,11 @@ static int avvia_driver(KernelConfig *cfg, int dopo_disco)
         klog(LOG_INFO, "[PASSO 14b] Driver che mancavano, dal disco di sistema...");
     {
         uint32_t di;
-        for (di = 0; di < CFG_MAX_MODULES; di++) {
+        if (drv_avviato_posti(cfg->module_count) != 0) {
+            klog(LOG_ERROR, "[PASSO 14b] niente memoria per l'elenco dei driver");
+            return 0;
+        }
+        for (di = 0; di < cfg->module_count; di++) {
             if (cfg->modules[di].name[0] == '\0') break;  /* fine elenco */
             if (g_drv_avviato[di]) continue;     /* gia' partito dalla base */
 

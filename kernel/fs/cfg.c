@@ -102,6 +102,29 @@ static char *cfg_trim(char *s)
 /* =============================================================================
  * cfg_apply_key — Applica una coppia sezione/chiave/valore alla config
  * ============================================================================= */
+
+/* one more slot in a growing array of the config (voce 35): it doubles, the
+ * old one goes back to the heap - nobody holds it while the file is read */
+static int cfg_posto(void **arr, uint32_t *posti, uint32_t usati, uint32_t dim,
+                     const char *sez, const char *key)
+{
+    uint32_t  n, k;
+    uint8_t  *nuovo;
+
+    if (usati < *posti) return 0;
+    n = *posti ? *posti * 2u : 16u;
+    nuovo = (uint8_t *)kmalloc(n * dim);
+    if (nuovo == NULL) {
+        klog(LOG_WARN, "CFG: [%s] niente memoria: '%s' ignorata", sez, key);
+        return -1;
+    }
+    for (k = 0; k < usati * dim; k++) nuovo[k] = ((uint8_t *)*arr)[k];
+    if (*arr) kfree(*arr);
+    *arr   = nuovo;
+    *posti = n;
+    return 0;
+}
+
 static void cfg_apply_key(KernelConfig *cfg, const char *section,
                            const char *key, const char *value)
 {
@@ -247,7 +270,8 @@ static void cfg_apply_key(KernelConfig *cfg, const char *section,
 
     /* --- [modules] --- */
     if (cfg_strcmp(section, "modules") == 0) {
-        if (cfg->module_count < CFG_MAX_MODULES) {
+        if (cfg_posto((void **)&cfg->modules, &cfg->module_posti, cfg->module_count,
+                      sizeof(CfgModule), "modules", key) == 0) {
             cfg_strcpy(cfg->modules[cfg->module_count].name,
                        key, CFG_NAME_LEN);
             cfg_strcpy(cfg->modules[cfg->module_count].path,
@@ -284,7 +308,8 @@ static void cfg_apply_key(KernelConfig *cfg, const char *section,
 
     /* --- [env] --- */
     if (cfg_strcmp(section, "env") == 0) {
-        if (cfg->env_count < CFG_MAX_ENV) {
+        if (cfg_posto((void **)&cfg->env, &cfg->env_posti, cfg->env_count,
+                      sizeof(CfgEnvVar), "env", key) == 0) {
             cfg_strcpy(cfg->env[cfg->env_count].key,
                        key, CFG_NAME_LEN);
             cfg_strcpy(cfg->env[cfg->env_count].value,
@@ -395,7 +420,7 @@ KernelConfig *cfg_load(void)
         return &g_config;
     }
 
-    /* Leggi tutto il file in un buffer statico.
+    /* Leggi tutto il file in un buffer.
      *
      * TRAPPOLA TROVATA (2026-07-31, 0.132): il buffer era di 4096 byte e
      * il file ne era arrivato a 5246. Il kernel ne leggeva 4095 e
@@ -406,29 +431,44 @@ KernelConfig *cfg_load(void)
      *
      * Il buffer e' stato portato a 8192, ma la dimensione non e' il vero
      * rimedio: qualunque tetto si sceglie, un giorno il file lo supera.
-     * Il rimedio e' l'AVVISO qui sotto — una lettura che riempie tutto il
-     * buffer significa che il file potrebbe continuare, e va detto. */
-    #define CFG_BUF_SIZE 8192
-    static char cfg_buf[CFG_BUF_SIZE];
+     * 0.347 (voce 35): no ceiling. The buffer starts at 8 KB and doubles
+     * while a read fills it; the file is read again from the start. */
+    uint32_t cfg_dim = 8192;
+    char    *cfg_buf = NULL;
+    int      n;
 
-    int n = vfs_read(handle, cfg_buf, CFG_BUF_SIZE - 1, 0);
-    vfs_close(handle);
+    for (;;) {
+        cfg_buf = (char *)kmalloc(cfg_dim);
+        if (cfg_buf == NULL) {
+            vfs_close(handle);
+            klog(LOG_ERROR, "CFG: niente memoria per /boot/kernel.cfg (%u byte), uso valori default",
+                 cfg_dim);
+            g_config_loaded = 1;
+            return &g_config;
+        }
+        n = vfs_read(handle, cfg_buf, cfg_dim - 1, 0);
+        if (n < (int)(cfg_dim - 1)) break;
+        kfree(cfg_buf);
+        cfg_dim *= 2u;
+        vfs_close(handle);
+        handle = vfs_open("/boot/kernel.cfg", 0x0000);
+        if (handle < 0) handle = vfs_open("/boot/KERNEL.CFG", 0x0000);
+        if (handle < 0) { cfg_buf = NULL; n = -1; break; }
+    }
+    if (handle >= 0) vfs_close(handle);
 
     if (n <= 0) {
+        if (cfg_buf) kfree(cfg_buf);
         klog(LOG_WARN, "CFG: file vuoto o errore lettura, uso valori default");
         g_config_loaded = 1;
         return &g_config;
-    }
-
-    if (n >= (int)(CFG_BUF_SIZE - 1)) {
-        klog(LOG_ERROR, "CFG: /boot/kernel.cfg supera %d byte: LETTO SOLO L'INIZIO, "
-                        "le sezioni finali sono state ignorate", CFG_BUF_SIZE - 1);
     }
 
     cfg_buf[n] = '\0';
 
     /* Parsa il contenuto */
     cfg_parse_buffer(&g_config, cfg_buf, (uint32_t)n);
+    kfree(cfg_buf);
 
     /* Ri-applicata DOPO il parsing: se il file conteneva OSNAME o OSVER,
      * il valore di version.h deve vincere comunque. Vedi
@@ -533,7 +573,8 @@ static void cfg_env_set_identity(KernelConfig *cfg, const char *key,
             return;
         }
     }
-    if (cfg->env_count < CFG_MAX_ENV) {
+    if (cfg_posto((void **)&cfg->env, &cfg->env_posti, cfg->env_count,
+                  sizeof(CfgEnvVar), "env", key) == 0) {
         cfg_strcpy(cfg->env[cfg->env_count].key,   key,   CFG_NAME_LEN);
         cfg_strcpy(cfg->env[cfg->env_count].value, value, CFG_PATH_LEN);
         cfg->env_count++;

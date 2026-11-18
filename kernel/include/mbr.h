@@ -62,7 +62,7 @@
 
 #include "kernel.h"
 
-#define MBR_MAX_PART        16   /* 4 primarie + logiche, tetto pratico */
+/* MBR_MAX_PART (16) gone in 0.347 (voce 35): the table grows, see below. */
 
 /* Schema rilevato sul settore 0 */
 #define PT_SCHEMA_NESSUNO   0    /* niente di riconoscibile */
@@ -93,7 +93,7 @@ typedef struct {
      * cio' che dicono fdisk e Linux — altrimenti chi partiziona con uno
      * strumento esterno e poi monta qui monterebbe la partizione
      * sbagliata credendo di aver capito il nome. */
-    uint8_t  numero;
+    uint16_t numero;        /* 16 bit since 0.347: no ceiling on logicals */
     uint64_t inizio;        /* LBA assoluto del primo settore */
     uint64_t settori;       /* lunghezza in settori */
 } Partizione;
@@ -102,8 +102,14 @@ typedef struct {
     int         schema;                  /* PT_SCHEMA_* */
     uint32_t    problemi;                /* maschera PT_PROB_* */
     int         n;                       /* partizioni trovate */
-    Partizione  p[MBR_MAX_PART];
+    int         posti;
+    /* [n], kmalloc, doubles (0.347, voce 35: it was 16 inline). Whoever
+     * fills it with mbr_leggi* gives it back with mbr_libera, on every
+     * path - also after a 0 return with no table. */
+    Partizione *p;
 } TabellaPartizioni;
+
+void mbr_libera(TabellaPartizioni *t);
 
 /* Legge e valida la tabella del disco `indice` (indice ATA).
  * Ritorna 0 se il settore 0 e' stato letto, <0 se nemmeno quello.

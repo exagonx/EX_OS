@@ -1,0 +1,7 @@
+# tools/exilla/mozilla-chiave.txt - the key tools/exilla/sorgenti.sh trusts
+# "Mozilla Software Releases <release@mozilla.com>", primary key of 2015; the
+# releases are signed by its subkeys (the one of 6 August 2026, after the
+# August 2026 rotation, expires 2028-08-05). Checked on 18 November 2026
+# against Mozilla's published fingerprint. A different primary key stops the
+# download: changing this line is a person's decision.
+14F26682D0916CDD81E37B6D61B7B526D98F0353

@@ -576,7 +576,7 @@ void segnali_riavvia(InterruptFrame *f, uint32_t num)
 
     if (p == NULL) return;
     if (num != SYS_READ && num != SYS_WRITE && num != SYS_WAITPID &&
-        num != SYS_FCNTL)
+        num != SYS_FCNTL && num != SYS_IPC_RECV_SEG_R)
         return;
     capo = capo_di(p);
     if (capo == NULL) return;

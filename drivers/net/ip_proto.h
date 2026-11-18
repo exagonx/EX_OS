@@ -220,6 +220,15 @@ typedef struct {
 #define IP_EREDITA_TCP     1
 #define IP_EREDITA_UDP     2
 #define IP_EREDITA_INS     3
+
+/* =============================================================================
+ * IP_MSG_RITIRA (ip.drv 0.026, voce 37): the sender's pending poll
+ * (IP_MSG_TCP_ASPETTA) or epoll_wait (IP_MSG_INS_ATTENDI) is answered now,
+ * with what is ready - maybe nothing. No payload. Nothing pending (the
+ * answer already left): no answer. So the waiter, cut short by a signal,
+ * always gets exactly ONE answer and nothing is left in its mailbox.
+ * ============================================================================= */
+#define IP_MSG_RITIRA      27
 typedef struct { unsigned int tipo, id, pid; } IpEredita;
 
 #define IP_EV_IN       0x001u

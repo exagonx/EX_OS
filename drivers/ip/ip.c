@@ -58,7 +58,7 @@
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.025");
+EX_VERSIONE("ip.drv", "0.026");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -2723,6 +2723,18 @@ static void tcp_aspetta(unsigned int cliente, const unsigned char *payload,
     }
 }
 
+/* IP_MSG_RITIRA (voce 37): see ip_proto.h. One thread waits in one place. */
+static void ritira(unsigned int cliente)
+{
+    unsigned int k;
+
+    for (k = 0; k < g_ins_n; k++) {
+        if (g_insp[k] == NULL || g_ins(k).attesa_pid != cliente) continue;
+        if (g_ins(k).tipo == INS_POLL)  { aspetta_rispondi(k, 1); return; }
+        if (g_ins(k).tipo == INS_EPOLL) { ins_consegna(k, 1); return; }
+    }
+}
+
 /* IP_MSG_INS_CREA */
 static void ins_crea(unsigned int cliente)
 {
@@ -4183,6 +4195,10 @@ static void servi(void)
 
                 case IP_MSG_INS_CREA:
                     ins_crea(meta.sender_pid);
+                    break;
+
+                case IP_MSG_RITIRA:
+                    ritira(meta.sender_pid);
                     break;
 
                 case IP_MSG_INS_CTL:

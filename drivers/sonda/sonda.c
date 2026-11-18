@@ -122,7 +122,7 @@
 
 /* +0.001 a ogni modifica: `sonda.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("sonda.drv", "0.010");
+EX_VERSIONE("sonda.drv", "0.011");
 
 #define FILE_PRED     "/SONDA.TXT"
 
@@ -1200,6 +1200,30 @@ static void dump_sistema(void)
  * main
  * --------------------------------------------------------------------------- */
 
+/* -porta:IND reads one I/O byte; -porta:IND|=VAL sets bits (read, or,
+ * write, read back). Voce 102: the bits the .253's _PTS sets before S5
+ * (SCIO 0x4400: PS1S = 0x4401 bit 7, PS1E = 0x4405 bit 7), by hand. */
+static int porta(const char *a)
+{
+    char         *f;
+    unsigned int  ind = (unsigned int)strtoul(a, &f, 16), val = 0;
+    int           prima, dopo;
+
+    if (f == a || ind > 0xFFFFu || (*f && strncmp(f, "|=", 2) != 0)) {
+        printf("sonda: -porta:IND oppure -porta:IND|=VAL (esadecimali)\n");
+        return 1;
+    }
+    if (*f) val = (unsigned int)strtoul(f + 2, 0, 16) & 0xFFu;
+    if (ioport_bind(ind, 1) != 0) { printf("sonda: ioport_bind(0x%04x) rifiutata\n", ind); return 1; }
+    prima = ioport_in(ind);
+    if (!*f) { printf("porta 0x%04x = 0x%02x\n", ind, prima & 0xFF); return 0; }
+    ioport_out(ind, ((unsigned int)prima | val) & 0xFFu);
+    dopo = ioport_in(ind);
+    printf("porta 0x%04x: 0x%02x -> scritto 0x%02x -> riletto 0x%02x\n",
+           ind, prima & 0xFF, ((unsigned int)prima | val) & 0xFFu, dopo & 0xFF);
+    return 0;
+}
+
 static void aiuto(void)
 {
     printf("sonda.drv - scrive su file tutto quel che serve per scrivere\n");
@@ -1228,6 +1252,8 @@ static void aiuto(void)
     printf("            SSDT...); IND e' la FADT del registro (dmesg),\n");
     printf("            da ricomporre sull'host con tools/acpi-da-testo.py.\n");
     printf("            Sola lettura.\n");
+    printf("  -porta:IND        legge un byte dalla porta IND (esadecimale)\n");
+    printf("  -porta:IND|=VAL   ci accende i bit VAL (legge, or, scrive, rilegge)\n");
     printf("  -mmio     aggiunge i registri in memoria, motore 2D compreso.\n");
     printf("            Non scrive niente, ma legge una finestra di cui non\n");
     printf("            abbiamo il documento: stessa prudenza.\n");
@@ -1271,6 +1297,7 @@ int main(int argc, char **argv)
         if (strcmp(argv[i], "-mmio") == 0)  { mmio = 1; continue; }
         if (strcmp(argv[i], "-rom") == 0)   { rom = 1; continue; }
         if (strcmp(argv[i], "-acpi") == 0)  return dump_acpi(i + 1 < argc ? argv[i + 1] : 0);
+        if (strncmp(argv[i], "-porta:", 7) == 0) return porta(argv[i] + 7);
         if (strcmp(argv[i], "-motore") == 0) { mmio = 1; motore = 1; continue; }
         if (argv[i][0] == '-') {
             printf("sonda: opzione sconosciuta: %s\n", argv[i]);

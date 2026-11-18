@@ -4169,7 +4169,10 @@ void sha256_fine_esa(Sha256 *s, char out[65]);
  *     permette: rende 0 invece di EINPROGRESS);
  *   - UDP: un datagramma che arriva mentre nessun filo del programma lo sta
  *     aspettando lo stack lo scarta (drivers/net/ip_proto.h, UDP);
- *   - dup/dup2 di un socket: EOPNOTSUPP;
+ *   - dup e fcntl(F_DUPFD) di un socket ci sono dalla voce 35 (18/11/2026):
+ *     il socket si chiude con l'ultimo descrittore; il numero nuovo lo da'
+ *     il kernel (F_DUPFD non garantisce >= arg) e FD_CLOEXEC e' in comune.
+ *     dup2 di un socket resta EOPNOTSUPP;
  *   - i descrittori non passano ai figli.
  * ============================================================================= */
 typedef unsigned int    socklen_t;

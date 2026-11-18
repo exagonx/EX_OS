@@ -305,8 +305,23 @@ int32_t ipc_recv(IpcMessage *out, void *buf, uint32_t buf_len)
  * RUNNING, non svegliarlo, e subito dopo sched_block() lo metterebbe a
  * dormire su una sveglia già consumata.
  * ============================================================================= */
+static int32_t ricevi(IpcMessage *out, void *buf, uint32_t buf_len,
+                      uint32_t timeout_ms, int segnale);
+
 int32_t ipc_recv_timeout(IpcMessage *out, void *buf, uint32_t buf_len,
                          uint32_t timeout_ms)
+{
+    return ricevi(out, buf, buf_len, timeout_ms, 0);
+}
+
+int32_t ipc_recv_segnale(IpcMessage *out, void *buf, uint32_t buf_len,
+                         uint32_t timeout_ms)
+{
+    return ricevi(out, buf, buf_len, timeout_ms, 1);
+}
+
+static int32_t ricevi(IpcMessage *out, void *buf, uint32_t buf_len,
+                      uint32_t timeout_ms, int segnale)
 {
     Process *self = proc_get_current();
     uint32_t scadenza = 0;
@@ -356,6 +371,12 @@ int32_t ipc_recv_timeout(IpcMessage *out, void *buf, uint32_t buf_len,
             self->block_until = 0;
             interrupts_enable();
             return ERR(ETIMEDOUT);
+        }
+        /* voce 37: a caught signal ends the wait (the mailbox is empty here) */
+        if (segnale && segnali_interrompono(self)) {
+            self->block_until = 0;
+            interrupts_enable();
+            return ERR(EINTR);
         }
 
         /* Mailbox vuota: blocca finché ipc_send non consegna qualcosa,

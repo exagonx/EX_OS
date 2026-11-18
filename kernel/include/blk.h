@@ -36,7 +36,6 @@
 #include "kernel.h"
 #include "mbr.h"
 
-#define BLK_MAX_DEV     16
 #define BLK_NOME_MAX    12
 
 #define BLK_TIPO_NESSUNO    0
@@ -49,7 +48,7 @@
 #define BLK_TIPO_RAM        6
 
 /* Il valore di `padre` quando sotto la partizione c'e' un disco ATA. */
-#define BLK_PADRE_ATA       0xFF
+#define BLK_PADRE_ATA       0xFFFF
 
 typedef struct {
     char     nome[BLK_NOME_MAX];  /* "fd0", "hd0", "hd0p1" */
@@ -73,7 +72,9 @@ typedef struct {
      * quando una chiavetta USB e' un dispositivo servito da un processo, la
      * stessa finestra puo' stare sopra due mondi diversi, e la sola cosa che
      * li distingue e' questa riga. */
-    uint8_t  padre;
+    uint16_t padre;               /* 16 bit: the table has no ceiling (voce 35) */
+    int      indice;              /* its index in the table */
+    uint32_t ram_base;            /* BLK_TIPO_RAM: where the volume is */
     uint64_t primo;               /* LBA di partenza nel supporto sottostante */
     uint64_t settori;             /* lunghezza della finestra */
 } BlkDev;

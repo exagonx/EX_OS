@@ -449,6 +449,8 @@ typedef struct { unsigned int bit[FD_SETSIZE / 32]; } fd_set;
 #define FD_ISSET(f, s)  (((s)->bit[(unsigned int)(f) / 32u] >> ((unsigned int)(f) % 32u)) & 1u)
 
 #define SYS_IPC_RECV_TMO  228
+#define SYS_IPC_RECV_SEG   272  /* voce 37: a caught signal cuts it (-EINTR) */
+#define SYS_IPC_RECV_SEG_R 273  /* ... and SA_RESTART starts it again */
 #define SYS_TIME           13
 #define SYS_TIME_SET      213
 #define SYS_FUSO          270   /* (0.340) the zone: int32_t[2] minutes, summer */
@@ -5112,9 +5114,14 @@ int close(int fd)
  * ricorda per conto suo dove era arrivato, mentre su POSIX una read() da
  * uno dei due sposta anche l'altro. Chi legge da un fd duplicato faccia
  * una lseek() esplicita invece di dare per scontato di ripartire da capo. */
+#ifndef EXOS_LIBC_SO
+static int presa_dup(int fd);
+#endif
 int dup(int fd)
 {
-    if (E_PRESA(fd)) { errno = 95; return -1; }    /* EOPNOTSUPP: vedi libc.h */
+#ifndef EXOS_LIBC_SO
+    if (E_PRESA(fd)) return presa_dup(fd);         /* voce 35 */
+#endif
 #ifndef EXOS_LIBC_SO
     if (E_SHMFD(fd)) {
         if (g_shm_dup) return g_shm_dup(fd);
@@ -9493,8 +9500,20 @@ static int c_e_posta(void)
     return (int)_syscall3(SYS_POLL, (uintptr_t)&p, 1u, 0u) > 0;
 }
 
+static int ipc_scegli_su(IpcFiltro filtro, void *dato, IpcMessage *out_meta,
+                         void *buf, unsigned int buf_len, unsigned int ms,
+                         unsigned int num);
+
 int ipc_scegli(IpcFiltro filtro, void *dato, IpcMessage *out_meta,
                void *buf, unsigned int buf_len, unsigned int ms)
+{
+    return ipc_scegli_su(filtro, dato, out_meta, buf, buf_len, ms, SYS_IPC_RECV_TMO);
+}
+
+/* num = the recv to use: SYS_IPC_RECV_TMO, or _SEG / _SEG_R (voce 37) */
+static int ipc_scegli_su(IpcFiltro filtro, void *dato, IpcMessage *out_meta,
+                         void *buf, unsigned int buf_len, unsigned int ms,
+                         unsigned int num)
 {
     unsigned int  i = 0;
     unsigned int  inizio = uptime_ms();
@@ -9543,7 +9562,7 @@ int ipc_scegli(IpcFiltro filtro, void *dato, IpcMessage *out_meta,
             resta = ms - passati;
         }
 
-        r = (int)_syscall4(SYS_IPC_RECV_TMO, (uintptr_t)&meta,
+        r = (int)_syscall4(num, (uintptr_t)&meta,
                            (uintptr_t)posta, IPC_MSG_MAX_DATA, resta);
         if (r < 0) return r;
 
@@ -11002,14 +11021,40 @@ typedef struct {
     char         nome[16];      /* the kernel's name */
     unsigned int byte;          /* 0 until the zone exists */
     unsigned int virt;
+    int          indice;        /* its place in g_shmzona */
 } ShmZonaP;
 
 /* The zones this process holds (descriptors and mappings of one zone count
  * together). ! The DESCRIPTORS are not limited here any more (0.281: their
  * numbers come from the kernel, see fdl_prendi); this is how many different
  * zones one process may hold at once. */
-#define SHMFD_MAX       1024
-static ShmZonaP g_shmzona[SHMFD_MAX];
+/* No ceiling any more (voce 35, it was 1024 zones): pointers to zones that
+ * double; a zone keeps its address, so a ShmZonaP * stays good. */
+static ShmZonaP **g_shmzona;
+static int        g_shm_n;
+
+/* a free zone's index, the table grown if needed; -1 = no memory */
+static int shm_posto(void)
+{
+    ShmZonaP **t;
+    int        i, n;
+
+    for (i = 0; i < g_shm_n; i++) if (!g_shmzona[i]->usato) return i;
+    n = g_shm_n ? g_shm_n * 2 : 64;
+    t = (ShmZonaP **)malloc((size_t)n * sizeof(*t));
+    if (t == NULL) return -1;
+    for (i = 0; i < n; i++) {
+        if (i < g_shm_n) { t[i] = g_shmzona[i]; continue; }
+        t[i] = (ShmZonaP *)calloc(1, sizeof(ShmZonaP));
+        if (t[i] == NULL) { while (--i >= g_shm_n) free(t[i]); free(t); return -1; }
+        t[i]->indice = i;
+    }
+    free(g_shmzona);
+    g_shmzona = t;
+    i = g_shm_n;
+    g_shm_n = n;
+    return i;
+}
 #ifndef SHM_ANON
 #define SHM_ANON  ((char *)1)       /* come in <sys/mman.h> */
 #endif
@@ -11036,7 +11081,7 @@ static ShmZonaP *shmfd_zona(int fd)
     int z;
 
     z = SHMFD_ZONA(fd);
-    return z ? &g_shmzona[z - 1] : NULL;
+    return z ? g_shmzona[z - 1] : NULL;
 }
 
 /* The zone goes when nobody holds it any more: no descriptor and no
@@ -11050,7 +11095,7 @@ static void shmfd_forse_libera(ShmZonaP *z)
     }
     else if (z->virt)
         shm_chiudi((void *)(uintptr_t)z->virt);
-    memset(z, 0, sizeof(*z));
+    { int ix = z->indice; memset(z, 0, sizeof(*z)); z->indice = ix; }
 }
 
 /* ! THE END OF THE TABLE IS SAID, once, on stderr: the program only sees
@@ -11060,7 +11105,7 @@ static void shmfd_finite(void)
 {
     static int detto;
     static const char m[] = "libc: shm_open: le zone di memoria condivisa "
-                            "di questo processo sono finite (SHMFD_MAX)\n";
+                            "di questo processo sono finite (memoria esaurita)\n";
 
     if (!detto) { detto = 1; write(2, m, sizeof(m) - 1); }
 }
@@ -11071,7 +11116,7 @@ static int shmfd_nuovo(int zi)
     int fd = fdl_prendi(FDL_SHM, (void *)(uintptr_t)(zi + 1));
 
     if (fd < 0) { errno = -fd; return -1; }
-    g_shmzona[zi].descrittori++;
+    g_shmzona[zi]->descrittori++;
     return fd;
 }
 
@@ -11101,28 +11146,26 @@ int shm_open(const char *nome, int flag, mode_t modo)
     /* SHM_ANON: una zona privata, senza nome; la memoria arriva con
      * ftruncate, come per le altre. */
     if (nome == SHM_ANON) {
-        for (i = 0; i < SHMFD_MAX && g_shmzona[i].usato; i++) ;
-        if (i == SHMFD_MAX) { shmfd_finite(); errno = EMFILE; return -1; }
-        memset(&g_shmzona[i], 0, sizeof(g_shmzona[i]));
-        g_shmzona[i].usato   = 1;
-        g_shmzona[i].privata = 1;
+        if ((i = shm_posto()) < 0) { shmfd_finite(); errno = ENOMEM; return -1; }
+        memset(g_shmzona[i], 0, sizeof(ShmZonaP)); g_shmzona[i]->indice = i;
+        g_shmzona[i]->usato   = 1;
+        g_shmzona[i]->privata = 1;
         fd = shmfd_nuovo(i);
-        if (fd < 0) memset(&g_shmzona[i], 0, sizeof(g_shmzona[i]));
+        if (fd < 0) { memset(g_shmzona[i], 0, sizeof(ShmZonaP)); g_shmzona[i]->indice = i; }
         return fd;
     }
     shmfd_nome(nome, k);
 
     /* Gia' aperta da questo processo: un altro descrittore sulla stessa
      * (O_CREAT | O_EXCL: c'e' gia', EEXIST). */
-    for (i = 0; i < SHMFD_MAX; i++)
-        if (g_shmzona[i].usato && strcmp(g_shmzona[i].nome, k) == 0) {
+    for (i = 0; i < g_shm_n; i++)
+        if (g_shmzona[i]->usato && strcmp(g_shmzona[i]->nome, k) == 0) {
             if ((flag & (O_CREAT | 0x80)) == (O_CREAT | 0x80)) { errno = EEXIST; return -1; }
             return shmfd_nuovo(i);
         }
 
-    for (i = 0; i < SHMFD_MAX && g_shmzona[i].usato; i++) ;
-    if (i == SHMFD_MAX) { shmfd_finite(); errno = EMFILE; return -1; }
-    z = &g_shmzona[i];
+    if ((i = shm_posto()) < 0) { shmfd_finite(); errno = ENOMEM; return -1; }
+    z = g_shmzona[i];
 
     memset(&q, 0, sizeof(q));
     strcpy(q.nome, k);
@@ -11135,6 +11178,7 @@ int shm_open(const char *nome, int flag, mode_t modo)
     }
 
     memset(z, 0, sizeof(*z));
+    z->indice = i;
     z->usato = 1;
     strcpy(z->nome, k);
     if (r == 0) { z->byte = q.byte; z->virt = q.virt; }
@@ -11205,7 +11249,7 @@ static int shmfd_dup(int fd)
     ShmZonaP *z = shmfd_zona(fd);
 
     if (z == NULL) { errno = EBADF; return -1; }
-    return shmfd_nuovo((int)(z - g_shmzona));
+    return shmfd_nuovo(z->indice);
 }
 
 static int shmfd_fstat(int fd, struct stat *st)
@@ -11242,8 +11286,8 @@ static int shmfd_munmap(void *addr)
     unsigned int a = (unsigned int)(uintptr_t)addr;
     int i;
 
-    for (i = 0; i < SHMFD_MAX; i++) {
-        ShmZonaP *z = &g_shmzona[i];
+    for (i = 0; i < g_shm_n; i++) {
+        ShmZonaP *z = g_shmzona[i];
 
         if (!z->usato || !z->virt || !z->mappe) continue;
         if (a < z->virt || a >= z->virt + z->byte) continue;
@@ -15782,6 +15826,8 @@ typedef struct {
     unsigned char udp_da_ip[4];
     unsigned int  udp_da_porta;
     void         *libera_dopo;   /* the next closed one (g_prese_libere) */
+    int           rif;           /* descriptors on it: dup (voce 35) */
+    unsigned int  giro;          /* prese_al_figlio already sent it */
 } Presa;
 
 /* ! A CLOSED Presa IS NOT FREED, it goes on a list and the next socket
@@ -15845,13 +15891,17 @@ typedef struct { unsigned int tipo, id, pid; } PEredita;
 
 static int ip_esito(unsigned int tipo, const void *dati, unsigned int len);
 
-/* In the parent, `figlio` just born: it becomes an owner of every socket. */
+/* In the parent, `figlio` just born: it becomes an owner of every socket.
+ * ! ONCE PER SOCKET, not per descriptor: a dup'ed one would make the child
+ * an owner twice, and its close would never free the connection. */
 static void prese_al_figlio(int figlio)
 {
+    static unsigned int giro;
     FdlIndice   *ind = g_fdl;
     unsigned int b, i;
 
     if (ind == NULL || figlio <= 0) return;
+    giro++;
     for (b = 0; b < ind->posti; b++) {
         FdLibc *blk = ind->blocco[b];
 
@@ -15867,7 +15917,8 @@ static void prese_al_figlio(int figlio)
             } else if (blk[i].tipo == FDL_PRESA && blk[i].ogg != NULL) {
                 Presa *p = (Presa *)blk[i].ogg;
 
-                if (!p->usata) continue;
+                if (!p->usata || p->giro == giro) continue;
+                p->giro = giro;
                 if (p->tipo == S_SOCK_STREAM && p->id != 0) {
                     e.tipo = P_EREDITA_TCP;
                     e.id   = p->id;
@@ -15912,6 +15963,7 @@ static int presa_nuova(int tipo)
     if (p == NULL) return -12;                          /* ENOMEM */
     memset(p, 0, sizeof(Presa));
     p->usata = 1;
+    p->rif   = 1;
     p->tipo  = tipo;
     g_prese_figlio = prese_nel_figlio;  /* fork: see there */
     g_prese_padre  = prese_al_figlio;
@@ -16000,6 +16052,60 @@ static int ip_chiedi(unsigned int tipo, const void *dati, unsigned int len,
     return r;
 }
 
+/* ! A WAIT A SIGNAL CAN CUT SHORT (voce 37). The same as ip_chiedi, but the
+ * wait for the answer ends on a caught signal (num = SYS_IPC_RECV_SEG, or
+ * _SEG_R: restarted by the kernel when the handler has SA_RESTART). Then
+ * IP_MSG_RITIRA: the stack answers the pending wait NOW, and it answers it
+ * exactly once - either that answer, or the one that was already on its
+ * way. Waiting for it leaves nothing stale in the mailbox for the next call.
+ * *rotto = 1 when the signal came; the answer is in buf all the same. */
+#define P_IP_MSG_RITIRA     27
+
+/* ! A STACK BEFORE 0.026 answers RITIRA with ESITO -EINVAL, and its real
+ * answer is still to come: that ESITO is eaten here, the real one awaited,
+ * and from then on the waits are not cut (g_ritira_no). A kernel before
+ * 0.346 has no SYS_IPC_RECV_SEG (-ENOSYS): the same. */
+static int g_ritira_no = 0;
+
+static int ip_chiedi_seg(unsigned int tipo, const void *dati, unsigned int len,
+                         unsigned int risp, void *buf, unsigned int max,
+                         unsigned int *tipo_r, unsigned int num, int *rotto)
+{
+    AttesaIp   a;
+    IpcMessage meta;
+    int        r, pid = pid_ip();
+
+    *rotto = 0;
+    if (pid <= 0) return -E_NETDOWN;
+    if (ipc_send((unsigned int)pid, tipo, dati, len) < 0) {
+        g_pid_ip = 0;
+        return -E_NETDOWN;
+    }
+    a.pid = pid; a.tipo = risp;
+    r = ipc_scegli_su(filtro_ip, &a, &meta, buf, max, 0, g_ritira_no ? SYS_IPC_RECV_TMO : num);
+    if (r == -ENOSYS && !g_ritira_no) {     /* a kernel before 0.346 */
+        g_ritira_no = 1;
+        r = ipc_scegli_su(filtro_ip, &a, &meta, buf, max, 0, SYS_IPC_RECV_TMO);
+    }
+    if (r == -EINTR) {
+        *rotto = 1;
+        if (ipc_send((unsigned int)pid, P_IP_MSG_RITIRA, NULL, 0) < 0) return -EINTR;
+        r = ipc_scegli_su(filtro_ip, &a, &meta, buf, max, 0, SYS_IPC_RECV_TMO);
+        if (r >= (int)sizeof(int) && meta.tipo == P_IP_MSG_ESITO && risp != P_IP_MSG_ESITO) {
+            int codice;
+
+            memcpy(&codice, buf, sizeof(codice));
+            if (codice == -EINVAL) {        /* an old stack: see g_ritira_no */
+                g_ritira_no = 1;
+                *rotto = 0;
+                r = ipc_scegli_su(filtro_ip, &a, &meta, buf, max, 0, SYS_IPC_RECV_TMO);
+            }
+        }
+    }
+    if (r >= 0 && tipo_r) *tipo_r = meta.tipo;
+    return r;
+}
+
 static int ip_esito(unsigned int tipo, const void *dati, unsigned int len)
 {
     int codice = -EIO;
@@ -16037,11 +16143,12 @@ static int presa_errore(int e) { errno = e < 0 ? -e : e; return -1; }
 static int g_aspetta_no = 0;
 
 static int tcp_aspetta(Presa *const *p, const unsigned int *voluti,
-                       unsigned int *ev, unsigned int n, unsigned int ms)
+                       unsigned int *ev, unsigned int n, unsigned int ms,
+                       unsigned int num)
 {
     PTcpAspetta  a, r;
     unsigned int i, j, t = 0;
-    int          k, pronti = 0;
+    int          k, pronti = 0, rotto = 0;
 
     if (g_aspetta_no) return -EINVAL;
     if (n > P_ASPETTA_MAX) n = P_ASPETTA_MAX;
@@ -16052,8 +16159,8 @@ static int tcp_aspetta(Presa *const *p, const unsigned int *voluti,
         a.voce[i].eventi = voluti[i];
         ev[i]            = 0;
     }
-    k = ip_chiedi(P_IP_MSG_TCP_ASPETTA, &a, 2u * sizeof(unsigned int) + n * sizeof(PTcpVoce),
-                  P_IP_MSG_TCP_PRONTE, &r, sizeof(r), &t);
+    k = ip_chiedi_seg(P_IP_MSG_TCP_ASPETTA, &a, 2u * sizeof(unsigned int) + n * sizeof(PTcpVoce),
+                      P_IP_MSG_TCP_PRONTE, &r, sizeof(r), &t, num, &rotto);
     if (k < 0) return k;
     if (t == P_IP_MSG_ESITO) {
         int codice = -EIO;
@@ -16070,6 +16177,8 @@ static int tcp_aspetta(Presa *const *p, const unsigned int *voluti,
                 pronti++;
                 break;
             }
+    /* cut short by a signal with nothing ready: EINTR (voce 37) */
+    if (rotto && pronti == 0) return -EINTR;
     return pronti;
 }
 
@@ -16077,7 +16186,8 @@ static int tcp_aspetta(Presa *const *p, const unsigned int *voluti,
 static int tcp_aspetta_una(Presa *p, unsigned int voluti, unsigned int ms)
 {
     unsigned int ev = 0;
-    int          r = tcp_aspetta(&p, &voluti, &ev, 1, ms);
+    /* send and recv start again after a handler with SA_RESTART */
+    int          r = tcp_aspetta(&p, &voluti, &ev, 1, ms, SYS_IPC_RECV_SEG_R);
 
     return r < 0 ? r : (int)ev;
 }
@@ -16328,8 +16438,9 @@ static ssize_t tcp_manda(Presa *p, const unsigned char *buf, size_t n, int flag)
             if (p->snd_ms && uptime_ms() - inizio >= p->snd_ms)
                 return fatti ? (ssize_t)fatti : presa_errore(EAGAIN);
             /* until there is room again (or the end), not 10 ms at a time */
-            if (tcp_aspetta_una(p, P_EV_OUT, p->snd_ms ? p->snd_ms - (uptime_ms() - inizio) : 0) < 0)
-                dormi_ms(10);
+            r = tcp_aspetta_una(p, P_EV_OUT, p->snd_ms ? p->snd_ms - (uptime_ms() - inizio) : 0);
+            if (r == -EINTR) return fatti ? (ssize_t)fatti : presa_errore(EINTR);
+            if (r < 0) dormi_ms(10);
             continue;
         }
         fatti += (size_t)r;
@@ -16473,7 +16584,9 @@ static ssize_t tcp_prendi(Presa *p, unsigned char *buf, size_t n, int flag)
                 if (nb) return presa_errore(EAGAIN);
                 if (passati >= p->rcv_ms) return presa_errore(EAGAIN);
                 /* until something comes, or the timeout (see tcp_aspetta) */
-                if (tcp_aspetta_una(p, P_EV_IN, p->rcv_ms - passati) < 0) dormi_ms(10);
+                r = tcp_aspetta_una(p, P_EV_IN, p->rcv_ms - passati);
+                if (r == -EINTR) return fatti ? (ssize_t)fatti : presa_errore(EINTR);
+                if (r < 0) dormi_ms(10);
                 continue;
             }
         }
@@ -16665,11 +16778,34 @@ ssize_t writev(int fd, const struct iovec *v, int n)
 
 /* --- chiudere --------------------------------------------------------------------- */
 
+/* dup (voce 35): another descriptor on the same socket. O_NONBLOCK is
+ * shared, as on POSIX (it is of the open socket); FD_CLOEXEC too, here -
+ * POSIX gives the new one none: kept simple, said in libc.h. */
+static int presa_dup(int fd)
+{
+    Presa *p = presa_di(fd);
+    int    n;
+
+    if (!p) return presa_errore(EBADF);
+    __atomic_add_fetch(&p->rif, 1, __ATOMIC_ACQ_REL);
+    n = fdl_prendi(FDL_PRESA, p);
+    if (n < 0) {
+        __atomic_sub_fetch(&p->rif, 1, __ATOMIC_ACQ_REL);
+        return presa_errore(-n);
+    }
+    return n;
+}
+
 static int presa_chiudi(int fd)
 {
     Presa *p = presa_di(fd);
 
     if (!p) return presa_errore(EBADF);
+    /* another descriptor still holds it: only this number goes */
+    if (__atomic_sub_fetch(&p->rif, 1, __ATOMIC_ACQ_REL) > 0) {
+        fdl_lascia(fd);
+        return 0;
+    }
     if (p->tipo == S_SOCK_STREAM && p->id) {
         PTcpRif r;
 
@@ -16841,7 +16977,9 @@ static int presa_fcntl(int fd, int cmd, unsigned int arg)
     case S_F_SETFL: p->nonblocc = (arg & S_O_NONBLOCK) != 0; return 0;
     case S_F_GETFD: return p->cloexec;
     case S_F_SETFD: p->cloexec = (int)(arg & 1u); return 0;
-    default:        return presa_errore(E_OPNOTSUPP);   /* F_DUPFD: vedi libc.h */
+    case 0:         /* F_DUPFD: the number is the kernel's, not >= arg */
+    case 1030:      return presa_dup(fd);       /* F_DUPFD_CLOEXEC */
+    default:        return presa_errore(E_OPNOTSUPP);
     }
 }
 
@@ -17043,7 +17181,9 @@ static int poll_misto_giro(struct pollfd *fds, unsigned int nfds, int timeout,
             for (da = 0; da < nt; da += P_ASPETTA_MAX) {
                 unsigned int quanti = nt - da < P_ASPETTA_MAX ? nt - da : P_ASPETTA_MAX;
 
-                r = tcp_aspetta(tcp + da, voluti + da, ev + da, quanti, ms);
+                /* poll is never restarted (POSIX), SA_RESTART or not */
+                r = tcp_aspetta(tcp + da, voluti + da, ev + da, quanti, ms, SYS_IPC_RECV_SEG);
+                if (r == -EINTR && pronti == 0) return presa_errore(EINTR);
                 if (r >= 0) {
                     for (k = da; k < da + quanti; k++) {
                         short e = da_eventi(ev[k], fds[tmappa[k]].events);
@@ -17068,7 +17208,12 @@ static int poll_misto_giro(struct pollfd *fds, unsigned int nfds, int timeout,
                 for (k = 0; k < nk; k++) fds[mappa[k]].revents = locali[k].revents;
                 return r;
             }
-        } else dormi_ms(10);
+            if (r < 0 && errno == EINTR) return -1;     /* voce 37 */
+        } else {
+            struct timespec t10 = { 0, 10000000L };
+
+            if (nanosleep(&t10, NULL) < 0 && errno == EINTR) return presa_errore(EINTR);
+        }
     }
 }
 
@@ -17158,7 +17303,7 @@ int epoll_wait(int epfd, void *eventi, int max, int timeout)
     PInsAttendi  q;
     PInsEventi   r;
     unsigned int t = 0, i;
-    int          n;
+    int          n, rotto = 0;
 
     if (ins == 0) return presa_errore(EBADF);
     if (max <= 0 || eventi == NULL) return presa_errore(EINVAL);
@@ -17173,8 +17318,9 @@ int epoll_wait(int epfd, void *eventi, int max, int timeout)
             q.timeout_ms = passati < (unsigned int)timeout ? (unsigned int)timeout - passati
                                                            : P_ASPETTA_SUBITO;
         }
-        n = ip_chiedi(P_IP_MSG_INS_ATTENDI, &q, sizeof(q), P_IP_MSG_INS_EVENTI,
-                      &r, sizeof(r), &t);
+        /* never restarted, as on Linux (voce 37) */
+        n = ip_chiedi_seg(P_IP_MSG_INS_ATTENDI, &q, sizeof(q), P_IP_MSG_INS_EVENTI,
+                          &r, sizeof(r), &t, SYS_IPC_RECV_SEG, &rotto);
         if (n < 0) return presa_errore(n);
         if (t == P_IP_MSG_ESITO) {
             int codice = -EIO;
@@ -17190,6 +17336,7 @@ int epoll_wait(int epfd, void *eventi, int max, int timeout)
         break;
     }
     if (r.n > P_INS_EVENTI_MAX) r.n = P_INS_EVENTI_MAX;
+    if (rotto && r.n == 0) return presa_errore(EINTR);
     for (i = 0; i < r.n; i++) {
         unsigned char *e = (unsigned char *)eventi + i * 12u;
 

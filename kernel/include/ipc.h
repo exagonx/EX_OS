@@ -53,6 +53,9 @@ int32_t ipc_recv(IpcMessage *out, void *buf, uint32_t buf_len);
  * timeout_ms == 0 = attesa senza scadenza (identica a ipc_recv). */
 int32_t ipc_recv_timeout(IpcMessage *out, void *buf, uint32_t buf_len,
                          uint32_t timeout_ms);
+/* the same, and -EINTR when a caught signal is pending (voce 37) */
+int32_t ipc_recv_segnale(IpcMessage *out, void *buf, uint32_t buf_len,
+                         uint32_t timeout_ms);
 
 /* Registra il processo chiamante come fornitore del servizio 'name'.
  * Un solo processo alla volta può registrare un dato nome; uno stesso

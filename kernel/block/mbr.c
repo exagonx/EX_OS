@@ -15,6 +15,7 @@
 #include "mbr.h"
 #include "ata.h"
 #include "syscall.h"    /* ERR() e i codici errno, per mbr_scrivi */
+#include "kmalloc.h"    /* the table grows (voce 35) */
 
 /* Voce della tabella, 16 byte, come sta sul disco.
  *
@@ -103,23 +104,38 @@ static void chs_metti(uint8_t *out, uint64_t lba)
     out[2] = (uint8_t)(c & 0xFF);
 }
 
-/* Aggiunge una partizione al risultato, se c'e' posto. */
+void mbr_libera(TabellaPartizioni *t)
+{
+    if (t->p) kfree(t->p);
+    t->p = NULL; t->n = 0; t->posti = 0;
+}
+
+/* Aggiunge una partizione al risultato; the array doubles. TRONCATA now
+ * only when the heap is out. */
 static void aggiungi(TabellaPartizioni *t, uint8_t attiva, uint8_t tipo,
                      uint64_t inizio, uint64_t settori, int logica,
                      int numero)
 {
     Partizione *p;
 
-    if (t->n >= MBR_MAX_PART) {
-        t->problemi |= PT_PROB_TRONCATA;
-        return;
+    if (t->n >= t->posti) {
+        int k, posti = t->posti ? t->posti * 2 : 8;
+        Partizione *nuovo = (Partizione *)kmalloc((size_t)posti * sizeof(Partizione));
+
+        if (nuovo == NULL) {
+            t->problemi |= PT_PROB_TRONCATA;
+            return;
+        }
+        for (k = 0; k < t->n; k++) nuovo[k] = t->p[k];
+        if (t->p) kfree(t->p);
+        t->p = nuovo; t->posti = posti;
     }
 
     p = &t->p[t->n++];
     p->attiva  = attiva;
     p->tipo    = tipo;
     p->logica  = (uint8_t)logica;
-    p->numero  = (uint8_t)numero;
+    p->numero  = (uint16_t)numero;
     p->inizio  = inizio;
     p->settori = settori;
 }
@@ -144,13 +160,15 @@ static void percorri_estesa(MbrLettore leggi, void *ctx, TabellaPartizioni *t,
                             uint64_t ext_inizio, uint64_t ext_settori,
                             uint64_t disco_settori)
 {
-    uint64_t visti[MBR_MAX_PART + 1];
-    int      n_visti = 0;
+    /* the EBRs already seen; grows too. The loop ends: every EBR is a
+     * different sector inside the extended partition. */
+    uint64_t *visti = NULL;
+    int      n_visti = 0, visti_posti = 0;
     uint64_t ebr = ext_inizio;
     uint8_t  sett[512];
     int      giri;
 
-    for (giri = 0; giri < MBR_MAX_PART + 1; giri++) {
+    for (giri = 0; ; giri++) {
         const uint8_t *v0, *v1;
         uint32_t r0_lba, r0_n, r1_lba, r1_n;
         uint8_t  t0, t1, a0;
@@ -161,25 +179,34 @@ static void percorri_estesa(MbrLettore leggi, void *ctx, TabellaPartizioni *t,
             ebr <  ext_inizio    ||
             ebr >= ext_inizio + ext_settori) {
             t->problemi |= PT_PROB_CATENA;
-            return;
+            goto fine;
         }
 
         for (i = 0; i < n_visti; i++) {
             if (visti[i] == ebr) {           /* gia' passato di qui */
                 t->problemi |= PT_PROB_CATENA;
-                return;
+                goto fine;
             }
+        }
+        if (n_visti == visti_posti) {
+            int k, posti = visti_posti ? visti_posti * 2 : 16;
+            uint64_t *nv = (uint64_t *)kmalloc((size_t)posti * sizeof(uint64_t));
+
+            if (nv == NULL) { t->problemi |= PT_PROB_TRONCATA; goto fine; }
+            for (k = 0; k < n_visti; k++) nv[k] = visti[k];
+            if (visti) kfree(visti);
+            visti = nv; visti_posti = posti;
         }
         visti[n_visti++] = ebr;
 
         if (leggi(ctx, ebr, sett) != 0) {
             t->problemi |= PT_PROB_CATENA;
-            return;
+            goto fine;
         }
 
         if (sett[MBR_OFF_FIRMA] != 0x55 || sett[MBR_OFF_FIRMA + 1] != 0xAA) {
             t->problemi |= PT_PROB_CATENA;
-            return;
+            goto fine;
         }
 
         v0 = sett + MBR_OFF_TABELLA;
@@ -203,24 +230,22 @@ static void percorri_estesa(MbrLettore leggi, void *ctx, TabellaPartizioni *t,
             t->problemi |= PT_PROB_VUOTA;
         }
 
-        if (t1 == 0x00 || r1_lba == 0) return;   /* fine della catena */
+        if (t1 == 0x00 || r1_lba == 0) goto fine;   /* fine della catena */
 
         if (!tipo_esteso(t1)) {
             /* La seconda voce, se presente, deve essere un puntatore a
              * un altro EBR: qualunque altro tipo indica una tabella
              * malformata, non una partizione in piu'. */
             t->problemi |= PT_PROB_CATENA;
-            return;
+            goto fine;
         }
 
         /* RELATIVO ALL'INIZIO DELL'ESTESA, non all'EBR corrente. */
         ebr = ext_inizio + (uint64_t)r1_lba;
     }
 
-    /* Usciti per numero massimo di giri: la catena e' piu' lunga di
-     * quanto sia ragionevole, oppure e' circolare in un modo che
-     * l'elenco dei visitati non ha colto. */
-    t->problemi |= PT_PROB_CATENA;
+fine:
+    if (visti) kfree(visti);
 }
 
 /* =============================================================================
@@ -346,6 +371,8 @@ int mbr_leggi_da(MbrLettore leggi, void *ctx, uint64_t disco,
     out->schema   = PT_SCHEMA_NESSUNO;
     out->problemi = 0;
     out->n        = 0;
+    out->posti    = 0;
+    out->p        = NULL;
 
     if (leggi == NULL || disco == 0) return -1;
     if (leggi(ctx, 0, sett) != 0) return -1;
@@ -466,6 +493,8 @@ int mbr_leggi(int indice, TabellaPartizioni *out)
     out->schema   = PT_SCHEMA_NESSUNO;
     out->problemi = 0;
     out->n        = 0;
+    out->posti    = 0;
+    out->p        = NULL;
 
     d = ata_get_device(indice);
     if (d == NULL || !d->presente || d->tipo != ATA_TYPE_ATA) return -1;
@@ -506,6 +535,7 @@ int mbr_scrivi(int indice, const Partizione *voci, int n, uint32_t *problemi)
     /* (3) Un disco GPT ha una tabella MBR protettiva: riscriverla e' il
      * modo classico di rendere irraggiungibile un disco intero. */
     if (attuale.schema == PT_SCHEMA_GPT) {
+        mbr_libera(&attuale);
         if (problemi) *problemi = PT_PROB_GPT;
         klog(LOG_ERROR, "MBR: hd%d e' GPT: la tabella MBR non si tocca", indice);
         return ERR(EPERM);
@@ -521,10 +551,14 @@ int mbr_scrivi(int indice, const Partizione *voci, int n, uint32_t *problemi)
         const Partizione *est = NULL;
         int ha_logiche = 0, j;
 
+        Partizione est_c;
+
         for (i = 0; i < attuale.n; i++) {
             if (attuale.p[i].logica) ha_logiche = 1;
             else if (tipo_esteso(attuale.p[i].tipo)) est = &attuale.p[i];
         }
+        if (est) { est_c = *est; est = &est_c; }
+        mbr_libera(&attuale);
 
         if (ha_logiche) {
             for (j = 0; j < n; j++) {

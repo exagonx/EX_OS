@@ -52,8 +52,8 @@
 #include "blkr3.h"
 #include "sched.h"
 #include "syscall.h"   /* gli errno del kernel stanno li' */
+#include "posti.h"     /* the table grows (voce 35) */
 
-#define BLKR3_MAX_DEV   8
 
 /* Lo stato della casella. */
 #define CASELLA_LIBERA   0
@@ -72,14 +72,15 @@ typedef struct {
     uint32_t n;               /* settori */
     uint32_t pid_chiamante;
     int      esito;
+    uint32_t dorme;           /* the server asleep in blkr3_attendi, 0 = none */
     uint8_t  dati[BLKR3_BYTE_MAX];
 } R3Dev;
 
-static R3Dev g_r3[BLKR3_MAX_DEV];
-
-/* Il servente che dorme dentro blkr3_attendi(), per poterlo svegliare senza
- * cercarlo. Zero = nessuno sta dormendo. */
-static uint32_t g_dorme[BLKR3_MAX_DEV];
+/* No ceiling (voce 35, it was 8): pointers to slots that double, posti.h.
+ * Who sleeps in blkr3_attendi() is R3Dev.dorme, to wake it without a search. */
+static R3Dev **volatile g_r3;
+static volatile int     g_r3_n;
+POSTI_CRESCI(r3_cresci, R3Dev, g_r3, g_r3_n, 8)
 
 static void copia(uint8_t *dst, const uint8_t *src, uint32_t n)
 {
@@ -92,9 +93,9 @@ static void copia(uint8_t *dst, const uint8_t *src, uint32_t n)
 static R3Dev *cerca_per_pid(uint32_t pid, int stato)
 {
     int i;
-    for (i = 0; i < BLKR3_MAX_DEV; i++) {
-        if (!g_r3[i].usato || g_r3[i].pid != pid) continue;
-        if (stato < 0 || g_r3[i].stato == (uint8_t)stato) return &g_r3[i];
+    for (i = 0; i < g_r3_n; i++) {
+        if (!g_r3[i]->usato || g_r3[i]->pid != pid) continue;
+        if (stato < 0 || g_r3[i]->stato == (uint8_t)stato) return g_r3[i];
     }
     return NULL;
 }
@@ -102,8 +103,8 @@ static R3Dev *cerca_per_pid(uint32_t pid, int stato)
 static R3Dev *da_blkdev(int blkdev)
 {
     int i;
-    for (i = 0; i < BLKR3_MAX_DEV; i++)
-        if (g_r3[i].usato && g_r3[i].blkdev == blkdev) return &g_r3[i];
+    for (i = 0; i < g_r3_n; i++)
+        if (g_r3[i]->usato && g_r3[i]->blkdev == blkdev) return g_r3[i];
     return NULL;
 }
 
@@ -125,17 +126,17 @@ int blkr3_offri(uint32_t pid, const char *nome, uint64_t settori,
     if (settori == 0)        return -EINVAL;
     if (nome == NULL)        return -EINVAL;
 
-    for (i = 0; i < BLKR3_MAX_DEV; i++) if (!g_r3[i].usato) break;
-    if (i == BLKR3_MAX_DEV) return -ENOSPC;
+    for (i = 0; i < g_r3_n; i++) if (!g_r3[i]->usato) break;
+    if (i == g_r3_n && r3_cresci() != 0) return -ENOMEM;
 
     blkdev = blk_registra_ring3(nome, settori, sola_lettura);
     if (blkdev < 0) return blkdev;
 
-    g_r3[i].usato   = 1;
-    g_r3[i].pid     = pid;
-    g_r3[i].blkdev  = blkdev;
-    g_r3[i].stato   = CASELLA_LIBERA;
-    g_dorme[i]      = 0;
+    g_r3[i]->usato   = 1;
+    g_r3[i]->pid     = pid;
+    g_r3[i]->blkdev  = blkdev;
+    g_r3[i]->stato   = CASELLA_LIBERA;
+    g_r3[i]->dorme      = 0;
 
     klog(LOG_INFO, "BLKR3: '%s' offerto dal PID %u, %u settori",
          nome, pid, (uint32_t)settori);
@@ -221,8 +222,7 @@ static int un_giro(R3Dev *d, uint32_t op, uint64_t lba, uint32_t n,
 
     /* Passo 4: il servente, se dormiva. */
     {
-        int i = (int)(d - g_r3);
-        if (g_dorme[i] != 0) { sched_unblock_locked(g_dorme[i]); g_dorme[i] = 0; }
+        if (d->dorme != 0) { sched_unblock_locked(d->dorme); d->dorme = 0; }
     }
 
     /* Passo 5: si dorme finche' la risposta non c'e'. La sveglia arriva da
@@ -323,15 +323,15 @@ int blkr3_attendi(uint32_t pid, uint32_t *op, uint64_t *lba, uint32_t *n,
         /* ! CI SI DICHIARA ADDORMENTATI PRIMA DI DORMIRE, non dopo: fra le due
          * cose ci puo' entrare una richiesta, e un servente che si segna dopo
          * si perderebbe proprio la sveglia di quella. */
-        for (i = 0; i < BLKR3_MAX_DEV; i++)
-            if (g_r3[i].usato && g_r3[i].pid == pid) g_dorme[i] = pid;
+        for (i = 0; i < g_r3_n; i++)
+            if (g_r3[i]->usato && g_r3[i]->pid == pid) g_r3[i]->dorme = pid;
 
         me->block_until = scadenza;
         sched_block(PROC_BLOCKED);
         interrupts_disable();
 
-        for (i = 0; i < BLKR3_MAX_DEV; i++)
-            if (g_r3[i].usato && g_r3[i].pid == pid) g_dorme[i] = 0;
+        for (i = 0; i < g_r3_n; i++)
+            if (g_r3[i]->usato && g_r3[i]->pid == pid) g_r3[i]->dorme = 0;
 
         if (proc_interrotto()) { interrupts_enable(); return -EINTR; }
     }
@@ -437,25 +437,25 @@ int blkr3_espelli(int blkdev)
 
     interrupts_disable();
 
-    for (i = 0; i < BLKR3_MAX_DEV; i++) {
-        if (!g_r3[i].usato || g_r3[i].blkdev != blkdev) continue;
+    for (i = 0; i < g_r3_n; i++) {
+        if (!g_r3[i]->usato || g_r3[i]->blkdev != blkdev) continue;
 
         klog(LOG_INFO, "BLKR3: '%d' espulso: il servente %u torna libero",
-             blkdev, g_r3[i].pid);
+             blkdev, g_r3[i]->pid);
 
         /* Una richiesta in mano al servente non avra' mai risposta: chi
          * aspettava va svegliato, o resta li' per sempre. */
-        if (g_r3[i].stato != CASELLA_LIBERA && g_r3[i].pid_chiamante != 0) {
-            g_r3[i].esito = -EIO;
-            g_r3[i].stato = CASELLA_SERVITA;
-            sched_unblock_locked(g_r3[i].pid_chiamante);
+        if (g_r3[i]->stato != CASELLA_LIBERA && g_r3[i]->pid_chiamante != 0) {
+            g_r3[i]->esito = -EIO;
+            g_r3[i]->stato = CASELLA_SERVITA;
+            sched_unblock_locked(g_r3[i]->pid_chiamante);
         }
 
         /* ! PRIMA SI TOGLIE, POI SI SVEGLIA. Il servente, appena sveglio,
          * chiede «esisto ancora?»: se lo slot fosse ancora suo tornerebbe a
          * dormire senza accorgersi di niente. */
-        g_r3[i].usato = 0;
-        if (g_dorme[i] != 0) { sched_unblock_locked(g_dorme[i]); g_dorme[i] = 0; }
+        g_r3[i]->usato = 0;
+        if (g_r3[i]->dorme != 0) { sched_unblock_locked(g_r3[i]->dorme); g_r3[i]->dorme = 0; }
 
         blk_ritira(blkdev);
         trovato = 1;
@@ -475,27 +475,27 @@ void blkr3_processo_morto(uint32_t pid)
      * proc_reap_zombie() gira a interruzioni accese. */
     interrupts_disable();
 
-    for (i = 0; i < BLKR3_MAX_DEV; i++) {
+    for (i = 0; i < g_r3_n; i++) {
         /* the dead one was a CALLER: its request not taken yet, or its
          * answer, gives the box back (voce 51) */
-        if (g_r3[i].usato && g_r3[i].pid != pid && g_r3[i].pid_chiamante == pid &&
-            (g_r3[i].stato == CASELLA_PRONTA || g_r3[i].stato == CASELLA_SERVITA)) {
-            g_r3[i].stato         = CASELLA_LIBERA;
-            g_r3[i].pid_chiamante = 0;
+        if (g_r3[i]->usato && g_r3[i]->pid != pid && g_r3[i]->pid_chiamante == pid &&
+            (g_r3[i]->stato == CASELLA_PRONTA || g_r3[i]->stato == CASELLA_SERVITA)) {
+            g_r3[i]->stato         = CASELLA_LIBERA;
+            g_r3[i]->pid_chiamante = 0;
         }
-        if (!g_r3[i].usato || g_r3[i].pid != pid) continue;
+        if (!g_r3[i]->usato || g_r3[i]->pid != pid) continue;
 
         klog(LOG_WARN, "BLKR3: il PID %u e' morto: il suo disco sparisce", pid);
 
-        if (g_r3[i].stato != CASELLA_LIBERA && g_r3[i].pid_chiamante != 0) {
-            g_r3[i].esito = -EIO;
-            g_r3[i].stato = CASELLA_SERVITA;
-            sched_unblock_locked(g_r3[i].pid_chiamante);
+        if (g_r3[i]->stato != CASELLA_LIBERA && g_r3[i]->pid_chiamante != 0) {
+            g_r3[i]->esito = -EIO;
+            g_r3[i]->stato = CASELLA_SERVITA;
+            sched_unblock_locked(g_r3[i]->pid_chiamante);
         }
 
-        blk_ritira(g_r3[i].blkdev);
-        g_r3[i].usato = 0;
-        g_dorme[i]    = 0;
+        blk_ritira(g_r3[i]->blkdev);
+        g_r3[i]->usato = 0;
+        g_r3[i]->dorme    = 0;
     }
 
     interrupts_enable();

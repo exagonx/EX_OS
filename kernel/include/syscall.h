@@ -271,7 +271,7 @@ typedef struct {
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   272     /* la piu' alta e' SYS_FUSO_SET = 271 */
+#define SYSCALL_COUNT   274     /* la piu' alta e' SYS_IPC_RECV_SEG_R = 273 */
 
 /* =============================================================================
  * Codici errno
@@ -388,6 +388,18 @@ typedef struct {
  * ============================================================================= */
 #define SYS_FUSO          270   /* ebx = int32_t[2] */
 #define SYS_FUSO_SET      271   /* ebx = minutes east of UTC, ecx = 0/1 */
+
+/* =============================================================================
+ * SYS_IPC_RECV_SEG / _R (kernel 0.346, voce 37): ipc_recv with a timeout, as
+ * SYS_IPC_RECV_TMO, that a caught signal also cuts short: -EINTR with the
+ * mailbox still empty (a message already there is delivered first). Only for
+ * the libc's waits on a socket (poll, epoll_wait), which then withdraw the
+ * request from ip.drv (IP_MSG_RITIRA). _SEG is never restarted, as poll is
+ * not; _SEG_R starts again after a handler with SA_RESTART (segnali_riavvia).
+ * Same arguments as SYS_IPC_RECV_TMO.
+ * ============================================================================= */
+#define SYS_IPC_RECV_SEG   272
+#define SYS_IPC_RECV_SEG_R 273
 
 /* =============================================================================
  * Console virtuali (vedi kernel/arch/x86/vga.c)
@@ -1994,6 +2006,7 @@ int32_t sys_blk_scansiona(InterruptFrame *f);
 int32_t sys_blk_espelli(InterruptFrame *f);
 int32_t sys_ipc_recv(InterruptFrame *f);
 int32_t sys_ipc_recv_tmo(InterruptFrame *f);
+int32_t sys_ipc_recv_seg(InterruptFrame *f);
 int32_t sys_time(InterruptFrame *f);
 int32_t sys_time_set(InterruptFrame *f);
 int32_t sys_console_switch(InterruptFrame *f);

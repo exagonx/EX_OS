@@ -13,6 +13,7 @@
 #include "fat12.h"
 #include "rtc.h"
 #include "kmalloc.h"
+#include "posti.h"
 #include "sched.h"
 #include "isr.h"    /* irq_register_handler: sincronizzazione su IRQ6 */
 #include "smp.h"      /* bkl_fai_passare: clock waits on processor 1 (0.320) */
@@ -94,8 +95,8 @@ static uint8_t g_root_dirty = 0;
  * ============================================================================= */
 /* Deve stare al passo di VFS_MAX_OPEN: sul floppy ogni handle VFS ne
  * consuma uno di questi, e con il caricamento su richiesta gli eseguibili
- * restano aperti quanto i processi che li usano. */
-#define MAX_OPEN_FILES   64
+ * restano aperti quanto i processi che li usano. Since 0.347 (voce 35) the
+ * table grows, as the VFS one does since 0.282. */
 
 typedef struct {
     uint8_t        used;
@@ -120,7 +121,9 @@ typedef struct {
 
 #define DIR_ENTRIES_PER_SECTOR  (BYTES_PER_SECTOR / 32)
 
-static OpenFile g_open_files[MAX_OPEN_FILES];
+static OpenFile **volatile g_open_files;
+static volatile int        g_open_n;
+POSTI_CRESCI(aperti_cresci, OpenFile, g_open_files, g_open_n, 16)
 static uint32_t g_orfani_n = 0;          /* numbers for the deleted-while-open groups */
 
 /* ! TWO HANDLES OF THE SAME FILE ARE ONE FILE (analisi voce 70): every slot
@@ -140,9 +143,9 @@ static void fat12_allinea(int handle)
 {
     int i;
 
-    for (i = 0; i < MAX_OPEN_FILES; i++)
-        if (i != handle && stesso_posto(&g_open_files[i], &g_open_files[handle]))
-            g_open_files[i].entry = g_open_files[handle].entry;
+    for (i = 0; i < g_open_n; i++)
+        if (i != handle && stesso_posto(g_open_files[i], g_open_files[handle]))
+            g_open_files[i]->entry = g_open_files[handle]->entry;
 }
 
 /* a file being opened takes the copy of who has it open already */
@@ -150,9 +153,9 @@ static void fat12_prendi_copia(int slot)
 {
     int i;
 
-    for (i = 0; i < MAX_OPEN_FILES; i++)
-        if (i != slot && stesso_posto(&g_open_files[i], &g_open_files[slot])) {
-            g_open_files[slot].entry = g_open_files[i].entry;
+    for (i = 0; i < g_open_n; i++)
+        if (i != slot && stesso_posto(g_open_files[i], g_open_files[slot])) {
+            g_open_files[slot]->entry = g_open_files[i]->entry;
             return;
         }
 }
@@ -167,10 +170,10 @@ static int fat12_orfani(int is_root, uint32_t root_index, uint16_t lba, uint32_t
 
     chi.used = 1; chi.orfano = 0; chi.is_root_entry = (uint8_t)is_root;
     chi.root_index = root_index; chi.dir_lba = lba; chi.dir_slot = dslot;
-    for (i = 0; i < MAX_OPEN_FILES; i++) {
-        if (!stesso_posto(&g_open_files[i], &chi)) continue;
+    for (i = 0; i < g_open_n; i++) {
+        if (!stesso_posto(g_open_files[i], &chi)) continue;
         if (n == 0) { if (++g_orfani_n == 0) g_orfani_n = 1; n = g_orfani_n; }
-        g_open_files[i].orfano = n;
+        g_open_files[i]->orfano = n;
     }
     return n != 0;
 }
@@ -1842,8 +1845,8 @@ int fat12_init(uint8_t drive)
 
     /* Azzera tabella file aperti */
     {
-        uint32_t fi;
-        for (fi = 0; fi < MAX_OPEN_FILES; fi++) g_open_files[fi].used = 0;
+        int fi;
+        for (fi = 0; fi < g_open_n; fi++) g_open_files[fi]->used = 0;
     }
 
     klog(LOG_INFO, "FAT12: driver inizializzato (drive=0x%02x)", drive);
@@ -2287,7 +2290,7 @@ static int fat12_dir_scan(uint16_t dir_cluster, const char *name83,
  * ============================================================================= */
 static int fat12_writeback_entry(int handle)
 {
-    OpenFile *of = &g_open_files[handle];
+    OpenFile *of = g_open_files[handle];
 
     /* ! ONLY WHAT THE CONTENT CHANGES - first cluster and size (voce 70).
      * The whole copy put back the old name over a rename made meanwhile. */
@@ -2361,7 +2364,7 @@ static int fat12_writeback_entry(int handle)
  * ============================================================================= */
 static int fat12_apply_trunc(int slot)
 {
-    OpenFile *of = &g_open_files[slot];
+    OpenFile *of = g_open_files[slot];
 
     if (of->entry.first_cluster >= 2) {
         fat12_free_chain(of->entry.first_cluster);
@@ -2644,7 +2647,7 @@ int fat12_rmdir(const char *path)
  * motivo e stessa forma di apri_fallito() nel VFS. */
 static int fat12_open_fallito(int slot, int err)
 {
-    g_open_files[slot].used = 0;
+    g_open_files[slot]->used = 0;
     return err;
 }
 
@@ -2656,10 +2659,10 @@ int fat12_open(const char *path, uint32_t flags)
 
     if (!g_initialized) return -1;
 
-    for (slot = 0; slot < MAX_OPEN_FILES; slot++) {
-        if (!g_open_files[slot].used) break;
+    for (slot = 0; slot < g_open_n; slot++) {
+        if (!g_open_files[slot]->used) break;
     }
-    if (slot == MAX_OPEN_FILES) return -24;  /* EMFILE */
+    if (slot == g_open_n && aperti_cresci() != 0) return -12;  /* ENOMEM */
 
     /* ! Prenotazione IMMEDIATA dello slot, prima di qualunque accesso al
      * supporto. Da qui in giu' si legge dal floppy, e leggere dal floppy
@@ -2669,12 +2672,12 @@ int fat12_open(const char *path, uint32_t flags)
      * quella finestra troverebbe lo stesso slot libero e i due file
      * finirebbero nello stesso descrittore. Vedi il commento lungo in
      * vfs_open(): il guasto e' lo stesso, un piano piu' in su. */
-    g_open_files[slot].used          = 1;
-    g_open_files[slot].is_root_entry = 0;
-    g_open_files[slot].root_index    = 0;
-    g_open_files[slot].dir_lba       = 0;
-    g_open_files[slot].dir_slot      = 0;
-    g_open_files[slot].orfano        = 0;
+    g_open_files[slot]->used          = 1;
+    g_open_files[slot]->is_root_entry = 0;
+    g_open_files[slot]->root_index    = 0;
+    g_open_files[slot]->dir_lba       = 0;
+    g_open_files[slot]->dir_slot      = 0;
+    g_open_files[slot]->orfano        = 0;
 
     if (fat12_split_path(path, &dir_cluster, name83) != 0)
         return fat12_open_fallito(slot, -2);
@@ -2697,9 +2700,9 @@ int fat12_open(const char *path, uint32_t flags)
                 if (entries[i].ext[j] != (uint8_t)name83[8 + j]) match = 0;
             if (!match) continue;
 
-            g_open_files[slot].entry         = entries[i];
-            g_open_files[slot].is_root_entry = 1;
-            g_open_files[slot].root_index    = i;   /* indice VERO, non dedotto */
+            g_open_files[slot]->entry         = entries[i];
+            g_open_files[slot]->is_root_entry = 1;
+            g_open_files[slot]->root_index    = i;   /* indice VERO, non dedotto */
             fat12_prendi_copia(slot);
 
             if (flags & 0x0200) {                   /* O_TRUNC */
@@ -2724,9 +2727,9 @@ int fat12_open(const char *path, uint32_t flags)
                   entries[i].date = ist.data; entries[i].time = ist.ora; }
                 g_root_dirty = 1;
 
-                g_open_files[slot].entry         = entries[i];
-                g_open_files[slot].is_root_entry = 1;
-                g_open_files[slot].root_index    = i;
+                g_open_files[slot]->entry         = entries[i];
+                g_open_files[slot]->is_root_entry = 1;
+                g_open_files[slot]->root_index    = i;
                 return slot;
             }
         }
@@ -2740,9 +2743,9 @@ int fat12_open(const char *path, uint32_t flags)
         Fat12DirEntry e;
 
         if (fat12_dir_scan(dir_cluster, name83, &lba, &dslot, &e) == 0) {
-            g_open_files[slot].entry    = e;
-            g_open_files[slot].dir_lba  = lba;
-            g_open_files[slot].dir_slot = dslot;
+            g_open_files[slot]->entry    = e;
+            g_open_files[slot]->dir_lba  = lba;
+            g_open_files[slot]->dir_slot = dslot;
             fat12_prendi_copia(slot);
 
             if (flags & 0x0200) {                   /* O_TRUNC */
@@ -2779,9 +2782,9 @@ int fat12_open(const char *path, uint32_t flags)
             if (fat12_write_sector(lba, buf) != 0)
                 return fat12_open_fallito(slot, -5);
 
-            g_open_files[slot].entry    = entries[dslot];
-            g_open_files[slot].dir_lba  = lba;
-            g_open_files[slot].dir_slot = dslot;
+            g_open_files[slot]->entry    = entries[dslot];
+            g_open_files[slot]->dir_lba  = lba;
+            g_open_files[slot]->dir_slot = dslot;
             return slot;
         }
     }
@@ -2799,11 +2802,11 @@ int fat12_read(int handle, void *buf, uint32_t size, uint32_t offset)
     uint32_t       bytes_read = 0;
     uint8_t        sector_buf[BYTES_PER_SECTOR];
 
-    if (!g_initialized || handle < 0 || (uint32_t)handle >= MAX_OPEN_FILES
-        || !g_open_files[handle].used)
+    if (!g_initialized || handle < 0 || handle >= g_open_n
+        || !g_open_files[handle]->used)
         return -1;
 
-    entry = &g_open_files[handle].entry;
+    entry = &g_open_files[handle]->entry;
     if (entry->name[0] == 0x00 || (uint8_t)entry->name[0] == 0xE5) return -9;
 
     if (offset >= entry->file_size) return 0;   /* EOF */
@@ -2852,11 +2855,11 @@ int fat12_write(int handle, const void *buf, uint32_t size, uint32_t offset)
     uint32_t        written = 0;
     uint8_t         sector_buf[BYTES_PER_SECTOR];
 
-    if (!g_initialized || handle < 0 || (uint32_t)handle >= MAX_OPEN_FILES
-        || !g_open_files[handle].used)
+    if (!g_initialized || handle < 0 || handle >= g_open_n
+        || !g_open_files[handle]->used)
         return -1;
 
-    entry = &g_open_files[handle].entry;
+    entry = &g_open_files[handle]->entry;
     if (entry->name[0] == 0x00 || (uint8_t)entry->name[0] == 0xE5) return -9;
 
     /* Se file vuoto, alloca primo cluster */
@@ -3019,14 +3022,14 @@ fine_scrittura:
  * ============================================================================= */
 int fat12_close(int handle)
 {
-    if (handle >= 0 && (uint32_t)handle < MAX_OPEN_FILES) {
-        OpenFile *of = &g_open_files[handle];
+    if (handle >= 0 && handle < g_open_n) {
+        OpenFile *of = g_open_files[handle];
         int       i, altri = 0;
 
         /* the last handle of a deleted file frees its chain (voce 70) */
         if (of->used && of->orfano) {
-            for (i = 0; i < MAX_OPEN_FILES; i++)
-                if (i != handle && stesso_posto(&g_open_files[i], of)) altri++;
+            for (i = 0; i < g_open_n; i++)
+                if (i != handle && stesso_posto(g_open_files[i], of)) altri++;
             if (!altri && of->entry.first_cluster >= 2) {
                 fat12_free_chain(of->entry.first_cluster);
                 g_fat_dirty = 1;

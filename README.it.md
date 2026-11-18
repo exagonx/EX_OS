@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.345
+**Versione:** 0.347
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -112,6 +112,38 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### Un segnale interrompe un'attesa su un socket (kernel 0.346, ip.drv 0.026, voce 37) — testato in QEMU e sul PC di prova
+
+- **poll, epoll_wait, recv e send su un socket rendono EINTR** quando arriva un segnale
+  catturato, come su Linux: recv e send ripartono dopo un gestore con SA_RESTART, poll ed
+  epoll_wait mai. Fino alla 0.345 un filo in poll su un socket non si svegliava con
+  `pthread_kill`: Apache e MariaDB lo aggiravano guardando ogni 100 ms.
+- **Come:** l'attesa sta in ip.drv, quindi interromperla solo nella libc lascerebbe la
+  risposta in ritardo di ip.drv nella casella, per la chiamata dopo. Il kernel ha un'attesa
+  IPC che un segnale catturato chiude (SYS_IPC_RECV_SEG 272, e _SEG_R 273 che SA_RESTART fa
+  ripartire); poi la libc manda IP_MSG_RITIRA e ip.drv risponde subito all'attesa in corso:
+  una risposta sola, quindi non resta niente di vecchio. Una libc nuova su un kernel o un
+  ip.drv vecchio torna all'attesa di prima.
+- **Provato:** il nuovo `tools/prova_eintr.sh` (`tools/prove/eintrprova.c`, contro una libc.a
+  fatta dai sorgenti di oggi), a 32 e 64 bit: poll, poll con SA_RESTART, epoll_wait, il poll
+  dopo trova subito il cliente, recv con SO_RCVTIMEO interrotta e ripartita, `pthread_kill`
+  su un filo in poll, un poll senza segnali aspetta la sua scadenza: 8 su 8.
+- **Sul PC di prova (.253, 64 bit, 18/11):** 0.346 e ip.drv 0.026 con netupdate, impronta del
+  kernel controllata prima del riavvio, `netupdate -verifica` tutto a posto; la stessa prova
+  sulla macchina: 8 su 8.
+- **Non ancora:** una recv o un accept bloccanti senza scadenza non si interrompono (la
+  richiesta resta in ip.drv finché arrivano dati); la libc.a della toolchain (sysroot) non è
+  rifatta, quindi i programmi costruiti con quella (Apache, MariaDB, Valkey) lo avranno quando
+  si ricollegano.
+
+### Lo spegnimento del PC di prova: cosa fa prima il suo BIOS (voce 102, in corso)
+
+- `shutdown` non spegne il .253. Le sue tabelle ACPI, lette con `sonda.drv -acpi` e
+  disassemblate con iasl, dicono che il `_PTS(5)` del BIOS accende due bit del chipset nForce
+  (porte 0x4401 e 0x4405, bit 7) che EX-OS non tocca; sulla macchina il secondo è spento. Se
+  sia questa la causa si prova con l'utente davanti alla macchina.
+- `sonda.drv` 0.011: `-porta:IND` legge una porta di I/O, `-porta:IND|=VAL` ci accende dei bit.
 
 ### Ogni driver ha -install e -remove (voce 24) — testato in QEMU
 
@@ -1284,6 +1316,30 @@ NOME` applica le patch di EX-OS a una copia; `-applica NOME` cambia `VER=` solo 
 entrambi. Non compila: la prova resta la costruzione a 32 e 64 bit e le prove in
 QEMU. Provato su Apache e APR alla versione attuale, con un archivio alterato
 rifiutato. Firefox, gcc, binutils e Rust non sono coperti.
+
+### I sorgenti di Firefox dall'ultima versione pubblicata (tools/exilla/sorgenti.sh) — testato su Firefox 160.0.1
+
+`tools/exilla/sorgenti.sh` fa per Firefox (e, voce 103, Thunderbird) quello che
+`tools/aggiorna-sorgenti.sh` fa per le librerie: senza argomenti dice la nostra versione e
+quelle di Mozilla (release, ESR, beta, da product-details.mozilla.org); `-scarica` prende
+`firefox-VER.source.tar.xz` da archive.mozilla.org, controlla la firma con la chiave di
+Mozilla e lo sha512 con `SHA512SUMS`; `-prova` mette le patch di Exilla in ordine su una copia
+in `cross_build/aggiorna` e tiene da parte gli originali dei file che toccano, per
+`patch-crea.sh`; `-applica` rifiuta finché resta un `.rej`, sposta l'albero vecchio fuori da
+MEGA (senza cancellarlo) e mette la copia al suo posto.
+- **La chiave è fissata** in `tools/exilla/mozilla-chiave.txt` (Mozilla Software Releases,
+  `14F2 6682 … D98F 0353`, confrontata con quella che Mozilla pubblica; la sua sottochiave
+  d'agosto 2026 è quella dopo la rotazione): una chiave diversa ferma lo scaricamento.
+- **Un `.cargo-checksum.json` non si patcha**, si ricalcola per i crate che tocchiamo: le sue
+  somme sono di una versione del crate.
+- **Trovato facendolo:** tre file nostri di Exilla (`widget/exos/ExosPosta.cpp`, `ExosPosta.h`,
+  `nsWindow.h`) avevano come "originale" una nostra versione precedente, quindi le loro patch
+  avevano solo l'ultima modifica e da un albero pulito non si rifaceva Exilla con
+  `tools/exilla/patch`. Ora sono file interi, come gli altri nuovi.
+- **Provato su 160.0.1** (il nostro albero è la nightly 158.0a1): firma e sha512 buoni, 340
+  patch esatte, 42 spostate, 3 rifiutate e adattate a mano (due perché Mozilla ha cambiato le
+  righe, una non serve più: abseil accende mmap da solo quando c'è `<sys/mman.h>`). La copia è
+  pronta; restano il cambio (`-applica`), la costruzione a 32 e 64 bit e le prove di Exilla.
 
 ### Il tasto Stamp salva lo schermo in un PNG (kbd.drv 0.008, wserver 0.015, pm 0.026, /bin/cattura) — testato in QEMU
 

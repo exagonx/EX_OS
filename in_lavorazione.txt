@@ -184,12 +184,15 @@ GRUPPO  VOCI             COSA
   8     25 24 57 55 56   2D hardware, -install, AHCI
                          18/11: 24 FATTA (prova_install.sh 40/40); 25 vuole il CQ60, 55-57 il .253 con l'utente
   9     33 37 35 31      fork, EINTR, tetti, file oltre 2 GB
+                         18/11: 37 FATTA in QEMU (kernel 0.346, ip.drv 0.026, prova_eintr.sh 8/8); 33 resta l'ab che a volte trova chiuso
  10     72 42 48 36 34   grandi porting; 72 dopo 33 e 37
  --     40 21            decise il 2/11: BSY e DMA a 30 s; telnetd chiude i discendenti
                          17/11: 40 FATTA (kernel 0.345, anche il FLUSH ritentato); 21 FATTA (telnetd 0.016, voce 100)
  --     61 76            solo se ricompare (76: orologio in FAULT, 3/11)
  --     77               seguiti del 3-4/11: H.264 Firefox, Firefox 32, repo 64 da
                          pubblicare, ExPackage sul portatile, statici rimasti
+ --     103              (18/11) porting di Thunderbird: script che scarica gli ultimi sorgenti,
+                         patch, costruzione a 32 e 64 bit sopra il lavoro di Exilla
  --     87               (6/11) ExWin all'avvio: -autostart, F1-F4 shell, F5 grafica,
                          login grafico poi program manager nella home dell'utente
  --     88               (6/11) OpenGL: Mesa software (softpipe, poi llvmpipe), EGL per
@@ -10414,6 +10417,40 @@ tools/netinst/velocita tolto da netinst.
       17/11, DOPO IL RIAVVIO NELLA 0.343: il telnetd 0.015 dell'avvio, porta
       23, telnet_piu_prova.py 6 su 6.
 
+  103. PORTING DI THUNDERBIRD (l'utente, 18/11: "metti in lista il porting di
+      thunderbird con la solita procedura script per scaricare gli ultimi
+      sorgenti e adattamento"). In coda, non iniziato. La procedura: uno
+      script nel repository (tools/thunderbird-exos/, come
+      tools/valkey-exos/costruisci.sh) che scarica l'ULTIMA versione
+      pubblicata dei sorgenti (Thunderbird = comm-central sopra lo stesso
+      mozilla-central di Firefox: il tarball thunderbird-<versione>.source
+      li ha tutti e due), verifica l'impronta, applica le patch EX-OS e
+      costruisce a 32 e 64 bit. Si appoggia su tutto il lavoro di Exilla:
+      toolchain, Rust, NSPR/NSS, le patch di Gecko (tools/exilla/patch), il
+      widget ExWin, mozconfig-gecko: da riusare, non da rifare. In piu' di
+      Firefox: --enable-project=comm/mail, libotr/RNP (OpenPGP, Botan), il
+      calendario, IMAP/POP/SMTP con TLS, il profilo in ~/.thunderbird.
+      Licenza MPL 2.0: sorgenti e patch su ISO strumenti e netinst. Il
+      pacchetto nel catalogo (gruppo [thunderbird]) con la voce nel menu.
+      Prova: un account IMAP/SMTP di prova (un server sull'host, per
+      esempio dovecot + un SMTP locale), scaricare, scrivere, mandare.
+      Da fare dopo il gruppo 10 (grandi porting) o quando lo dice l'utente.
+      18/11, l'utente: "visto che manca crea la procedura anche per
+      firefox". FATTA: tools/exilla/sorgenti.sh [firefox|thunderbird]
+      (-scarica: archive.mozilla.org, firma con la chiave fissata in
+      tools/exilla/mozilla-chiave.txt e sha512; -prova: patch su una copia
+      in cross_build/aggiorna, originali a parte, .cargo-checksum.json
+      ricalcolati; -applica: rifiuta coi .rej, l'albero vecchio in
+      cross_build/aggiorna/vecchi). Provata su Firefox 160.0.1: 340 esatte,
+      42 spostate, 3 adattate a mano (Factory.cpp, gfxFT2FontList.cpp,
+      abseil config.h non serve piu'). TROVATO: ExosPosta.cpp/.h e
+      nsWindow.h avevano come originale una nostra versione (tocca.sh dopo
+      averli creati): le patch del repository non li ricreavano. Riparato
+      (originali .nuovo, patch-crea.sh: cambiano solo quelle tre). DA
+      DECIDERE CON L'UTENTE: -applica firefox 160.0.1 (Exilla passa da
+      158.0a1 nightly alla 160.0.1 release), poi costruzione 32/64 e prove.
+      Thunderbird usera' lo stesso script (thunderbird-main/).
+
   102. shutdown NON SPEGNE IL .253 (l'utente, 17/11 notte: "shutdown non spegne
       la macchina 253"). Da guardare: lo spegnimento ACPI (S5, SLP_TYP dal
       \_S5 del DSDT, PM1a/PM1b) sull'MCP73; cosa scrive il kernel in dmesg
@@ -10434,6 +10471,29 @@ tools/netinst/velocita tolto da netinst.
       fallisce il kernel scrive sullo schermo "ACPI: S5 non riuscito:
       PM1a_CNT ... prima, ... ora, PM1a_STS ..., GPE0 ...": la riga che
       l'utente vede al prossimo shutdown dice cosa ha visto il chipset.
+      18/11 MATTINA, LA DSDT LETTA: sonda.drv -acpi bffa0200 sul .253, 17
+      tabelle con checksum giusto (tools/acpi-da-testo.py), disassemblate con
+      iasl 20250404 (il pacchetto Debian acpica-tools aperto in
+      ~/cross_build/strumenti/acpica, non installato). Tutto in
+      ~/cross_build/prove/acpi253/ (cattura.txt, tab/DSDT.dsl). _S5 = 7.
+      _PTS(5) chiama PTS: SIOS (solo sotto S5), NPTS (vuoto), SBRG.SPTS e
+      TRMS(5). TRMS scrive 0x84 in 0x4001 (WAK_STS e RTC_STS di PM1_STS: gia'
+      fatto da acpi_spegni con 0xFFFF). SPTS invece accende due bit del
+      chipset che il kernel NON tocca: PS1S = 0x4401 bit 7 e PS1E = 0x4405
+      bit 7 (SCIO = 0x4400, cioe' PM1a_EVT + 0x400). Letti a macchina
+      accesa: 0x4401 = 0x00, 0x4405 = 0x14 (PS1E spento), 0x409c = 0x21 (S5CT,
+      SCTL 0x4090 + 0xc, a 1; _WAK li rimette a 2). IPOTESI: con PS1E acceso
+      lo SLP_EN fa scattare l'SMI del BIOS, che spegne lui; senza, il
+      chipset non spegne. NON PROVATA.
+      PRONTA LA PROVA (serve l'utente davanti, per riaccendere):
+        /prova343/sonda.drv -porta:4401|=80
+        /prova343/sonda.drv -porta:4405|=80
+        sync
+        shutdown
+      (sonda.drv 0.011 ha -porta:IND e -porta:IND|=VAL.) Se si spegne: nel
+      kernel, prima di SLP_TYP, gli stessi due bit sulle macchine nVidia
+      (base dalla FADT + 0x400), oppure un interprete AML per _PTS: da
+      decidere con l'utente. Se no: foto della riga "S5 non riuscito".
 
   101. PIU' SCHEDE DI RETE INSIEME, OGNUNA COL SUO DRIVER (l'utente, 17/11, alla
       domanda sulla rete nella voce 24: "hwconfig deve rilevare l'hardware
@@ -10473,12 +10533,8 @@ tools/netinst/velocita tolto da netinst.
       stack ogni 15 s invece di 2). Perche': da guardare.
       SUL .253 (17/11 sera): telnetd 0.016 con netupdate -check -yes (kernel
       invariato, 517448e1). La stessa prova contro la macchina: 8/8, 22 s
-      anche li'. ! SUBITO DOPO IL netupdate IL .253 SI E' RIAVVIATO (uptime
-      128 s alle 21:43:58; niente ping per circa un minuto). In dmesg nessun
-      errore, nessuna guardia, giornale ext3 pulito; netupdate.reg delle
-      21:34, nessuno ha chiesto un riavvio. Non si sa se l'ha riavviato
-      l'utente: chiesto. Se no, e' da cercare (nessun registro sopravvive
-      al riavvio: servirebbe dmesg su disco).
+      anche li'. Subito dopo il .253 si e' riavviato (uptime 128 s alle
+      21:43:58): l'aveva riavviato l'utente (detto il 18/11). Niente da cercare.
 
   61. IL LOGIN SI RIPETE DA SOLO SULLA CONSOLE (l'utente, 1/11, foto
       20261101_100408, portatile, 0.299): "EX-OS - accesso / utente:" a catena,
@@ -11491,6 +11547,26 @@ tools/netinst/velocita tolto da netinst.
       ip.drv (un messaggio di ritiro con un numero di richiesta, e la libc
       che scarta le risposte con un numero vecchio). Va fatto prima di
       altri programmi che contano su EINTR (Redis, nginx, la voce 33).
+      FATTO 18/11 (kernel 0.346, ip.drv 0.026), IN QEMU: SYS_IPC_RECV_SEG 272
+      (attesa IPC che un segnale catturato chiude, -EINTR a casella vuota) e
+      _SEG_R 273 (riparte con SA_RESTART, segnali_riavvia); IP_MSG_RITIRA 27:
+      ip.drv risponde SUBITO all'attesa in corso (poll o epoll_wait) di chi
+      la manda, una risposta sola; niente in corso, niente risposta. Cosi'
+      niente numeri di richiesta: chi e' interrotto manda RITIRA e aspetta
+      quella risposta sola. libc: ip_chiedi_seg, poll ed epoll_wait (mai
+      ripartiti), send e recv con scadenza (ripartono con SA_RESTART); il
+      poll misto (file + socket) guarda l'EINTR del poll del kernel e della
+      pausa da 10 ms. Una libc nuova su un ip.drv < 0.026 (ESITO -EINVAL a
+      RITIRA) o su un kernel < 0.346 (ENOSYS) torna all'attesa di prima
+      (g_ritira_no). tools/prova_eintr.sh 8/8 a 32 e 64. RESTANO: recv e
+      accept bloccanti SENZA scadenza (la RICEVI resta in volo: servirebbe
+      un'attesa prima, solo nei processi con un gestore); la libc.a dei
+      sysroot non rifatta (Apache, MariaDB, Valkey la hanno quando si
+      ricollegano; poi si possono togliere worker-ascolto.diff e il poll a
+      100 ms di MariaDB: da decidere con l'utente).
+      SUL .253 (18/11): 0.346 e ip.drv 0.026 con netupdate, sha256 del
+      kernel 67986141 controllato, riavvio, netupdate -verifica a posto;
+      eintrprova (64 bit) sulla macchina 8/8.
 
   36. PIU' SCHEDE DI RETE INSIEME (l'utente, 28/10: «il sistema deve poter
       supportare connessioni multiple piu schede di rete dove

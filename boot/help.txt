@@ -655,6 +655,21 @@ Dalla 0.324 lpt.drv fa in/out da solo, senza chiamate di sistema
 (la bitmap I/O del TSS, ioport_diretto): l'onda su D1 esce in
 ritardo di decine di microsecondi invece che di millisecondi.
 
+[sonda.drv sonda]
+lo strumento per scrivere un driver: referti, tabelle, porte
+
+  sonda.drv [file]           il referto della macchina su file
+  sonda.drv -schermo         l'essenziale a video, da fotografare
+  sonda.drv -acpi IND        le tabelle ACPI in esadecimale (IND = la
+                             FADT, dmesg "ACPI: FADT a 0x..."); sull'host
+                             tools/acpi-da-testo.py le ricompone e
+                             iasl -d le disassembla. Sola lettura
+  sonda.drv -porta:IND       legge un byte dalla porta IND (esadecimale)
+  sonda.drv -porta:IND|=VAL  ci accende i bit VAL e rilegge (sonda 0.011)
+
+Si lancia a mano da root e non si installa. Il nome deve finire in
+.drv: solo i driver possono toccare porte e registri.
+
 [driver -install]
 far partire un driver a ogni avvio
 
@@ -1747,6 +1762,11 @@ scrittura). Servono a Redis (BGSAVE), al prefork di Apache, a QProcess.
     catturato interrompe read, write, waitpid, poll, sleep con EINTR; con
     SA_RESTART (lo mette signal()) read/write/waitpid ripartono dopo il
     gestore. Prima solo kill -9 e Ctrl+C chiudevano un'attesa;
+  - anche sui socket (kernel 0.346, ip.drv 0.026, voce 37): poll,
+    epoll_wait, recv e send interrotti da un segnale catturato dicono
+    EINTR; recv e send ripartono con SA_RESTART, poll ed epoll_wait mai
+    (come Linux). Prima un filo in poll su un socket non si svegliava con
+    pthread_kill, e Apache e MariaDB guardavano ogni 100 ms;
   - una pipe con O_NONBLOCK dice EAGAIN invece di aspettare (kernel
     0.317; prima il flag restava ignorato e Valkey si fermava dopo BGSAVE);
   - Apache come demone (httpd senza -X): il padre va sullo sfondo e il

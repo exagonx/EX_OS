@@ -1449,9 +1449,6 @@ int32_t sys_fork(InterruptFrame *frame)
     figlio->console    = io->console;
     figlio->sottofondo = io->sottofondo;
     kstrcpy(figlio->cwd, capo->cwdt ? capo->cwdt : capo->cwd, sizeof(figlio->cwd));
-    figlio->env_count  = capo->env_count;
-    for (k = 0; k < MAX_ENV_VARS; k++)
-        kstrcpy(figlio->env[k], capo->env[k], ENV_VAR_LEN);
 
     /* --- the memory around the copy ------------------------------------- */
     figlio->heap_start       = capo->heap_start;
@@ -2549,7 +2546,7 @@ int32_t sys_exec(InterruptFrame *frame)
  * Sessantaquattro tiene una riga di link di collect2, che e' la piu' lunga
  * che si veda in una compilazione, e resta lontana dai 4096 di Linux perche'
  * allora ogni argomento costava un buffer intero. (Non e' piu' vero: le
- * stringhe stanno impacchettate nell'arena, vedi SPAWN_ARENA_BYTES.)
+ * stringhe stanno impacchettate nell'arena, vedi SpawnBuf.)
  *
  * ! E SOPRATTUTTO: adesso il troncamento NON esiste piu'. Chi supera il
  * tetto riceve E2BIG e un klog che dice quanti ne ha passati. Un comando
@@ -2570,8 +2567,11 @@ int32_t sys_exec(InterruptFrame *frame)
  * costo si senta: gli array che lo dimensionano stanno sullo heap insieme
  * all'arena (vedi SpawnBuf), quindi alzarlo costa memoria solo durante la
  * spawn, e solo quanto la riga di comando usa davvero. */
-#define MAX_SPAWN_ARGS  512
-#define MAX_SPAWN_ENV   32     /* variabili d'ambiente ereditate da un figlio */
+/* ! 0.347 (voce 35): NO CEILING AT ALL. MAX_SPAWN_ARGS (512), MAX_SPAWN_ENV
+ * (32: the variables after the 32nd were DROPPED without a word, and a make
+ * or a mach has more than that) and the 32 KB arena are gone: spawn and exec
+ * first measure what the caller passes, then allocate exactly that (see
+ * SpawnBuf). The ceiling is the kernel heap and the child's stack. */
 
 /* =============================================================================
  * Quanto puo' essere lungo UN argomento.
@@ -2602,7 +2602,9 @@ int32_t sys_exec(InterruptFrame *frame)
  * superare lo spazio che li tiene tutti, quindi legarlo a un secondo numero
  * piu' piccolo aggiungeva un modo di fallire e nessuna protezione.
  * ============================================================================= */
-#define MAX_ARG_LEN    SPAWN_ARENA_BYTES
+/* how far syscall_verify_str looks for the end of one string: the end of
+ * user space stops it first */
+#define MAX_ARG_LEN    0x7FFFFFFFu
 
 /* Le stringhe di argv e dell'ambiente stanno in un'ARENA sullo heap, non
  * sullo stack del kernel.
@@ -2631,7 +2633,6 @@ int32_t sys_exec(InterruptFrame *frame)
  * dal disco, quindi fra il riempimento del buffer e il suo uso il processo
  * si blocca di sicuro. Non si e' mai visto perche' finora a lanciare
  * programmi era quasi sempre la sola shell. */
-#define SPAWN_ARENA_BYTES  32768
 
 /* =============================================================================
  * Tutto cio' che una spawn tiene da parte, in UNA allocazione sola.
@@ -2650,24 +2651,61 @@ int32_t sys_exec(InterruptFrame *frame)
  * la prima che si dimentica e' una perdita di memoria che si vede solo
  * dopo qualche migliaio di comandi. Con una sola, `kfree(sb)` e' sempre
  * giusta. */
+/* ! 0.347: still ONE allocation, sized on what was measured: the header,
+ * then the four arrays and the arena carved from the same block. */
 typedef struct {
-    char     *kargv[MAX_SPAWN_ARGS + 1];
-    char     *kenvp[MAX_SPAWN_ENV + 1];
-    uintptr_t arg_ptrs[MAX_SPAWN_ARGS + 1];    /* larghi come un puntatore del figlio */
-    uintptr_t env_ptrs[MAX_SPAWN_ENV + 1];
-    char      arena[SPAWN_ARENA_BYTES];
+    char     **kargv;       /* [argc + 1] */
+    char     **kenvp;       /* [envc + 1] */
+    uintptr_t *arg_ptrs;    /* [argc + 1], as wide as a pointer of the child */
+    uintptr_t *env_ptrs;    /* [envc + 1] */
+    char      *arena;
+    uint32_t   arena_dim;
 } SpawnBuf;
 
-/* Copia `s` nell'arena e ne ritorna il puntatore, o NULL se non ci sta piu'. */
-static char *spawn_arena_dup(char *arena, uint32_t *uso, const char *s)
+/* NULL when the heap has no room, or the sizes overflow */
+static SpawnBuf *spawn_buf_nuovo(uint32_t argc, uint32_t envc, uint32_t byte)
+{
+    uint64_t  dim = sizeof(SpawnBuf)
+                  + ((uint64_t)argc + 1 + envc + 1) * (sizeof(char *) + sizeof(uintptr_t))
+                  + byte;
+    uint8_t  *m;
+    SpawnBuf *sb;
+
+    if (dim > 0x40000000u) return NULL;
+    m = (uint8_t *)kmalloc((size_t)dim);
+    if (m == NULL) return NULL;
+    sb = (SpawnBuf *)m;
+    m += sizeof(SpawnBuf);
+    sb->kargv     = (char **)m;      m += (argc + 1) * sizeof(char *);
+    sb->kenvp     = (char **)m;      m += (envc + 1) * sizeof(char *);
+    sb->arg_ptrs  = (uintptr_t *)m;  m += (argc + 1) * sizeof(uintptr_t);
+    sb->env_ptrs  = (uintptr_t *)m;  m += (envc + 1) * sizeof(uintptr_t);
+    sb->arena     = (char *)m;
+    sb->arena_dim = byte;
+    return sb;
+}
+
+/* a string's length with its NUL; 0 = the byte count would pass 1 GB */
+static uint32_t spawn_lungo(const char *s, uint32_t gia)
+{
+    uint32_t len = 0;
+
+    while (s[len]) len++;
+    if (len + 1u > 0x3FFFFFFFu - gia) return 0;
+    return len + 1u;
+}
+
+/* Copia `s` nell'arena e ne ritorna il puntatore, o NULL se non ci sta piu'
+ * (the string grew between the measure and the copy: another thread). */
+static char *spawn_arena_dup(SpawnBuf *sb, uint32_t *uso, const char *s)
 {
     uint32_t len = 0, k;
     char    *dst;
 
     while (s[len]) len++;
-    if (*uso + len + 1 > SPAWN_ARENA_BYTES) return NULL;
+    if (*uso + len + 1 > sb->arena_dim) return NULL;
 
-    dst = arena + *uso;
+    dst = sb->arena + *uso;
     for (k = 0; k <= len; k++) dst[k] = s[k];
     *uso += len + 1;
     return dst;
@@ -2720,46 +2758,61 @@ static int32_t exec_con_argv(const char *kpath, char **uargv, char **uenvp)
 {
     Process      *proc = proc_get_current();
     ElfLoadResult res;
-    SpawnBuf     *sb = (SpawnBuf *)kmalloc(sizeof(SpawnBuf));
+    SpawnBuf     *sb;
     uint32_t      argc = 0, envc = 0, uso = 0, i, usp, argv_u, envv_u, serve;
+    uint32_t      byte = 0, l, n_env = 0;
+    const char   *bn = kpath, *q;
     PDE          *new_pd, *old_pd;
     int           rc_elf;
 
-    if (sb == NULL) return ERR(ENOMEM);
-
+    /* the measure (0.347): argv strict (EFAULT), the environment tolerant
+     * (it ends at the first unreadable entry), as before */
     if (uargv != NULL) {
-        while (argc < MAX_SPAWN_ARGS) {
+        for (;;) {
             const char *ua;
 
-            if (!syscall_verify_ptr(&uargv[argc], sizeof(char *))) { kfree(sb); return ERR(EFAULT); }
+            if (!syscall_verify_ptr(&uargv[argc], sizeof(char *))) return ERR(EFAULT);
             ua = uargv[argc];
             if (ua == NULL) break;
-            if (!syscall_verify_str(ua, MAX_ARG_LEN)) { kfree(sb); return ERR(EFAULT); }
-            sb->kargv[argc] = spawn_arena_dup(sb->arena, &uso, ua);
-            if (sb->kargv[argc] == NULL) { kfree(sb); return ERR(E2BIG); }
+            if (!syscall_verify_str(ua, MAX_ARG_LEN)) return ERR(EFAULT);
+            if ((l = spawn_lungo(ua, byte)) == 0) return ERR(E2BIG);
+            byte += l;
             argc++;
         }
     }
+    for (q = kpath; *q; q++) if (*q == '/') bn = q + 1;
     if (argc == 0) {
-        const char *bn = kpath, *q;
+        if ((l = spawn_lungo(bn, byte)) == 0) return ERR(E2BIG);
+        byte += l;
+    }
+    if (uenvp != NULL) {
+        for (;;) {
+            const char *ue;
 
-        for (q = kpath; *q; q++) if (*q == '/') bn = q + 1;
-        sb->kargv[0] = spawn_arena_dup(sb->arena, &uso, bn);
+            if (!syscall_verify_ptr(&uenvp[n_env], sizeof(char *))) break;
+            ue = uenvp[n_env];
+            if (ue == NULL || !syscall_verify_str(ue, MAX_ARG_LEN)) break;
+            if ((l = spawn_lungo(ue, byte)) == 0) return ERR(E2BIG);
+            byte += l;
+            n_env++;
+        }
+    }
+    sb = spawn_buf_nuovo(argc ? argc : 1, n_env, byte);
+    if (sb == NULL) return ERR(ENOMEM);
+
+    for (i = 0; i < argc; i++) {
+        sb->kargv[i] = spawn_arena_dup(sb, &uso, uargv[i]);
+        if (sb->kargv[i] == NULL) { kfree(sb); return ERR(E2BIG); }
+    }
+    if (argc == 0) {
+        sb->kargv[0] = spawn_arena_dup(sb, &uso, bn);
         if (sb->kargv[0] == NULL) { kfree(sb); return ERR(E2BIG); }
         argc = 1;
     }
     sb->kargv[argc] = NULL;
-    if (uenvp != NULL) {
-        while (envc < MAX_SPAWN_ENV) {
-            const char *ue;
-
-            if (!syscall_verify_ptr(&uenvp[envc], sizeof(char *))) break;
-            ue = uenvp[envc];
-            if (ue == NULL || !syscall_verify_str(ue, MAX_ARG_LEN)) break;
-            sb->kenvp[envc] = spawn_arena_dup(sb->arena, &uso, ue);
-            if (sb->kenvp[envc] == NULL) break;
-            envc++;
-        }
+    for (envc = 0; envc < n_env; envc++) {
+        sb->kenvp[envc] = spawn_arena_dup(sb, &uso, uenvp[envc]);
+        if (sb->kenvp[envc] == NULL) break;
     }
     sb->kenvp[envc] = NULL;
 
@@ -2877,69 +2930,44 @@ int32_t sys_spawn(InterruptFrame *frame)
       if (resolve_path(kpath, abs, sizeof(abs)) != 0) return ERR(EINVAL);
       kstrcpy(kpath, abs, sizeof(kpath)); }
 
-    /* --- Copia argv in kernel space ---------------------------------------- */
-    SpawnBuf *sb        = (SpawnBuf *)kmalloc(sizeof(SpawnBuf));
-    char     *arena;
-    uint32_t  arena_uso = 0;
+    /* --- argv: measured here, copied below with the environment ---------
+     * ! 0.347: one allocation sized on both, so the environment (read from
+     * the extra block, further down) must be measured first. */
+    SpawnBuf *sb        = NULL;
+    uint32_t  arena_uso = 0, byte = 0, l;
     char    **kargv;
     uint32_t i, real_argc = 0;
-
-    if (sb == NULL) {
-        klog(LOG_ERROR, "SYSCALL spawn('%s'): heap esaurito per gli argomenti",
-             kpath);
-        return ERR(ENOMEM);
-    }
-    arena = sb->arena;
-    kargv = sb->kargv;
+    const char *bn = kpath;
 
     if (uargv && argc > 0) {
-        /* ! TROPPI ARGOMENTI E' UN ERRORE, non un motivo per accorciare la
-         * riga. Il taglio silenzioso c'e' stato fino ad agosto 2026 e ha
-         * fatto rispondere a cc1 «missing filename after '-o'»: chi legge
-         * quel messaggio cerca il difetto nel programma lanciato, che aveva
-         * ragione — a mentire era il kernel. */
-        if (argc > MAX_SPAWN_ARGS) {
-            klog(LOG_ERROR, "SYSCALL spawn('%s'): %u argomenti, il tetto e' %u",
-                 kpath, argc, (uint32_t)MAX_SPAWN_ARGS);
-            kfree(sb);
-            return ERR(E2BIG);
-        }
         for (i = 0; i < argc; i++) {
             if (!syscall_verify_ptr(&uargv[i], sizeof(char*))) break;
             const char *ua = uargv[i];
 
-            /* Un argomento illeggibile o piu' lungo del tetto FERMA lo
-             * spawn. Prima si usciva dal ciclo e il programma partiva con
-             * gli argomenti raccolti fin li': `cp lungo dest` diventava
-             * `cp`, che stampa il proprio uso — e l'utente conclude che il
-             * file non esiste. Un errore esplicito dice cosa e' successo. */
+            /* Un argomento illeggibile FERMA lo spawn. Prima si usciva dal
+             * ciclo e il programma partiva con gli argomenti raccolti fin
+             * li': `cp lungo dest` diventava `cp`, che stampa il proprio uso
+             * — e l'utente conclude che il file non esiste. Un errore
+             * esplicito dice cosa e' successo. */
             if (!ua || !syscall_verify_str(ua, MAX_ARG_LEN)) {
-                klog(LOG_ERROR, "SYSCALL spawn('%s'): argomento %u illeggibile "
-                                "o piu' lungo di %u byte", kpath, i,
-                                MAX_ARG_LEN - 1u);
-                kfree(sb);
+                klog(LOG_ERROR, "SYSCALL spawn('%s'): argomento %u illeggibile",
+                     kpath, i);
                 return ERR(EINVAL);
             }
-            kargv[i] = spawn_arena_dup(arena, &arena_uso, ua);
-            if (kargv[i] == NULL) {
-                klog(LOG_ERROR, "SYSCALL spawn('%s'): riga di comando oltre "
-                                "%u byte all'argomento %u", kpath,
-                     (uint32_t)SPAWN_ARENA_BYTES, i);
-                kfree(sb);
+            if ((l = spawn_lungo(ua, byte)) == 0) {
+                klog(LOG_ERROR, "SYSCALL spawn('%s'): riga di comando oltre 1 GB "
+                                "all'argomento %u", kpath, i);
                 return ERR(E2BIG);
             }
+            byte += l;
             real_argc++;
         }
     }
+    for (const char *p = kpath; *p; p++) if (*p == '/') bn = p+1;
     if (real_argc == 0) {
-        /* argv[0] = basename del path */
-        const char *bn = kpath;
-        for (const char *p = kpath; *p; p++) if (*p == '/') bn = p+1;
-        kargv[0] = spawn_arena_dup(arena, &arena_uso, bn);
-        if (kargv[0] == NULL) { kfree(sb); return ERR(E2BIG); }
-        real_argc = 1;
+        if ((l = spawn_lungo(bn, byte)) == 0) return ERR(E2BIG);
+        byte += l;
     }
-    kargv[real_argc] = NULL;
 
     /* --- Blocco EXTRA: ambiente e redirezioni ------------------------------
      *
@@ -3013,7 +3041,6 @@ int32_t sys_spawn(InterruptFrame *frame)
         klog(LOG_WARN, "SYSCALL spawn('%s'): il PID %u (uid %u) ha chiesto un "
                        "figlio uid %u: serve root", kpath, parent->pid,
              parent->uid, kex.uid);
-        kfree(sb);
         return ERR(EPERM);
     }
 
@@ -3021,32 +3048,52 @@ int32_t sys_spawn(InterruptFrame *frame)
      * PRIMA di creare il figlio, cosi' un puntatore illeggibile ferma lo
      * spawn invece di lasciare il processo a meta'. Divide l'arena con
      * argv: e' la riga di comando INTERA a dover stare in un tetto. */
-    char      **kenvp     = sb->kenvp;
-    uint32_t    real_envc = 0;
+    char      **kenvp;
+    uint32_t    real_envc = 0, n_env = 0;
 
     if (ha_extra && kex.envp != NULL) {
-        for (i = 0; i < MAX_SPAWN_ENV; i++) {
+        for (;;) {
             const char *uv;
 
-            if (!syscall_verify_ptr(&kex.envp[i], sizeof(char *))) break;
-            uv = kex.envp[i];
+            if (!syscall_verify_ptr(&kex.envp[n_env], sizeof(char *))) break;
+            uv = kex.envp[n_env];
             if (uv == NULL) break;
             if (!syscall_verify_str(uv, MAX_ARG_LEN)) {
                 klog(LOG_ERROR, "SYSCALL spawn('%s'): variabile d'ambiente %u "
-                                "illeggibile", kpath, i);
-                kfree(sb);
+                                "illeggibile", kpath, n_env);
                 return ERR(EINVAL);
             }
-            kenvp[real_envc] = spawn_arena_dup(arena, &arena_uso, uv);
-            if (kenvp[real_envc] == NULL) {
-                klog(LOG_ERROR, "SYSCALL spawn('%s'): ambiente oltre %u byte "
-                                "alla variabile %u", kpath,
-                     (uint32_t)SPAWN_ARENA_BYTES, i);
-                kfree(sb);
+            if ((l = spawn_lungo(uv, byte)) == 0) {
+                klog(LOG_ERROR, "SYSCALL spawn('%s'): ambiente oltre 1 GB "
+                                "alla variabile %u", kpath, n_env);
                 return ERR(E2BIG);
             }
-            real_envc++;
+            byte += l;
+            n_env++;
         }
+    }
+
+    sb = spawn_buf_nuovo(real_argc ? real_argc : 1, n_env, byte);
+    if (sb == NULL) {
+        klog(LOG_ERROR, "SYSCALL spawn('%s'): heap esaurito per %u argomenti, "
+                        "%u variabili, %u byte", kpath, real_argc, n_env, byte);
+        return ERR(ENOMEM);
+    }
+    kargv = sb->kargv;
+    kenvp = sb->kenvp;
+    for (i = 0; i < real_argc; i++) {
+        kargv[i] = spawn_arena_dup(sb, &arena_uso, uargv[i]);
+        if (kargv[i] == NULL) { kfree(sb); return ERR(E2BIG); }
+    }
+    if (real_argc == 0) {
+        kargv[0] = spawn_arena_dup(sb, &arena_uso, bn);
+        if (kargv[0] == NULL) { kfree(sb); return ERR(E2BIG); }
+        real_argc = 1;
+    }
+    kargv[real_argc] = NULL;
+    for (real_envc = 0; real_envc < n_env; real_envc++) {
+        kenvp[real_envc] = spawn_arena_dup(sb, &arena_uso, kex.envp[real_envc]);
+        if (kenvp[real_envc] == NULL) break;
     }
     kenvp[real_envc] = NULL;
 
@@ -5103,7 +5150,8 @@ int32_t sys_diskinfo(InterruptFrame *frame)
         di.problemi = tab.problemi;
 
         n = (uint32_t)tab.n;
-        if (n > DISKINFO_MAX_PART) n = DISKINFO_MAX_PART;
+        /* ! the kernel has them all (0.347); this ABI shows 16, and says so */
+        if (n > DISKINFO_MAX_PART) { n = DISKINFO_MAX_PART; di.problemi |= PT_PROB_TRONCATA; }
         di.n_part = n;
 
         for (i = 0; i < n; i++) {
@@ -5143,6 +5191,7 @@ int32_t sys_diskinfo(InterruptFrame *frame)
                 }
             }
         }
+        mbr_libera(&tab);
     }
 
     *dst = di;
@@ -5818,6 +5867,8 @@ int32_t sys_ipc_recv(InterruptFrame *frame)
  * Ritorna 0, -ETIMEDOUT se la scadenza è passata a mailbox vuota, o un
  * altro errno negativo.
  * ============================================================================= */
+int32_t sys_ipc_recv_seg(InterruptFrame *frame) { return sys_ipc_recv_tmo(frame); }
+
 int32_t sys_ipc_recv_tmo(InterruptFrame *frame)
 {
     IpcMessage *out_meta   = (IpcMessage *)FR_A1(frame);
@@ -5836,7 +5887,9 @@ int32_t sys_ipc_recv_tmo(InterruptFrame *frame)
     }
 
     IpcMessage kmeta;
-    int32_t ret = ipc_recv_timeout(&kmeta, buf, buf_len, timeout_ms);
+    int32_t ret = (FR_NUM(frame) == SYS_IPC_RECV_SEG || FR_NUM(frame) == SYS_IPC_RECV_SEG_R)
+                  ? ipc_recv_segnale(&kmeta, buf, buf_len, timeout_ms)
+                  : ipc_recv_timeout(&kmeta, buf, buf_len, timeout_ms);
     if (ret == 0 && out_meta != NULL) {
         out_meta->sender_pid = kmeta.sender_pid;
         out_meta->tipo       = kmeta.tipo;
@@ -7662,7 +7715,7 @@ int32_t sys_blk_espelli(InterruptFrame *frame)
         const BlkDev *p = blk_get(k);
 
         if (p == NULL || !p->usato) continue;
-        if (p->tipo != BLK_TIPO_PART || p->padre != (uint8_t)dev) continue;
+        if (p->tipo != BLK_TIPO_PART || p->padre != (uint16_t)dev) continue;
         if (blk_occupato(k)) return ERR(EBUSY);
     }
 

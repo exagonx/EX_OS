@@ -14,8 +14,8 @@
 
 #include "kernel.h"
 
-#define CFG_MAX_MODULES  16
-#define CFG_MAX_ENV      32
+/* CFG_MAX_MODULES (16) and CFG_MAX_ENV (32) gone in 0.347 (voce 35): the
+ * arrays grow like [mount]. */
 /* CFG_MAX_MOUNT (5) gone in 0.343: [mount] grows with what it lists (voce 50). */
 #define CFG_NAME_LEN     64
 #define CFG_PATH_LEN     128
@@ -185,12 +185,14 @@ typedef struct {
     char        modules_list[CFG_PATH_LEN];
 
     /* [modules] */
-    CfgModule   modules[CFG_MAX_MODULES];
+    CfgModule  *modules;            /* [module_count], kmalloc, grows (0.347) */
     uint32_t    module_count;
+    uint32_t    module_posti;
 
     /* [env] */
-    CfgEnvVar   env[CFG_MAX_ENV];
+    CfgEnvVar  *env;                /* [env_count], kmalloc, grows (0.347) */
     uint32_t    env_count;
+    uint32_t    env_posti;
 
     /* [mount] */
     CfgMount   *mounts;             /* [mount_count], kmalloc, grows (0.343) */

@@ -163,6 +163,12 @@ Come si arriva a costruirla:
   `tools/exilla/tocca.sh` e diventano patch con `tools/exilla/patch-crea.sh`:
   sono in `tools/exilla/patch/`. Per rimetterle su un albero pulito:
   `cd firefox-main && for p in ../tools/exilla/patch/*.patch; do patch -p1 < "$p"; done`.
+- **I sorgenti nuovi** (18/11/2026): `tools/exilla/sorgenti.sh` dice la nostra versione e
+  l'ultima di Mozilla, scarica l'archivio firmato (`-scarica`), prova le patch su una copia
+  (`-prova`) e la mette al posto di `firefox-main` quando non resta un `.rej` (`-applica`).
+  La base delle patch sta in `tools/exilla/base.txt`. ! Un file NUOVO va segnato con
+  `tocca.sh` PRIMA di crearlo: segnato dopo, il suo "originale" e' una nostra versione e la
+  patch non lo ricrea (successo a ExosPosta.cpp, ExosPosta.h e nsWindow.h, riparati).
 
 Cosa ha trovato nel sistema, ed e' sistemato:
 - **`ungetc` teneva un carattere solo**: la shell ne rimette tre (guarda se c'e'

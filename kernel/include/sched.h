@@ -226,8 +226,10 @@ uint32_t         proc_tetto(void);  /* the ceiling in force: procmax or g_proc_m
 #define USER_STACK_SLACK    32      /* margine sotto ESP: caso peggiore pusha */
 #endif
 #define PROCESS_NAME_LEN    32      /* Lunghezza massima nome processo */
-#define MAX_ENV_VARS        32      /* Variabili d'ambiente per processo */
-#define ENV_VAR_LEN         128     /* Lunghezza max chiave=valore */
+/* MAX_ENV_VARS/ENV_VAR_LEN gone in 0.347 (voce 35): the PCB's env table
+ * was never filled nor read, 4 KB per process for nothing. The environment
+ * travels with spawn/exec (envp) into the libc's environ; [env] of
+ * kernel.cfg is read with cfg_getenv. */
 
 /* Priorità scheduler */
 #define PRIO_IDLE       0   /* Task idle (solo quando nessun altro è pronto) */
@@ -802,10 +804,6 @@ typedef struct Process {
  * fatti loro: e' il puntatore a decidere, non il campo. */
     char            cwd[VFS_PATH_MAX];
     char           *cwdt;           /* la directory VERA: propria o del capogruppo */
-
-    /* --- Environment --- */
-    char            env[MAX_ENV_VARS][ENV_VAR_LEN];
-    uint32_t        env_count;
 
     /* --- Timing --- */
     uint32_t        ticks_total;            /* Tick CPU totali consumati */

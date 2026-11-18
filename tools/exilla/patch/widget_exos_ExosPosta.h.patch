@@ -1,14 +1,65 @@
 --- a/widget/exos/ExosPosta.h
 +++ b/widget/exos/ExosPosta.h
-@@ -34,6 +34,11 @@
- // A request to the server. 0 or a negative errno.
- int Manda(uint32_t aTipo, const void* aDati, uint32_t aLen);
- 
+@@ -0,0 +1,62 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* EX-OS (Exilla): the mail to and from the ExWin window server.
++ *
++ * ExWin is a separate process (wserver). A window is a shared memory zone
++ * that we fill with pixels, plus messages over the kernel's IPC: requests
++ * from us (create, update, move, resize, title, destroy) and events from it
++ * (mouse, keys, close, new size). The protocol is <exos/win_proto.h>, the
++ * same header the server is built from.
++ *
++ * ! THE EVENTS ARRIVE IN THE MAILBOX OF THE MAIN THREAD, because the server
++ * sends them to the thread that created the window, and Gecko creates its
++ * windows there. So the main thread sleeps in the kernel waiting for mail
++ * (nsAppShell), and another thread that needs it awake (Gecko's
++ * ScheduleNativeEventCallback) sends it a letter too: Sveglia(). Requests may
++ * come from any thread of the process (wserver 0.009 accepts the whole
++ * thread group): the renderer thread sends WIN_MSG_AGGIORNA itself.
++ */
++
++#ifndef widget_exos_ExosPosta_h
++#define widget_exos_ExosPosta_h
++
++#include <stdint.h>
++
++class nsWindow;
++
++namespace mozilla::widget::exos {
++
++// The server's pid, or 0 if ExWin is not running. Looked up once.
++uint32_t Server();
++
++// A request to the server. 0 or a negative errno.
++int Manda(uint32_t aTipo, const void* aDati, uint32_t aLen);
++
 +// The machine's uptime, in ms, when this process began.
 +uint32_t Nato();
 +// The machine's uptime now, in ms.
 +uint32_t Ora();
 +
- // Wake the main thread up. From any thread; cheap when already pending.
- void Sveglia();
- 
++// Wake the main thread up. From any thread; cheap when already pending.
++void Sveglia();
++
++// Main thread: was a wake-up asked for? Clears the request.
++bool PrendiSveglia();
++
++// Main thread: handle the next message. With aAspetta it sleeps until one
++// arrives. True if one was handled (a wake-up letter counts).
++bool Ricevi(bool aAspetta);
++
++// Main thread: wait for the answer to WIN_MSG_CREA, leaving everything else
++// on the libc's shelf for Ricevi. False after aMs milliseconds.
++bool AspettaCreata(void* aCreata, uint32_t aDimensione, uint32_t aMs);
++
++// The windows by server id, for the events.
++void Registra(uint32_t aId, nsWindow* aFinestra);
++void Togli(uint32_t aId);
++
++}  // namespace mozilla::widget::exos
++
++#endif  // widget_exos_ExosPosta_h
