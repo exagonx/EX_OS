@@ -372,8 +372,9 @@ static int32_t ricevi(IpcMessage *out, void *buf, uint32_t buf_len,
             interrupts_enable();
             return ERR(ETIMEDOUT);
         }
-        /* voce 37: a caught signal ends the wait (the mailbox is empty here) */
-        if (segnale && segnali_interrompono(self)) {
+        /* voce 37: a caught signal ends the wait (the mailbox is empty here);
+         * (0.349) so does pthread_cancel, inside a cancellation point */
+        if (segnale && (segnali_interrompono(self) || (self->ferma && self->in_punto))) {
             self->block_until = 0;
             interrupts_enable();
             return ERR(EINTR);

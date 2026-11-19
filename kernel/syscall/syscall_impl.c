@@ -866,7 +866,7 @@ int32_t sys_open(InterruptFrame *frame)
                 return free_fd;
             }
         }
-        inode = vfs_open(abs, (uint32_t)flags);
+        inode = vfs_open(abs, (uint32_t)flags & ~(uint32_t)O_CLOEXEC);
     }
     if (inode < 0) {                       /* Propaga errore */
         FDV(proc, free_fd).type = FD_UNUSED;
@@ -1009,6 +1009,7 @@ static int32_t fd_duplica(Process *proc, int vecchio, int nuovo)
     fd_lascia(proc, nuovo);
 
     FDV(proc, nuovo) = FDV(proc, vecchio);
+    FDV(proc, nuovo).flags &= ~(uint32_t)O_CLOEXEC;    /* POSIX: dup clears it */
     return nuovo;
 }
 
@@ -1234,22 +1235,28 @@ int32_t sys_fcntl(InterruptFrame *frame)
         return fd_lucchetto(proc, fd, cmd, (KFlock *)(uintptr_t)FR_A3(frame));
 
     switch (cmd) {
-    case F_DUPFD: {
+    case F_DUPFD:
+    case F_DUPFD_CLOEXEC: {
         /* "il piu' basso libero da `arg` in su", che non e' find_free_fd:
          * chi lo chiede vuole stare SOPRA i descrittori standard. */
-        int i;
+        int     i;
+        int32_t n;
         if (arg >= proc->fdt->limite) return ERR(EINVAL);
         i = fd_libero(proc, (int)arg);
         if (i < 0) return ERR(EMFILE);
-        return fd_duplica(proc, fd, i);
+        n = fd_duplica(proc, fd, i);
+        if (n >= 0 && cmd == F_DUPFD_CLOEXEC) FDV(proc, n).flags |= O_CLOEXEC;
+        return n;
     }
 
-    /* Vedi il commento su FD_CLOEXEC in syscall.h: qui non c'e' niente da
-     * ricordare, perche' non c'e' un exec che erediti descrittori. */
-    case F_GETFD:  return 0;
-    case F_SETFD:  return 0;
+    /* FD_CLOEXEC is the O_CLOEXEC bit of flags (0.349, see syscall.h) */
+    case F_GETFD:  return (FDV(proc, fd).flags & O_CLOEXEC) ? FD_CLOEXEC : 0;
+    case F_SETFD:
+        if (arg & FD_CLOEXEC) FDV(proc, fd).flags |= O_CLOEXEC;
+        else                  FDV(proc, fd).flags &= ~(uint32_t)O_CLOEXEC;
+        return 0;
 
-    case F_GETFL:  return (int32_t)FDV(proc, fd).flags;
+    case F_GETFL:  return (int32_t)(FDV(proc, fd).flags & ~(uint32_t)O_CLOEXEC);
 
     case F_SETFL:
         /* La modalita' di accesso di un file aperto non si cambia: e' cio'
@@ -2869,6 +2876,28 @@ static int32_t exec_con_argv(const char *kpath, char **uargv, char **uenvp)
         }
     }
     shm_cleanup_process(proc);
+    /* ! THE DESCRIPTORS GO NOW, THE OTHER THREADS GONE (0.349): what has
+     * FD_CLOEXEC closes, as on every Unix (before, fork + exec handed the
+     * new program the pipe that should have closed: syscall.h). And the
+     * numbers of the libc's own descriptors (FD_SERVIZIO: sockets, epoll,
+     * shm) are given back: their state was in the old program's libc, and
+     * the new one would find them taken, meaning nothing. */
+    {
+        int fd;
+
+        for (fd = 0; fd < FD_N(proc); fd++) {
+            if (FDV(proc, fd).type == FD_UNUSED) continue;
+            if (FDV(proc, fd).type != FD_SERVIZIO &&
+                !(FDV(proc, fd).flags & O_CLOEXEC)) continue;
+            fd_lascia(proc, fd);
+            FDV(proc, fd).type        = FD_UNUSED;
+            FDV(proc, fd).flags       = 0;
+            FDV(proc, fd).offset      = 0;
+            FDV(proc, fd).inode       = 0;
+            FDV(proc, fd).driver_data = NULL;
+            fd_rilasciato(proc, fd);
+        }
+    }
 
 #define PAROLA  sizeof(uintptr_t)
     usp = res.user_stack_top;

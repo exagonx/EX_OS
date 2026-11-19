@@ -58,7 +58,7 @@
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.026");
+EX_VERSIONE("ip.drv", "0.027");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -2726,12 +2726,41 @@ static void tcp_aspetta(unsigned int cliente, const unsigned char *payload,
 /* IP_MSG_RITIRA (voce 37): see ip_proto.h. One thread waits in one place. */
 static void ritira(unsigned int cliente)
 {
-    unsigned int k;
+    unsigned int k, i;
+    IpEsito      e;
 
     for (k = 0; k < g_ins_n; k++) {
         if (g_insp[k] == NULL || g_ins(k).attesa_pid != cliente) continue;
         if (g_ins(k).tipo == INS_POLL)  { aspetta_rispondi(k, 1); return; }
         if (g_ins(k).tipo == INS_EPOLL) { ins_consegna(k, 1); return; }
+    }
+
+    /* ! (0.027, voce 105) AND accept() AND connect(): until 0.026 a thread
+     * in accept could not be cancelled and a signal did not cut it. -EINTR,
+     * as their timeout does with -ETIMEDOUT; a connect that is cut gives up
+     * the half-open connection (nobody has its id). */
+    e.codice = -EINTR;
+    for (k = 0; k < g_tcp_n; k++) {
+        Conn *c = g_tcp[k];
+
+        if (c == NULL) continue;
+        if (c->attesa_pid == cliente &&
+            (c->attesa_tipo == IP_MSG_TCP_APRI || c->attesa_tipo == IP_MSG_TCP_ACCETTA)) {
+            ipc_send(cliente, IP_MSG_ESITO, &e, sizeof(e));
+            c->attesa_pid = 0;
+            if (c->stato == S_ASCOLTA) acc_avanza(c);
+            if (c->stato == S_SYN_INVIA) { c->stato = S_MORTA; c->rto_scade = 0; }
+            tcp_evento(c);
+            return;
+        }
+        if (c->stato != S_ASCOLTA) continue;
+        for (i = 0; i < c->acc_n; i++)
+            if (c->acc[i].pid == cliente) {     /* queued behind another accept */
+                ipc_send(cliente, IP_MSG_ESITO, &e, sizeof(e));
+                memmove(c->acc + i, c->acc + i + 1, (c->acc_n - i - 1u) * sizeof(struct AttesaAcc));
+                c->acc_n--;
+                return;
+            }
     }
 }
 

@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.348
+**Version:** 0.349
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -111,6 +111,58 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### pthread_cancel stops a thread that waits, FD_CLOEXEC closes at exec, posix_spawn (kernel 0.349, ip.drv 0.027, voce 105) — tested in QEMU
+
+The first step of voce 105: what VLC's generic POSIX code needs from EX-OS, implemented instead
+of worked around (until now VLC was built on its Android thread subset and its own `netconf.c`).
+
+- **pthread_cancel cuts a wait short.** Until 0.348 a thread asleep in `read` or `poll` was
+  cancelled only when the data came: the request did not reach a wait in the kernel. Now the
+  libc marks the POSIX cancellation points (`read`, `write`, `poll`, `select`, `epoll_wait`,
+  `recv`, `send`, `accept`, `connect`, `nanosleep`, `sleep`, `usleep`, `clock_nanosleep`,
+  `sem_wait`, `sem_timedwait`, `waitpid`, `sigwait`, `sigsuspend`, `pause`, `fcntl(F_SETLKW)`)
+  with a bit in the syscall number (`SYS_PUNTO`); the kernel ends that wait with EINTR as a
+  caught signal does, or answers EINTR at once when the request is already there (POSIX: a
+  `read` with data ready still acts), and the libc ends the thread with its cleanup handlers.
+  With cancellation disabled nothing changes. A kernel before 0.349 answers ENOSYS to the bit,
+  asked once: cancellation as it was.
+- **accept and connect can be interrupted** (ip.drv 0.027): `IP_MSG_RITIRA` answered only a
+  pending `poll` or `epoll_wait`; now also a pending accept (-EINTR, also when queued behind
+  another process's accept) and connect (-EINTR, the half-open connection is dropped). So a
+  signal cuts them short too, as on Linux (accept restarts with `SA_RESTART`, connect never).
+- **FD_CLOEXEC is real.** `fcntl(F_GETFD)` answered 0 and exec kept every descriptor, so after
+  `fork` + `exec` the child held the parent's pipes and their reader never saw the end. Now the
+  bit is kept (`open(O_CLOEXEC)`, `pipe2(O_CLOEXEC)`, `F_SETFD`, `F_DUPFD_CLOEXEC`, the new
+  `dup3`; `dup`, `dup2` and `F_DUPFD` clear it), and exec closes those descriptors and gives back
+  the numbers of the libc's own (sockets, epoll, shm), whose state stayed in the old program.
+- **posix_spawn and `<spawn.h>`:** fork, the file actions in the child in the order given (open,
+  close, dup2, `addchdir_np`; a list that grows), the attributes (signal mask and defaults,
+  `SETSID`, `SETPGROUP` for its own group, `RESETIDS`; one scheduling policy, `SCHED_OTHER` at
+  priority 0), execve, or the `PATH` search for `posix_spawnp`. The exec error comes back
+  through a pipe with O_CLOEXEC: `posix_spawn("/no/such")` is ENOENT and no child is left.
+- **clock_nanosleep** (relative, and `TIMER_ABSTIME` on its own clock; ENOTSUP on a CPU clock)
+  and **strerror_l** (one language of messages: strerror's).
+- Found on the way: the syscall number in the frame kept the bit, and `ipc_recv_tmo`, which picks
+  by that number the wait a signal cuts, took the one nothing cuts.
+
+`tools/prova_annulla.sh` (`tools/prove/annullaprova.c`): a thread cancelled 300 ms into each of
+those waits ends at once with `PTHREAD_CANCELED` and its cleanup run (nanosleep in 90 ms: the
+kernel's sleep looks every 100 ms, as for `kill`), cancellation disabled leaves the `read` alone, a request
+already there ends a `read` with data ready, `FD_CLOEXEC` through `fork` + `exec`, `posix_spawn`
+with `adddup2` of a pipe read to its end, `clock_nanosleep` and `strerror_l`: 21 of 21 at 32 and
+64 bit. `prova_eintr.sh`, `prova_segnali.sh`, `prova_epoll.sh` and `prova_moltifili.sh` still
+pass.
+
+**VLC is back on its own POSIX code:** `src/posix/thread.c` (real `pthread_cancel`, `mwait` on
+`clock_nanosleep`, conditions on the monotonic clock), `error.c` (`strerror_l`) and `netconf.c`
+(`posix_spawnp`), as they come in the archive. Gone from `tools/vlc-exos`: the Android thread
+subset, `indirizzi.c` (futex stand-ins) and a `netconf.c` of its own; `<unistd.h>` now says
+`_POSIX_CLOCK_SELECTION` and `_POSIX_SPAWN`. `tools/vlc-exos/prova.sh` as before at 32 and 64
+bit, but for `sin-441-1s-44100.flac`, `[NO]` until the plugins are `.so` files: in the one-program
+VLC the FLAC decoder and packetizer have the same entry name and the linker keeps one (the symbol
+rename that hid it is gone: voce 105 wants the cause fixed). Next: the shared libc, in a clone of
+the repository.
+
 ### Qt 5 on EX-OS, and VLC with its menus (tools/qt5-exos, kernel 0.348, voce 85) — tested in QEMU
 
 VLC's window had no menu and no controls: in VLC 3 those are the Qt interface, and Qt was not
@@ -169,9 +221,21 @@ a group on the tools CD, a check for netupdate, the tests at 32 and 64 bit.
   start, and the card's master volume (`audio -v`, the Volume panel) stays the user's. Measured on
   what the card plays, a 1 kHz tone at 10000: 1250 with `--aout_exos-gain=0.125`, 7303 after two
   `z` (90%, i.e. 0.9 cubed). The VLC test now plays that tone in ncurses and checks the WAV.
-- **`sound.ogg` is silence:** Firefox's test file is -91 dB. It still tests the Vorbis decoder,
-  but no ear: the "audio" check of the VLC test counts the seconds of sound of the whole run, so
-  it passed on the other files and the videos.
+- **The end of every sound was cut, and a short one was never heard** (19 November): at the end
+  `aout_exos` waited until the driver had *taken* every sample, then closed; but what the driver
+  takes sits in the card's two halves, not heard yet, and closing stops the DMA on it. Every file
+  lost its last tenth of a second, and a sound shorter than the two halves (all taken at the
+  start) none at all. Now the drain also waits for two underflows of the ring (`sottoflussi`,
+  one per interrupt with nothing left to take): both halves have played. `small-shot.mp3`: 0.21 s
+  of 0.31 before, the whole of it now.
+- **The VLC test now listens to each audio file alone:** QEMU's `wavcapture` records the card
+  around each one, and the recording is compared with what FFmpeg on this machine decodes from
+  the file: as long, as many seconds of sound, the same peak. The old check counted the seconds
+  of sound of the whole run, so it passed even with a file that never reached the card.
+  `sound.ogg` turned out to be silence (-91 dB: it still tests the Vorbis decoder, and the check
+  wants silence back), and `small-shot.flac` is not decoded by VLC 3.0.24 even on Linux
+  (`cvlc --aout afile` writes an empty WAV; FFmpeg decodes it): the test uses Firefox's
+  `sin-441-1s-44100.flac` instead.
 
 ### GNU nano 9.3 (tools/nano-exos) — tested in QEMU
 

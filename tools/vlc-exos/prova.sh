@@ -22,8 +22,11 @@
 # (vlc -I qt, same day): its window on the screen, VLC's own log (-vv, on
 # the disk, read back with debugfs) says the "qt" interface module is in
 # use, and the cone is in the middle of the window.
-# What is [OK]: the card played at least as many seconds as the audio files
-# last, VLC wrote no error for the audio, and every screenshot of a video has
+# What is [OK]: each audio file, recorded alone from the card (QEMU's
+# wavcapture around it), is what FFmpeg on this machine decodes from it: as
+# long, as many seconds of sound, the same peak (19 November 2026: one WAV of
+# the whole run passed even with a file that never reached the card), VLC
+# wrote no error for the audio, and every screenshot of a video has
 # a picture in it (at least 2% of the screen differs from the empty desktop: the AV1 file is 160x90).
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
@@ -69,7 +72,10 @@ while da_fare:
 if mancano:
     print("  [NO] librerie non trovate: %s" % " ".join(sorted(mancano))); sys.exit(1)
 PY
-AUDIO="sound.ogg small-shot.flac small-shot.mp3"
+# ! NOT small-shot.flac: 0.2 s, and VLC 3.0.24 decodes nothing of it, on
+# Linux too (cvlc --aout afile writes an empty WAV); FFmpeg does. A second of
+# 441 Hz instead
+AUDIO="sound.ogg sin-441-1s-44100.flac small-shot.mp3"
 VIDEO="gizmo.mp4 vp9cake.webm av1.mp4"
 # the tone of the volume check: 2 s at 1 kHz, peak 10000, 48 kHz stereo
 python3 - "$S/m/tono.wav" <<'PY'
@@ -81,17 +87,9 @@ open(sys.argv[1], "wb").write(b"RIFF" + struct.pack("<I", 36 + len(d)) + b"WAVEf
     + struct.pack("<IHHIIHH", 16, 1, 2, r, 4 * r, 4, 16) + b"data" + struct.pack("<I", len(d)) + d)
 PY
 for f in $AUDIO $VIDEO; do cp "firefox-main/dom/media/test/$f" "$S/m/"; done
-# how long the audio lasts, as FFmpeg on this machine reads it
+# the reference for each audio file: FFmpeg on this machine
 # (tools/prova_codec.sh builds one in cross_build/costruzione-ffmpeg/host)
 FFMPEG=$(command -v ffmpeg || echo "$TC/costruzione-ffmpeg/host/ffmpeg")
-DURATA=0
-if [ -x "$FFMPEG" ]; then
-    for f in $AUDIO; do
-        d=$("$FFMPEG" -hide_banner -i "$S/m/$f" 2>&1 | sed -n 's/.*Duration: \([0-9:.]*\),.*/\1/p' \
-            | awk -F: '{ print $1 * 3600 + $2 * 60 + $3 }')
-        DURATA=$(python3 -c "print($DURATA + ${d:-0})")
-    done
-fi
 MB=$(( $(du -sm "$S" | cut -f1) * 13 / 10 + 32 ))
 IMG="$D/hd.img"; PART="$D/part.img"
 /sbin/mke2fs -q -t ext2 -b 4096 -L vlc -d "$S" "$PART" "${MB}M" || exit 1
@@ -119,7 +117,10 @@ T=/tmp/exos/foto-vlc$BIT; rm -rf "$T"; mkdir -p "$T"
     [ -n "${QT_LOGGING_RULES:-}" ] && echo "export QT_LOGGING_RULES=$QT_LOGGING_RULES@1"
     for f in $AUDIO; do
         echo "echo VLC-AUDIO $f@1"
+        # what the card plays for this file alone (capture 0: one at a time)
+        echo "mon:wavcapture $D/ascolto-$f.wav a0@1"
         echo "/disk/vlc -I dummy --aout exos --no-video --play-and-exit /disk/m/$f@${PAUSA_AUDIO:-20}"
+        echo "mon:stopcapture 0@1"
     done
     echo "echo VLC-AUDIO-FINE@1"
     # --loop: still playing at the screenshot (after the end the screen says
@@ -161,31 +162,46 @@ esito=0
 # --- audio --------------------------------------------------------------------
 sed -n '/VLC-AUDIO /,/VLC-AUDIO-FINE/p' "$D/seriale.txt" | grep -a -i -E "error|errore" \
     | grep -a -v -E "no suitable interface module|globalhotkeys|XML reader not found" | head -10 > "$D/errori-audio.txt"
-SUONATI=$(python3 - "$WAV" <<'E'
-import sys, struct
-try:
-    b = open(sys.argv[1], 'rb').read()
-except OSError:
-    print(0); sys.exit()
-ch, rate = struct.unpack('<HI', b[22:28])
-d = b[44:]
-n = len(d) // (2 * ch)
-# seconds with sound in them (a block of 10 ms is "sound" if not all near 0)
-blocco = max(1, rate // 100) * 2 * ch
-pieni = sum(1 for i in range(0, len(d) - blocco, blocco)
-            if max(abs(v) for v in struct.unpack('<%dh' % (blocco // 2), d[i:i + blocco])) > 64)
-print('%.2f %.2f %d' % (n / rate, pieni / 100.0, rate))
-E
-)
-read -r TOT PIENI RATE <<< "$SUONATI"
-echo "  scheda: ${TOT:-0} s scritti, ${PIENI:-0} s con suono, a ${RATE:-?} Hz; file audio: ${DURATA} s"
 if [ -s "$D/errori-audio.txt" ]; then
     echo "  [NO] VLC ha scritto errori sull'audio:"; sed 's/^/        /' "$D/errori-audio.txt"; esito=1
-elif python3 -c "import sys; sys.exit(0 if float('${PIENI:-0}') >= 0.9 * float('$DURATA') > 0 else 1)"; then
-    echo "  [OK] audio: Vorbis, FLAC e MP3 suonati dalla scheda"
-else
-    echo "  [NO] audio: la scheda ha suonato meno dei file"; esito=1
 fi
+[ -x "$FFMPEG" ] || { echo "  [NO] audio: manca FFmpeg su questa macchina, niente da confrontare"; esito=1; }
+for f in $AUDIO; do
+    [ -x "$FFMPEG" ] || break
+    "$FFMPEG" -v error -i "$S/m/$f" -f s16le -ac 1 -ar 48000 - > "$D/atteso-$f.raw" 2>/dev/null
+    riga=$(python3 - "$D/atteso-$f.raw" "$D/ascolto-$f.wav" <<'E'
+import struct, sys
+
+def misura(d, rate, ch):
+    """seconds, seconds with sound (10 ms blocks not all near 0), peak"""
+    if not d:
+        return 0.0, 0.0, 0
+    v = struct.unpack('<%dh' % (len(d) // 2), d[:len(d) // 2 * 2])
+    b = max(1, rate // 100) * ch
+    pieni = sum(1 for i in range(0, len(v), b) if max(abs(x) for x in v[i:i + b]) > 64)
+    return len(v) / ch / rate, pieni / 100.0, max(abs(x) for x in v)
+
+a = misura(open(sys.argv[1], 'rb').read(), 48000, 1)
+try:
+    w = open(sys.argv[2], 'rb').read()
+    ch, rate = struct.unpack('<HI', w[22:28])
+    c = misura(w[44:], rate, ch)
+except (OSError, struct.error):
+    c = (0.0, 0.0, 0)
+ok = c[0] >= 0.9 * a[0] > 0 and c[1] >= 0.9 * a[1] and (
+    abs(c[2] - a[2]) <= 0.15 * a[2] if a[2] > 64 else c[2] <= 64)
+print('%s %.2f %.2f %d %.2f %.2f %d' % ('OK' if ok else 'NO', c[0], c[1], c[2], a[0], a[1], a[2]))
+E
+)
+    read -r va cs cp cm as ap am <<< "$riga"
+    m="scheda ${cs:-0} s, ${cp:-0} s di suono, picco ${cm:-0}; il file ${as:-?} s, ${ap:-?} s, picco ${am:-?}"
+    [ "${am:-0}" -le 64 ] 2>/dev/null && m="$m (il file e' muto)"
+    if [ "$va" = OK ]; then
+        echo "  [OK] audio $f: $m"
+    else
+        echo "  [NO] audio $f: $m ($D/ascolto-$f.wav)"; esito=1
+    fi
+done
 
 # --- the text interface -----------------------------------------------------
 python3 tools/schermo_testo.py -i "$T/ncurses.ppm" > "$D/ncurses.txt" 2>&1

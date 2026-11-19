@@ -1151,6 +1151,11 @@ typedef int clockid_t;
 #define CLOCK_BOOTTIME            7
 int        clock_gettime(clockid_t orologio, struct timespec *ts);
 int        clock_getres(clockid_t orologio, struct timespec *ts);
+/* (19/11/2026, voce 105) POSIX: returns the error, not -1. TIMER_ABSTIME
+ * waits for that time on that clock; the CPU clocks are ENOTSUP. */
+#define TIMER_ABSTIME 1
+int        clock_nanosleep(clockid_t orologio, int flag, const struct timespec *req,
+                           struct timespec *rem);
 
 /* ! Tutte e quattro tornano 0, e non significa «root»: significa che su
  * EX-OS non esiste la domanda. Serve a OPENSSL_issetugid(), che chiede
@@ -1828,12 +1833,13 @@ int truncate64(const char *path, off64_t size);
 #define O_APPEND    0x400
 #define O_NONBLOCK  0x800
 /* Accettati e tolti dalla libc prima del kernel (i numeri di Linux):
- * O_CLOEXEC perche' EX-OS non ha exec che erediti i descrittori, O_NOFOLLOW
+ * O_NOFOLLOW
  * perche' non ci sono collegamenti simbolici da non seguire, O_NOCTTY
  * perche' aprire un terminale non lo fa mai diventare quello di controllo
  * (non ci sono sessioni: vedi setsid). */
 #define O_NOCTTY    0x100
 #define O_NOFOLLOW  0x20000
+/* O_CLOEXEC reaches the kernel (0.349): the descriptor closes at exec */
 #define O_CLOEXEC   0x80000
 /* (18/11/2026, Qt) every open is already large (lseek64 at 32 bit): 0 as on
  * x86_64 Linux and musl */
@@ -1859,14 +1865,16 @@ int truncate64(const char *path, off64_t size);
 #define F_GETFL     3
 #define F_SETFL     4
 
-/* C'e' per chi lo scrive (`fcntl(fd, F_SETFD, FD_CLOEXEC)` e' in ogni
- * programma POSIX), non perche' faccia qualcosa: spawn() non eredita i
- * descrittori del padre, quindi non esiste il momento in cui un fd
- * sopravvive a un exec. F_GETFD risponde sempre 0. */
+/* FD_CLOEXEC (kernel 0.349): exec closes the descriptor, as on every Unix.
+ * Up to 0.348 F_GETFD answered 0 and fork + exec kept every descriptor.
+ * F_DUPFD_CLOEXEC is F_DUPFD with the bit on the copy; dup, dup2 and
+ * F_DUPFD clear it. spawn() still hands the child only what it names. */
 #define FD_CLOEXEC  1
+#define F_DUPFD_CLOEXEC 1030
 
 int dup(int fd);
 int dup2(int vecchio, int nuovo);
+int dup3(int vecchio, int nuovo, int flag);    /* flag: O_CLOEXEC (0.349) */
 int fcntl(int fd, int cmd, ...) EXOS_LFS(fcntl);
 
 /* =============================================================================
@@ -2548,7 +2556,7 @@ int            alphasort(const struct dirent **a, const struct dirent **b);
 #define AT_REMOVEDIR        0x200
 #define AT_SYMLINK_FOLLOW   0x400
 int     faccessat(int dirfd, const char *path, int modo, int flag);
-/* pipe2: pipe() e poi i flag (O_NONBLOCK; O_CLOEXEC si ignora, vedi open).
+/* pipe2: pipe() e poi i flag (O_NONBLOCK, e O_CLOEXEC dal kernel 0.349).
  * Solo in libc.a. */
 int     pipe2(int fd[2], int flag);
 #define X_OK    1
@@ -2841,6 +2849,8 @@ locale_t    uselocale(locale_t l);
 double      strtod_l(const char *s, char **fine, locale_t l);
 float       strtof_l(const char *s, char **fine, locale_t l);
 long double strtold_l(const char *s, char **fine, locale_t l);
+/* (19/11/2026) one language of messages: strerror's, whatever the locale */
+char       *strerror_l(int err, locale_t l);
 
 /* =============================================================================
  * struct lconv, localeconv — le convenzioni numeriche della locale

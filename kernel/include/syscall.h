@@ -1094,6 +1094,18 @@ typedef struct {
 #define SYS_THREAD_FERMA    206 /* ebx = tid              -> 0 o negativo */
 #define SYS_THREAD_FERMARSI 207 /* niente                 -> 1 se e' stato chiesto */
 
+/* ! A CANCELLATION POINT IS A BIT OF THE SYSCALL NUMBER (0.349, voce 105).
+ * pthread_cancel must cut short a thread asleep in read, poll, recv,
+ * nanosleep, sem_wait...; it may not cut short the same wait anywhere else
+ * (a lock inside the libc, a read with cancellation disabled). Only the libc
+ * knows which is which, so it says so in the call itself: SYS_PUNTO in the
+ * number, set only when the thread can be cancelled. For that call the
+ * thread is `in_punto` (sched.h), a pending `ferma` makes the wait return
+ * EINTR (proc_da_interrompere), and SYS_THREAD_FERMA wakes it as a signal
+ * would. No extra syscall per read, and the request arriving between the
+ * libc's look and the kernel's sleep is caught by the wait loop itself. */
+#define SYS_PUNTO           0x40000000u
+
 /* I fili che nessuno aspettera' e dove sta la pila (28 settembre 2026, tappa 1
  * di Exilla: pthread_detach e pthread_getattr_np). Numeri liberi del blocco
  * 214-218. La pila: out[0] = fondo della riserva, out[1] = cima utile (sotto
@@ -1430,19 +1442,22 @@ typedef struct {
 #define O_TRUNC     0x0200
 #define O_APPEND    0x0400
 #define O_NONBLOCK  0x0800
+/* ! FD_CLOEXEC LIVES HERE, as this bit of `flags` (0.349): every place that
+ * makes a descriptor sets `flags` whole, so it cannot stay behind; dup clears
+ * it on the copy, F_GETFL hides it, and exec closes what has it. */
+#define O_CLOEXEC   0x80000
 
 /* =============================================================================
  * Comandi di sys_fcntl
  *
  * I numeri sono quelli di Linux, come tutto il resto della numerazione.
  *
- * ! FD_CLOEXEC NON HA NIENTE DA CHIUDERE. In EX-OS spawn() non eredita i
- * descrittori del padre — il figlio riceve i suoi da SpawnAzione, per
- * percorso — quindi non esiste il momento in cui un fd "sopravvive a un
- * exec". F_GETFD risponde sempre 0 e F_SETFD accetta e dimentica: sono
- * li' perche' il codice di terzi li chiama a coppie (leggi i flag,
- * riscrivili con FD_CLOEXEC in piu') e vuole due successi, non perche'
- * cambino qualcosa.
+ * ! FD_CLOEXEC REALLY CLOSES, FROM 0.349. Up to 0.348 F_SETFD was taken
+ * and forgotten: spawn() inherits no descriptor, and this comment said no
+ * exec ever would. But fork came in 0.313, and fork + exec (posix_spawn,
+ * system, every Unix-style CGI) handed the new program the very pipe that
+ * should have closed: whoever waited for its end waited for ever. Now it is
+ * the O_CLOEXEC bit of `flags`, and sys_exec closes what carries it.
  * ============================================================================= */
 /* A file lock as the kernel takes it: libc turns struct flock, whose shape
  * depends on off_t, into this. Offsets are from the start of the file;
@@ -1455,8 +1470,8 @@ typedef struct {
 } KFlock;
 
 #define F_DUPFD     0   /* duplica su un numero >= arg */
-#define F_GETFD     1   /* sempre 0; serve a dire "questo fd esiste" */
-#define F_SETFD     2   /* accettata e ignorata: vedi sopra */
+#define F_GETFD     1   /* FD_CLOEXEC or 0 */
+#define F_SETFD     2   /* FD_CLOEXEC on or off: see above */
 #define F_GETFL     3   /* i flag passati a open() */
 #define F_RDLCK     0
 #define F_WRLCK     1
@@ -1468,6 +1483,7 @@ typedef struct {
 #define F_SETFL     4   /* solo O_APPEND e O_NONBLOCK sono modificabili */
 
 #define FD_CLOEXEC  1
+#define F_DUPFD_CLOEXEC 1030    /* F_DUPFD, and the copy closes at exec */
 
 /* =============================================================================
  * Flag per sys_mmap

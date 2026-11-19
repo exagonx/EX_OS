@@ -1016,7 +1016,13 @@
  * process in the foreground reads the console: the check compared the
  * thread's own pid, and every thread but the first read end of input
  * (VLC -I ncurses, whose keys never arrived). */
-#define EXOS_VERSION    "0.348"
+/* 0.348 -> 0.349 (voce 105): FD_CLOEXEC is real - the O_CLOEXEC bit of a
+ * descriptor's flags, F_GETFD/F_SETFD/F_DUPFD_CLOEXEC, and exec closes what
+ * has it and gives back the numbers of the libc's own descriptors; until
+ * now fork + exec handed the new program every descriptor. And
+ * pthread_cancel cuts short a thread asleep in a cancellation point: the
+ * libc marks the call with SYS_PUNTO, the wait ends EINTR. */
+#define EXOS_VERSION    "0.349"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

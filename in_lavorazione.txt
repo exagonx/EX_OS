@@ -9177,7 +9177,11 @@ tools/netinst/velocita tolto da netinst.
         VLC suona il tono in ncurses e lo controlla. Strada facendo:
         sound.ogg di Firefox e' silenzio (-91 dB); il controllo "audio"
         della prova conta i secondi di suono di tutta la prova, passava
-        coi video. DA FARE: misurare ogni file audio per conto suo.
+        coi video. FATTO: wavcapture di QEMU attorno a ogni file, confronto
+        con FFmpeg (durata, secondi di suono, picco). Ha trovato: la coda
+        di ogni suono tagliata (lo svuotamento chiudeva con le due meta'
+        ancora da suonare: ora aspetta due sottoflussi) e small-shot.flac
+        che VLC 3.0.24 non decodifica neanche su Linux (-> sin-441-1s).
       - RESTA: provarlo sul portatile (dopo il CD strumenti e netupdate);
         QSharedMemory/QSystemSemaphore, QNetworkInterface, futimens,
         inotify (vedi sopra).
@@ -10503,6 +10507,53 @@ tools/netinst/velocita tolto da netinst.
       prove rischiose. Trovato: vedi la voce 100.
       17/11, DOPO IL RIAVVIO NELLA 0.343: il telnetd 0.015 dell'avvio, porta
       23, telnet_piu_prova.py 6 su 6.
+
+  105. LE PARTI CHE MANCANO A EX-OS, AL POSTO DEI RIPIEGHI DEL PORT DI VLC
+      (l'utente, 19/11: "Invece di creare modifiche per compatibilita',
+      implementa le parti mancanti"; poi: "Ogni cosa che manca implementala
+      e se richiede componenti nuovi procedi con il clone del repository e
+      implementalo", e la libc condivisa per override.c). Trovato: il VLC
+      in un programma solo perdeva tre plugin con lo stesso nome (flac,
+      vc1, file: VLC chiama un modulo come il suo sorgente) e il packetizer
+      FLAC mancante non faceva decodificare nessun FLAC. Il rinomina-simboli
+      e' tolto da costruisci.sh (19/11): il FLAC in VLC torna al passo 4,
+      fino ad allora prova.sh dice [NO] su sin-441-1s-44100.flac.
+      FATTI 1 E 2 il 19/11 (kernel 0.349, ip.drv 0.027), provati in QEMU a
+      32 e 64 (tools/prova_annulla.sh 21 su 21; eintr, segnali, epoll,
+      moltifili ancora buone): SYS_PUNTO nel numero della syscall per i
+      punti di cancellazione, il kernel interrompe l'attesa del filo da
+      fermare o risponde EINTR subito; FD_CLOEXEC vero (exec chiude, dup
+      toglie, F_DUPFD_CLOEXEC, dup3, open/pipe2 con O_CLOEXEC) e l'exec
+      rende i numeri FD_SERVIZIO della libc; RITIRA di ip.drv anche per
+      accept e connect; posix_spawn/posix_spawnp con spawn.h,
+      clock_nanosleep, strerror_l. Trovato: il bit SYS_PUNTO restava nel
+      frame e ipc_recv_tmo sceglieva l'attesa non interrompibile.
+      VLC SUI SUOI src/posix/thread.c, error.c, netconf.c (19/11): via
+      il sottoinsieme di Android, indirizzi.c e il netconf.c nostro;
+      unistd.h dice _POSIX_CLOCK_SELECTION e _POSIX_SPAWN. prova.sh come
+      prima a 32 e 64 (solo il FLAC [NO], passo 4).
+      RESTA DEL 1-2: la libc nuova nei sysroot e i porting ricostruiti
+      (si fa col passo 3, che rifa' comunque tutti i programmi). In coda: sigpending risponde sempre "nessuno" (manca
+      la syscall), fchdir non c'e'.
+      PASSI, in quest'ordine:
+      1. libc: clock_nanosleep, strerror_l, posix_spawn/posix_spawnp con le
+         file_actions e gli attr. VLC torna a src/posix/error.c e netconf.c.
+      2. La cancellazione dei fili: i punti POSIX (poll, select, read,
+         write, recv, send, accept, connect, nanosleep, sem_wait, waitpid,
+         sleep...) e il kernel che interrompe l'attesa di un filo da
+         fermare come gia' fa per i segnali (0.346). VLC torna a
+         src/posix/thread.c (via vlc_threads.h di Android e indirizzi.c).
+      3. La libc condivisa (libc.so), in un clone del repository: il
+         loader, l'avvio dei programmi, la sysroot, ogni programma. Poi
+         l'override.c di VLC funziona com'e'.
+      4. VLC normale: libvlc.so, libvlccore.so e i plugin .so con dlopen.
+         Via il programma unico, il rinomina-simboli, le sed su swscale e
+         puzzle.
+      5. Il video dentro la finestra di VLC: una finestra figlia in ExWin,
+         un modulo finestra di VLC per ExWin, la piattaforma exwin
+         nell'interfaccia Qt. Via la sed su embedded-video.
+      Ogni passo: 32 e 64 bit, prove in QEMU, sysroot e porting dipendenti
+      ricostruiti, manuali.
 
   104. GNU NANO (l'utente, 18/11: "potresti fare il porting di Nano l'editor di
       testo linux con stessa procedura di apache e mariadb"). FATTA in QEMU:

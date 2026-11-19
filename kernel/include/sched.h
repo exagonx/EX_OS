@@ -677,6 +677,10 @@ typedef struct Process {
      * quella il filo ha guardato, e sa. */
     uint32_t        ferma;
     uint32_t        scuoti;
+    /* (0.349, voce 105) inside a syscall the libc marked as a cancellation
+     * point (SYS_PUNTO, syscall.h): with `ferma` up, its wait ends EINTR. Set
+     * and cleared by syscall_handler around the one call. */
+    uint32_t        in_punto;
 
     /* Console virtuale di appartenenza (0..VGA_N_CONSOLE-1).
      *

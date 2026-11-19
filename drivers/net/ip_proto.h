@@ -224,7 +224,9 @@ typedef struct {
 /* =============================================================================
  * IP_MSG_RITIRA (ip.drv 0.026, voce 37): the sender's pending poll
  * (IP_MSG_TCP_ASPETTA) or epoll_wait (IP_MSG_INS_ATTENDI) is answered now,
- * with what is ready - maybe nothing. No payload. Nothing pending (the
+ * with what is ready - maybe nothing. No payload. (0.027, voce 105) Also a
+ * pending IP_MSG_TCP_ACCETTA or IP_MSG_TCP_APRI: ESITO -EINTR, and the
+ * connect's half-open connection is dropped. Nothing pending (the
  * answer already left): no answer. So the waiter, cut short by a signal,
  * always gets exactly ONE answer and nothing is left in its mailbox.
  * ============================================================================= */

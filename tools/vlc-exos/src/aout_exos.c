@@ -47,7 +47,8 @@ typedef struct {
     unsigned int magia, byte, dati_off, rate, canali, bit;
     volatile unsigned int scritto;
     volatile unsigned int suonato;
-    unsigned int sottoflussi, stato;
+    volatile unsigned int sottoflussi;  /* +1 at every half filled short */
+    unsigned int stato;
 } AudioAnello;
 
 #define ATTESA_MS 2000
@@ -280,6 +281,15 @@ static void Flush(audio_output_t *aout, bool wait)
     {
         Via(sys);
         for (int i = 0; i < 2000 && sys->anello->scritto != sys->anello->suonato; i++)
+            usleep(PASSO_US);
+        /* ! TAKEN IS NOT HEARD: the last samples sit in the card's two
+         * halves, and CHIUDI stops the DMA on them. Every file lost its last
+         * tenth of a second, and a sound shorter than two halves (all taken
+         * at VIA) was never heard at all (small-shot.flac, 19 November
+         * 2026). Each interrupt with nothing left to take counts an
+         * underflow: two of them and both halves have played. */
+        unsigned int s0 = sys->anello->sottoflussi;
+        for (int i = 0; i < 400 && sys->partito && sys->anello->sottoflussi - s0 < 2; i++)
             usleep(PASSO_US);
         msg_Dbg(aout, "drained: written %u, played %u",
                 sys->anello->scritto, sys->anello->suonato);

@@ -2084,8 +2084,10 @@ int proc_da_interrompere(void)
 {
     Process *p = proc_get_current();
 
-    /* da_finire (voce 6 step 3): the waits that can be cut end now */
-    return (p && (p->interrotto || p->da_finire || segnali_interrompono(p))) ? 1 : 0;
+    /* da_finire (voce 6 step 3): the waits that can be cut end now; and
+     * (0.349) a thread asked to stop, inside a cancellation point */
+    return (p && (p->interrotto || p->da_finire || segnali_interrompono(p) ||
+                  (p->ferma && p->in_punto))) ? 1 : 0;
 }
 
 /* Sleep until tick `fino` (signed comparison, voce 26). */
@@ -2740,6 +2742,13 @@ int proc_filo_ferma(uint32_t tid)
             proc_attesa_togli(p);
             p->attesa_dove = 0;
             p->block_until = 0;
+            sched_unblock_locked(p->pid);
+        } else if (p->state == PROC_BLOCKED && p->in_punto) {
+            /* ! ASLEEP IN A CANCELLATION POINT (0.349): read, poll, recv,
+             * nanosleep. Woken as a caught signal wakes it; its wait loop
+             * sees proc_da_interrompere() and returns EINTR, and the libc
+             * ends the thread. Before, pthread_cancel left it there until
+             * the data came - VLC's threads in poll, for ever. */
             sched_unblock_locked(p->pid);
         } else {
             /* ! NON DORME ANCORA, ED E' IL CASO PERICOLOSO: puo' aver appena

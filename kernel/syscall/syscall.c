@@ -46,9 +46,15 @@ int syscall_verify_str(const char *str, uint32_t max_len)
 
 void syscall_handler(InterruptFrame *frame)
 {
-    uint32_t num = FR_RET(frame);
+    uint32_t num   = FR_RET(frame);
+    uint32_t punto = num & SYS_PUNTO;      /* a cancellation point (0.349) */
     int32_t  ret;
 
+    num &= ~SYS_PUNTO;
+    /* ! OFF IN THE FRAME TOO: handlers read the number there (ipc_recv_tmo
+     * picks the wait a signal cuts by it), and with the bit on they took
+     * the one nothing cuts */
+    FR_NUM(frame) = num;
     if (num >= SYSCALL_COUNT || syscall_table[num] == NULL) {
         klog(LOG_WARN, "SYSCALL: %u non implementata (PID %u)",
              num, proc_get_current() ? proc_get_current()->pid : 0);
@@ -60,7 +66,17 @@ void syscall_handler(InterruptFrame *frame)
          num, FR_A1(frame), FR_A2(frame), FR_A3(frame),
          proc_get_current() ? proc_get_current()->pid : 0);
 
-    ret = syscall_table[num](frame);
+    /* ! A CANCELLATION POINT WITH THE REQUEST ALREADY THERE DOES NOTHING
+     * (0.349): POSIX wants it to act even when the call would not wait (a
+     * read with data ready), and this is where the libc learns it, with no
+     * syscall of its own to ask first. */
+    if (punto && proc_get_current() != NULL && proc_get_current()->ferma) {
+        ret = ERR(EINTR);
+    } else {
+        if (punto && proc_get_current() != NULL) proc_get_current()->in_punto = 1;
+        ret = syscall_table[num](frame);
+        if (proc_get_current() != NULL) proc_get_current()->in_punto = 0;
+    }
 #if defined(__x86_64__)
     /* @EXOS-64: il ritorno da un segnale ha gia' rimesso TUTTI i registri del
      * programma interrotto, RAX compreso e intero (segnali.c): scriverci il
@@ -110,7 +126,11 @@ void syscall_handler(InterruptFrame *frame)
 
         if (p != NULL && (frame->cs & 3) == 3 &&
             (p->seg_pendenti & ~p->seg_bloccati) != 0) {
-            if (ret == ERR(EINTR)) segnali_riavvia(frame, num);  /* SA_RESTART */
+            if (ret == ERR(EINTR)) {
+                segnali_riavvia(frame, num);  /* SA_RESTART */
+                /* restarted: still a cancellation point the second time */
+                if (FR_NUM(frame) == num) FR_NUM(frame) = num | punto;
+            }
             segnali_consegna(frame);
         }
     }

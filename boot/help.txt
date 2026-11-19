@@ -1802,6 +1802,17 @@ scrittura). Servono a Redis (BGSAVE), al prefork di Apache, a QProcess.
     EINTR; recv e send ripartono con SA_RESTART, poll ed epoll_wait mai
     (come Linux). Prima un filo in poll su un socket non si svegliava con
     pthread_kill, e Apache e MariaDB guardavano ogni 100 ms;
+  - accept e connect interrotti da un segnale dicono EINTR (ip.drv 0.027,
+    voce 105): accept riparte con SA_RESTART, connect mai;
+  - FD_CLOEXEC (kernel 0.349): exec chiude i descrittori segnati con
+    O_CLOEXEC, pipe2(O_CLOEXEC), F_SETFD, F_DUPFD_CLOEXEC, dup3. Prima
+    l'exec li teneva tutti e un figlio teneva aperti i tubi del padre;
+  - posix_spawn e posix_spawnp (<spawn.h>): fork, le azioni sui file,
+    exec; se l'exec fallisce l'errore torna al padre e il figlio non resta;
+  - pthread_cancel ferma un filo che aspetta (kernel 0.349): read, write,
+    poll, select, epoll_wait, recv, send, accept, connect, sleep,
+    nanosleep, clock_nanosleep, sem_wait, waitpid, sigwait. Prima il filo
+    restava li' finche' arrivavano i dati;
   - dup() e fcntl(F_DUPFD) di un socket (libc, voce 35): il socket si
     chiude con l'ultimo descrittore; dup2 di un socket ancora no;
   - struct stat ha st_atim, st_mtim, st_ctim (POSIX 2008, i secondi di

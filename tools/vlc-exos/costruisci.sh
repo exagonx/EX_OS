@@ -105,15 +105,10 @@ costruisci() {
     # ! no shared objects here: the plugins come out as static archives and
     # are joined in one program, as VLC's mobile builds do
     sed -i -E '/VLC is based on plugins/ s/as_fn_error .*/:/' "$SRC/configure"
-    # ! no pthread_cancel: the threads of VLC's Android port, which has the
-    # same subset; the futex calls they need are in src/indirizzi.c
-    sed -i 's/^#elif defined (__ANDROID__)      \/\* pthreads subset/#elif defined (__ANDROID__) || defined (__exos__) \/* pthreads subset/' \
-        "$SRC/include/vlc_threads.h"
-    grep -q '__exos__' "$SRC/include/vlc_threads.h" || { echo "vlc_threads.h: riga non trovata"; exit 1; }
-    cp "$SRC/src/android/thread.c" "$SRC/src/posix/thread.c"
-    cat "$R/tools/vlc-exos/src/indirizzi.c" >> "$SRC/src/posix/thread.c"
-    cp "$SRC/src/android/error.c" "$SRC/src/posix/error.c"
-    cp "$R/tools/vlc-exos/src/netconf.c" "$SRC/src/posix/netconf.c"
+    # ! VLC'S OWN POSIX THREADS, error.c and netconf.c (voce 105, 19 November
+    # 2026): until kernel 0.349 EX-OS had no cancellation of a thread that
+    # waits, no clock_nanosleep, strerror_l, posix_spawn, and VLC was built
+    # on its Android subset with futex stand-ins and a netconf of its own
     # override.c wraps libc functions that are not thread-safe on Linux: in one
     # static program they are two definitions of the same name
     echo '/* EX-OS: nothing to override in a static program */ void vlc_enable_override(void) {}' > "$SRC/bin/override.c"

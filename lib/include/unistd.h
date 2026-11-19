@@ -49,6 +49,10 @@
 #define _POSIX_MONOTONIC_CLOCK  200809L   /* CLOCK_MONOTONIC */
 #define _POSIX_THREADS          200809L   /* pthread (tappa 1 di Exilla) */
 #define _POSIX_SEMAPHORES       200809L   /* <semaphore.h> */
+/* (19/11/2026, voce 105) pthread_condattr_setclock and clock_nanosleep;
+ * posix_spawn in <spawn.h> */
+#define _POSIX_CLOCK_SELECTION  200809L
+#define _POSIX_SPAWN            200809L
 
 #define _SC_NPROCESSORS_CONF 83      /* i processori: uno (vedi sysconf) */
 

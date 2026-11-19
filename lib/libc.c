@@ -451,6 +451,19 @@ typedef struct { unsigned int bit[FD_SETSIZE / 32]; } fd_set;
 #define SYS_IPC_RECV_TMO  228
 #define SYS_IPC_RECV_SEG   272  /* voce 37: a caught signal cuts it (-EINTR) */
 #define SYS_IPC_RECV_SEG_R 273  /* ... and SA_RESTART starts it again */
+/* (kernel 0.349, voce 105) this bit in the number: a cancellation point */
+#define SYS_PUNTO         0x40000000u
+
+/* The cancellation points (see annulla_se_chiesto): `pn` gives a syscall
+ * that may sleep the SYS_PUNTO bit when the thread is inside a point and
+ * can be cancelled; the public functions that POSIX names points go in with
+ * punto_entra and out with punto_esci, and punto_eintr ends the thread when
+ * an EINTR was a pthread_cancel. */
+static uint32_t pn(uint32_t n);
+static void    *punto_entra(void);
+static void     punto_esci(void *pf);
+static int32_t  punto_eintr(int32_t r);
+static long     punto_fine(void *pf, long r);
 #define SYS_TIME           13
 #define SYS_TIME_SET      213
 #define SYS_FUSO          270   /* (0.340) the zone: int32_t[2] minutes, summer */
@@ -4968,8 +4981,9 @@ int open(const char *path, int flags, ...)
         (void)__builtin_va_arg(args, int);   /* mode_t, ignorato */
         __builtin_va_end(args);
     }
-    /* O_CLOEXEC, O_NOFOLLOW e O_NOCTTY: vedi libc.h. Il kernel non li conosce. */
-    flags &= ~(0x80000 | 0x20000 | 0x100);
+    /* O_NOFOLLOW e O_NOCTTY: vedi libc.h. Il kernel non li conosce.
+     * O_CLOEXEC goes through: the kernel keeps it since 0.349 */
+    flags &= ~(0x20000 | 0x100);
     return err_posix(_syscall3(SYS_OPEN, (uintptr_t)path, (uint32_t)flags, 0));
 }
 
@@ -5234,6 +5248,13 @@ static int luc_chiedi(int fd, int cmd, int come, KFlock *k)
     /* POSIX: a negative length is the bytes before the start */
     if (k->lung < 0) { k->inizio += k->lung; k->lung = -k->lung; }
     if (k->inizio < 0) { errno = EINVAL; return -1; }
+    if (cmd == 7 /* F_SETLKW: a cancellation point (0.349) */) {
+        void   *pf = punto_entra();
+        int32_t r  = punto_eintr(_syscall3(pn(SYS_FCNTL), (uint32_t)fd, (uint32_t)cmd, (uintptr_t)k));
+
+        punto_esci(pf);
+        return (int)err_posix(r);
+    }
     return (int)err_posix(_syscall3(SYS_FCNTL, (uint32_t)fd, (uint32_t)cmd, (uintptr_t)k));
 }
 
@@ -5350,14 +5371,26 @@ int fcntl64(int fd, int cmd, ...)
 
 ssize_t read(int fd, void *buf, size_t n)
 {
+    void   *pf;
+    int32_t r;
+
     if (E_PRESA(fd)) return recv(fd, buf, n, 0);
-    return err_posix(_syscall3(SYS_READ, (uint32_t)fd, (uintptr_t)buf, n));
+    pf = punto_entra();                 /* a cancellation point (0.349) */
+    r  = punto_eintr(_syscall3(pn(SYS_READ), (uint32_t)fd, (uintptr_t)buf, n));
+    punto_esci(pf);
+    return err_posix(r);
 }
 
 ssize_t write(int fd, const void *buf, size_t n)
 {
+    void   *pf;
+    int32_t r;
+
     if (E_PRESA(fd)) return send(fd, buf, n, 0);
-    return err_posix(_syscall3(SYS_WRITE, (uint32_t)fd, (uintptr_t)buf, n));
+    pf = punto_entra();
+    r  = punto_eintr(_syscall3(pn(SYS_WRITE), (uint32_t)fd, (uintptr_t)buf, n));
+    punto_esci(pf);
+    return err_posix(r);
 }
 
 /* Il programma a cui appartiene `pid` (0 = chi chiama): il pid del capogruppo.
@@ -5752,8 +5785,12 @@ int spawn_utente(const char *path, char *const argv[], char *const envp[],
 
 int waitpid(int pid, int *stato, int opzioni)
 {
-    return err_posix(_syscall3(SYS_WAITPID, (uint32_t)pid,
-                             (uintptr_t)stato, (uint32_t)opzioni));
+    void   *pf = punto_entra();         /* a cancellation point (0.349) */
+    int32_t r  = punto_eintr(_syscall3(pn(SYS_WAITPID), (uint32_t)pid,
+                                       (uintptr_t)stato, (uint32_t)opzioni));
+
+    punto_esci(pf);
+    return err_posix(r);
 }
 
 /* =============================================================================
@@ -6144,6 +6181,7 @@ typedef struct {
     struct exos_pulizia *pulizie;   /* pthread_cleanup_push, l'ultima in cima */
     int          annulla_no;        /* pthread_setcancelstate: 1 = DISABLE */
     int          annulla_tipo;      /* pthread_setcanceltype (vedi pthread_cancel) */
+    int          nel_punto;         /* inside a cancellation point (0.349) */
 } Filo;
 
 typedef struct FiliBlocco {
@@ -6377,6 +6415,81 @@ static void annulla_se_chiesto(void)
     if (!f || f->annulla_no) return;
     f->annulla_no = 1;                  /* once: the handlers may wait too */
     pthread_exit(PTHREAD_CANCELED);
+}
+
+/* =============================================================================
+ * THE CANCELLATION POINTS THAT SLEEP (kernel 0.349, voce 105)
+ *
+ * ! UNTIL 0.348 A THREAD ASLEEP IN read OR poll WAS NOT CANCELLED: the
+ * request does not cut a wait in the kernel, said the comment above, and
+ * VLC's threads live in poll. Now the public functions POSIX names points
+ * (read, write, poll, select, recv, send, accept, connect, epoll_wait,
+ * nanosleep, sleep, usleep, sem_wait, waitpid, sigsuspend, pause, sigwait,
+ * fcntl F_SETLKW) mark the thread `nel_punto`, and their syscalls that may
+ * sleep carry SYS_PUNTO: the kernel ends that wait with EINTR when the
+ * thread is asked to stop, or answers EINTR at once when it already was,
+ * and punto_eintr ends the thread. The same wait anywhere else - a lock
+ * inside the libc, a point with cancellation disabled - is not cut.
+ *
+ * ! A KERNEL BEFORE 0.349 ANSWERS ENOSYS TO THE BIT: asked once, with a
+ * harmless call, and then never set (cancellation as it was).
+ * ============================================================================= */
+static int g_punto_noto = 0;            /* 1 the kernel knows SYS_PUNTO, -1 not */
+
+static Filo *filo_mio(void)             /* pthread_self without making one */
+{
+    unsigned int tp = tp_mio();
+    FiliBlocco  *b;
+    int          i;
+
+    if (tp == 0) return NULL;
+    for (b = &g_fili; b; b = b->succ)
+        for (i = 0; i < PTHREAD_FILI; i++)
+            if (b->f[i].usato && (unsigned int)b->f[i].tp == tp) return &b->f[i];
+    return NULL;
+}
+
+static uint32_t pn(uint32_t n)
+{
+    Filo *f;
+
+    if (!g_ci_sono_fili) return n;      /* one thread: nobody can cancel it */
+    f = filo_mio();
+    if (!f || f->nel_punto <= 0 || f->annulla_no) return n;
+    if (g_punto_noto == 0)
+        g_punto_noto = _syscall1(SYS_THREAD_FERMARSI | SYS_PUNTO, 0) == -ENOSYS ? -1 : 1;
+    return g_punto_noto > 0 ? (n | SYS_PUNTO) : n;
+}
+
+static void *punto_entra(void)
+{
+    Filo *f;
+
+    if (!g_ci_sono_fili) return NULL;
+    f = filo_mio();
+    if (f) f->nel_punto++;
+    return f;
+}
+
+static void punto_esci(void *pf)
+{
+    if (pf) ((Filo *)pf)->nel_punto--;
+}
+
+static int32_t punto_eintr(int32_t r)
+{
+    if (r == -EINTR && g_ci_sono_fili) annulla_se_chiesto();
+    return r;
+}
+
+/* ! THE SOCKETS END THE THREAD ONLY ON THE WAY OUT, with their locks given
+ * back: the wait in the kernel carries SYS_PUNTO deep inside (ipc_scegli_su),
+ * where the libc may still hold a socket's lock. */
+static long punto_fine(void *pf, long r)
+{
+    punto_esci(pf);
+    if (r < 0 && errno == EINTR && g_ci_sono_fili) annulla_se_chiesto();
+    return r;
 }
 
 int pthread_cancel(pthread_t t)
@@ -6873,7 +6986,17 @@ int sem_init(sem_t *s, int pshared, unsigned int v)
     return 0;
 }
 int sem_destroy(sem_t *s) { (void)s; return 0; }
-int sem_wait(sem_t *s) { semaforo_prendi(&s->s); return 0; }
+/* sem_wait and sem_timedwait are cancellation points (0.349): the same loop
+ * as semaforo_prendi, with the sleep marked */
+int sem_wait(sem_t *s)
+{
+    void *pf = punto_entra();
+
+    while (!semaforo_prova(&s->s))
+        punto_eintr(_syscall3(pn(SYS_ATTESA_DORMI), (uintptr_t)&s->s, 0, 0));
+    punto_esci(pf);
+    return 0;
+}
 int sem_trywait(sem_t *s)
 {
     if (semaforo_prova(&s->s)) return 0;
@@ -6886,7 +7009,19 @@ int sem_timedwait(sem_t *s, const struct timespec *quando)
 
     if (semaforo_prova(&s->s)) return 0;
     if (ms == 0) { errno = ETIMEDOUT; return -1; }
-    return semaforo_prendi_ms(&s->s, ms);
+    {
+        unsigned int fine = uptime_ms() + ms;
+        void        *pf   = punto_entra();
+
+        for (;;) {
+            unsigned int ora;
+
+            if (semaforo_prova(&s->s)) { punto_esci(pf); return 0; }
+            ora = uptime_ms();
+            if ((int)(ora - fine) >= 0) { punto_esci(pf); errno = ETIMEDOUT; return -1; }
+            punto_eintr(_syscall3(pn(SYS_ATTESA_DORMI), (uintptr_t)&s->s, 0, fine - ora));
+        }
+    }
 }
 int sem_post(sem_t *s) { semaforo_lascia(&s->s); return 0; }
 int sem_getvalue(sem_t *s, int *v) { *v = s->s; return 0; }
@@ -8679,8 +8814,10 @@ int usleep(unsigned int us)
     uint32_t ms = (us + 999) / 1000;
     if (ms == 0) ms = 1;
     {
-        int32_t r = _syscall1(SYS_SLEEP, ms);
+        void   *pf = punto_entra();     /* a cancellation point (0.349) */
+        int32_t r  = punto_eintr(_syscall1(pn(SYS_SLEEP), ms));
 
+        punto_esci(pf);
         if (r < 0) { errno = -r; return -1; }   /* EINTR: a caught signal */
     }
     return 0;
@@ -8892,7 +9029,10 @@ int nanosleep(const struct timespec *req, struct timespec *rem)
         while (ms > 0) {
             unsigned int fetta = (ms > 1000000ULL) ? 1000000u : (unsigned int)ms;
             unsigned int t0 = uptime_ms();
-            int32_t r = _syscall1(SYS_SLEEP, fetta);
+            void        *pf = punto_entra();    /* a cancellation point (0.349) */
+            int32_t      r  = punto_eintr(_syscall1(pn(SYS_SLEEP), fetta));
+
+            punto_esci(pf);
 
             if (r < 0) {
                 unsigned int fatto = uptime_ms() - t0;
@@ -8924,7 +9064,13 @@ unsigned int sleep(unsigned int sec)
     unsigned int ms = sec > 4294967u ? 4294967000u : sec * 1000u;
     unsigned int fatto;
 
-    if (_syscall1(SYS_SLEEP, ms) >= 0) return 0;
+    {
+        void   *pf = punto_entra();     /* a cancellation point (0.349) */
+        int32_t r  = punto_eintr(_syscall1(pn(SYS_SLEEP), ms));
+
+        punto_esci(pf);
+        if (r >= 0) return 0;
+    }
     /* interrupted by a caught signal: the seconds left, rounded up */
     fatto = uptime_ms() - t0;
     return fatto >= ms ? 0 : (ms - fatto + 999u) / 1000u;
@@ -9660,7 +9806,7 @@ static int ipc_scegli_su(IpcFiltro filtro, void *dato, IpcMessage *out_meta,
             resta = ms - passati;
         }
 
-        r = (int)_syscall4(num, (uintptr_t)&meta,
+        r = (int)_syscall4(num == SYS_IPC_RECV_TMO ? num : pn(num), (uintptr_t)&meta,
                            (uintptr_t)posta, IPC_MSG_MAX_DATA, resta);
         if (r < 0) return r;
 
@@ -10942,8 +11088,8 @@ int log_seriale(const char *s)
  * convenzione vecchia. */
 static int poll_kernel(struct pollfd *fds, unsigned int nfds, int timeout)
 {
-    return (int)err_posix(_syscall3(SYS_POLL, (uintptr_t)fds, nfds,
-                                    (unsigned int)timeout));
+    return (int)err_posix(punto_eintr(_syscall3(pn(SYS_POLL), (uintptr_t)fds, nfds,
+                                                (unsigned int)timeout)));
 }
 
 #ifndef EXOS_LIBC_SO
@@ -10952,13 +11098,20 @@ static int poll_misto(struct pollfd *fds, unsigned int nfds, int timeout);
 
 /* Con un socket fra i descrittori il giro lo fa poll_misto (sezione dei
  * socket); senza, e' la syscall di sempre. */
-int poll(struct pollfd *fds, unsigned int nfds, int timeout)
+static int poll_corpo(struct pollfd *fds, unsigned int nfds, int timeout)
 {
     unsigned int i;
 
     for (i = 0; fds && i < nfds; i++)
         if (E_PRESA(fds[i].fd)) return poll_misto(fds, nfds, timeout);
     return poll_kernel(fds, nfds, timeout);
+}
+
+int poll(struct pollfd *fds, unsigned int nfds, int timeout)
+{
+    void *pf = punto_entra();           /* a cancellation point (0.349) */
+
+    return (int)punto_fine(pf, (long)poll_corpo(fds, nfds, timeout));
 }
 
 /* =============================================================================
@@ -15502,7 +15655,20 @@ int pipe2(int fd[2], int flag)
         fcntl(fd[0], 4 /* F_SETFL */, 0x800);
         fcntl(fd[1], 4 /* F_SETFL */, 0x800);
     }
+    if (flag & 0x80000 /* O_CLOEXEC, kernel 0.349 */) {
+        fcntl(fd[0], 2 /* F_SETFD */, 1 /* FD_CLOEXEC */);
+        fcntl(fd[1], 2 /* F_SETFD */, 1 /* FD_CLOEXEC */);
+    }
     return 0;
+}
+
+/* dup3 (0.349): dup2 with O_CLOEXEC on the copy; the same number is EINVAL */
+int dup3(int vecchio, int nuovo, int flag)
+{
+    if (vecchio == nuovo || (flag & ~0x80000)) { errno = EINVAL; return -1; }
+    if (dup2(vecchio, nuovo) < 0) return -1;
+    if (flag & 0x80000) fcntl(nuovo, 2 /* F_SETFD */, 1 /* FD_CLOEXEC */);
+    return nuovo;
 }
 
 /* <net/if.h>: nessuna interfaccia con un nome (vedi l'header). */
@@ -16206,7 +16372,9 @@ static int ip_chiedi_seg(unsigned int tipo, const void *dati, unsigned int len,
         *rotto = 1;
         if (ipc_send((unsigned int)pid, P_IP_MSG_RITIRA, NULL, 0) < 0) return -EINTR;
         r = ipc_scegli_su(filtro_ip, &a, &meta, buf, max, 0, SYS_IPC_RECV_TMO);
-        if (r >= (int)sizeof(int) && meta.tipo == P_IP_MSG_ESITO && risp != P_IP_MSG_ESITO) {
+        /* ! (0.349) ALSO WHEN THE ANSWER ITSELF IS AN ESITO (accept, connect):
+         * neither ever gets -EINVAL from the stack, an old stack does */
+        if (r >= (int)sizeof(int) && meta.tipo == P_IP_MSG_ESITO) {
             int codice;
 
             memcpy(&codice, buf, sizeof(codice));
@@ -16225,6 +16393,21 @@ static int ip_esito(unsigned int tipo, const void *dati, unsigned int len)
 {
     int codice = -EIO;
     int r = ip_chiedi(tipo, dati, len, P_IP_MSG_ESITO, &codice, sizeof(codice), NULL);
+
+    if (r < 0) return r;
+    return r < (int)sizeof(codice) ? -EIO : codice;
+}
+
+/* ip_esito that a signal or pthread_cancel cuts short (0.349: accept and
+ * connect, ip.drv 0.027). *rotto as in ip_chiedi_seg; the stack's answer
+ * is the result all the same (an accept that made it, or -EINTR). */
+static int ip_esito_seg(unsigned int tipo, const void *dati, unsigned int len,
+                        unsigned int num, int *rotto)
+{
+    int          codice = -EIO;
+    unsigned int t = 0;
+    int          r = ip_chiedi_seg(tipo, dati, len, P_IP_MSG_ESITO, &codice, sizeof(codice),
+                                   &t, num, rotto);
 
     if (r < 0) return r;
     return r < (int)sizeof(codice) ? -EIO : codice;
@@ -16420,7 +16603,7 @@ int listen(int fd, int coda)
 }
 
 /* --- connettersi -------------------------------------------------------------- */
-int connect(int fd, const struct sockaddr *a, unsigned int len)
+static int connect_corpo(int fd, const struct sockaddr *a, unsigned int len)
 {
     Presa        *p = presa_di(fd);
     unsigned char ip[4];
@@ -16448,7 +16631,12 @@ int connect(int fd, const struct sockaddr *a, unsigned int len)
     /* ! -EAGAIN E' L'ARP: lo stack non conosce ancora l'indirizzo Ethernet del
      * prossimo salto, ha mandato la domanda e chiede di riprovare. */
     for (giri = 0; giri < 30; giri++) {
-        r = ip_esito(P_IP_MSG_TCP_APRI, &ap, sizeof(ap));
+        int rotto = 0;
+
+        /* a signal or pthread_cancel cuts it (0.349, ip.drv 0.027): never
+         * restarted, as on Linux; the stack drops the half-open connection */
+        r = ip_esito_seg(P_IP_MSG_TCP_APRI, &ap, sizeof(ap), SYS_IPC_RECV_SEG, &rotto);
+        if (rotto && r <= 0) return presa_errore(EINTR);
         if (r != -EAGAIN) break;
         dormi_ms(100);
     }
@@ -16468,7 +16656,14 @@ int connect(int fd, const struct sockaddr *a, unsigned int len)
     return 0;
 }
 
-int accept4(int fd, struct sockaddr *a, unsigned int *len, int flag)
+int connect(int fd, const struct sockaddr *a, unsigned int len)
+{
+    void *pf = punto_entra();           /* a cancellation point (0.349) */
+
+    return (int)punto_fine(pf, (long)connect_corpo(fd, a, len));
+}
+
+static int accept4_corpo(int fd, struct sockaddr *a, unsigned int *len, int flag)
 {
     Presa       *p = presa_di(fd), *n;
     PTcpAccetta  ac;
@@ -16480,9 +16675,16 @@ int accept4(int fd, struct sockaddr *a, unsigned int *len, int flag)
     if (!p->ascolta) return presa_errore(EINVAL);
     ac.id = p->id;
     for (;;) {
+        int rotto = 0;
+
         ac.timeout_ms = p->nonblocc ? 0 : 1000;
-        r = ip_esito(P_IP_MSG_TCP_ACCETTA, &ac, sizeof(ac));
+        /* a signal or pthread_cancel cuts the wait (0.349, ip.drv 0.027);
+         * SA_RESTART starts it again, as on Linux */
+        r = p->nonblocc ? ip_esito(P_IP_MSG_TCP_ACCETTA, &ac, sizeof(ac))
+                        : ip_esito_seg(P_IP_MSG_TCP_ACCETTA, &ac, sizeof(ac),
+                                       SYS_IPC_RECV_SEG_R, &rotto);
         if (r > 0) break;
+        if (rotto) return presa_errore(EINTR);
         if (r != -EAGAIN && r != -ETIMEDOUT) return presa_errore(r);
         if (p->nonblocc) return presa_errore(EAGAIN);
         if (p->rcv_ms && uptime_ms() - inizio >= p->rcv_ms) return presa_errore(EAGAIN);
@@ -16507,6 +16709,13 @@ int accept4(int fd, struct sockaddr *a, unsigned int *len, int flag)
     }
     scrivi_in(a, len, n->ip_rem, n->porta_rem);
     return nuovo;
+}
+
+int accept4(int fd, struct sockaddr *a, unsigned int *len, int flag)
+{
+    void *pf = punto_entra();           /* a cancellation point (0.349) */
+
+    return (int)punto_fine(pf, (long)accept4_corpo(fd, a, len, flag));
 }
 
 int accept(int fd, struct sockaddr *a, unsigned int *len)
@@ -16594,7 +16803,7 @@ static ssize_t udp_manda(Presa *p, const void *buf, size_t n,
     return r < 0 ? presa_errore(r) : (ssize_t)n;
 }
 
-ssize_t sendto(int fd, const void *buf, size_t n, int flag,
+static ssize_t sendto_corpo(int fd, const void *buf, size_t n, int flag,
                const struct sockaddr *a, unsigned int len)
 {
     Presa        *p = presa_di(fd);
@@ -16612,6 +16821,14 @@ ssize_t sendto(int fd, const void *buf, size_t n, int flag,
         porta = p->porta_rem;
     } else return presa_errore(E_DESTADDRREQ);
     return udp_manda(p, buf, n, ip, porta);
+}
+
+ssize_t sendto(int fd, const void *buf, size_t n, int flag,
+               const struct sockaddr *a, unsigned int len)
+{
+    void *pf = punto_entra();           /* a cancellation point (0.349) */
+
+    return (ssize_t)punto_fine(pf, (long)sendto_corpo(fd, buf, n, flag, a, len));
 }
 
 ssize_t send(int fd, const void *buf, size_t n, int flag)
@@ -16797,7 +17014,7 @@ static ssize_t udp_prendi(Presa *p, void *buf, size_t n, int flag,
     return (ssize_t)n;
 }
 
-ssize_t recvfrom(int fd, void *buf, size_t n, int flag,
+static ssize_t recvfrom_corpo(int fd, void *buf, size_t n, int flag,
                  struct sockaddr *a, unsigned int *len)
 {
     Presa *p = presa_di(fd);
@@ -16806,6 +17023,14 @@ ssize_t recvfrom(int fd, void *buf, size_t n, int flag,
     if (p->tipo == S_SOCK_DGRAM) return udp_prendi(p, buf, n, flag, a, len);
     if (a && len) scrivi_in(a, len, p->ip_rem, p->porta_rem);
     return tcp_prendi(p, (unsigned char *)buf, n, flag);
+}
+
+ssize_t recvfrom(int fd, void *buf, size_t n, int flag,
+                 struct sockaddr *a, unsigned int *len)
+{
+    void *pf = punto_entra();           /* a cancellation point (0.349) */
+
+    return (ssize_t)punto_fine(pf, (long)recvfrom_corpo(fd, buf, n, flag, a, len));
 }
 
 ssize_t recv(int fd, void *buf, size_t n, int flag)
@@ -17421,7 +17646,7 @@ int epoll_ctl(int epfd, int op, int fd, void *evento)
     return 0;
 }
 
-int epoll_wait(int epfd, void *eventi, int max, int timeout)
+static int epoll_wait_corpo(int epfd, void *eventi, int max, int timeout)
 {
     unsigned int ins = ep_di(epfd);
     unsigned int inizio = uptime_ms();
@@ -17469,6 +17694,13 @@ int epoll_wait(int epfd, void *eventi, int max, int timeout)
         memcpy(e + 4, r.ev[i].dati, 8);
     }
     return (int)r.n;
+}
+
+int epoll_wait(int epfd, void *eventi, int max, int timeout)
+{
+    void *pf = punto_entra();           /* a cancellation point (0.349) */
+
+    return (int)punto_fine(pf, (long)epoll_wait_corpo(epfd, eventi, max, timeout));
 }
 
 int epoll_pwait(int epfd, void *eventi, int max, int timeout, const void *maschera)
@@ -17893,7 +18125,12 @@ static int seg_attendi(const sigset_t *s, unsigned int ms)
 
     if (!s) return -EINVAL;
     m = (uint32_t)*s;
-    r = _syscall3(SYS_SEG_ATTENDI, (uintptr_t)&m, ms, (uintptr_t)&preso);
+    {
+        void *pf = punto_entra();       /* sigwait & co: points (0.349) */
+
+        r = punto_eintr(_syscall3(pn(SYS_SEG_ATTENDI), (uintptr_t)&m, ms, (uintptr_t)&preso));
+        punto_esci(pf);
+    }
     return r < 0 ? r : preso;
 }
 
@@ -17939,7 +18176,12 @@ int sigsuspend(const sigset_t *maschera)
 
     if (!maschera) { errno = EFAULT; return -1; }
     m = (uint32_t)*maschera;
-    r = _syscall1(SYS_SEG_SOSPENDI, (uintptr_t)&m);
+    {
+        void *pf = punto_entra();       /* a cancellation point (0.349) */
+
+        r = punto_eintr(_syscall1(pn(SYS_SEG_SOSPENDI), (uintptr_t)&m));
+        punto_esci(pf);
+    }
     errno = r < 0 ? -r : EINTR;
     return -1;
 }
@@ -18143,6 +18385,348 @@ int asprintf(char **out, const char *fmt, ...)
 }
 
 void bzero(void *p, size_t n) { memset(p, 0, n); }
+
+/* =============================================================================
+ * clock_nanosleep, strerror_l (19 November 2026, voce 105: VLC's POSIX
+ * threads, src/posix/thread.c and error.c)
+ * ============================================================================= */
+#define TIMER_ABSTIME_ 1
+
+/* ! IT RETURNS THE ERROR, NOT -1 AND errno (POSIX), and an absolute time is
+ * waited for on its own clock, the realtime one too: slices of nanosleep
+ * until the clock says it is there - a sleep cut short by a signal is EINTR,
+ * one that ends early is slept again. */
+int clock_nanosleep(int orologio, int flag, const struct timespec *req, struct timespec *rem)
+{
+    struct timespec ora;
+
+    if (req == NULL || req->tv_nsec < 0 || req->tv_nsec >= 1000000000L) return EINVAL;
+    if (orologio == 2 || orologio == 3) return 95;  /* ENOTSUP: CPU time is not a sleep */
+    if (clock_gettime(orologio, &ora) != 0) return EINVAL;
+    if (!(flag & TIMER_ABSTIME_))
+        return nanosleep(req, rem) == 0 ? 0 : errno;
+    for (;;) {
+        struct timespec resta;
+        long long       s;
+        long            ns;
+
+        if (clock_gettime(orologio, &ora) != 0) return EINVAL;
+        s  = (long long)req->tv_sec - (long long)ora.tv_sec;
+        ns = req->tv_nsec - ora.tv_nsec;
+        if (ns < 0) { ns += 1000000000L; s--; }
+        if (s < 0 || (s == 0 && ns == 0)) return 0;
+        resta.tv_sec  = (time_t)s;
+        resta.tv_nsec = ns;
+        if (nanosleep(&resta, NULL) != 0 && errno == EINTR) return EINTR;
+    }
+}
+
+/* One language of messages, whatever the locale: the same text as strerror */
+char *strerror_l(int err, void *locale)
+{
+    (void)locale;
+    return strerror(err);
+}
+
+/* =============================================================================
+ * posix_spawn (19 November 2026, voce 105) - <spawn.h>
+ *
+ * ! fork, THE ACTIONS IN THE CHILD, execve: the way POSIX describes it, now
+ * that the kernel closes FD_CLOEXEC at exec (0.349) - before, the child got
+ * the parent's every descriptor and the pipes never saw their end. The
+ * native spawn() is another thing (the kernel builds the process, a few
+ * fixed redirections) and stays as it is.
+ *
+ * ! THE ERROR OF exec COMES BACK THROUGH A PIPE WITH O_CLOEXEC: a good exec
+ * closes it and the parent reads 0 bytes, a failed one writes errno there.
+ * So posix_spawn("/no/such") says ENOENT, as glibc, and no child is left.
+ *
+ * ! THE ACTIONS ARE A LIST THAT GROWS (no fixed number), in the order given.
+ * The structures repeat lib/include/spawn.h, as everything in this file.
+ * ============================================================================= */
+typedef struct {
+    int   tipo;                 /* 1 open, 2 close, 3 dup2, 4 chdir */
+    int   fd, fd2, flag;
+    unsigned int modo;
+    char *percorso;
+} AzioneSp;
+
+typedef struct {
+    int       n, posti;
+    AzioneSp *v;
+} AzioniSp;
+
+typedef struct {
+    short    flag;
+    int      gruppo;
+    sigset_t predefiniti, maschera;
+    int      politica;
+    int      priorita;
+} AttrSp;
+
+#define SP_RESETIDS      0x01
+#define SP_SETPGROUP     0x02
+#define SP_SETSIGDEF     0x04
+#define SP_SETSIGMASK    0x08
+#define SP_SETSCHEDPARAM 0x10
+#define SP_SETSCHEDULER  0x20
+#define SP_USEVFORK      0x40
+#define SP_SETSID        0x80
+#define SP_TUTTI         0xFF
+
+int posix_spawn_file_actions_init(AzioniSp *a)
+{
+    if (!a) return EINVAL;
+    a->n = 0; a->posti = 0; a->v = NULL;
+    return 0;
+}
+
+int posix_spawn_file_actions_destroy(AzioniSp *a)
+{
+    int i;
+
+    if (!a) return EINVAL;
+    for (i = 0; i < a->n; i++) free(a->v[i].percorso);
+    free(a->v);
+    a->n = 0; a->posti = 0; a->v = NULL;
+    return 0;
+}
+
+static AzioneSp *sp_nuova(AzioniSp *a, int tipo)
+{
+    if (a->n == a->posti) {
+        int       posti = a->posti ? a->posti * 2 : 8;
+        AzioneSp *v     = (AzioneSp *)realloc(a->v, (size_t)posti * sizeof(AzioneSp));
+
+        if (!v) return NULL;
+        a->v = v; a->posti = posti;
+    }
+    memset(&a->v[a->n], 0, sizeof(AzioneSp));
+    a->v[a->n].tipo = tipo;
+    return &a->v[a->n++];
+}
+
+int posix_spawn_file_actions_addopen(AzioniSp *a, int fd, const char *percorso,
+                                     int flag, unsigned int modo)
+{
+    AzioneSp *z;
+    char     *c;
+
+    if (!a || !percorso) return EINVAL;
+    if (fd < 0) return EBADF;
+    c = strdup(percorso);
+    if (!c) return ENOMEM;
+    z = sp_nuova(a, 1);
+    if (!z) { free(c); return ENOMEM; }
+    z->fd = fd; z->flag = flag; z->modo = modo; z->percorso = c;
+    return 0;
+}
+
+int posix_spawn_file_actions_addclose(AzioniSp *a, int fd)
+{
+    AzioneSp *z;
+
+    if (!a) return EINVAL;
+    if (fd < 0) return EBADF;
+    z = sp_nuova(a, 2);
+    if (!z) return ENOMEM;
+    z->fd = fd;
+    return 0;
+}
+
+int posix_spawn_file_actions_adddup2(AzioniSp *a, int fd, int nuovo)
+{
+    AzioneSp *z;
+
+    if (!a) return EINVAL;
+    if (fd < 0 || nuovo < 0) return EBADF;
+    z = sp_nuova(a, 3);
+    if (!z) return ENOMEM;
+    z->fd = fd; z->fd2 = nuovo;
+    return 0;
+}
+
+int posix_spawn_file_actions_addchdir_np(AzioniSp *a, const char *percorso)
+{
+    AzioneSp *z;
+    char     *c;
+
+    if (!a || !percorso) return EINVAL;
+    c = strdup(percorso);
+    if (!c) return ENOMEM;
+    z = sp_nuova(a, 4);
+    if (!z) { free(c); return ENOMEM; }
+    z->percorso = c;
+    return 0;
+}
+
+int posix_spawnattr_init(AttrSp *a)
+{
+    if (!a) return EINVAL;
+    memset(a, 0, sizeof(*a));
+    return 0;
+}
+int posix_spawnattr_destroy(AttrSp *a) { return a ? 0 : EINVAL; }
+int posix_spawnattr_setflags(AttrSp *a, short f)
+{
+    if (!a || (f & ~SP_TUTTI)) return EINVAL;
+    a->flag = f;
+    return 0;
+}
+int posix_spawnattr_getflags(const AttrSp *a, short *f)
+{ if (!a || !f) return EINVAL; *f = a->flag; return 0; }
+int posix_spawnattr_setpgroup(AttrSp *a, int g)
+{ if (!a) return EINVAL; a->gruppo = g; return 0; }
+int posix_spawnattr_getpgroup(const AttrSp *a, int *g)
+{ if (!a || !g) return EINVAL; *g = a->gruppo; return 0; }
+int posix_spawnattr_setsigdefault(AttrSp *a, const sigset_t *s)
+{ if (!a || !s) return EINVAL; a->predefiniti = *s; return 0; }
+int posix_spawnattr_getsigdefault(const AttrSp *a, sigset_t *s)
+{ if (!a || !s) return EINVAL; *s = a->predefiniti; return 0; }
+int posix_spawnattr_setsigmask(AttrSp *a, const sigset_t *s)
+{ if (!a || !s) return EINVAL; a->maschera = *s; return 0; }
+int posix_spawnattr_getsigmask(const AttrSp *a, sigset_t *s)
+{ if (!a || !s) return EINVAL; *s = a->maschera; return 0; }
+/* One scheduling policy, SCHED_OTHER with priority 0 (lib/include/sched.h) */
+int posix_spawnattr_setschedpolicy(AttrSp *a, int p)
+{ if (!a || p != 0) return EINVAL; a->politica = p; return 0; }
+int posix_spawnattr_getschedpolicy(const AttrSp *a, int *p)
+{ if (!a || !p) return EINVAL; *p = a->politica; return 0; }
+struct sched_param_sp { int pr; };     /* struct sched_param of sched.h */
+int posix_spawnattr_setschedparam(AttrSp *a, const struct sched_param_sp *q)
+{ if (!a || !q || q->pr != 0) return EINVAL; a->priorita = q->pr; return 0; }
+int posix_spawnattr_getschedparam(const AttrSp *a, struct sched_param_sp *q)
+{ if (!a || !q) return EINVAL; q->pr = a->priorita; return 0; }
+
+/* In the child: the attributes, then the actions in order. 0 or errno. */
+static int sp_prepara(const AzioniSp *az, const AttrSp *at)
+{
+    int i;
+
+    if (at) {
+        if (at->flag & SP_SETSIGDEF)
+            for (i = 1; i < SIG_MAX; i++)
+                if ((at->predefiniti >> i) & 1u) signal(i, SIG_DFL);
+        if ((at->flag & SP_SETSID) && setsid() < 0) return errno;
+        if ((at->flag & SP_SETPGROUP) && setpgid(0, at->gruppo) < 0) return errno;
+        if (at->flag & SP_RESETIDS) {
+            if (setgid((unsigned int)getgid()) < 0) return errno;
+            if (setuid((unsigned int)getuid()) < 0) return errno;
+        }
+        if ((at->flag & SP_SETSIGMASK) && sigprocmask(2 /* SIG_SETMASK */, &at->maschera, NULL) < 0)
+            return errno;
+    }
+    for (i = 0; az && i < az->n; i++) {
+        const AzioneSp *z = &az->v[i];
+
+        switch (z->tipo) {
+        case 1: {
+            int f = open(z->percorso, z->flag, z->modo);
+
+            if (f < 0) return errno;
+            if (f != z->fd) {
+                if (dup2(f, z->fd) < 0) { int e = errno; close(f); return e; }
+                close(f);
+            }
+            break;
+        }
+        case 2:
+            if (close(z->fd) < 0 && errno == EBADF) return EBADF;
+            break;
+        case 3:
+            /* POSIX: dup2 onto itself clears FD_CLOEXEC, so it is inherited */
+            if (z->fd == z->fd2) {
+                if (fcntl(z->fd, 2 /* F_SETFD */, 0) < 0) return errno;
+            } else if (dup2(z->fd, z->fd2) < 0) {
+                return errno;
+            }
+            break;
+        case 4:
+            if (chdir(z->percorso) < 0) return errno;
+            break;
+        }
+    }
+    return 0;
+}
+
+/* execve along the caller's PATH, as execvp, but with envp */
+static int sp_esegui(const char *file, char *const argv[], char *const envp[], int cerca)
+{
+    const char *path, *p;
+    char       *buf;
+    size_t      lf;
+    int         e = ENOENT;
+
+    if (!cerca || strchr(file, '/')) {
+        execve(file, argv, envp);
+        return errno;
+    }
+    path = getenv("PATH");
+    if (!path || !*path) path = "/bin:/exos/bin";
+    lf  = strlen(file);
+    buf = (char *)malloc(strlen(path) + lf + 2);
+    if (!buf) return ENOMEM;
+    for (p = path; ; ) {
+        const char *fine = strchr(p, ':');
+        size_t      ld   = fine ? (size_t)(fine - p) : strlen(p);
+
+        if (ld == 0) { buf[0] = '.'; ld = 1; }
+        else memcpy(buf, p, ld);
+        buf[ld] = '/';
+        memcpy(buf + ld + 1, file, lf + 1);
+        execve(buf, argv, envp);
+        if (errno != ENOENT && errno != ENOTDIR) e = errno;     /* EACCES... */
+        if (!fine) break;
+        p = fine + 1;
+    }
+    free(buf);
+    return e;
+}
+
+static int sp_fai(int *pid, const char *file, const AzioniSp *az, const AttrSp *at,
+                  char *const argv[], char *const envp[], int cerca)
+{
+    int  tubo[2], f, e = 0, n, stato;
+    char *vuoto[] = { NULL };
+
+    if (!file || !argv) return EINVAL;
+    if (!envp) envp = vuoto;
+    if (pipe2(tubo, 0x80000 /* O_CLOEXEC */) < 0) return errno;
+    f = fork();
+    if (f < 0) {
+        e = errno;
+        close(tubo[0]); close(tubo[1]);
+        return e;
+    }
+    if (f == 0) {
+        close(tubo[0]);
+        e = sp_prepara(az, at);
+        if (e == 0) e = sp_esegui(file, argv, envp, cerca);
+        while (write(tubo[1], &e, sizeof(e)) < 0 && errno == EINTR) ;
+        _exit(127);
+    }
+    close(tubo[1]);
+    do n = (int)read(tubo[0], &e, sizeof(e)); while (n < 0 && errno == EINTR);
+    close(tubo[0]);
+    if (n == (int)sizeof(e)) {          /* the child never became the program */
+        while (waitpid(f, &stato, 0) < 0 && errno == EINTR) ;
+        return e ? e : ECHILD;
+    }
+    if (pid) *pid = f;
+    return 0;
+}
+
+int posix_spawn(int *pid, const char *percorso, const AzioniSp *az, const AttrSp *at,
+                char *const argv[], char *const envp[])
+{
+    return sp_fai(pid, percorso, az, at, argv, envp, 0);
+}
+
+int posix_spawnp(int *pid, const char *file, const AzioniSp *az, const AttrSp *at,
+                 char *const argv[], char *const envp[])
+{
+    return sp_fai(pid, file, az, at, argv, envp, 1);
+}
 #include "libc_gnu.c"        /* what Mesa asks (voce 88): static libc only */
 #include "libc_avvio.c"
 #endif

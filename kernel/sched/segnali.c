@@ -921,7 +921,7 @@ int32_t sys_seg_attendi(InterruptFrame *frame)
             if (preso != NULL) *preso = sig;
             return 0;
         }
-        if (self->interrotto) {
+        if (self->interrotto || (self->ferma && self->in_punto)) {   /* (0.349) a cancel */
             self->seg_attesi = 0;
             interrupts_enable();
             return ERR(EINTR);
@@ -960,10 +960,18 @@ int32_t sys_seg_sospendi(InterruptFrame *frame)
     self->seg_salvata = self->seg_bloccati;
     self->seg_bloccati = nuova;
     self->seg_sospeso = 1;
-    while ((self->seg_pendenti & ~self->seg_bloccati) == 0 && !self->interrotto) {
+    /* (0.349) and pthread_cancel: sigsuspend and pause are cancellation points */
+    while ((self->seg_pendenti & ~self->seg_bloccati) == 0 && !self->interrotto &&
+           !(self->ferma && self->in_punto)) {
         self->block_until = 0;
         sched_block(PROC_BLOCKED);
         interrupts_disable();
+    }
+    /* ! NO SIGNAL CAME, SO NOBODY PUTS THE MASK BACK (the delivery does it):
+     * left out by a cancel, it would be the suspend's mask for good */
+    if ((self->seg_pendenti & ~self->seg_bloccati) == 0) {
+        self->seg_bloccati = self->seg_salvata;
+        self->seg_sospeso  = 0;
     }
     interrupts_enable();
     return ERR(EINTR);
