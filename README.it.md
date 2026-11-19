@@ -155,7 +155,7 @@ sul CD strumenti, una verifica per netupdate, le prove a 32 e 64 bit.
   l'interfaccia "qt" è in uso, la sua finestra sullo schermo) e `vlc -I ncurses` (lo schermo
   riletto, `q` esce), il suono e i tre video come prima; `tools/prova_curses.sh`,
   `tools/prova_tetti.sh`, `tools/prova_segnali.sh` e `tools/prova_telnet_piu.sh` per il kernel
-  0.348. Resta aperto: il volume segna 0%.
+  0.348.
 - **Il centro della finestra di VLC era nero, senza il cono** (19 novembre): il `winId()` del
   plugin era l'id della finestra del server, che c'è solo da `setVisible`; Qt legge `winId()` una
   volta, quando fa la finestra, e si teneva lo 0. Con 0 un widget figlio che si ridisegna da solo
@@ -167,6 +167,17 @@ sul CD strumenti, una verifica per netupdate, le prove a 32 e 64 bit.
 - `VLC_SOLO_COLLEGA=1 tools/vlc-exos/costruisci.sh` ora ricollega davvero e basta (9 s):
   `lib_per` svuotava prima l'albero, quindi era una costruzione intera da sorgenti nuovi
   (`LIB_TIENI=1` in `tools/librerie-exos/comune.sh`).
+- **Il volume di VLC segnava 0% e non faceva niente** (19 novembre): `aout_exos` non aveva
+  `volume_set`, quindi VLC non aveva nessun volume (il cursore di Qt a 0%, `----` o 0% in ncurses).
+  Ora è il volume software di VLC, come con ALSA (`modules/audio_output/volume.h`): il cursore,
+  `a`/`z` in ncurses e `--aout_exos-gain` (0..8) cambiano i campioni, VLC ricorda il livello per
+  l'avvio dopo, e il volume generale della scheda (`audio -v`, il pannello Volume) resta
+  dell'utente. Misurato su quello che suona la scheda, un tono da 1 kHz a 10000: 1250 con
+  `--aout_exos-gain=0.125`, 7303 dopo due `z` (90%, cioè 0,9 al cubo). La prova di VLC ora suona
+  quel tono in ncurses e controlla il WAV.
+- **`sound.ogg` è silenzio:** il file di prova di Firefox è a -91 dB. Prova ancora il
+  decodificatore Vorbis, ma non l'orecchio: il controllo "audio" della prova di VLC conta i secondi
+  di suono di tutta la prova, quindi passava grazie agli altri file e ai video.
 
 ### GNU nano 9.3 (tools/nano-exos) — testato in QEMU
 

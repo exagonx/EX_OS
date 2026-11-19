@@ -9170,7 +9170,14 @@ tools/netinst/velocita tolto da netinst.
         Controlli nuovi: QT-NATIVO in ciaoqt, i pixel arancioni del cono
         nella prova di VLC. Strada facendo: VLC_SOLO_COLLEGA rifaceva tutto
         (lib_per svuota l'albero): LIB_TIENI=1 in comune.sh.
-      - APERTO: il volume segna 0% (aout_exos non dice il volume?).
+      - RISOLTO 19/11 il volume a 0%: aout_exos non aveva volume_set,
+        VLC non aveva volume. Ora il volume software di VLC (volume.h,
+        come ALSA): misurato sul WAV della scheda, tono a 10000 -> 1250
+        con --aout_exos-gain=0.125, 7303 dopo due z (90%). La prova di
+        VLC suona il tono in ncurses e lo controlla. Strada facendo:
+        sound.ogg di Firefox e' silenzio (-91 dB); il controllo "audio"
+        della prova conta i secondi di suono di tutta la prova, passava
+        coi video. DA FARE: misurare ogni file audio per conto suo.
       - RESTA: provarlo sul portatile (dopo il CD strumenti e netupdate);
         QSharedMemory/QSystemSemaphore, QNetworkInterface, futimens,
         inotify (vedi sopra).

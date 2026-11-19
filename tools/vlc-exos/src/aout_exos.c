@@ -12,7 +12,9 @@
  * a ring in shared memory, IPC only opens, starts, stops and closes it. The
  * same protocol as Firefox's cubeb backend (media/libcubeb/src/cubeb_exos.c).
  * The card plays 16-bit samples; VLC converts and resamples to what the card
- * grants.
+ * grants. The volume is VLC's own, in software, as with ALSA
+ * (modules/audio_output/volume.h): the card's master volume stays the
+ * user's, set with `audio` or the volume panel.
  *****************************************************************************/
 #ifdef HAVE_CONFIG_H
 # include "config.h"
@@ -65,7 +67,11 @@ struct aout_sys_t
     unsigned int visto;     /* `suonato` when last seen changing ... */
     mtime_t visto_quando;   /* ... and when */
     bool partito, in_pausa, pieno_detto;
+    float soft_gain;        /* volume.h: VLC's software volume ... */
+    bool soft_mute;         /* ... and mute */
 };
+
+#include "volume.h"
 
 static int ChiediApri(int pid, AudioFormato *f, AudioEsito *e)
 {
@@ -314,6 +320,7 @@ static int Start(audio_output_t *aout, audio_sample_format_t *restrict fmt)
                                                     : AOUT_CHAN_CENTER;
     fmt->channel_type = AUDIO_CHANNEL_TYPE_BITMAP;
     aout_FormatPrepare(fmt);
+    aout_SoftVolumeStart(aout);
     msg_Dbg(aout, "card at %u Hz, %u channels", sys->rate, sys->byte_frame / 2);
     return VLC_SUCCESS;
 }
@@ -337,6 +344,9 @@ static int Open(vlc_object_t *obj)
     aout->play = Play;
     aout->pause = Pause;
     aout->flush = Flush;
+    /* ! NO volume_set, NO VOLUME: VLC then reports -1, the Qt slider sat at
+     * 0% and dragging it did fuck all (19 November 2026) */
+    aout_SoftVolumeInit(aout);
     return VLC_SUCCESS;
 }
 
@@ -352,6 +362,7 @@ vlc_module_begin ()
     set_category(CAT_AUDIO)
     set_subcategory(SUBCAT_AUDIO_AOUT)
     set_capability("audio output", 200)
+    add_sw_gain()
     add_shortcut("exos")
     set_callbacks(Open, Close)
 vlc_module_end ()

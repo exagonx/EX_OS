@@ -13,7 +13,12 @@
 # plays three videos, H.264 with AAC, VP9 and AV1, in a window (vout_exos),
 # with a screenshot during each one. Run after tools/vlc-exos/costruisci.sh.
 # Between the two, the text interface (vlc -I ncurses, 18 November 2026): its
-# screen read back while it plays, then q. At the end the Qt interface
+# screen read back while it plays a 1 kHz tone, z twice (volume down), read
+# again, then q: the volume reads 100% and then 90%, and the card's output
+# goes from a peak of 10000 to 7290 (0.9 cubed: VLC's software volume in
+# aout_exos, 19 November 2026; before it the screen read nothing and the Qt
+# slider sat at 0%). Not sound.ogg: Firefox's test file is silence (-91 dB),
+# good for the Vorbis decoder and useless for the ear. At the end the Qt interface
 # (vlc -I qt, same day): its window on the screen, VLC's own log (-vv, on
 # the disk, read back with debugfs) says the "qt" interface module is in
 # use, and the cone is in the middle of the window.
@@ -66,6 +71,15 @@ if mancano:
 PY
 AUDIO="sound.ogg small-shot.flac small-shot.mp3"
 VIDEO="gizmo.mp4 vp9cake.webm av1.mp4"
+# the tone of the volume check: 2 s at 1 kHz, peak 10000, 48 kHz stereo
+python3 - "$S/m/tono.wav" <<'PY'
+import math, struct, sys
+r = 48000
+d = b"".join(struct.pack("<hh", v, v) for v in
+             (int(10000 * math.sin(2 * math.pi * 1000 * i / r)) for i in range(2 * r)))
+open(sys.argv[1], "wb").write(b"RIFF" + struct.pack("<I", 36 + len(d)) + b"WAVEfmt "
+    + struct.pack("<IHHIIHH", 16, 1, 2, r, 4 * r, 4, 16) + b"data" + struct.pack("<I", len(d)) + d)
+PY
 for f in $AUDIO $VIDEO; do cp "firefox-main/dom/media/test/$f" "$S/m/"; done
 # how long the audio lasts, as FFmpeg on this machine reads it
 # (tools/prova_codec.sh builds one in cross_build/costruzione-ffmpeg/host)
@@ -108,8 +122,13 @@ T=/tmp/exos/foto-vlc$BIT; rm -rf "$T"; mkdir -p "$T"
         echo "/disk/vlc -I dummy --aout exos --no-video --play-and-exit /disk/m/$f@${PAUSA_AUDIO:-20}"
     done
     echo "echo VLC-AUDIO-FINE@1"
-    echo "/disk/vlc -I ncurses --aout exos --no-video /disk/m/sound.ogg@8"
+    # --loop: still playing at the screenshot (after the end the screen says
+    # "no current item" and no volume)
+    echo "/disk/vlc -I ncurses --aout exos --no-video --loop /disk/m/tono.wav@6"
     echo "foto:$T/ncurses.ppm@1"
+    echo "z@n1"
+    echo "z@n4"
+    echo "foto:$T/ncurses-z.ppm@1"
     echo "q@n4"
     echo "echo VLC-NCURSES-FINE@1"
     echo "exwin@14"
@@ -170,10 +189,44 @@ fi
 
 # --- the text interface -----------------------------------------------------
 python3 tools/schermo_testo.py -i "$T/ncurses.ppm" > "$D/ncurses.txt" 2>&1
-if grep -q "VLC media player" "$D/ncurses.txt" && grep -q "sound.ogg" "$D/ncurses.txt"; then
+if grep -q "VLC media player" "$D/ncurses.txt" && grep -q "tono.wav" "$D/ncurses.txt"; then
     echo "  [OK] vlc -I ncurses: l'intestazione e il file sullo schermo"
 else
     echo "  [NO] vlc -I ncurses: lo schermo non lo mostra ($D/ncurses.txt)"; esito=1
+fi
+python3 tools/schermo_testo.py -i "$T/ncurses-z.ppm" > "$D/ncurses-z.txt" 2>&1
+v1=$(sed -n 's/.*Volume *: *\([0-9]*\)%.*/\1/p' "$D/ncurses.txt" | head -1)
+v2=$(sed -n 's/.*Volume *: *\([0-9]*\)%.*/\1/p' "$D/ncurses-z.txt" | head -1)
+if [ "$v1" = 100 ] && [ "$v2" = 90 ]; then
+    echo "  [OK] volume: 100%, e 90% dopo due z"
+else
+    echo "  [NO] volume: ${v1:-niente}% e poi ${v2:-niente}% invece di 100 e 90 ($D/ncurses.txt, $D/ncurses-z.txt)"; esito=1
+fi
+# what the card played: a second and more of the tone at 10000, then at 7290
+SENTITO=$(python3 - "$WAV" <<'E'
+import struct, sys
+try:
+    b = open(sys.argv[1], 'rb').read()
+except OSError:
+    print("0 0"); sys.exit()
+ch, rate = struct.unpack('<HI', b[22:28])
+d, s = b[44:], rate // 4 * 2 * ch
+picchi = [max(abs(x) for x in struct.unpack('<%dh' % (s // 2), d[i:i + s]))
+          for i in range(0, len(d) - s, s)]
+def corsa(lo, hi):          # the longest run of quarter seconds in [lo, hi]
+    m = n = 0
+    for p in picchi:
+        n = n + 1 if lo <= p <= hi else 0
+        m = max(m, n)
+    return m
+print(corsa(9800, 10100), corsa(7150, 7450))
+E
+)
+read -r PIENO BASSO <<< "$SENTITO"
+if [ "${PIENO:-0}" -ge 4 ] && [ "${BASSO:-0}" -ge 4 ]; then
+    echo "  [OK] volume: la scheda ha suonato il tono a 10000 e poi a 7290"
+else
+    echo "  [NO] volume: nel WAV ${PIENO:-0} quarti di secondo a 10000 e ${BASSO:-0} a 7290 (almeno 4 e 4)"; esito=1
 fi
 grep -aq "VLC-NCURSES-FINE" "$D/seriale.txt" || { echo "  [NO] vlc -I ncurses: q non l'ha chiuso"; esito=1; }
 

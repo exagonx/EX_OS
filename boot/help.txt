@@ -1508,7 +1508,11 @@ Video...), la barra del tempo, pausa, avanti, indietro e il volume; il
 video resta nella sua finestra (VLC 3 lo mette dentro l'interfaccia solo
 su X11, Windows e macOS). Vuole Qt 5 (gruppo qt5 del CD strumenti, o
 netupdate -install:qt5). Con -I ncurses lo schermo di testo di VLC:
-q esce (provato); spazio, frecce e h (l'aiuto) sono i tasti di VLC.
+q esce (provato); spazio, frecce e h (l'aiuto) sono i tasti di VLC,
+a e z alzano e abbassano il volume (provato).
+Il volume di VLC e' suo, in software: il cursore di Qt, a/z in ncurses
+o --aout_exos-gain=0.5 (da 0 a 8) cambiano solo VLC, e VLC lo ricorda
+all'avvio dopo. Il volume di tutta la scheda e' `audio -v 0..100`.
 Non ci sono i sottotitoli con i caratteri
 (freetype), la rete in streaming cifrata e i DVD. Gli avvisi
 "globalhotkeys" e "XML reader not found" all'avvio non sono errori.

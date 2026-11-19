@@ -151,7 +151,7 @@ a group on the tools CD, a check for netupdate, the tests at 32 and 64 bit.
   the "qt" interface is in use, its window on the screen) and `vlc -I ncurses` (the screen read
   back, `q` quits), the audio and the three videos as before; `tools/prova_curses.sh`,
   `tools/prova_tetti.sh`, `tools/prova_segnali.sh` and `tools/prova_telnet_piu.sh` for kernel
-  0.348. Still open: the volume reads 0%.
+  0.348.
 - **The middle of VLC's window was black, without the cone** (19 November): the plugin's
   `winId()` was the server's window id, which exists only from `setVisible`; Qt reads `winId()`
   once, when the window is made, and kept 0. With 0 a child widget that repaints alone (the cone
@@ -162,6 +162,16 @@ a group on the tools CD, a check for netupdate, the tests at 32 and 64 bit.
 - `VLC_SOLO_COLLEGA=1 tools/vlc-exos/costruisci.sh` really only relinks now (9 s): `lib_per`
   emptied the build tree first, so it was a whole build from fresh sources (`LIB_TIENI=1` in
   `tools/librerie-exos/comune.sh`).
+- **VLC's volume read 0% and did nothing** (19 November): `aout_exos` had no `volume_set`, so
+  VLC had no volume at all (the Qt slider at 0%, `----` or 0% in ncurses). Now it is VLC's own
+  software volume, as with ALSA (`modules/audio_output/volume.h`): the slider, `a`/`z` in
+  ncurses and `--aout_exos-gain` (0..8) change the samples, VLC remembers the level for the next
+  start, and the card's master volume (`audio -v`, the Volume panel) stays the user's. Measured on
+  what the card plays, a 1 kHz tone at 10000: 1250 with `--aout_exos-gain=0.125`, 7303 after two
+  `z` (90%, i.e. 0.9 cubed). The VLC test now plays that tone in ncurses and checks the WAV.
+- **`sound.ogg` is silence:** Firefox's test file is -91 dB. It still tests the Vorbis decoder,
+  but no ear: the "audio" check of the VLC test counts the seconds of sound of the whole run, so
+  it passed on the other files and the videos.
 
 ### GNU nano 9.3 (tools/nano-exos) — tested in QEMU
 

@@ -43,7 +43,7 @@ collega() {
     local m propri=""
     for m in aout_exos vout_exos; do
         $CC $CFLAGS -D__unix__ -DEXOS_SOLO_POSIX -D_GNU_SOURCE -std=gnu11 -DHAVE_CONFIG_H \
-            -I"$B/obj" -I"$SRC/include" -I"$B/obj/include" \
+            -I"$B/obj" -I"$SRC/include" -I"$B/obj/include" -I"$SRC/modules/audio_output" \
             -DMODULE_STRING=\"$m\" -DMODULE_NAME=$m \
             -c "$R/tools/vlc-exos/src/$m.c" -o "$B/$m.o" || exit 1
         propri="$propri $B/$m.o"
