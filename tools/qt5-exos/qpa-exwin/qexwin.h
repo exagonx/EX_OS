@@ -92,7 +92,14 @@ public:
     void raise() override;
     void requestActivateWindow() override;
     void setWindowState(Qt::WindowStates state) override;
-    WId winId() const override { return WId(m_id); }
+    /* ! NEVER 0, AND FROM THE START: QWidget reads winId() once, when the
+     * QWindow is made, and the server window comes only at setVisible. The
+     * server id was 0 then, Qt kept the 0 for good, and a child widget
+     * repainting alone (VLC's fading cone) found no native parent: its
+     * flush went to QWidget(0x0) and was thrown away. Shitty silent loss.
+     * Unique per window; the server's id is serverId(). */
+    WId winId() const override { return WId(this); }
+    unsigned int serverId() const { return m_id; }
 
     /* the server's zone: the backing store paints here */
     uchar *zona() const { return m_zona; }

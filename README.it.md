@@ -155,8 +155,18 @@ sul CD strumenti, una verifica per netupdate, le prove a 32 e 64 bit.
   l'interfaccia "qt" è in uso, la sua finestra sullo schermo) e `vlc -I ncurses` (lo schermo
   riletto, `q` esce), il suono e i tre video come prima; `tools/prova_curses.sh`,
   `tools/prova_tetti.sh`, `tools/prova_segnali.sh` e `tools/prova_telnet_piu.sh` per il kernel
-  0.348. Resta aperto: il centro della finestra di VLC è nero, senza il cono (animazioni, PNG e
-  risorse di VLC funzionano: da trovare), e il volume segna 0%.
+  0.348. Resta aperto: il volume segna 0%.
+- **Il centro della finestra di VLC era nero, senza il cono** (19 novembre): il `winId()` del
+  plugin era l'id della finestra del server, che c'è solo da `setVisible`; Qt legge `winId()` una
+  volta, quando fa la finestra, e si teneva lo 0. Con 0 un widget figlio che si ridisegna da solo
+  (il cono che compare piano) non trova un genitore nativo, e Qt buttava la sua copia: dipinto,
+  mai sullo schermo. Ora `winId()` non è mai 0. Trovato con `QT_EXWIN_DEBUG=1` (il plugin dice
+  cosa dipinge e copia) e `QT_LOGGING_RULES=qt.widgets.painting=true`, che le due prove passano;
+  `ciaoqt` controlla `nativeParentWidget()` (QT-NATIVO) e la prova di VLC conta l'arancione del
+  cono.
+- `VLC_SOLO_COLLEGA=1 tools/vlc-exos/costruisci.sh` ora ricollega davvero e basta (9 s):
+  `lib_per` svuotava prima l'albero, quindi era una costruzione intera da sorgenti nuovi
+  (`LIB_TIENI=1` in `tools/librerie-exos/comune.sh`).
 
 ### GNU nano 9.3 (tools/nano-exos) — testato in QEMU
 

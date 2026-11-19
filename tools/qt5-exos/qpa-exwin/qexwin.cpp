@@ -138,6 +138,9 @@ bool QExwinIntegration::hasCapability(QPlatformIntegration::Capability cap) cons
 
 QPlatformWindow *QExwinIntegration::createPlatformWindow(QWindow *window) const
 {
+    if (g_racconta)
+        fprintf(stderr, "exwin: finestra %p padre %p %s %dx%d\n", (void *)window, (void *)window->parent(),
+                window->objectName().toLocal8Bit().constData(), window->width(), window->height());
     return new QExwinWindow(window);
 }
 
@@ -659,6 +662,9 @@ QPaintDevice *QExwinBackingStore::paintDevice()
 
 void QExwinBackingStore::beginPaint(const QRegion &region)
 {
+    if (g_racconta)
+        fprintf(stderr, "exwin: dipinge %d,%d %dx%d\n", region.boundingRect().x(), region.boundingRect().y(),
+                region.boundingRect().width(), region.boundingRect().height());
     if (m_immagine.hasAlphaChannel()) {
         QPainter p(&m_immagine);
         p.setCompositionMode(QPainter::CompositionMode_Source);
@@ -679,8 +685,13 @@ void QExwinBackingStore::resize(const QSize &size, const QRegion &staticContents
 void QExwinBackingStore::flush(QWindow *window, const QRegion &region, const QPoint &offset)
 {
     QExwinWindow *w = static_cast<QExwinWindow *>(window->handle());
-    if (!w || !w->zona())
+    if (!w || !w->zona()) {
+        if (g_racconta)
+            fprintf(stderr, "exwin: flush BUTTATO %p (padre %p) %d,%d %dx%d: senza zona\n", (void *)window,
+                    (void *)window->parent(), region.boundingRect().x(), region.boundingRect().y(),
+                    region.boundingRect().width(), region.boundingRect().height());
         return;
+    }
     const QSize z = w->misuraZona();
     const QRect tutto(QPoint(), z);
     QRect fatto;
@@ -698,6 +709,13 @@ void QExwinBackingStore::flush(QWindow *window, const QRegion &region, const QPo
                 d[x] = s[x] | 0xFF000000u;
         }
         fatto |= r;
+    }
+    if (g_racconta) {
+        const QPoint c(m_immagine.width() / 2, m_immagine.height() / 2);
+        fprintf(stderr, "exwin: flush %d,%d %dx%d (zona %dx%d, immagine %dx%d) centro %08x\n",
+                fatto.x(), fatto.y(), fatto.width(), fatto.height(), z.width(), z.height(),
+                m_immagine.width(), m_immagine.height(),
+                m_immagine.isNull() ? 0u : m_immagine.pixel(c));
     }
     if (!fatto.isEmpty())
         w->aggiorna(fatto);

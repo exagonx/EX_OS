@@ -80,6 +80,8 @@ collega() {
 }
 
 costruisci() {
+    # VLC_SOLO_COLLEGA keeps the built tree (see below)
+    [ "${VLC_SOLO_COLLEGA:-}" = 1 ] && LIB_TIENI=1
     lib_per "$1"
     BIT=$1
     local Q=$TC/qt5-exos$BIT/exos/qt5

@@ -151,8 +151,17 @@ a group on the tools CD, a check for netupdate, the tests at 32 and 64 bit.
   the "qt" interface is in use, its window on the screen) and `vlc -I ncurses` (the screen read
   back, `q` quits), the audio and the three videos as before; `tools/prova_curses.sh`,
   `tools/prova_tetti.sh`, `tools/prova_segnali.sh` and `tools/prova_telnet_piu.sh` for kernel
-  0.348. Still open: the middle of VLC's window is black, without the cone (animations, PNG and
-  VLC's resources work: to be found), and the volume reads 0%.
+  0.348. Still open: the volume reads 0%.
+- **The middle of VLC's window was black, without the cone** (19 November): the plugin's
+  `winId()` was the server's window id, which exists only from `setVisible`; Qt reads `winId()`
+  once, when the window is made, and kept 0. With 0 a child widget that repaints alone (the cone
+  fades in) finds no native parent, and Qt threw its flush away: painted, never on the screen.
+  Now `winId()` is never 0. Found with `QT_EXWIN_DEBUG=1` (the plugin says what it paints and
+  flushes) and `QT_LOGGING_RULES=qt.widgets.painting=true`, both passed by the two tests;
+  `ciaoqt` checks `nativeParentWidget()` (QT-NATIVO) and the VLC test counts the cone's orange.
+- `VLC_SOLO_COLLEGA=1 tools/vlc-exos/costruisci.sh` really only relinks now (9 s): `lib_per`
+  emptied the build tree first, so it was a whole build from fresh sources (`LIB_TIENI=1` in
+  `tools/librerie-exos/comune.sh`).
 
 ### GNU nano 9.3 (tools/nano-exos) — tested in QEMU
 

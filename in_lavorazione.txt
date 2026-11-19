@@ -9159,11 +9159,18 @@ tools/netinst/velocita tolto da netinst.
         di 0.348 ok (prova_curses, prova_tetti, prova_segnali,
         prova_telnet_piu a 32 e 64). ciaoqt prova anche un'animazione e
         un PNG (scritto e riletto in memoria).
-      - APERTO: il centro della finestra di VLC (-I qt) e' nero, il cono
-        non c'e'. Misurato: animazioni (QT-ANIMA 1), PNG e risorse di VLC
-        (qInitResources_vlc collegata) vanno; da capire in BackgroundWidget
-        / MainInterface di VLC. Il volume segna 0% (aout_exos non dice il
-        volume?).
+      - RISOLTO 19/11 (l'utente: "trova perche' il centro di vlc e' nero
+        senza il cono"): VLC dipingeva il cono (stampe provvisorie in
+        BackgroundWidget::paintEvent: pixmap 128x128, opacita' fino a 1),
+        Qt chiamava beginPaint ma mai flush per quella zona.
+        qt.widgets.painting: "needing flush in QWidget(0x0)" -> il winId()
+        del plugin era l'id del server, 0 fino a setVisible, e Qt se lo
+        tiene dalla creazione: un figlio che si ridisegna da solo non trova
+        il genitore nativo e la copia si perde. winId() = WId(this) ora.
+        Controlli nuovi: QT-NATIVO in ciaoqt, i pixel arancioni del cono
+        nella prova di VLC. Strada facendo: VLC_SOLO_COLLEGA rifaceva tutto
+        (lib_per svuota l'albero): LIB_TIENI=1 in comune.sh.
+      - APERTO: il volume segna 0% (aout_exos non dice il volume?).
       - RESTA: provarlo sul portatile (dopo il CD strumenti e netupdate);
         QSharedMemory/QSystemSemaphore, QNetworkInterface, futimens,
         inotify (vedi sopra).

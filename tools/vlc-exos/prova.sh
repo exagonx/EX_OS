@@ -14,9 +14,9 @@
 # with a screenshot during each one. Run after tools/vlc-exos/costruisci.sh.
 # Between the two, the text interface (vlc -I ncurses, 18 November 2026): its
 # screen read back while it plays, then q. At the end the Qt interface
-# (vlc -I qt, same day): its window on the screen, and VLC's own log (-vv,
-# on the disk, read back with debugfs) says the "qt" interface module is in
-# use.
+# (vlc -I qt, same day): its window on the screen, VLC's own log (-vv, on
+# the disk, read back with debugfs) says the "qt" interface module is in
+# use, and the cone is in the middle of the window.
 # What is [OK]: the card played at least as many seconds as the audio files
 # last, VLC wrote no error for the audio, and every screenshot of a video has
 # a picture in it (at least 2% of the screen differs from the empty desktop: the AV1 file is 160x90).
@@ -100,6 +100,9 @@ T=/tmp/exos/foto-vlc$BIT; rm -rf "$T"; mkdir -p "$T"
     echo "export LD_LIBRARY_PATH=/disk/lib:/disk/qt5/lib@1"
     echo "export QT_PLUGIN_PATH=/disk/qt5/plugins@1"
     echo "export QT_QPA_FONTDIR=/disk/qt5/lib/fonts@1"
+    echo "export QT_EXWIN_DEBUG=${QT_EXWIN_DEBUG:-0}@1"   # 1: what the exwin plugin does, in qt.log
+    # Qt's own logging categories, e.g. QT_LOGGING_RULES=qt.widgets.painting=true
+    [ -n "${QT_LOGGING_RULES:-}" ] && echo "export QT_LOGGING_RULES=$QT_LOGGING_RULES@1"
     for f in $AUDIO; do
         echo "echo VLC-AUDIO $f@1"
         echo "/disk/vlc -I dummy --aout exos --no-video --play-and-exit /disk/m/$f@${PAUSA_AUDIO:-20}"
@@ -220,6 +223,29 @@ E
         echo "  [OK] vlc -I qt: l'interfaccia Qt e' in uso, $c% dello schermo cambiato, $D/foto/qt.png"
     else
         echo "  [NO] vlc -I qt: in uso ma ${c:-0}% dello schermo cambiato, $D/foto/qt.png"; esito=1
+    fi
+    # the cone in the middle of VLC's window: orange pixels. A child widget
+    # repainting alone (the cone fades in) never reached the screen while
+    # the exwin plugin's winId() was 0 (19 November 2026)
+    n=$(python3 - "$T/qt.ppm" <<'E'
+import re, sys
+# ! THE HEADER BY ITS GRAMMAR: split() also ate the first bytes of the
+# picture when they look like blanks, and the colours came out shifted
+try:
+    t = open(sys.argv[1], 'rb').read()
+    d = t[re.match(rb'P6\s+\d+\s+\d+\s+\d+\s', t).end():]
+except (OSError, AttributeError):
+    print(0); sys.exit()
+w = int(t.split()[1])
+# only the middle of VLC's window (the video behind it may be orange too)
+print(sum(1 for y in range(200, 360) for x in range(300, 500)
+          if d[3 * (y * w + x)] > 200 and 90 < d[3 * (y * w + x) + 1] < 180 and d[3 * (y * w + x) + 2] < 80))
+E
+)
+    if [ "${n:-0}" -ge 1000 ]; then
+        echo "  [OK] vlc -I qt: il cono al centro della finestra ($n pixel arancioni)"
+    else
+        echo "  [NO] vlc -I qt: il cono non si vede (${n:-0} pixel arancioni), $D/foto/qt.png"; esito=1
     fi
 else
     echo "  [NO] vlc -I qt: il registro non dice 'using interface module \"qt\"' ($D/qt.log)"; esito=1

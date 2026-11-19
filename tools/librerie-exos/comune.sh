@@ -67,7 +67,10 @@ lib_per() {
     B=$TC/costruzione-$NOME/exos$BIT
     OUT=$TC/$NOME-exos$BIT
     DEST=$OUT/exos
-    rm -rf "$B" "$OUT"
+    # ! LIB_TIENI=1: the tree of the last build stays (a script that only
+    # relinks, as VLC_SOLO_COLLEGA; until 18 November 2026 this emptied it
+    # first, and the "relink" was a whole build from fresh sources)
+    [ "${LIB_TIENI:-}" = 1 ] || rm -rf "$B" "$OUT"
     mkdir -p "$B" "$DEST/lib" "$DEST/include" "$DEST/bin"
     # ! EVERYTHING -fPIC (3 November 2026): the libraries become shared
     # objects (lib_condivisa), and a .so is made of position-independent

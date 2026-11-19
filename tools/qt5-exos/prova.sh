@@ -24,6 +24,7 @@
 #   - QT-MENU and a screenshot with the menu open (a WIN_ST_COMPARSA window),
 #     then QT-ESCI: the click on the menu item reached the popup;
 #   - QT-PNG: a PNG written and read back in memory;
+#   - QT-NATIVO 1: a child widget's flush has a window to go to;
 #   - QT-ANIMA 1: a property animation reached its end (VLC's cone);
 #   - no [FAULT] or PANIC.
 # =============================================================================
@@ -42,6 +43,8 @@ Q="$TC/qt5-exos$BIT/exos/qt5"
 D="$TC/$MACCHINA/prova-qt$BIT"
 S="$D/disco"
 rm -rf "${D:?}"; mkdir -p "$S/casa" "$S/lib" "$D/foto"
+# an RGBA PNG made elsewhere, for QT-PNGFILE (VLC's cone is one)
+cp tools/exilla/tappa6-schermata.png "$S/casa/prova.png"
 
 # --- the program --------------------------------------------------------------
 "$CROSS/bin/$T-g++" -O2 -fPIC -std=c++17 -D__unix__ -DEXOS_SOLO_POSIX \
@@ -159,6 +162,10 @@ L=$(grep -a -m1 "QT-ANIMA" "$D/seriale.txt" | tr -d ' ')
 [ "$L" = "QT-ANIMA1" ] && si "un'animazione arriva in fondo (QT-ANIMA 1)" || no "l'animazione: '$L' invece di QT-ANIMA 1"
 grep -aq "QT-PNG scritto 1 letto 1 16x8" "$D/seriale.txt" && si "PNG scritto e riletto" \
     || no "PNG: '$(grep -a -m1 QT-PNG "$D/seriale.txt")'"
+grep -aq "QT-PNGFILE 800x600" "$D/seriale.txt" && si "un PNG RGBA letto dal disco" \
+    || no "PNG RGBA dal disco: '$(grep -a -m1 QT-PNGFILE "$D/seriale.txt")'"
+grep -aq "QT-NATIVO 1 winId 1" "$D/seriale.txt" && si "un widget figlio trova la sua finestra (QT-NATIVO)" \
+    || no "widget figlio senza finestra nativa: '$(grep -a -m1 QT-NATIVO "$D/seriale.txt")' (winId 0?)"
 grep -aq "QT-TESTO ciao" "$D/seriale.txt" && si "la tastiera scrive nella riga (QT-TESTO ciao)" || no "QT-TESTO ciao non c'e'"
 grep -aq "QT-CLIC" "$D/seriale.txt" && si "il clic sul bottone (QT-CLIC)" || no "QT-CLIC non c'e'"
 c=$(diversi "$F/finestra.ppm" "$F/menu.ppm")

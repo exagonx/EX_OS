@@ -15,7 +15,11 @@
  * 300 ms, read after a second (VLC fades its cone in like this): 1 when Qt's
  * animation timer runs. QT-PNG: a 16x8 picture written as PNG in memory and
  * read back (libpng of the sysroot; VLC's cone is a PNG), with the formats
- * QImageReader knows.
+ * QImageReader knows. QT-PNGFILE: an RGBA PNG made by another program
+ * ($HOME/prova.png), read from the disk as VLC reads its cone. QT-NATIVO:
+ * a child widget finds the window it is flushed to (nativeParentWidget);
+ * with winId() 0 it found none, and what it repainted alone never reached
+ * the screen (VLC's cone, 19 November 2026).
  * ============================================================================= */
 #include <QApplication>
 #include <QBuffer>
@@ -70,6 +74,12 @@ int main(int argc, char **argv)
                       .arg(scritto).arg(letto).arg(b.width()).arg(b.height()).arg(dati.size())
                       .arg(formati.join(QLatin1Char(','))));
     }
+    {
+        QImageReader r(QString::fromLocal8Bit(qgetenv("HOME")) + QStringLiteral("/prova.png"));
+        const QImage c = r.read();
+        di("PNGFILE", QStringLiteral("%1x%2 formato %3 errore '%4'")
+                          .arg(c.width()).arg(c.height()).arg(int(c.format())).arg(r.errorString()));
+    }
     w.setProperty("opacita", 0.0);
     QPropertyAnimation *anima = new QPropertyAnimation(&w, "opacita", &w);
     anima->setDuration(300);
@@ -87,6 +97,8 @@ int main(int argc, char **argv)
         di("PRONTO", QStringLiteral("riga %1,%2 bottone %3,%4 menu %5")
                          .arg(r.x()).arg(r.y()).arg(b.x()).arg(b.y())
                          .arg(w.menuBar()->height()));
+        di("NATIVO", QStringLiteral("%1 winId %2").arg(riga->nativeParentWidget() == &w)
+                         .arg(w.winId() != 0));
     });
     return app.exec();
 }
