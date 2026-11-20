@@ -1,0 +1,25 @@
+/* lib/exhttp/exhttp.ver - what exhttp.so offers to programs: everything else stays inside it.
+ * The ld version script of the library (voce 105, 19 November 2026); it
+ * took the place of the name table of exhttp_esporta.c, with the same names.
+ * ! A NEW PUBLIC FUNCTION GOES HERE TOO, or programs will not link to it. */
+{
+    global:
+        exhttp_prendi;
+        exhttp_tcp;
+        exhttp_scambio;
+        http_url;
+        exhttp_posta;
+        exhttp_biscotti;
+        exhttp_attesa;
+        exhttp_passo;
+        exhttp_verso;
+        exhttp_da;
+        exhttp_certi_esamina;
+        exhttp_certi_aggiungi;
+        exhttp_attesi;
+        exhttp_intestazioni;
+        exhttp_tls_sopra;
+        exhttp_tls_impronta;
+        exhttp_tls_fidati;
+    local: *;
+};

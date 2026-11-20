@@ -21,10 +21,11 @@
 const char *ex_version(void) __attribute__((weak));
 
 /* I due estremi dell'immagine caricata. `_start` e' il punto d'ingresso, cioe'
- * l'inizio di .text; `_bss_end` lo pone il linker script alla fine di .bss.
- * Li dichiarano tutti i linker script dei programmi. */
+ * l'inizio di .text; `_end` e' la fine di .bss, posta dal linker script di
+ * serie di ld (dal 19 novembre 2026 i programmi grafici sono collegati a
+ * /lib/ld-exos.so con quello: prima era `_bss_end` dei loro .ld). */
 extern void _start(void);
-extern char _bss_end;
+extern char _end;
 
 /* =============================================================================
  * ! LA MEMORIA DI UN PROCESSO NON LA DICE NESSUNA CHIAMATA, e va composta.
@@ -33,7 +34,7 @@ extern char _bss_end;
  * `procinfo()` da' gli stack ma non il resto. Le tre parti si sanno pero'
  * ricavare tutte, e sono quelle che contano:
  *
- *   immagine  da `_start` a `_bss_end`: codice, dati e bss, cioe' quanto il
+ *   immagine  da `_start` a `_end`: codice, dati e bss, cioe' quanto il
  *             programma occupa prima ancora di cominciare
  *   heap      da dove finisce la bss (arrotondato alla pagina, che e' dove il
  *             kernel mette heap_start) fino a sbrk(0)
@@ -50,7 +51,7 @@ void exinfo_memoria(unsigned int *immagine, unsigned int *heap,
                     unsigned int *pila)
 {
     unsigned int base = (unsigned int)(void *)_start;
-    unsigned int fine = (unsigned int)&_bss_end;
+    unsigned int fine = (unsigned int)&_end;
 
     if (immagine) *immagine = (fine > base) ? fine - base : 0;
 

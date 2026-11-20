@@ -154,7 +154,21 @@ typedef Elf32Phdr   ElfPhdr;
 typedef struct {
     uint32_t entry_point;       /* Indirizzo virtuale entry point */
     uint32_t user_stack_top;    /* Top stack utente (allineato 16 byte) */
+    /* (0.350) a program with PT_INTERP: the address of its auxv at the top
+     * of the stack, 0 for a static one. The stack builders write it in the
+     * first word (the fake return address, 0 before), where the
+     * interpreter looks; entry_point is then the interpreter's */
+    uint32_t aux;
 } ElfLoadResult;
+
+/* The auxv the kernel gives an interpreter (the numbers of SysV) */
+#define AT_NULL     0
+#define AT_PHDR     3
+#define AT_PHENT    4
+#define AT_PHNUM    5
+#define AT_PAGESZ   6
+#define AT_BASE     7
+#define AT_ENTRY    9
 
 /* Carica l'eseguibile SU RICHIESTA: i segmenti si annotano e le pagine
  * arrivano al primo accesso. E' il modo giusto per i programmi. */
@@ -186,18 +200,7 @@ int elf_load_argv(const char *path, Process *proc, ElfLoadResult *result,
  * dipendere dal filesystem mentre gira — i driver. Vedi elf.c. */
 int elf_load_residente(const char *path, Process *proc, ElfLoadResult *result);
 
-/* =============================================================================
- * LIBRERIE CONDIVISE — kernel/loader/lib.c
- *
- * Carica la libreria (una volta per tutto il sistema) e la aggancia a `proc`.
- * Rende 0 e riempie *out_tabella con l'indirizzo della tabella di
- * esportazione, oppure un -errno. Il perche' sta tutto in lib.c.
- * ============================================================================= */
-int32_t lib_apri(const char *percorso, Process *proc, uint32_t *out_tabella);
-
-/* «Ce l'ho gia' dentro?»: rende la tabella se la libreria e' gia'
- * agganciata a questo processo, -ENOENT se no. Non carica niente.
- * Il perche' per esteso sta in kernel/loader/lib.c. */
-int32_t lib_trova(const char *percorso, Process *proc, uint32_t *out_tabella);
+/* The EX-OS libraries: ELF shared objects since 0.351, see condivise.h
+ * (kernel/loader/lib.c and its fixed addresses are gone, voce 105). */
 
 #endif /* ELF_H */

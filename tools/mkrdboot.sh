@@ -18,7 +18,9 @@
 #     /rdboot/bin    i programmi del floppy (sh, login, mount, fdisk, ...)
 #     /rdboot/dev    i driver per arrivare ai dischi e allo schermo, e i
 #                    moduli del kernel (ext4.mod)
-#     /rdboot/lib    libc.so (solo a 32 bit: a 64 la libc e' statica)
+#     /rdboot/lib    ld-exos.so, la libc condivisa e l'interprete dei programmi
+#                    (voce 105: a 32 e a 64 bit dal 19 novembre 2026; prima
+#                    libc.so, e a 64 bit niente)
 #     /rdboot/etc    la configurazione della base (vuota per ora)
 #     /rdboot/tmp    vuota: il posto per scrivere quando il disco non c'e'
 #
@@ -84,7 +86,9 @@ for n in $DRIVER; do
     if [ -f "$f" ]; then cp "$f" "$A/rdboot/dev/$n.drv"; else mancano="$mancano $n.drv"; fi
 done
 for m in "$B"/moduli/*.mod; do [ -f "$m" ] && cp "$m" "$A/rdboot/dev/"; done
-[ "$ARCH" = i386 ] && for l in build/lib/*.so; do [ -f "$l" ] && cp "$l" "$A/rdboot/lib/"; done
+# ! A 64 BIT TOO (19 November 2026): the base programs are on /lib/ld-exos.so,
+# and the kernel looks for the interpreter in /rdboot/lib when /lib is not there.
+for l in "$B"/lib/*.so; do [ -f "$l" ] && cp "$l" "$A/rdboot/lib/"; done
 
 fakeroot sh -c "
     chown -R 0:0 '$A'

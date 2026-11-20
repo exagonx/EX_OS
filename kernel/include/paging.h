@@ -180,6 +180,8 @@ void     vm_precarica_utente(vaddr_t addr, uint32_t len);
 void    *paging_finestra_apri(paddr_t phys);
 void     paging_finestra_chiudi(void);
 void     paging_azzera_fisica(paddr_t phys);
+/* copies frame `da` into frame `a`, interrupts off (the COW's copy) */
+void     paging_copia_fisica(paddr_t da, paddr_t a);
 
 void     paging_init(void);
 

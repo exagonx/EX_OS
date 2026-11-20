@@ -7,76 +7,80 @@
 #
 #     tools/vlc-exos/costruisci.sh [32|64]      both by default
 #     VLC_SOLO_COLLEGA=1 tools/vlc-exos/costruisci.sh 64
-#                     only the outputs of EX-OS and the link, on a tree built
+#                     only the outputs of EX-OS and make install, on a tree built
 #
 # The archive: vlc-3.0.24.tar.xz with .sha256 from
 # https://download.videolan.org/pub/videolan/vlc/3.0.24/
-# VLC decodes through tools/ffmpeg-exos. EX-OS has no dlopen: every plugin is
-# linked into one program.
+# VLC decodes through tools/ffmpeg-exos.
 # (18 November 2026, voce 85) The Qt interface: Qt 5 from tools/qt5-exos
 # (cross_build/qt5-exos<bit>, built first), shared, linked to bin/vlc. The
 # video keeps its own ExWin window (vout_exos): VLC 3 puts it inside the
 # interface only on X11, Windows and macOS.
+# ! VLC AS ON LINUX (voce 105, step 4, 20 November 2026): bin/vlc on
+# lib/libvlc.so.5 and lib/libvlccore.so.9, and every plugin a .so in
+# lib/vlc/plugins/<kind>/, opened with dlopen. Until then EX-OS had no
+# dlopen of ordinary shared objects and every plugin was linked into one
+# program: three plugins of the same name were lost (VLC names a module
+# after its source file: flac, vc1, file), two tables had to be made static
+# by sed, and the FLAC packetizer was missing, so no FLAC played.
+# On the disk: /exos/bin/vlc, /exos/lib/libvlc*.so.N, /exos/lib/vlc/plugins
+# (VLC's PKGLIBDIR, --prefix=/exos), /exos/lib/vlc/vlc-cache-gen.
 # =============================================================================
 NOME=vlc
 VER=3.0.24
 . "$(dirname "$0")/../librerie-exos/comune.sh"
 ARCHIVIO=$TP/vlc/vlc-$VER.tar.xz
 
-# The link: aout_exos and vout_exos compiled, every plugin listed, one vlc.
-collega() {
-    # ! vlc-static does not link (no modules list): only the libraries and
-    # the plugins must be there
-    [ -f "$B/obj/src/.libs/libvlccore.a" ] && [ -f "$B/obj/lib/.libs/libvlc.a" ] \
+# make install into $B/inst, the two outputs of EX-OS as plugins next to
+# VLC's own, then DEST: the program, the two libraries, the plugins, the
+# headers of libvlc.
+raccogli() {
+    local O=$B/obj I=$B/inst P m n d f so x
+    [ -f "$O/src/.libs/libvlccore.so" ] && [ -f "$O/lib/.libs/libvlc.so" ] && [ -f "$O/bin/.libs/vlc" ] \
         || { grep -a -E " error:" "$B/costruisci.log" | sort -u | head -30; exit 1; }
-    # --- one program: every plugin, listed by its entry point -------------
-    local P=$B/obj/modules/.libs nomi
-    # the Qt interface, when it was built: Qt's shared libraries, and where
-    # the linker finds what they need in turn
-    local Q=$TC/qt5-exos$BIT/exos/qt5 QTLIB=""
-    # (-rpath: on the disk Qt is in /exos/qt5/lib, not in /exos/lib)
-    [ -f "$P/libqt_plugin.a" ] && QTLIB="-L$Q/lib -lQt5Widgets -lQt5Svg -lQt5Gui -lQt5Core -Wl,-rpath,/exos/qt5/lib -Wl,-rpath-link,$Q/lib -Wl,-rpath-link,$CROSS/$T/lib"
-    # Mesa installs GL/gl.h, so configure says HAVE_GL; but EX-OS has only
-    # EGL and GLES2, no libGL: glspectrum (glPushMatrix...) cannot link
-    rm -f "$P"/libglspectrum_plugin.a
-    # the outputs of EX-OS: sound on the "audio" service, pictures in ExWin
-    local m propri=""
-    for m in aout_exos vout_exos; do
-        $CC $CFLAGS -D__unix__ -DEXOS_SOLO_POSIX -D_GNU_SOURCE -std=gnu11 -DHAVE_CONFIG_H \
-            -I"$B/obj" -I"$SRC/include" -I"$B/obj/include" -I"$SRC/modules/audio_output" \
-            -DMODULE_STRING=\"$m\" -DMODULE_NAME=$m \
-            -c "$R/tools/vlc-exos/src/$m.c" -o "$B/$m.o" || exit 1
-        propri="$propri $B/$m.o"
+    rm -rf "$I"
+    # only the parts that go on the disk: share/ wants the AppStream file
+    # that VLC 3.0.24 generates in the build tree and installs from the
+    # source tree (out-of-tree builds stop there), and EX-OS has no use for it
+    for d in compat src modules lib bin; do
+        LC_ALL=C make -C "$O/$d" install DESTDIR="$I" >> "$B/installa.log" 2>&1 \
+            || { tail -20 "$B/installa.log"; exit 1; }
     done
-    nomi=$( { for a in "$P"/lib*_plugin.a; do $T-nm "$a" | sed -n 's/^[0-9a-f]* T vlc_entry__\(.*\)$/\1/p'; done
-              echo aout_exos; echo vout_exos; } | sort -u)
-    {
-        echo '/* tools/vlc-exos/costruisci.sh: every plugin linked into vlc */'
-        echo 'typedef int (*vlc_set_cb) (void *, void *, int, ...);'
-        echo 'typedef int (*vlc_plugin_cb) (vlc_set_cb, void *);'
-        for m in $nomi; do echo "int vlc_entry__$m(vlc_set_cb, void *);"; done
-        echo 'vlc_plugin_cb vlc_static_modules[] = {'
-        for m in $nomi; do echo "    vlc_entry__$m,"; done
-        echo '    0 };'
-    } > "$B/moduli.c"
-    $CC $CFLAGS -c "$B/moduli.c" -o "$B/moduli.o"
-    # ! NOT -static (3 November 2026): FFmpeg, libvpx, dav1d, FLAC, Opus,
-    # Vorbis, Ogg and zlib are shared libraries, found at start in /exos/lib
-    # (lib/libc_dl.c); VLC's own plugins stay inside, there is no dlopen of
-    # VLC modules
-    $CXX -L"$B/libc" -o "$B/vlc" "$B/obj/bin/vlc-vlc.o" "$B/obj/bin/vlc-override.o" "$B/moduli.o" $propri \
-        -Wl,--start-group "$P"/lib*_plugin.a $(ls "$B"/obj/modules/.libs/lib*.a | grep -v _plugin.a) \
-        "$B/obj/lib/.libs/libvlc.a" "$B/obj/src/.libs/libvlccore.a" \
-        $(ls "$B"/obj/compat/.libs/libcompat.a 2>/dev/null) \
-        -lavformat -lavcodec -lswscale -lswresample -lavutil -lvpx -ldav1d \
-        -lFLAC -lopus -lvorbisenc -lvorbis -logg -lz -lncurses $QTLIB -lm -lpthread -Wl,--end-group \
-        > "$B/collega.log" 2>&1 || { grep -a -E "undefined reference|multiple definition" "$B/collega.log" \
-            | sed -E 's/.*(undefined reference to .*|multiple definition of [^;]*).*/\1/' | sort | uniq -c | sort -rn | head -30; exit 1; }
-    mkdir -p "$DEST/bin"
-    cp "$B/vlc" "$DEST/bin/vlc"
-    echo "    $(echo $nomi | wc -w) moduli dentro bin/vlc"
-    # our own sources go with the archive: the thread calls, the proxy, and
-    # the two outputs of EX-OS
+    P=$I/exos/lib/vlc/plugins
+    [ -d "$P/codec" ] || { echo "vlc: make install non ha messo i plugin"; tail -20 "$B/installa.log"; exit 1; }
+    # --- the outputs of EX-OS: sound on the "audio" service, pictures in
+    # ExWin; built as VLC builds its plugins (common.am: __PLUGIN__, only
+    # the vlc_entry symbols exported, on libvlccore)
+    printf '{ global: vlc_entry*; local: *; };\n' > "$B/plugin.ver"
+    for m in aout_exos:audio_output vout_exos:video_output; do
+        n=${m%%:*}; d=${m#*:}
+        $CC $CFLAGS -D__PLUGIN__ -D__unix__ -DEXOS_SOLO_POSIX -D_GNU_SOURCE -std=gnu11 -DHAVE_CONFIG_H \
+            -I"$O" -I"$SRC/include" -I"$O/include" -I"$SRC/modules/audio_output" -I"$B/libc/include" \
+            -DMODULE_STRING=\"$n\" -c "$R/tools/vlc-exos/src/$n.c" -o "$B/$n.o" || exit 1
+        mkdir -p "$P/$d"
+        $CC -shared -o "$P/$d/lib${n}_plugin.so" "$B/$n.o" $NONSHARED -L"$B/libc" -L"$O/src/.libs" -lvlccore -lm \
+            -Wl,--version-script="$B/plugin.ver" || exit 1
+    done
+    # --- DEST
+    rm -rf "$DEST/bin" "$DEST/lib/vlc" "$DEST"/lib/libvlc* "$DEST/include/vlc"
+    mkdir -p "$DEST/bin" "$DEST/lib/vlc" "$DEST/include"
+    cp "$I/exos/bin/vlc" "$DEST/bin/vlc"
+    # the real file under its soname, as lib_condivisa_sua: no symbolic
+    # links on EX-OS
+    for f in "$I"/exos/lib/libvlc.so.*.*.* "$I"/exos/lib/libvlccore.so.*.*.*; do
+        so=$($T-readelf -d "$f" | sed -n 's/.*Library soname: \[\(.*\)\]/\1/p')
+        [ -n "$so" ] || { echo "vlc: $f senza soname"; exit 1; }
+        cp "$f" "$DEST/lib/$so"
+    done
+    ( cd "$I/exos/lib/vlc" && find plugins -name '*.so' -exec cp --parents {} "$DEST/lib/vlc/" \; )
+    cp "$I/exos/lib/vlc/vlc-cache-gen" "$DEST/lib/vlc/"
+    cp -r "$I/exos/include/vlc" "$DEST/include/"
+    # ! NO TEXT RELOCATIONS: every page of code is shared by the kernel
+    # (kernel/loader/condivise.c); a TEXTREL would make it a private copy
+    x=$(find "$DEST/lib" -name '*.so*' -exec sh -c "$T-readelf -d \"\$1\" | grep -q TEXTREL && echo \"\$1\"" _ {} \;)
+    [ -z "$x" ] || { echo "vlc: TEXTREL in"; echo "$x"; exit 1; }
+    n=$(find "$DEST/lib/vlc/plugins" -name '*.so' | wc -l)
+    echo "    bin/vlc, $(cd "$DEST/lib" && ls libvlc*.so.* | tr '\n' ' ')e $n plugin in lib/vlc/plugins"
 }
 
 costruisci() {
@@ -86,40 +90,37 @@ costruisci() {
     BIT=$1
     local Q=$TC/qt5-exos$BIT/exos/qt5
     [ -f "$Q/lib/pkgconfig/Qt5Widgets.pc" ] || manca "$Q" "tools/qt5-exos/costruisci.sh $BIT (the Qt interface)"
-    # ! VLC_SOLO_COLLEGA=1: only aout_exos/vout_exos and the link, on a tree
-    # already configured and built (minutes instead of the whole VLC)
-    if [ "${VLC_SOLO_COLLEGA:-}" = 1 ] && [ -f "$B/obj/src/.libs/libvlccore.a" ]; then
+    # ! VLC_SOLO_COLLEGA=1: only aout_exos/vout_exos and make install, on a
+    # tree already configured and built (minutes instead of the whole VLC)
+    if [ "${VLC_SOLO_COLLEGA:-}" = 1 ] && [ -f "$B/obj/src/.libs/libvlccore.so" ]; then
         SRC=$(ls -d "$B"/src/*/ | head -1); SRC=${SRC%/}
         lib_libc_di_oggi
-        collega
+        raccogli
         lib_fine "$R"/tools/vlc-exos/src/*.c
         return
     fi
     lib_sorgente
     lib_config_sub
+    lib_libtool_exos
     # ! the libc of today (comune.sh): wcswidth for the ncurses interface
     # came on 18 November 2026, after the sysroots. C only: the C++ headers
     # of libstdc++ must stay in front of the libc's (<cstdlib> and
     # #include_next <stdlib.h>), so the C++ files see the sysroot's
     lib_libc_di_oggi
-    # ! no shared objects here: the plugins come out as static archives and
-    # are joined in one program, as VLC's mobile builds do
-    sed -i -E '/VLC is based on plugins/ s/as_fn_error .*/:/' "$SRC/configure"
     # ! VLC'S OWN POSIX THREADS, error.c and netconf.c (voce 105, 19 November
     # 2026): until kernel 0.349 EX-OS had no cancellation of a thread that
     # waits, no clock_nanosleep, strerror_l, posix_spawn, and VLC was built
     # on its Android subset with futex stand-ins and a netconf of its own
-    # override.c wraps libc functions that are not thread-safe on Linux: in one
-    # static program they are two definitions of the same name
-    echo '/* EX-OS: nothing to override in a static program */ void vlc_enable_override(void) {}' > "$SRC/bin/override.c"
+    # bin/override.c AS IT IS (voce 105): putenv, setenv, setlocale... of
+    # vlc win over the libc's for the plugins, and reach the real ones with
+    # dlsym(RTLD_NEXT), now that the libc is /lib/ld-exos.so. With libc.a
+    # inside they were two definitions of one name, and override.c was
+    # replaced by an empty vlc_enable_override.
     # ! THE VIDEO IN ITS OWN WINDOW (18 November 2026): VLC 3 puts it inside
     # the Qt interface only on X11, Windows and macOS; here the interface
     # kept an empty black box for it. embedded-video defaults to off
     sed -i 's/^    add_bool( "embedded-video", 1, EMBEDDED_TEXT, EMBEDDED_LONGTEXT,/    add_bool( "embedded-video", 0, EMBEDDED_TEXT, EMBEDDED_LONGTEXT,/' "$SRC/src/libvlc-module.c"
     grep -q 'add_bool( "embedded-video", 0' "$SRC/src/libvlc-module.c" || { echo "libvlc-module.c: embedded-video non trovato"; exit 1; }
-    # two plugins export the same table name: in one program it must be local
-    sed -i 's/^const char \*const ppsz_mode_descriptions\[\]/static &/' \
-        "$SRC/modules/video_chroma/swscale.c" "$SRC/modules/video_filter/puzzle.c"
     mkdir -p "$B/obj" "$B/pc"
     S=$CROSS/$T
     pc() { printf 'Name: %s\nDescription: %s\nVersion: %s\nLibs: %s\nCflags:\n' "$1" "$1" "$2" "$3" > "$B/pc/$1.pc"; }
@@ -141,11 +142,13 @@ costruisci() {
     # (tools/ncurses-exos, voce 30): a UTF-8 title shows its accents as two
     # signs, as in nano
     pc ncursesw 6.6 "-lncurses"
+    # -rpath-link: a cross ld looks for what a .so needs (libvlc.so needs
+    # libvlccore.so.9, not installed yet) only there, never in -rpath
     ( cd "$B/obj" && PKG_CONFIG_LIBDIR="$B/pc:$Q/lib/pkgconfig" "$SRC/configure" --host=$T --build=x86_64-pc-linux-gnu \
-        --prefix=/exos/vlc CC=$CC CXX=$CXX AR=$AR RANLIB=$RANLIB \
+        --prefix=/exos CC=$CC CXX=$CXX AR=$AR RANLIB=$RANLIB \
         CFLAGS="$CFLAGS -I$B/libc/include -D__unix__ -DEXOS_SOLO_POSIX -D_GNU_SOURCE -std=gnu11 -Wno-error=incompatible-pointer-types" \
-        CXXFLAGS="$CFLAGS -fPIC -D__unix__ -DEXOS_SOLO_POSIX -D_GNU_SOURCE" LDFLAGS="-static -L$B/libc" \
-        --disable-shared --enable-static --disable-nls --disable-lua --enable-qt --disable-skins2 \
+        CXXFLAGS="$CFLAGS -fPIC -D__unix__ -DEXOS_SOLO_POSIX -D_GNU_SOURCE" LDFLAGS="-L$B/libc $NONSHARED -Wl,-rpath,/exos/qt5/lib -Wl,-rpath-link,$Q/lib -Wl,-rpath-link,$CROSS/$T/lib -Wl,-rpath-link,$B/obj/src/.libs" \
+        --enable-shared --disable-static --disable-nls --disable-lua --enable-qt --disable-skins2 \
         --disable-xcb --disable-xvideo --disable-alsa --disable-pulse --disable-jack --disable-oss \
         --disable-dbus --disable-a52 --disable-mad --disable-libgcrypt --disable-gnutls --disable-vlm \
         --disable-sout --disable-addonmanagermodules --disable-avahi --disable-udev --disable-mtp \
@@ -160,9 +163,16 @@ costruisci() {
         --enable-flac --enable-run-as-root --enable-ncurses \
         ) > "$B/configura.log" 2>&1 || { tail -20 "$B/configura.log"; exit 1; }
     grep -q "^QT_LIBS = .*Qt5Widgets" "$B/obj/Makefile" || { echo "vlc: configure non ha trovato Qt"; grep -a -A3 "Qt5Core" "$B/configura.log" | tail -8; exit 1; }
-    make -C "$B/obj" -k -j8 > "$B/costruisci.log" 2>&1 || true
-    [ -f "$B/obj/modules/.libs/libqt_plugin.a" ] || { echo "vlc: l'interfaccia Qt non si e' costruita"; grep -a " error" "$B/costruisci.log" | grep -a "gui/qt" | sort -u | head -20; exit 1; }
-    collega
+    # ! NO glspectrum: Mesa installs GL/gl.h, so configure says HAVE_GL,
+    # but EX-OS has only EGL and GLES2, no libGL to link -lGL with (the
+    # OpenGL output, libgl_plugin, takes its functions through EGL and is
+    # built). Its line of the generated Makefile goes; nothing else may fail
+    sed -i 's/^\(am__append_[0-9]* = libglspectrum_plugin.la\)$/# \1 (no libGL on EX-OS: tools\/vlc-exos\/costruisci.sh)/' "$B/obj/modules/Makefile"
+    grep -q '^# am__append_[0-9]* = libglspectrum_plugin.la' "$B/obj/modules/Makefile" || { echo "vlc: glspectrum non trovato nel Makefile"; exit 1; }
+    make -C "$B/obj" -j8 > "$B/costruisci.log" 2>&1 \
+        || { grep -a -E " error:|undefined reference|\*\*\* \[" "$B/costruisci.log" | sort -u | head -30; exit 1; }
+    [ -f "$B/obj/modules/.libs/libqt_plugin.so" ] || { echo "vlc: l'interfaccia Qt non si e' costruita"; grep -a " error" "$B/costruisci.log" | grep -a "gui/qt" | sort -u | head -20; exit 1; }
+    raccogli
     lib_fine "$R"/tools/vlc-exos/src/*.c
 }
 lib_tutte "$1"

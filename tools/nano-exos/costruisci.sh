@@ -28,7 +28,7 @@
 #   - ! THE LIBC OF TODAY, NOT THE SYSROOT'S: nano's gnulib needs
 #     <stdio_ext.h> (__fseterr, __fpending...: 18 November 2026), and the
 #     sysroot's libc is older. lib_libc_di_oggi (comune.sh) compiles
-#     lib/libc.c here, and nano links to it (-static) with the headers of
+#     lib/libc.c here, and nano links to it (/lib/ld-exos.so, voce 105) with the headers of
 #     lib/include in front (struct stat with st_mtim is of the same day);
 #   - /exos/nano/nanorc is the system nanorc, /exos/nano/share/nano the
 #     syntax files (include them from nanorc, as on Linux).
@@ -47,7 +47,7 @@ costruisci() {
     ( cd "$B" && "$SRC/configure" --host=$T --build="$("$SRC/build-aux/config.guess")" \
         --prefix=/exos --sysconfdir=/exos/nano --datarootdir=/exos/nano/share \
         CC=$CC AR=$AR RANLIB=$RANLIB CFLAGS="$CFLAGS" CPPFLAGS="-I$B/libc/include" \
-        LDFLAGS="-static -L$B/libc" PKG_CONFIG=false NCURSES_CFLAGS="" NCURSES_LIBS=-lncurses \
+        LDFLAGS="-L$B/libc" PKG_CONFIG=false NCURSES_CFLAGS="" NCURSES_LIBS=-lncurses \
         --disable-utf8 --disable-nls --disable-libmagic --enable-cross-guesses=risky \
         --disable-year2038 ) > "$B/configura.log" 2>&1 || { tail -30 "$B/configura.log"; exit 1; }
     make -C "$B" -j3 > "$B/costruisci.log" 2>&1 || { grep -a -m10 -B3 -A6 'error' "$B/costruisci.log"; exit 1; }

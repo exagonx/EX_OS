@@ -10,7 +10,8 @@
  * objects, the ones `gcc -shared -fPIC` and rustc make - at 64 bit (x86_64,
  * RELA) and at 32 (i386, REL):
  *
- *   - the PT_LOAD segments in one anonymous mapping, read from the file;
+ *   - the PT_LOAD segments mapped by the kernel from its cache of shared
+ *     objects (SYS_SO_MAPPA, kernel 0.351): the code is one copy for all;
  *   - DT_NEEDED, loaded first, searched in LD_LIBRARY_PATH, DT_RUNPATH /
  *     DT_RPATH (with $ORIGIN), then /lib, /exos/lib, /exwin/lib and the CD's;
  *   - the relocations: RELATIVE, 64/32, PC32, GLOB_DAT, JUMP_SLOT (bound at
@@ -33,6 +34,10 @@
  * Look-up order: that table, the libc's, then the libraries in load order.
  *
  * Only in the static libc.a: lib/libc.c includes it under !EXOS_LIBC_SO.
+ * ! AND IN /lib/ld-exos.so (EXOS_LIBC_ELF, 0.350, voce 105): the shared libc
+ * is also the interpreter, lib/libc_ld.c. There the libc is a module of the
+ * global scope like any library - slot 1, after the program - and has no
+ * table of its own: its .dynsym is the table.
  * ============================================================================= */
 
 /* --- what libc.c does not define for itself --------------------------------------- */
@@ -145,6 +150,11 @@ static int       g_dl_non_dyn;            /* the last candidate was an ELF but n
  * relocated in the same order (dependencies first), then the constructors
  * run: dl_finisci. */
 static DlModulo **g_dl_da_avviare;        /* only while the program starts: one thread */
+#ifdef EXOS_LIBC_ELF
+static int      (*g_ld_dopo_programma)(void);   /* lib/libc_ld.c */
+static DlModulo  *g_ld_libc;                    /* the libc as a module, slot 1 */
+static int        g_ld_avviato;                 /* the interpreter did the start */
+#endif
 static int        g_dl_n_da_avviare, g_dl_posti_da_avviare;
 
 static void dl_dici(const char *cosa, const char *chi)
@@ -208,7 +218,9 @@ static int dl_dip_metti(DlModulo *m, DlModulo *dm)
 #else
 #define DL_PAROLA ".long"
 #endif
+#ifndef EXOS_LIBC_ELF
 #include "libc_esportati.h"               /* g_dl_libc, g_dl_libc_n */
+#endif
 
 static void *dl_tabella(const DlEsportato *t, unsigned long n, const char *nome)
 {
@@ -241,8 +253,14 @@ static unsigned int dl_conta_sim(const DlDin *d, uintptr_t base)
     return 0;
 }
 
-/* a symbol DEFINED in module m, or 0 */
-static void *dl_nel_modulo(const DlModulo *m, const char *nome, const DlSim **s_out)
+/* a symbol DEFINED in module m, or 0.
+ * ! THE PROGRAM'S PLT SLOT IS THE FUNCTION'S ADDRESS for everybody but the
+ * PLT itself (19 November 2026, as glibc does): a program built without -fPIC
+ * that takes &strlen gets its own PLT entry, an undefined FUNC symbol with a
+ * value. Every other reference (GOT, R_*_32, dlsym) must get that same
+ * address, or two pointers to one function differ; only the JUMP_SLOT that
+ * fills the slot (plt = 1) goes to the real definition. */
+static void *dl_nel_modulo(const DlModulo *m, const char *nome, const DlSim **s_out, int plt)
 {
     unsigned int i;
 
@@ -250,7 +268,8 @@ static void *dl_nel_modulo(const DlModulo *m, const char *nome, const DlSim **s_
         const DlSim *s = &m->sim[i];
         unsigned int leg = s->st_info >> 4;
 
-        if (s->st_shndx == 0 || (leg != 1 && leg != 2 && leg != 10)) continue;  /* GLOBAL WEAK UNIQUE */
+        if (leg != 1 && leg != 2 && leg != 10) continue;                       /* GLOBAL WEAK UNIQUE */
+        if (s->st_shndx == 0 && (plt || (s->st_info & 0xf) != 2 || s->st_value == 0)) continue;
         if (strcmp(m->str + s->st_name, nome) != 0) continue;
         if (s_out) *s_out = s;
         if ((s->st_info & 0xf) == 6) return (void *)(uintptr_t)s->st_value;     /* STT_TLS: offset */
@@ -262,7 +281,7 @@ static void *dl_nel_modulo(const DlModulo *m, const char *nome, const DlSim **s_
 }
 
 /* the global scope: the program's table, the libc's, then every library */
-static void *dl_globale(const char *nome, DlModulo **chi, const DlSim **s_out)
+static void *dl_globale(const char *nome, DlModulo **chi, const DlSim **s_out, int plt)
 {
     void  *p;
     DlTab *t = dl_tab_leggi(&g_dlm_tab);
@@ -271,7 +290,9 @@ static void *dl_globale(const char *nome, DlModulo **chi, const DlSim **s_out)
     *chi = 0;
     if (__exos_esportati && &__exos_esportati_n &&
         (p = dl_tabella(__exos_esportati, __exos_esportati_n, nome)) != 0) return p;
+#ifndef EXOS_LIBC_ELF
     if ((p = dl_tabella(g_dl_libc, g_dl_libc_n, nome)) != 0) return p;
+#endif
     /* ! FOUND IS "THE MODULE DEFINES IT", NOT "THE VALUE IS NOT 0": the first
      * __thread variable of a library is at offset 0 of its block, and was
      * "undefined symbol" (4 November 2026, tools/prova-dl/prova-tante.sh) */
@@ -279,7 +300,7 @@ static void *dl_globale(const char *nome, DlModulo **chi, const DlSim **s_out)
         DlModulo    *m = (DlModulo *)t->v[i];
         const DlSim *s = 0;
         if (!m) continue;
-        p = dl_nel_modulo(m, nome, &s);
+        p = dl_nel_modulo(m, nome, &s, plt);
         if (p || s) { *chi = m; if (s_out) *s_out = s; return p; }
     }
     return 0;
@@ -366,6 +387,23 @@ __attribute__((regparm(1))) void *___tls_get_addr(DlTlsIndice *ti) { return __tl
 /* --- loading ------------------------------------------------------------------------ */
 static DlModulo *dl_carica(const char *nome, const char *runpath, const char *origine);
 
+/* ! A DT_NEEDED OF ld-exos.so IN A PROGRAM WITH libc.a (20 November 2026,
+ * voce 105): since gcc -shared links -lc as on Linux, every library names the
+ * shared libc. A static program has its libc inside and lends it through its
+ * table (lib/libc_esportati.h): loading /lib/ld-exos.so as well would give it
+ * a second libc, a second malloc and a second errno. In ld-exos.so itself the
+ * name is the libc already in the global scope (dl_carica). */
+static int dl_libc_nominata(const char *nome)
+{
+#ifdef EXOS_LIBC_ELF
+    (void)nome;
+    return 0;
+#else
+    const char *b = strrchr(nome, '/');
+    return strcmp(b ? b + 1 : nome, "ld-exos.so") == 0;
+#endif
+}
+
 static int dl_leggi_a(int fd, uintptr_t dove, size_t n, long off)
 {
     if (lseek(fd, off, SEEK_SET) != off) return -1;
@@ -397,20 +435,33 @@ static void dl_avvia_modulo(DlModulo *m)
  * program's PT_TLS, found from __ehdr_start (the ELF header, loaded with the
  * first segment). 0 = no PT_TLS. A TLS variable of a library opened later
  * has no place in the static block: that stays an error. */
-extern const DlTestaElf __ehdr_start __attribute__((weak));
 static DlModulo g_dl_prog_collegato;
+#ifdef EXOS_LIBC_ELF
+/* the program's headers, from the kernel's auxv (lib/libc_ld.c): here
+ * __ehdr_start would be the libc's own */
+static const DlFase *g_ld_phdr;
+static int           g_ld_phnum;
+#else
+extern const DlTestaElf __ehdr_start __attribute__((weak));
+#endif
 
 static uintptr_t dl_tls_programma(void)
 {
     static uintptr_t dim = (uintptr_t)-1;
     const DlFase    *f;
-    int              i;
+    int              i, n;
 
     if (dim != (uintptr_t)-1) return dim;
     dim = 0;
+#ifdef EXOS_LIBC_ELF
+    f = g_ld_phdr; n = g_ld_phnum;
+    if (!f) return 0;
+#else
     if (!&__ehdr_start) return 0;
     f = (const DlFase *)((const char *)&__ehdr_start + __ehdr_start.e_phoff);
-    for (i = 0; i < __ehdr_start.e_phnum; i++)
+    n = __ehdr_start.e_phnum;
+#endif
+    for (i = 0; i < n; i++)
         if (f[i].p_type == 7 && f[i].p_memsz) {                                     /* PT_TLS */
             uintptr_t a = f[i].p_align < 4 ? 4 : (uintptr_t)f[i].p_align;
             dim = ((uintptr_t)f[i].p_memsz + a - 1) & ~(a - 1);
@@ -441,7 +492,7 @@ static int dl_riloca(DlModulo *m, const DlRel *r, size_t n)
 
             for (k = 0; mt && k < mt->n && !da; k++) {  /* the definition, not the copy itself */
                 DlModulo *x = (DlModulo *)mt->v[k];
-                if (x && x != m) da = dl_nel_modulo(x, nome, &dove);
+                if (x && x != m) da = dl_nel_modulo(x, nome, &dove, 1);
             }
             if (!da) { dl_dici("undefined symbol (COPY)", nome); return -1; }
             memcpy(p, da, ds->st_size < dove->st_size ? ds->st_size : dove->st_size);
@@ -454,7 +505,7 @@ static int dl_riloca(DlModulo *m, const DlRel *r, size_t n)
             if (ds->st_shndx != 0 && (ds->st_info >> 4) == 0) {             /* local */
                 S = (ds->st_info & 0xf) == 6 ? ds->st_value : m->base + ds->st_value; s = ds;
             } else {
-                S = (uintptr_t)dl_globale(nome, &chi, &s);
+                S = (uintptr_t)dl_globale(nome, &chi, &s, tipo == 7);   /* JUMP_SLOT at 32 and 64 */
                 if (!S && !(chi && s)) {
                     if ((ds->st_info >> 4) == 2) S = 0;                       /* weak: may be 0 */
                     else { dl_dici("undefined symbol", nome); return -1; }
@@ -575,15 +626,24 @@ static DlModulo *dl_da_file(const char *percorso)
     if (m) m->percorso = strdup(percorso);
     if (!m || !m->percorso) { free(m); free(f); close(fd); dl_dici("out of memory", percorso); return (DlModulo *)-1; }
     m->magia = DL_MOD_MAGIA;
-    m->misura = hi - lo;
-    m->mappa = mmap(0, m->misura, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (m->mappa == MAP_FAILED) { m->mappa = 0; free(f); close(fd); dl_libera(m); dl_dici("out of memory (mmap)", percorso); return (DlModulo *)-1; }
-    m->base = (uintptr_t)m->mappa - lo;
-    for (i = 0; i < n; i++) {
-        if (f[i].p_type == 1 && f[i].p_filesz &&
-            dl_leggi_a(fd, m->base + f[i].p_vaddr, f[i].p_filesz, (long)f[i].p_offset) != 0) {
-            free(f); close(fd); dl_libera(m); dl_dici("short read", percorso); return (DlModulo *)-1;
+    /* ! THE KERNEL MAPS IT, FROM ITS CACHE (0.351): the read-only pages are
+     * the same frames in every process, the writable ones our own copy.
+     * Up to 0.350 the file was read here into anonymous pages, one copy of
+     * the same code per process (kernel/loader/condivise.c). */
+    {
+        struct { uint32_t base, inizio, misura, entry; } e;
+        int32_t r = _syscall3(SYS_SO_MAPPA, (uint32_t)fd, (uintptr_t)&e, (uintptr_t)percorso);
+
+        if (r < 0) {
+            free(f); close(fd); dl_libera(m);
+            dl_dici(r == -ENOMEM ? "out of memory (mapping)" : "the kernel cannot map it", percorso);
+            return (DlModulo *)-1;
         }
+        m->mappa  = (void *)(uintptr_t)e.inizio;
+        m->misura = e.misura;
+        m->base   = (uintptr_t)e.base;
+    }
+    for (i = 0; i < n; i++) {
         if (f[i].p_type == 2) din = m->base + f[i].p_vaddr;                         /* PT_DYNAMIC */
         if (f[i].p_type == 7) {                                                     /* PT_TLS */
             m->tls_imm = m->base + f[i].p_vaddr; m->tls_file = f[i].p_filesz;
@@ -632,6 +692,7 @@ static DlModulo *dl_da_file(const char *percorso)
     for (d = m->din; d->d_tag; d++) {
         DlModulo *dm;
         if (d->d_tag != 1) continue;                                               /* DT_NEEDED */
+        if (dl_libc_nominata(m->str + d->d_val)) continue;
         dm = dl_carica(m->str + d->d_val, runpath, origine);
         if (!dm) { free(origine); dl_libera(m); return (DlModulo *)-1; }             /* dlerror says it */
         if (dl_dip_metti(m, dm) != 0) { free(origine); dl_libera(m); dl_dici("out of memory", percorso); return (DlModulo *)-1; }
@@ -696,6 +757,14 @@ static int dl_finisci(int da, DlModulo *dopo, const DlRel *drel, size_t dreln,
         free(v);
         return -1;
     }
+#ifdef EXOS_LIBC_ELF
+    /* the program has its COPY of the libc's variables now: the libc's own
+     * references go there, and to what the program redefines (libc_ld.c) */
+    if (dopo == &g_dl_prog_collegato && g_ld_dopo_programma && g_ld_dopo_programma() != 0) {
+        free(v);
+        return -1;
+    }
+#endif
     for (i = 0; i < n; i++) dl_avvia_modulo(v[i]);
     free(v);
     return 0;
@@ -737,11 +806,10 @@ static DlModulo *dl_lista(const char *lista, const char *nome, const char *origi
 }
 
 /* by name: already loaded? else search. 0 = not found or failed (dlerror set) */
-static DlModulo *dl_carica(const char *nome, const char *runpath, const char *origine)
+/* already loaded: by its path, or by its file name when `nome` has no '/' */
+static DlModulo *dl_gia(const char *nome)
 {
-    static const char *const dove = "/lib:/exos/lib:/exwin/lib:/cdrom/lib:/cdrom/exos/lib:/cdrom/exwin/lib";
     const char *base = strrchr(nome, '/');
-    DlModulo   *m;
     DlTab      *t = dl_tab_leggi(&g_dlm_tab);
     int         i;
 
@@ -751,8 +819,28 @@ static DlModulo *dl_carica(const char *nome, const char *runpath, const char *or
         if (!x) continue;
         b = strrchr(x->percorso, '/');
         if (strcmp(x->percorso, nome) == 0 ||
-            (!base && b && strcmp(b + 1, nome) == 0)) { x->conta++; return x; }
+            (!base && b && strcmp(b + 1, nome) == 0)) return x;
     }
+    return 0;
+}
+
+static DlModulo *dl_carica(const char *nome, const char *runpath, const char *origine)
+{
+    static const char *const dove = "/lib:/exos/lib:/exwin/lib:/cdrom/lib:/cdrom/exos/lib:/cdrom/exwin/lib";
+    const char *base = strrchr(nome, '/');
+    DlModulo   *m = dl_gia(nome);
+
+    if (m) { m->conta++; return m; }
+#ifdef EXOS_LIBC_ELF
+    /* ! THE LIBC IS ALREADY HERE: it enters the global scope where a
+     * DT_NEEDED names it, as ld.so does. A library before it in the program's
+     * list wins over it (VLC's libvlc defines setlocale, putenv... for its
+     * plugins: lib/override.c) */
+    if (g_ld_libc && strcmp(base ? base + 1 : nome, "ld-exos.so") == 0) {
+        if (dl_tab_metti(&g_dlm_tab, 0, g_ld_libc) < 0) { dl_dici("out of memory", nome); return 0; }
+        return g_ld_libc;
+    }
+#endif
     g_dl_errore = 0;
     if (base) m = dl_da_file(nome);
     else {
@@ -791,7 +879,13 @@ static DlModulo *dl_carica(const char *nome, const char *runpath, const char *or
  * ! The address of a library function taken in the program is the library's
  * address, not the program's PLT slot: no canonical PLT. Comparing such a
  * pointer from both sides is the only thing that differs from Linux. */
+#ifdef EXOS_LIBC_ELF
+static const DlDin *g_ld_prog_din;        /* the program's, from its PT_DYNAMIC */
+#define DL_PROG_DIN g_ld_prog_din
+#else
 extern const DlDin _DYNAMIC[] __attribute__((weak));
+#define DL_PROG_DIN _DYNAMIC
+#endif
 
 static void dl_muori(const char *argv0)
 {
@@ -813,13 +907,18 @@ void __exos_dl_avvio_programma(const char *argv0)
     size_t        reln = 0, jmpn = 0;
     char         *origine;
 
-    if (!_DYNAMIC) return;                       /* a static program: nothing to do */
+#ifdef EXOS_LIBC_ELF
+    /* called by the program's _libc_start: the interpreter already did it */
+    if (g_ld_avviato > 1) return;
+    g_ld_avviato = 2;
+#endif
+    if (!DL_PROG_DIN) return;                    /* a static program: nothing to do */
     if (!argv0) argv0 = "?";
     m->percorso = strdup(argv0);
     origine = strdup(argv0);
     if (!m->percorso || !origine) { dl_dici("out of memory", argv0); dl_muori(argv0); }
     m->base = 0;                                 /* ET_EXEC: addresses are absolute */
-    m->din = _DYNAMIC;
+    m->din = DL_PROG_DIN;
     m->conta = 1 << 30;                          /* never closed */
     for (d = m->din; d->d_tag; d++) {
         switch (d->d_tag) {
@@ -836,11 +935,28 @@ void __exos_dl_avvio_programma(const char *argv0)
     m->nsim = dl_conta_sim(m->din, 0);
     if (!m->sim || !m->str) { dl_dici("no dynamic symbol table", argv0); dl_muori(argv0); }
     if (dl_tab_metti(&g_dlm_tab, 0, m) != 0) { dl_dici("out of memory", argv0); dl_muori(argv0); }
+#ifdef EXOS_LIBC_ELF
+    /* where the program is: RTLD_NEXT from it starts after it */
+    {
+        int i;
+        for (i = 0; i < g_ld_phnum; i++)
+            if (g_ld_phdr[i].p_type == 1 && g_ld_phdr[i].p_memsz) {
+                uintptr_t a = (uintptr_t)g_ld_phdr[i].p_vaddr & ~(uintptr_t)4095;
+                uintptr_t z = (uintptr_t)(g_ld_phdr[i].p_vaddr + g_ld_phdr[i].p_memsz);
+                if (!m->mappa || a < (uintptr_t)m->mappa) {
+                    m->misura += m->mappa ? (uintptr_t)m->mappa - a : 0;
+                    m->mappa = (void *)a;
+                }
+                if (z > (uintptr_t)m->mappa + m->misura) m->misura = z - (uintptr_t)m->mappa;
+            }
+    }
+#endif
 
     { char *b = strrchr(origine, '/'); if (b) *b = 0; else strcpy(origine, "."); }
     for (d = m->din; d->d_tag; d++) {
         DlModulo *dm;
         if (d->d_tag != 1) continue;             /* DT_NEEDED */
+        if (dl_libc_nominata(m->str + d->d_val)) continue;
         dm = dl_carica(m->str + d->d_val, runpath, origine);
         if (!dm) dl_muori(argv0);
         if (dl_dip_metti(m, dm) != 0) { dl_dici("out of memory", argv0); dl_muori(argv0); }
@@ -871,11 +987,11 @@ static void *dl_nel_grafo(DlModulo *m, const char *nome)
     int        a = 0, z = 0, posti = 32, i, j;
 
     coda = (DlModulo **)malloc((size_t)posti * sizeof(DlModulo *));
-    if (!coda) return dl_nel_modulo(m, nome, 0);
+    if (!coda) return dl_nel_modulo(m, nome, 0, 0);
     coda[z++] = m;
     while (a < z && !p) {
         DlModulo *x = coda[a++];
-        if ((p = dl_nel_modulo(x, nome, 0)) != 0) break;
+        if ((p = dl_nel_modulo(x, nome, 0, 0)) != 0) break;
         for (i = 0; i < x->ndip; i++) {
             for (j = 0; j < z && coda[j] != x->dip[i]; j++) { }
             if (j < z) continue;
@@ -889,6 +1005,38 @@ static void *dl_nel_grafo(DlModulo *m, const char *nome)
     }
     free(coda);
     return p;
+}
+
+/* RTLD_NEXT: the first definition in the modules after the caller's, in the
+ * order of the global scope. ! Until 19 November 2026 RTLD_NEXT was the
+ * global scope: a library that wraps a function of the libc and calls the
+ * real one through RTLD_NEXT found itself again, and ran in circles. */
+static void *dl_dopo(const void *chi, const char *nome)
+{
+    uintptr_t x = (uintptr_t)chi;
+    DlTab    *t = dl_tab_leggi(&g_dlm_tab);
+    int       i, k = -1;
+
+    for (i = 0; t && i < t->n; i++) {
+        DlModulo *m = (DlModulo *)t->v[i];
+        if (m && m->mappa && x >= (uintptr_t)m->mappa && x < (uintptr_t)m->mappa + m->misura) { k = i; break; }
+    }
+    /* not in a module: the program (module 0 if it is linked to any) */
+    if (k < 0 && t && t->n > 0 && t->v[0] == &g_dl_prog_collegato) k = 0;
+    for (i = k + 1; t && i < t->n; i++) {
+        DlModulo    *m = (DlModulo *)t->v[i];
+        const DlSim *s = 0;
+        void        *p;
+        if (!m) continue;
+        p = dl_nel_modulo(m, nome, &s, 0);
+        if (p || s) return p;
+    }
+#ifndef EXOS_LIBC_ELF
+    /* the libc is inside the program: after every library, as on Linux */
+    return dl_tabella(g_dl_libc, g_dl_libc_n, nome);
+#else
+    return 0;
+#endif
 }
 
 static int dl_addr_elf(const void *a, DlInfo *info)
@@ -917,6 +1065,10 @@ static int dl_addr_elf(const void *a, DlInfo *info)
     }
     return 0;
 }
+
+#ifdef EXOS_LIBC_ELF
+#include "libc_ld.c"                      /* the interpreter: /lib/ld-exos.so */
+#endif
 
 #undef int64_t
 #undef intptr_t

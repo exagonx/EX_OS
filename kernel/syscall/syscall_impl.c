@@ -52,6 +52,7 @@ extern void vga_putchar(char c);
 #include "tty.h"       /* TTY_IOCTL_*: comandi nativi del terminale (sys_ioctl) */
 #include "smp.h"       /* SmpInfo: i processori trovati all'avvio (SYS_CPU_INFO) */
 #include "cpufreq.h"   /* SYS_CPUFREQ (0.311) */
+#include "condivise.h" /* SYS_SO_MAPPA (0.351) */
 
 /* =============================================================================
  * ! LE SYSCALL CHE SCAVALCANO IL FILESYSTEM DEVONO CHIEDERE CHI SEI
@@ -2931,11 +2932,11 @@ static int32_t exec_con_argv(const char *kpath, char **uargv, char **uenvp)
     usp &= ~15u;
     usp -= 4 * PAROLA;
     { uintptr_t t[4];
-      t[0] = 0; t[1] = argc; t[2] = argv_u; t[3] = envv_u;
+      t[0] = res.aux; t[1] = argc; t[2] = argv_u; t[3] = envv_u;   /* aux: 0.350 */
       spawn_write_user(new_pd, usp, t, sizeof(t)); }
 #else
     usp -= 16;
-    { uint32_t z = 0;
+    { uint32_t z = res.aux;              /* the interpreter's auxv (0.350), or 0 */
       spawn_write_user(new_pd, usp + 0,  &z,      4);
       spawn_write_user(new_pd, usp + 4,  &argc,   4);
       spawn_write_user(new_pd, usp + 8,  &argv_u, 4);
@@ -3429,11 +3430,11 @@ uint32_t usp       = res.user_stack_top;
     usp &= ~15u;
     usp -= 4 * PAROLA;
     { uintptr_t t[4];
-      t[0] = 0; t[1] = real_argc; t[2] = argv_uptr; t[3] = envv_uptr;
+      t[0] = res.aux; t[1] = real_argc; t[2] = argv_uptr; t[3] = envv_uptr;
       spawn_write_user(cpd, usp, t, sizeof(t)); }
 #else
     usp -= 16;
-    { uint32_t z = 0;
+    { uint32_t z = res.aux;              /* the interpreter's auxv (0.350), or 0 */
       spawn_write_user(cpd, usp+0,  &z,          4);
       spawn_write_user(cpd, usp+4,  &real_argc,  4);
       spawn_write_user(cpd, usp+8,  &argv_uptr,  4);
@@ -7116,67 +7117,6 @@ int32_t sys_chmod(InterruptFrame *frame)
 }
 
 /* =============================================================================
- * SYS_LIB_APRI (248) — aggancia una libreria condivisa
- *
- * Il perche' sta in kernel/include/syscall.h e in kernel/loader/lib.c. Qui c'e'
- * solo il passaggio del confine, che e' sempre lo stesso mestiere: il percorso
- * si COPIA prima di usarlo.
- * ========================================================================== */
-int32_t sys_lib_apri(InterruptFrame *frame)
-{
-    const char *u    = (const char *)FR_A1(frame);
-    Process    *self = proc_get_current();
-    char        perc[128];
-    uint32_t    i;
-    uint32_t    tabella = 0;
-    int32_t     rc;
-
-    if (self == NULL) return ERR(ESRCH);
-    if (!syscall_verify_str(u, sizeof(perc) - 1)) return ERR(EFAULT);
-
-    /* ! COPIATO PRIMA, come per ogni stringa che arriva da ring 3: lasciarlo
-     * la' vorrebbe dire che il processo puo' cambiarlo fra il controllo e
-     * l'uso, e la libreria aperta non sarebbe quella controllata. */
-    for (i = 0; i + 1 < sizeof(perc) && u[i]; i++) perc[i] = u[i];
-    perc[i] = '\0';
-
-    rc = lib_apri(perc, self, &tabella);
-    if (rc != 0) return rc;
-
-    /* La fascia delle librerie sta sotto 0x08000000: il valore e' sempre
-     * positivo e non si puo' confondere con un -errno. */
-    return (int32_t)tabella;
-}
-
-/* =============================================================================
- * SYS_LIB_TROVA (238) — la stessa porta, ma solo per chiedere
- *
- * Il perche' sta in kernel/include/syscall.h e in kernel/loader/lib.c. Qui c'e'
- * il passaggio del confine, identico a quello di sys_lib_apri: il percorso si
- * COPIA prima di usarlo.
- * ========================================================================== */
-int32_t sys_lib_trova(InterruptFrame *frame)
-{
-    const char *u    = (const char *)FR_A1(frame);
-    Process    *self = proc_get_current();
-    char        perc[128];
-    uint32_t    i;
-    uint32_t    tabella = 0;
-    int32_t     rc;
-
-    if (self == NULL) return ERR(ESRCH);
-    if (!syscall_verify_str(u, sizeof(perc) - 1)) return ERR(EFAULT);
-
-    for (i = 0; i + 1 < sizeof(perc) && u[i]; i++) perc[i] = u[i];
-    perc[i] = '\0';
-
-    rc = lib_trova(perc, self, &tabella);
-    if (rc != 0) return rc;
-
-    return (int32_t)tabella;
-}
-
-/* =============================================================================
  * SYS_POLL (244) — aspettare piu' sorgenti insieme
  *
  * L'interfaccia e il perche' stanno in kernel/include/syscall.h. Qui c'e' il
@@ -7811,6 +7751,27 @@ int32_t sys_dma_alloc_gruppo(InterruptFrame *f)  { return con_lo_spazio(sys_dma_
 int32_t sys_fb_map_gruppo(InterruptFrame *f)     { return con_lo_spazio(sys_fb_map, f); }
 int32_t sys_mmio_map_gruppo(InterruptFrame *f)   { return con_lo_spazio(sys_mmio_map, f); }
 
+/* SYS_SO_MAPPA (0.351, voce 105): a shared object from the kernel's cache
+ * (loader/condivise.c) into the space of the group, above the heap as mmap */
+static int32_t sys_so_mappa(InterruptFrame *frame)
+{
+    int32_t     fd   = (int32_t)FR_A1(frame);
+    SoEsito    *dove = (SoEsito *)FR_A2(frame);
+    const char *nome = (const char *)FR_A3(frame);
+    Process    *proc = proc_get_current();
+    SoEsito     e;
+    int32_t     rc;
+
+    if (!syscall_verify_ptr(dove, sizeof(SoEsito))) return ERR(EFAULT);
+    if (nome != NULL && !syscall_verify_str(nome, PERCORSO_MAX)) nome = NULL;
+    if (fd < 0 || fd >= FD_N(proc) || FDV(proc, fd).type != FD_FILE) return ERR(EBADF);
+    rc = so_mappa((int)FDV(proc, fd).inode, nome, proc, 0, &e);
+    if (rc == 0) *dove = e;
+    return rc;
+}
+
+int32_t sys_so_mappa_gruppo(InterruptFrame *f)    { return con_lo_spazio(sys_so_mappa, f); }
+
 /* =============================================================================
  * spawn_dal_kernel — un programma lanciato dal kernel, con i suoi argomenti
  * (@RDBOOT passo 3, 22 ottobre 2026)
@@ -7873,12 +7834,12 @@ Process *spawn_dal_kernel(const char *path, const char *const *argv,
     usp &= ~15u;
     usp -= 4 * PAROLA;
     { uintptr_t t[4];
-      t[0] = 0; t[1] = argc; t[2] = argv_uptr; t[3] = envv_uptr;
+      t[0] = res.aux; t[1] = argc; t[2] = argv_uptr; t[3] = envv_uptr;
       if (spawn_write_user(p->page_directory, usp, t, sizeof(t)) != 0) goto rotto; }
 #else
     usp -= 16;
     { uint32_t t[4];
-      t[0] = 0; t[1] = argc; t[2] = argv_uptr; t[3] = envv_uptr;
+      t[0] = res.aux; t[1] = argc; t[2] = argv_uptr; t[3] = envv_uptr;
       if (spawn_write_user(p->page_directory, usp, t, sizeof(t)) != 0) goto rotto; }
 #endif
 #undef PAROLA

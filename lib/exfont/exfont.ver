@@ -1,0 +1,15 @@
+/* lib/exfont/exfont.ver - what exfont.so offers to programs: everything else stays inside it.
+ * The ld version script of the library (voce 105, 19 November 2026); it
+ * took the place of the name table of exfont_esporta.c, with the same names.
+ * ! A NEW PUBLIC FUNCTION GOES HERE TOO, or programs will not link to it. */
+{
+    global:
+        exttf_apri;
+        exttf_chiudi;
+        exttf_altezza;
+        exttf_base;
+        exttf_larghezza_car;
+        exttf_glifo;
+        exttf_ha_glifo;
+    local: *;
+};

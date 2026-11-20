@@ -18,6 +18,7 @@
 #   7. `-ferma`, an unknown option refused, no [FAULT].
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1
+KV=$(sed -n 's/^#define EXOS_VERSION *"\(.*\)"/\1/p' kernel/include/version.h)
 D=/tmp/exos-prove/dpms; rm -rf "$D"; mkdir -p "$D"
 ok=0; no=0
 si() { echo "  [OK] $1"; ok=$((ok+1)); }
@@ -69,7 +70,8 @@ giro() {    # $1 = 32|64
         "dpms.drv -ferma@3" \
         "dpms.drv@3" > "$log" 2>&1
     L=$(tr -d '\r' < "$log")
-    echo "$L" | grep -aq "EX-OS .* 0.312" && si "$bit: kernel 0.312" || no "$bit: il kernel non e' 0.312 (vedi $log)"
+    # the kernel of the tree, not the one dpms came with (0.312)
+    echo "$L" | grep -aq "EX-OS .* $KV" && si "$bit: kernel $KV" || no "$bit: il kernel non e' $KV (vedi $log)"
     echo "$L" | grep -aq "dpms.drv 0.002" && si "$bit: dpms.drv 0.002" || no "$bit: -version"
     echo "$L" | grep -aq "servizio:   spento" && si "$bit: senza servizio lo dice" || no "$bit: lo stato senza servizio"
     echo "$L" | grep -aq "servizio acceso, metodo vga" && si "$bit: -dopo:1 accende il servizio, metodo vga" \

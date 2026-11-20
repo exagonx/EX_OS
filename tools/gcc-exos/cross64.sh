@@ -108,6 +108,9 @@ sysroot)
     rm -f "$S/lib/libc.a"
     ar rcs "$S/lib/libc.a" "$S/lib/libc.o"
     rm -f "$S/lib/libc.o"
+    # the shared libc next to it (voce 105): /lib/ld-exos.so, the program
+    # start and the libc.so script. Without -static a program now uses it.
+    bash tools/costruisci-ld.sh 64 "$S/lib" || fail "ld-exos.so"
     for l in pthread dl rt; do rm -f "$S/lib/lib$l.a"; ar rcs "$S/lib/lib$l.a"; done
     cp -rp lib/include/. "$S/include/"
     ln -sfn include "$S/sys-include"

@@ -249,11 +249,16 @@ netupdate -avvio. Fino alla 0.048 rilanciare netupdate non la riscriveva.
 [netupdate expackage pacchetti]
 Installare e togliere le applicazioni del repository
 
-  netupdate -install:list            l'elenco, con cosa c'e' gia' qui
-  netupdate -install:list -p         una pagina per volta: Invio avanza,
+  netupdate -list                    l'elenco, con lo stato (no,
+                                     installato, aggiornabile) e la versione
+  netupdate -list -p                 una pagina per volta: Invio avanza,
                                      q smette
-  netupdate -install:list tes        solo quelle col nome che contiene tes
-  netupdate -install:<app>           l'app e quelle che vuole, in catena
+  netupdate -list:tes                solo quelle col nome che contiene tes
+                                     (-install:list fa lo stesso)
+  netupdate -install:<app>           l'app e quelle che vuole, in catena,
+                                     e la sua voce nel menu se e' grafica
+  netupdate -check                   aggiorna solo cio' che e' installato
+  netupdate -check -yesall           e installa le dipendenze nuove
   netupdate -remove:<app>            l'app e le librerie di nessun altro
   netupdate -install:<app> -yes      senza chiedere Procedo? (anche -remove)
   netupdate -set                     il repository, con le domande
@@ -262,8 +267,9 @@ Installare e togliere le applicazioni del repository
 Con la scrivania: menu Strumenti > ExPackage (/exwin/bin/expackage). Mostra
 le applicazioni del repository: [ ] non installata, [x] installata, [+] da
 installare, [-] da togliere, [d] da installare perche' serve a una [+].
-Invio o doppio clic cambiano il segno; Applica toglie le [-] e installa le
-[+] con le loro dipendenze. Repository > Imposta e verifica sceglie modalita'
+Invio o doppio clic cambiano il segno. Update rilegge l'elenco e le
+versioni; Upgrade aggiorna le installate "aggiornabili" (netupdate -check
+-yes), poi toglie le [-] e installa le [+] con le loro dipendenze. Repository > Imposta e verifica sceglie modalita'
 (HTTP, FTP, HTTPS, FTPS) e indirizzo, e controlla che ci sia l'elenco delle
 applicazioni: se non c'e' rimette il repository di prima. Lavora netupdate:
 Visualizza > Registro di netupdate mostra quel che ha scritto. Per cambiare
@@ -279,6 +285,15 @@ non c'e' piu' un tetto: netupdate -check -yes porta quella nuova.
 font-cjk arrivava SENZA FILE, perche' l'elenco a parte si scaricava solo per
 il pacchetto chiesto: prima netupdate -check -yes, poi -install:font-cjk.
 Chi aveva gia' Exilla li chiede da se': netupdate -install:font-cjk.
+
+Dalla 0.050 il repository ha app.txt: per ogni applicazione versione e
+build (quando i suoi file sono cambiati). Quella con la stessa build di
+quella installata non si guarda. I file che non arrivano si ritentano da
+soli (tentativi = 3 in /boot/netupdate.cnf), poi si chiede; quelli rimasti
+vanno in /boot/netupdate.err e il -check dopo li riprende. Il netupdate di
+prima legge ancora catalogo.txt, che ha solo avvio e sistema: porta la 0.050,
+e dal giro dopo vale app.txt. Dopo IL KERNEL E' CAMBIATO riavviare subito:
+col kernel vecchio i programmi nuovi (anche ls e sync) non partono.
 
 [sync]
 tutto quel che e' stato scritto va sui dischi, giornali compresi
@@ -914,6 +929,12 @@ TELNET: DOPO UNA SESSIONE CHIUSA RESTANO PROCESSI in ps (un dmesg -segui,
   shell. Aggiorna con netupdate; intanto kill PID. Dalla 0.016 a fine
   sessione si chiude tutto quello che la sessione ha lanciato, anche i
   lavori con & (la console dice "chiusi N processi"), entro circa 20 s.
+TELNET: DOPO netupdate, PRIMA DEL RIAVVIO, LA SESSIONE NUOVA SI CHIUDE
+  SUBITO (sulla console [FAULT] '/bin/telnetd' ... EIP=0x00000000): e'
+  telnetd collegato a ld-exos.so, che col kernel vecchio non parte. Riavvia
+  dalla console o da una sessione gia' aperta (reboot). Dal 20 novembre 2026
+  telnetd, sshd e netupdate sono statici e si entra anche a meta' salto;
+  ps, ls e gli altri comandi cadono ancora finche' non riavvii.
 TELNET: LA SECONDA SESSIONE NON RISPONDE finche' la prima non esce: e'
   telnetd fino alla 0.014. Aggiorna con netupdate. Se la console dice "non
   passa alla copia", ip.drv e' piu' vecchio della 0.021: aggiorna anche quello.
@@ -1517,6 +1538,17 @@ Non ci sono i sottotitoli con i caratteri
 (freetype), la rete in streaming cifrata e i DVD. Gli avvisi
 "globalhotkeys" e "XML reader not found" all'avvio non sono errori.
 
+Dal 20/11/2026 VLC e' fatto come su Linux: /exos/bin/vlc usa
+/exos/lib/libvlc.so.5 e libvlccore.so.9, e ogni modulo e' un file .so in
+/exos/lib/vlc/plugins, caricato quando serve. I moduli si cercano li' e
+nelle cartelle di VLC_PLUGIN_PATH. Il loro elenco sta in
+/exos/lib/vlc/plugins/plugins.dat: se manca VLC parte lo stesso, ma apre
+tutti i moduli a ogni avvio (lento). Si rifa' con
+  /exos/lib/vlc/vlc-cache-gen /exos/lib/vlc/plugins
+anche dopo aver aggiunto o tolto un modulo. Prima VLC era un programma
+solo con i moduli dentro, e tre moduli con lo stesso nome si perdevano:
+il FLAC non si sentiva.
+
 [netdetect]
 elenca le schede di rete e il driver che vogliono
 
@@ -1802,6 +1834,18 @@ scrittura). Servono a Redis (BGSAVE), al prefork di Apache, a QProcess.
     EINTR; recv e send ripartono con SA_RESTART, poll ed epoll_wait mai
     (come Linux). Prima un filo in poll su un socket non si svegliava con
     pthread_kill, e Apache e MariaDB guardavano ogni 100 ms;
+  - la libc condivisa /lib/ld-exos.so (kernel 0.350, voce 105): un
+    programma collegato senza -static la usa, il kernel avvia l'interprete
+    (PT_INTERP) e questo lega il programma alla libc e alle sue librerie.
+    Senza /lib/ld-exos.so quei programmi non partono ("interprete non
+    trovato" nel log del kernel); dlsym(RTLD_NEXT) cerca dopo chi chiama;
+  - ogni programma su /lib/ld-exos.so (kernel 0.351, voce 105), anche
+    i comandi e le applicazioni di ExWin, a 32 e 64 bit; statici restano
+    i driver, login, install, soccorso, sh. Le librerie di /exwin/lib
+    (exwin.so, exdlg.so...) sono .so ELF vere, e il kernel tiene una copia
+    sola del loro codice per tutti. Sul floppy l'interprete sta in
+    /rdboot/lib. Un programma costruito prima su libc.so o sullo stub di
+    una libreria non parte piu': ricostruirlo, o riprenderlo con netupdate;
   - accept e connect interrotti da un segnale dicono EINTR (ip.drv 0.027,
     voce 105): accept riparte con SA_RESTART, connect mai;
   - FD_CLOEXEC (kernel 0.349): exec chiude i descrittori segnati con

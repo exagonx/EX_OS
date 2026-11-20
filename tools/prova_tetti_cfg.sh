@@ -19,6 +19,7 @@
 #   - no [FAULT] or PANIC.
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1
+KV=$(sed -n 's/^#define EXOS_VERSION *"\(.*\)"/\1/p' kernel/include/version.h)
 D=/tmp/exos-prove/tetticfg; rm -rf "$D"; mkdir -p "$D"
 SBIN=/usr/sbin
 ok=0; no=0
@@ -64,7 +65,8 @@ giro() {    # $1 = 32|64
         "grep -c tettofinto20 /tmp/dm.txt@3" "grep \"TETTO_ULTIMA\" /tmp/dm.txt@3" \
         "echo CFG-FINE@1" "sync@3" > "$log" 2>&1
     L=$(tr -d '\r' < "$log")
-    echo "$L" | grep -aq "EX-OS .*0\.34[7-9]" && si "$bit: gira il kernel 0.347" || no "$bit: non gira la 0.347 (uname)"
+    # 0.347 or later: the kernel of the tree (the test is from 0.347)
+    echo "$L" | grep -aq "EX-OS .* $KV" && si "$bit: gira il kernel $KV" || no "$bit: non gira la $KV (uname)"
     tratto() { echo "$L" | awk 'index($0,"echo CFG-INIZIO") && /ex-os/ {s=1; next} s && /echo CFG-FINE/ {exit} s'; }
     # the first non-empty line after the prompt with that command
     dopo() { tratto | awk -v c="$1" 'index($0,c) && /ex-os/ {s=1; next} s && $0 != "" {print; exit}'; }

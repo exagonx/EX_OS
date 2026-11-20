@@ -1,0 +1,20 @@
+/* lib/exzip/exzip.ver - what exzip.so offers to programs: everything else stays inside it.
+ * The ld version script of the library (voce 105, 19 November 2026); it
+ * took the place of the name table of exzip_esporta.c, with the same names.
+ * ! A NEW PUBLIC FUNCTION GOES HERE TOO, or programs will not link to it. */
+{
+    global:
+        ex_zip_apri;
+        ex_zip_quante;
+        ex_zip_voce;
+        ex_zip_estrai;
+        ex_zip_crea;
+        ex_zip_aggiungi;
+        ex_zip_finisci;
+        ex_zip_chiudi;
+        ex_zip_errore;
+        ex_zip_aggiungi_albero;
+        ex_zip_riapri;
+        ex_zip_livello;
+    local: *;
+};

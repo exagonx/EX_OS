@@ -13,6 +13,26 @@
 # the boot sector still pointed there (voce 75, 4 November 2026).
 # =============================================================================
 !silenced
+# ! THE SHARED LIBC (voce 105, kernel 0.350): the kernel starts
+# /lib/ld-exos.so for every program linked without -static (PT_INTERP), and
+# a program with shared objects of its own already has PT_INTERP: without
+# the file, kernel 0.350 says "interprete non trovato" and none of them
+# starts. It comes with the same update as the kernel.
+if [ ! -f /lib/ld-exos.so ]; then
+    echo "  ! Manca /lib/ld-exos.so (la libc condivisa): con il kernel 0.350"
+    echo "    i programmi collegati alle librerie condivise non partono."
+    echo "    netupdate -check -yes, poi riavvia."
+    exit 1
+fi
+# ! EVERY PROGRAM ON ld-exos.so (voce 105, kernel 0.351): /lib/libc.so, its
+# bridges and the library stubs are gone, and the kernel says ENOSYS to
+# SYS_LIB_APRI. What netupdate brings is rebuilt; a program of the user
+# built before against libc.so is not, and does not start. Said, not removed.
+if [ -f /lib/libc.so ]; then
+    echo "  - /lib/libc.so non serve piu' dal kernel 0.351: i programmi del sistema"
+    echo "    usano /lib/ld-exos.so. Un programma tuo costruito su libc.so va"
+    echo "    ricostruito (exide lo fa con la riga nuova); dopo, rm /lib/libc.so."
+fi
 # ! THE IMAGE AND FONT LIBRARIES (6 November 2026): until then the 64-bit
 # system had no /exwin/lib/eximg.so and exfont.so, and a JPG or PNG
 # wallpaper, the images in Immagini and the TrueType fonts were not read.
@@ -91,6 +111,26 @@ fi
 if [ ! -f /boot/fuso.cfg ]; then
     echo "  - Nessun /boot/fuso.cfg: il kernel 0.340 suppone UTC+1 con l'ora legale"
     echo "    europea. Altrove: date -fuso:+2,ue (per esempio); orologio in UTC: date -fuso:0,no."
+fi
+# ! THE ARCHIVE BY APPLICATION (voce 107, netupdate 0.050, 20 November 2026):
+# the netupdate before 0.050 reads only [avvio] and [sistema] of the old
+# archive, and brings the new netupdate with them. The applications move to
+# app.txt at the next -check, which writes their build in the register: a
+# register without any is a machine one -check behind. And the files that
+# did not arrive stay in /boot/netupdate.err until a -check brings them.
+if [ -f /boot/netupdate.reg ]; then
+    if [ -f /bin/grep ]; then
+        grep "^build " /boot/netupdate.reg > /dev/null
+        if [ $? != 0 ]; then
+            echo "  - Le applicazioni non sono ancora nell'archivio nuovo (netupdate 0.050):"
+            echo "    netupdate -check -yes, ancora una volta."
+        fi
+    fi
+fi
+if [ -f /boot/netupdate.err ]; then
+    echo "  ! Dall'ultimo netupdate mancano dei file (elencati in /boot/netupdate.err)."
+    echo "    netupdate -check -yes li riprende."
+    exit 1
 fi
 if [ "$NETUPDATE_RIAVVIO" = 1 ]; then
     exit 0

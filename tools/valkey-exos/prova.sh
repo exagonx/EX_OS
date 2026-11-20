@@ -46,6 +46,8 @@ sed -i 's#/exos/valkey#/a/valkey#g' "$T/valkey/etc/valkey.conf"
 # the shared libraries the programs name, from the ones built here
 for l in $(for f in "$T"/valkey/bin/*; do readelf -d "$f" 2>/dev/null; done |
            sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | sort -u); do
+    # the shared libc is the system's, in /lib of the CD (voce 105)
+    [ "$l" = ld-exos.so ] && continue
     f=$(ls cross_build/*-exos$BITS/exos/lib/"$l" 2>/dev/null | head -1)
     [ -n "$f" ] || { echo "manca $l (per valkey a $BITS bit)" >&2; exit 1; }
     cp "$f" "$T/lib/"

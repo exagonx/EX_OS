@@ -32,7 +32,7 @@ costruisci() {
     lib_config_sub
     mkdir -p "$B/obj"
     ( cd "$B/obj" && "$SRC/configure" --host=$T --build="$("$SRC/config.guess")" \
-        --prefix=/exos CC=$CC AR=$AR RANLIB=$RANLIB CFLAGS="$CFLAGS" LDFLAGS=-static \
+        --prefix=/exos CC=$CC AR=$AR RANLIB=$RANLIB CFLAGS="$CFLAGS" \
         --disable-shared --enable-static --enable-pcre2-16 --enable-pcre2-32 \
         --disable-jit --disable-pcre2grep-libz --disable-pcre2grep-libbz2 \
         --disable-pcre2test-libreadline --disable-pcre2test-libedit ) \

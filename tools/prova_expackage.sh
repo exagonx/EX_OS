@@ -18,7 +18,7 @@
 #     slash.
 # Run B, the desktop: expackage shows the list; a click and Enter on fb
 # mark it and its chain ([d] base: photo b2-dipendenze), a second Enter
-# takes the mark away; a click and Enter on nasm mark it, Applica and Procedi
+# takes the mark away; a click and Enter on nasm mark it, Upgrade and Procedi
 # install it; the register says nasm.
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1
@@ -34,6 +34,9 @@ else
 fi
 [ -f "$ISO" ] || { echo "manca $ISO" >&2; exit 1; }
 CAT="$SRV/$REPO$([ "$ARCH" = x86_64 ] && echo _64)/catalogo.txt"
+# ! FROM netupdate 0.050 THE APPLICATIONS ARE IN app.txt (voce 107): the old
+# catalogue keeps only [avvio] and [sistema]
+APP="${CAT%/*}/app.txt"; [ -f "$APP" ] && CAT=$APP
 N_CAT=$(grep -c '^\[' "$CAT")
 # apache's `vuole` as the catalogue writes them: five at 32 bit (more than the
 # four netupdate 0.040 kept), four at 64
@@ -110,7 +113,7 @@ gira b \
     "foto:$D/b2-dipendenze.ppm@1" "key:ret@3" \
     "punta:nasm@1" "mon:mouse_button 1; mouse_button 0@2" "key:ret@3" \
     "foto:$D/b2-segnato.ppm@1" \
-    "punta:Applica@1" "mon:mouse_button 1; mouse_button 0@3" "foto:$D/b3-conferma.ppm@1" \
+    "punta:Upgrade@1" "mon:mouse_button 1; mouse_button 0@3" "foto:$D/b3-conferma.ppm@1" \
     "punta:Procedi@1" "mon:mouse_button 1; mouse_button 0@90" "foto:$D/b4-fatto.ppm@1" \
     "key:alt-f1@3" "netupdate -registro@~10" "sync@5"
 B=$(pulito "$D/b.log")

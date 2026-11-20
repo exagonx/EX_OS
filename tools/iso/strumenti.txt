@@ -65,6 +65,8 @@ nome   = C
 dice   = gcc, cpp, as, ld, la libc e gli header di sistema
 prova  = bin/gcc
 sempre = si
+vuole  = zlib
+vuole  = zstd
 mbyte  = 50
 
 # !! IL C NON SI SCEGLIE, e non e' una comodita': cc1plus, fbc e libcrypto
@@ -168,12 +170,14 @@ nota  = Le istruzioni per esteso stanno in /freebasic/leggimi.txt.
 nome  = NASM
 dice  = nasm e ndisasm: l'assemblatore Intel e il disassemblatore
 prova = bin/nasm
+vuole = zlib
 mbyte = 3
 solo  = bin/nasm
 solo  = bin/ndisasm
 solo  = prova-nasm.asm
 solo  = prova-nasm16.asm
 
+# !! VUOLE SOLO zlib (libz.so.1, il 20/11/2026), che non vuole `base`.
 # !! NON VUOLE `base`, ed e' l'unico gruppo che non lo chiede. NASM non
 # chiama nessun altro programma: assembla e scrive un file. Con `-f bin` non
 # serve nemmeno `ld` — quel formato E' gia' il prodotto finito, ed e' il caso
@@ -262,6 +266,17 @@ solo  = lib/libpanel.a
 solo  = lib/libmenu.a
 solo  = lib/libform.a
 solo  = lib/libncurses++.a
+solo  = lib/libncurses.so.6
+solo  = lib/libncurses.so
+solo  = lib/libcurses.so
+solo  = lib/libpanel.so.6
+solo  = lib/libpanel.so
+solo  = lib/libmenu.so.6
+solo  = lib/libmenu.so
+solo  = lib/libform.so.6
+solo  = lib/libform.so
+solo  = lib/libncurses++.so.6
+solo  = lib/libncurses++.so
 file  = curses.h
 file  = ncurses.h
 file  = ncurses_dll.h
@@ -301,7 +316,6 @@ nota  = Esempio: /cdrom/prova-curses.c (o dove sta il CD degli strumenti).
 nome  = zlib
 dice  = zlib 1.3.2: deflate, gzip (-lz)
 prova = lib/libz.a
-vuole = base
 mbyte = 1
 solo  = lib/libz.a
 solo  = lib/libz.so
@@ -378,7 +392,6 @@ nota  = Esempio: /cdrom/prova-librerie.cpp (tutte le librerie insieme).
 nome  = Zstandard
 dice  = zstd 1.5.7: libzstd e il programma zstd
 prova = lib/libzstd.a
-vuole = base
 mbyte = 2
 solo  = lib/libzstd.a
 solo  = lib/libzstd.so
@@ -541,9 +554,14 @@ prova = bin/vlc
 vuole = ffmpeg
 vuole = flac
 vuole = qt5
+vuole = curses
 mbyte = 60
 solo  = bin/vlc
 solo  = bin/vlcapri
+solo  = lib/libvlc.so.5
+solo  = lib/libvlccore.so.9
+solo  = lib/vlc
+solo  = include/vlc
 solo  = share/vlc
 solo  = src/vlc
 menu  = Multimedia/VLC | /exos/bin/vlcapri | /exos/share/vlc/vlc_64.ico
@@ -554,11 +572,74 @@ nota  = vlc -I qt film.mp4: l'interfaccia con i menu (Qt 5); il video sta
 nota  = nella sua finestra. vlc -I ncurses brano.ogg: quella di testo.
 
 
+[libpng]
+nome  = libpng
+dice  = libpng 1.6.59: le immagini PNG (libpng16)
+prova = lib/libpng16.so.16
+vuole = zlib
+mbyte = 1
+solo  = lib/libpng16.a
+solo  = lib/libpng16.so
+solo  = lib/libpng16.so.16
+solo  = lib/libpng.so
+solo  = include/libpng16
+solo  = i386-exos/include/libpng16
+file  = png.h
+file  = pngconf.h
+file  = pnglibconf.h
+solo  = src/libpng
+
+nota  = gcc prog.c -lpng16 -lz
+
+
+[freetype]
+nome  = FreeType
+dice  = FreeType 2.15.0: i caratteri TrueType e OpenType
+prova = lib/libfreetype.so.6
+vuole = libpng
+vuole = zlib
+vuole = bzip2
+mbyte = 2
+solo  = lib/libfreetype.a
+solo  = lib/libfreetype.so
+solo  = lib/libfreetype.so.6
+solo  = include/freetype2
+solo  = i386-exos/include/freetype2
+solo  = src/freetype
+
+nota  = gcc prog.c -I/exos/include/freetype2 -lfreetype
+
+
+[harfbuzz]
+nome  = HarfBuzz
+dice  = HarfBuzz 15.0.0: la composizione del testo (quale glifo, dove)
+prova = lib/libharfbuzz.so.0
+vuole = freetype
+mbyte = 3
+solo  = lib/libharfbuzz.a
+solo  = lib/libharfbuzz.so
+solo  = lib/libharfbuzz.so.0
+solo  = lib/libharfbuzz-subset.a
+solo  = lib/libharfbuzz-subset.so
+solo  = lib/libharfbuzz-subset.so.0
+solo  = include/harfbuzz
+solo  = i386-exos/include/harfbuzz
+solo  = src/harfbuzz
+
+nota  = gcc prog.c -I/exos/include/harfbuzz -lharfbuzz
+
+
 [qt5]
 nome  = Qt 5
 dice  = Qt 5.15.19: Core, Gui, Widgets, Network, Sql, Xml, Svg; il plugin exwin
 prova = qt5/lib/libQt5Core.so.5
 vuole = ssl
+vuole = zlib
+vuole = pcre2
+vuole = zstd
+vuole = libpng
+vuole = freetype
+vuole = harfbuzz
 mbyte = 60
 solo  = qt5
 solo  = src/qt5
@@ -673,6 +754,10 @@ nome  = MariaDB
 dice  = MariaDB 11.8.9 LTS: il server SQL, i client, il servizio mariadb-svc e i connettori
 prova = mariadb/bin/mariadbd
 vuole = mariadb-connector
+vuole = bzip2
+vuole = xz
+vuole = lz4
+vuole = pcre2
 mbyte = 500
 solo  = mariadb
 solo  = bin/mariadb

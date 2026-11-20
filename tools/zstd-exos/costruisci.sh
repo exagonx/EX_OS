@@ -29,7 +29,7 @@ costruisci() {
     lib_sorgente
     make -C "$SRC/lib" -j3 CC=$CC AR=$AR CFLAGS="$CFLAGS" libzstd.a \
         > "$B/costruisci.log" 2>&1 || { grep -m10 -B2 -A5 'rror' "$B/costruisci.log"; exit 1; }
-    make -C "$SRC/programs" -j3 CC=$CC AR=$AR CFLAGS="$CFLAGS" LDFLAGS=-static \
+    make -C "$SRC/programs" -j3 CC=$CC AR=$AR CFLAGS="$CFLAGS" \
         HAVE_THREAD=0 HAVE_ZLIB=0 HAVE_LZMA=0 HAVE_LZ4=0 zstd \
         >> "$B/costruisci.log" 2>&1 || { grep -m10 -B2 -A5 'rror' "$B/costruisci.log"; exit 1; }
     cp -p "$SRC/lib/libzstd.a" "$DEST/lib/"

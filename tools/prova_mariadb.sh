@@ -90,10 +90,23 @@ fi
 # Up to 8 November this test ran them without, and all three stopped at
 # "libssl.so.4: cannot open shared object file". They go in /a/lib, and the
 # connectors run with LD_LIBRARY_PATH=/a/lib.
-LIBSO=build/iso/exos/lib; [ "$BIT" = 64 ] && LIBSO=build-64/iso/exos/lib
+# ! SINCE THE SHARED LIBC (voce 105) mariadbd itself is not static either:
+# it wants bz2, lzma, lz4, pcre2 too. A list by hand went stale the same
+# day, so DT_NEEDED is followed from the programs, as prova_librerie.sh.
+# ld-exos.so is the system's: the kernel takes it from /lib of the CD.
 mkdir -p "$T/lib"
-for l in libssl.so.4 libcrypto.so.4 libz.so.1 libzstd.so.1; do
-    cp -L "$LIBSO/$l" "$T/lib/$l" || { echo "  manca $LIBSO/$l: make iso / make ARCH=x86_64 tools64"; exit 1; }
+nomi=$(for f in "$T"/bin/*; do readelf -d "$f" 2>/dev/null; done | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')
+while [ -n "$nomi" ]; do
+    nuovi=""
+    for l in $nomi; do
+        [ "$l" = ld-exos.so ] && continue
+        [ -f "$T/lib/$l" ] && continue
+        f=$(ls cross_build/*-exos$BIT/exos/lib/"$l" 2>/dev/null | head -1)
+        [ -n "$f" ] || { echo "  manca $l (a $BIT bit)"; exit 1; }
+        cp -L "$f" "$T/lib/"
+        nuovi="$nuovi $(readelf -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')"
+    done
+    nomi=$nuovi
 done
 cat > "$T/prova.sql" <<'EOF'
 select concat('MARIADB versione ', version()) as r;
@@ -122,12 +135,11 @@ echo "=== $ARCH ==="
 CLI="/a/bin/mariadb --no-defaults --character-sets-dir=/a/share/charsets -h 127.0.0.1 -u root"
 EXOS_ISTANZA=md$ARCH EXOS_NO_FLOPPY=1 EXOS_CDROM="$ISO" \
     timeout 2400 python3 tools/qemu_drive.py "netdetect -c@12" "dhcp@8" \
-    "mount hd0p1 /a@5" "cd /a@2" \
+    "mount hd0p1 /a@5" "cd /a@2" "export LD_LIBRARY_PATH=/a/lib@2" \
     "/a/bin/mariadbd $OPZ --bootstrap --log-warnings=0 < /a/bootstrap.sql@~900" \
     "echo BOOTSTRAP-FINITO@2" \
     "/a/bin/mariadbd $OPZ --bind-address=127.0.0.1 --port=3306 --skip-name-resolve --ssl-cert=/a/cert.pem --ssl-key=/a/key.pem &@60" \
     "$CLI -N < /a/prova.sql@~120" \
-    "export LD_LIBRARY_PATH=/a/lib@2" \
     "/a/bin/connprova 127.0.0.1 3306@~60" "/a/bin/connprovapp 127.0.0.1 3306@~60" \
     "/a/bin/connprovars 127.0.0.1 3306@~60" "/a/bin/connprovafb 127.0.0.1 3306@~60" \
     "/a/bin/mariadb-admin --no-defaults -h 127.0.0.1 -u root shutdown@~120" \

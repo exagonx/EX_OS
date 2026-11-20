@@ -144,6 +144,12 @@ EOF
 
 # --- 4. into the sysroot, and the specs --------------------------------------------
 cp -p --remove-destination "$OUT"/libgcc_s.so* "$OUT"/libstdc++.so* "$SYS/"
+# ! libstdc++.la MUST SAY SO (20 November 2026, VLC's plugins): GCC's own
+# libtool did not know exos and wrote library_names='' (static only), and
+# libtool believes the .la over the directory. Qt's .la files name it, so
+# every libtool link of a C++ shared object on top of Qt (VLC's Qt plugin)
+# took the non-PIC libstdc++.a and failed with "recompile with -fPIC"
+bash "$R/tools/librerie-exos/la-condivisa.sh" "$SYS/libstdc++.la" libstdc++.so.6 || fail "libstdc++.la"
 "$R/tools/gcc-exos/specs-condivise.sh" "$CROSS/bin/$T-gcc" > /dev/null || fail "specs"
 grep -q -- "-lgcc_s" "$("$CROSS/bin/$T-gcc" -print-libgcc-file-name | xargs dirname)/specs" ||
     fail "le specs non usano libgcc_s"

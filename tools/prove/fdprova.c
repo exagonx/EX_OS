@@ -185,7 +185,14 @@ int main(int argc, char **argv)
         verifica(d == 3000 && g >= 0, riga);
         verifica(close(3000) == 0 && fcntl(3000, F_GETFD) < 0 && errno == EBADF,
                  "close del 3000, poi EBADF");
-        verifica(dup(s) < 0 && errno == EOPNOTSUPP, "dup di un socket: EOPNOTSUPP");
+        /* dup of a socket works since kernel 0.347 (voce 35): another number
+         * on the same socket, closing one leaves the other open */
+        {
+            int ds = dup(s);
+
+            verifica(ds >= 0 && ds != s && ds != f && close(ds) == 0 && fcntl(s, F_GETFD) >= 0,
+                     "dup di un socket: un altro numero, e chiuderlo lascia il primo");
+        }
         close(s);
         close(f);
     }

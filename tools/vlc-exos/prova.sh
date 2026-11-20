@@ -12,6 +12,10 @@
 # MP3 through the "audio" service (aout_exos); then ExWin starts and VLC
 # plays three videos, H.264 with AAC, VP9 and AV1, in a window (vout_exos),
 # with a screenshot during each one. Run after tools/vlc-exos/costruisci.sh.
+# (voce 105, step 4, 20 November 2026) VLC as on Linux: libvlc.so.5 and
+# libvlccore.so.9 in /disk/lib, the plugins in /disk/plugins
+# (VLC_PLUGIN_PATH), opened with dlopen; first of all vlc-cache-gen writes
+# their plugins.dat, and [OK] wants it written.
 # Between the two, the text interface (vlc -I ncurses, 18 November 2026): its
 # screen read back while it plays a 1 kHz tone, z twice (volume down), read
 # again, then q: the volume reads 100% and then 90%, and the card's output
@@ -39,9 +43,13 @@ D="$TC/$MACCHINA/prova-vlc$BIT"
 S="$D/disco"
 rm -rf "${D:?}"; mkdir -p "$S/m" "$S/casa" "$D/foto"
 cp "$V" "$S/vlc"
+VL="$TC/vlc-exos$BIT/exos/lib"
+mkdir -p "$S/lib"
+cp "$VL"/libvlc.so.[0-9]* "$VL"/libvlccore.so.[0-9]* "$S/lib/"
+cp -r "$VL/vlc/plugins" "$S/plugins"
+cp "$VL/vlc/vlc-cache-gen" "$S/vlc-cache-gen"
 # VLC is linked to the shared libraries (3 November 2026): the ones it names
 # go to /disk/lib, found through LD_LIBRARY_PATH (on a system, /exos/lib)
-mkdir -p "$S/lib"
 for l in ffmpeg libvpx dav1d opus vorbis ogg flac zlib; do
     cp "$TC"/$l-exos$BIT/exos/lib/lib*.so.[0-9]* "$S/lib/" 2>/dev/null
 done
@@ -56,7 +64,8 @@ python3 - "$CROSS/bin/$TRIPLA-readelf" "$S" "$CROSS/$TRIPLA/lib" <<'PY' || exit 
 import glob, os, re, shutil, subprocess, sys
 readelf, disco, sysroot = sys.argv[1:4]
 qui = {os.path.basename(f): f for f in glob.glob(disco + "/lib/*") + glob.glob(disco + "/qt5/lib/*.so.*")}
-da_fare = [disco + "/vlc"] + glob.glob(disco + "/qt5/plugins/*/*.so")
+da_fare = [disco + "/vlc", disco + "/vlc-cache-gen"] + glob.glob(disco + "/qt5/plugins/*/*.so") \
+    + glob.glob(disco + "/plugins/*/*.so")
 visti, mancano = set(), set()
 while da_fare:
     d = subprocess.run([readelf, "-d", da_fare.pop()], capture_output=True, text=True).stdout
@@ -111,6 +120,9 @@ T=/tmp/exos/foto-vlc$BIT; rm -rf "$T"; mkdir -p "$T"
     echo "export HOME=/disk/casa@1"
     echo "export LD_LIBRARY_PATH=/disk/lib:/disk/qt5/lib@1"
     echo "export QT_PLUGIN_PATH=/disk/qt5/plugins@1"
+    echo "export VLC_PLUGIN_PATH=/disk/plugins@1"
+    # the plugins' cache, as a Linux package does after installing
+    echo "/disk/vlc-cache-gen /disk/plugins > /disk/casa/cache-gen.log 2>&1@${PAUSA_CACHE:-60}"
     echo "export QT_QPA_FONTDIR=/disk/qt5/lib/fonts@1"
     echo "export QT_EXWIN_DEBUG=${QT_EXWIN_DEBUG:-0}@1"   # 1: what the exwin plugin does, in qt.log
     # Qt's own logging categories, e.g. QT_LOGGING_RULES=qt.widgets.painting=true
@@ -273,7 +285,16 @@ done
 # --- the Qt interface -------------------------------------------------------
 P1=$(/sbin/sfdisk -d "$IMG" 2>/dev/null | sed -n 's/.*start= *\([0-9]*\).*/\1/p' | head -1)
 dd if="$IMG" of="$D/p1.img" bs=512 skip="${P1:-2048}" status=none
-/sbin/debugfs -R "dump /casa/qt.log $D/qt.log" "$D/p1.img" > /dev/null 2>&1; rm -f "$D/p1.img"
+/sbin/debugfs -R "dump /casa/qt.log $D/qt.log" "$D/p1.img" > /dev/null 2>&1
+/sbin/debugfs -R "dump /casa/cache-gen.log $D/cache-gen.log" "$D/p1.img" > /dev/null 2>&1
+# --- the plugins' cache (voce 105, step 4) ---------------------------------
+PD=$(/sbin/debugfs -R "stat /plugins/plugins.dat" "$D/p1.img" 2>/dev/null | sed -n 's/.*Size: *\([0-9]*\).*/\1/p' | head -1)
+rm -f "$D/p1.img"
+if [ "${PD:-0}" -gt 10000 ]; then
+    echo "  [OK] vlc-cache-gen: plugins.dat di $PD byte"
+else
+    echo "  [NO] vlc-cache-gen: plugins.dat ${PD:-assente} ($D/cache-gen.log)"; esito=1
+fi
 if grep -aq 'using interface module "qt"' "$D/qt.log" 2>/dev/null; then
     c=$(python3 - "$T/fondo.ppm" "$T/qt.ppm" <<'E'
 import sys

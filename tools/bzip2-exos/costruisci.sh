@@ -24,7 +24,7 @@ costruisci() {
     lib_per "$1"
     lib_sorgente
     make -C "$SRC" -j3 CC=$CC AR=$AR RANLIB=$RANLIB \
-        CFLAGS="$CFLAGS -D_FILE_OFFSET_BITS=64" LDFLAGS=-static \
+        CFLAGS="$CFLAGS -D_FILE_OFFSET_BITS=64" LDFLAGS= \
         libbz2.a bzip2 bzip2recover > "$B/costruisci.log" 2>&1 \
         || { grep -m10 -B2 -A5 'rror' "$B/costruisci.log"; exit 1; }
     cp -p "$SRC/libbz2.a" "$DEST/lib/"

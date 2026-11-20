@@ -28,7 +28,7 @@ costruisci() {
     lib_sorgente
     make -C "$SRC/lib" -j3 CC=$CC AR=$AR CFLAGS="$CFLAGS" liblz4.a \
         > "$B/costruisci.log" 2>&1 || { grep -m10 -B2 -A5 'rror' "$B/costruisci.log"; exit 1; }
-    make -C "$SRC/programs" -j3 CC=$CC AR=$AR CFLAGS="$CFLAGS" LDFLAGS=-static lz4 \
+    make -C "$SRC/programs" -j3 CC=$CC AR=$AR CFLAGS="$CFLAGS" lz4 \
         >> "$B/costruisci.log" 2>&1 || { grep -m10 -B2 -A5 'rror' "$B/costruisci.log"; exit 1; }
     cp -p "$SRC/lib/liblz4.a" "$DEST/lib/"
     cp -p "$SRC/lib/lz4.h" "$SRC/lib/lz4hc.h" "$SRC/lib/lz4frame.h" "$DEST/include/"

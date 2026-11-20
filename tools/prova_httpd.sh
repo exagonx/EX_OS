@@ -65,6 +65,8 @@ echo prova > "$T/schermate/prova.png"
 mkdir -p "$T/lib"
 for l in $(for f in "$T"/apache2/bin/*; do readelf -d "$f" 2>/dev/null; done |
            sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | sort -u); do
+    # the shared libc is the system's, in /lib of the CD (voce 105)
+    [ "$l" = ld-exos.so ] && continue
     f=$(ls cross_build/*-exos$BITS/exos/lib/"$l" 2>/dev/null | head -1)
     [ -n "$f" ] || { echo "manca $l (per httpd a $BITS bit)" >&2; exit 1; }
     cp "$f" "$T/lib/"

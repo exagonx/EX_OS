@@ -310,6 +310,13 @@ double scalbn(double, int);
 float scalbnf(float, int);
 long double scalbnl(long double, int);
 double sin(double);
+/* in libm since openlibm, missing here until 20 November 2026 (VLC's OpenGL
+ * output calls sincosf); GNU names, so only with _GNU_SOURCE as in glibc */
+#ifdef _GNU_SOURCE
+void sincos(double, double *, double *);
+void sincosf(float, float *, float *);
+void sincosl(long double, long double *, long double *);
+#endif
 float sinf(float);
 double sinh(double);
 float sinhf(float);

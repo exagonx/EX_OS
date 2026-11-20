@@ -1964,6 +1964,12 @@ static void cow_copia_fisica(paddr_t da, paddr_t a)
     if (fl & 0x200u) interrupts_enable();
 }
 
+/* the same copy for the cache of the shared objects (loader/condivise.c) */
+void paging_copia_fisica(paddr_t da, paddr_t a)
+{
+    cow_copia_fisica(da, a);
+}
+
 static void cow_tlb(PDE *pd, vaddr_t pagina)
 {
     Process *io = proc_get_current();

@@ -15,9 +15,9 @@
 # ! SHARED BY FFMPEG ITSELF (--enable-shared, 3 November 2026): its libraries
 # share hidden tables (ff_lcevc_resolution_type...) that its own shared build
 # puts in each library; lib_condivisa_sua then names the files as their
-# soname and checks them. The programs (ffmpeg, ffprobe) stay static
-# (--extra-ldexeflags=-static), the libraries are shared: Firefox opens
-# libavcodec.so.63 with dlopen.
+# soname and checks them. The libraries are shared: Firefox opens
+# libavcodec.so.63 with dlopen. The programs (ffmpeg, ffprobe) are not
+# static since the shared libc (voce 105): /lib/ld-exos.so and the libraries.
 # LGPL build: no --enable-gpl and no x264 or x265. Decoders of its own for
 # H.264, HEVC, VP8, VP9, AAC, MP3, Vorbis, Opus, FLAC; dav1d for AV1; libvpx,
 # libvorbis and libopus for encoding WebM. The tools/<lib>-exos/costruisci.sh
@@ -54,7 +54,7 @@ costruisci() {
     ( cd "$B/obj" && PKG_CONFIG_LIBDIR="$B/pc" "$SRC/configure" --enable-cross-compile \
         --cross-prefix=$T- --arch=$ARCH --target-os=linux $CPU --prefix=/exos \
         --pkg-config=pkg-config --pkg-config-flags=--static \
-        --extra-cflags="$MARCH -D__unix__ -DEXOS_SOLO_POSIX -D_GNU_SOURCE" --extra-ldexeflags=-static \
+        --extra-cflags="$MARCH -D__unix__ -DEXOS_SOLO_POSIX -D_GNU_SOURCE" \
         --extra-ldsoflags="$NONSHARED" --enable-pic --enable-static --enable-shared --disable-autodetect --disable-doc --disable-debug \
         --disable-ffplay --disable-network --disable-devices \
         --enable-pthreads --enable-zlib --enable-libdav1d --enable-libvpx \

@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.349
+**Version:** 0.351
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -63,6 +63,62 @@ and Joliet) whatever the boot medium is.
 
 A driver or a program crashing cannot bring the system down.
 
+### The archive by application: netupdate brings only what changed, ExPackage has Update and Upgrade (netupdate 0.050, expackage 0.002, voci 106 and 107) — tested in QEMU and on the test PC
+
+- **The repository has a new archive next to the old one.** `app.txt` has one block per
+  application: name, what it wants, **version** (the program's: VLC 3.0.24, nano 9.3) and
+  **build**, the moment (UTC, `YYYYMMDDhhmm`) its files last changed; `app/<id>.txt` has its files
+  with bytes and sha256. `versione.txt` carries the hash of `app.txt` (`app = ...`). The build
+  moves by itself when the list moves (`tools/netinst/archivio_app.py`, run by `mknetinst.sh`): a
+  rebuild with the same version — every port on ld-exos.so on 19/11 — arrives all the same.
+- **The old `catalogo.txt` and `elenco.txt` hold only `[avvio]` and `[sistema]`.** A netupdate
+  before 0.050 updates kernel and system (netupdate 0.050 is in it), and from the next round it
+  reads `app.txt`. Kernel and system stay whole.
+- **An application with the same build as the installed one is not looked at**: its list is not
+  downloaded and its block in the register stays as it is. The others are compared file by file
+  as before, and the register (`/boot/netupdate.reg`) records the version and build of each.
+- **`-check`** updates only what is installed, and names the new dependencies that are missing;
+  **`-check -yes`** does it without asking; **`-check -yesall`** installs those dependencies too.
+  New applications come only with `-install:<app>`, with everything they want and their start
+  menu entry if they are graphical (`grafica = si` in `app.txt`).
+- **`netupdate -list`** the server's applications with their state (no, installato,
+  **aggiornabile**) and version; **`-list:<piece>`** those whose name contains it; `-p` one page at
+  a time, `-tab` for programs (five more columns at the end: version, build, updatable, installed
+  version, graphical). `-install:list` stays as it was.
+- **Files that do not arrive** are retried by themselves `tentativi` times (`/boot/netupdate.cnf`,
+  3 if it does not say), then netupdate asks (with `-yes` it stops); those left go to
+  `/boot/netupdate.err`, and the next `-check` names them first. The file goes when a `-check` ends
+  with none missing. The `sistema.sh` check reports it.
+- **ExPackage**: **Update** reads the list and the versions again, installing nothing;
+  **Upgrade** updates the installed ones that are updatable (`netupdate -check -yes`), then
+  removes the `[-]` and installs the `[+]` with the `[d]`. Next to the name, the repository's
+  version; the state "aggiornabile".
+- **Fault found (the 0.346 -> 0.351 jump):** between the update and the reboot the old kernel is
+  still running, and it does not know `/lib/ld-exos.so`: `ls`, `sync` and every new program die
+  with a page fault at 0. No harm done: `reboot` is inside the shell, and after the reboot all
+  works. After "IL KERNEL E' CAMBIATO", just reboot.
+- **Fault found: a VLC installed by netupdate did not start.** Qt 5 wants libpng16, FreeType and
+  HarfBuzz, ported but never put on the CD or in the repository (the VLC tests copied them by
+  hand), and zlib, pcre2, zstd its `vuole` did not name; the gcc of `base` wants libz and libzstd,
+  nasm libz. Now there are `[libpng]` `[freetype]` `[harfbuzz]`, the right `vuole` (zlib and zstd
+  no longer want `base`), and `mknetinst` checks with `tools/netinst/controlla_dipendenze.py`
+  that every library asked for (`readelf -d`) comes with the chain of `vuole`. On a machine
+  already updated: `netupdate -check -yesall`.
+- **Fault found: toolinst (0.007)** kept 12 groups, 10 `solo`, 4 `file`, 8 `nota`, 4 `vuole` and
+  read 16 KB of catalogue: the tools CD has 38 groups and 25 KB. Every list now grows with the
+  file (`tools/prova_toolinst.sh`).
+- **The first -check of 0.050 does not fetch again what is already right**: a file the register
+  does not know but whose bytes and sha256 on the disk are the server's stays (on the test PC
+  5141 files recognised, 2672 really changed).
+- **Fault found: between the update and the reboot nobody could get in by telnet.** For every
+  connection telnetd runs `/bin/telnetd` again, which was dynamic: with `/lib/ld-exos.so` already
+  new and the old kernel it died at EIP 0 and the session closed without a byte (on the test PC
+  and in QEMU). Now **telnetd, sshd and netupdate are static** like login, install and sh
+  (`STATICI_OBBLIGATI` in the Makefile, `STATICI` in `tools/costruisci-utente64.sh`): a new
+  session gets in, updates, and `reboot` (built into the shell) reboots. The other dynamic
+  commands (`ps`, `ls`...) still die on the old kernel: just reboot.
+- Tests: `tools/prova_netupdate_app.sh`, `tools/prova_expackage.sh` with Upgrade.
+
 ### The kernel is a **minikernel**
 
 It is not a microkernel and it is not monolithic, and it is worth saying
@@ -110,6 +166,132 @@ for **`g++`** — containers, `std::string` and exceptions included. See
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### VLC as on Linux: libvlc.so, libvlccore.so and every plugin a .so opened with dlopen (voce 105, step 4) — tested in QEMU
+
+`/exos/bin/vlc` now runs on `/exos/lib/libvlc.so.5` and `libvlccore.so.9`, and each of its 241
+modules is a `.so` in `/exos/lib/vlc/plugins/<kind>/`, opened with dlopen when VLC needs it, as on
+Linux. Until now VLC was one program with every plugin linked in: three plugins with the same
+name were lost (VLC names a module after its source file: flac, vc1, file), two tables had to be
+made static by sed, and the FLAC packetizer was missing, so no FLAC played. The FLAC file of
+`tools/vlc-exos/prova.sh` now plays at 32 and 64 bit like the rest.
+
+- **libtool learns EX-OS** (`lib_libtool_exos` in `tools/librerie-exos/comune.sh`): in every
+  per-system case of libtool's code in a configure, `exos*` goes where `linux*` is. Before it,
+  libtool said "dynamic_linker=no" and built only static archives, for every autoconf port.
+- **`gcc -shared` links the libc** as on Linux (`tools/gcc-exos/specs-condivise.sh`): `-lc` is
+  `/lib/ld-exos.so`, so a library gets `DT_NEEDED ld-exos.so` and its libc symbols are checked
+  when it is linked. Without it libtool's C++ links (`-nostdlib`, then the libraries g++ names)
+  had no libc at all. A static program with `libc.a` that opens such a library skips that
+  `DT_NEEDED` and lends its own libc, as before (`lib/libc_dl.c`).
+- **libstdc++.la tells the truth** (`tools/librerie-exos/la-condivisa.sh`, called by
+  `cxx-condivise.sh`): GCC's libtool had written "static only", and every C++ shared object
+  linked on top of Qt took the non-PIC `libstdc++.a`.
+- **ncurses is a shared library**: `libncurses.so.6`, `libpanel`, `libmenu`, `libform`,
+  `libncurses++` (the `.a` stay for `-static` programs). VLC's text interface is a plugin, and a
+  `.so` cannot carry the non-PIC archive. `tic`, `tput` and the others now use it.
+- **`sincos`, `sincosf`, `sincosl`** declared in `<math.h>` (with `_GNU_SOURCE`): openlibm had
+  them, the header did not; VLC's OpenGL output calls `sincosf`.
+- **The modules' list** `plugins.dat` is written on the machine by
+  `/exos/lib/vlc/vlc-cache-gen` (a cross build cannot run it): netupdate's check for VLC
+  (`tools/netinst/verifiche/vlc.sh`) makes it when it is missing. Without it VLC still starts,
+  but opens every module at each start.
+- Only `glspectrum` is not built: EX-OS has EGL and GLES2, no libGL to link `-lGL` with (VLC's
+  OpenGL output takes its functions through EGL and is there).
+
+`tools/vlc-exos/prova.sh` at 32 and 64 bit: the three audio files compared with FFmpeg (FLAC
+included), the ncurses interface and its volume, the three videos in their window, `vlc-cache-gen`
+writes `plugins.dat`, the Qt interface with the cone: all `[OK]`.
+
+### Every program on /lib/ld-exos.so, the EX-OS libraries are real .so files (kernel 0.351, voce 105) — tested in QEMU
+
+The rest of the third step of voce 105. Until now the shared libc served the ports; the system's
+own programs still carried `libc.c` (at 64 bit) or went through `libc.so` and its bridges (at 32
+bit), and the twelve EX-OS libraries were ET_EXEC files at fixed addresses with a table of names.
+Now there is one way, the Unix one.
+
+- **The kernel keeps one copy of each shared object** (`kernel/loader/condivise.c`,
+  `SYS_SO_MAPPA` 274): code and read-only data are read once for the whole system and mapped in
+  every process that loads the file, only the writable part is private. `ld-exos.so` and the
+  libraries it loads (`DT_NEEDED`, `dlopen`) come from there. Measured with `tools/prova_ld.sh`
+  (11/11 at 32 and 64 bit): six sleeping copies of a program cost 208 KB each at 32 bit (215 at
+  64) against 219 (231) of the same program built `-static`.
+- **Every command, every ExWin application, exilla and vlcapri are on `/lib/ld-exos.so`**, at 32
+  and 64 bit. Static remain the drivers (they start before there is a filesystem to read a
+  library from), `login`, `install`, `soccorso` and `sh` (the way in and the way to repair), and
+  `extaskbar`, `wifid`, `hello`, `prova64`, `readlink`. `make verifica-statici` checks them by
+  looking for PT_INTERP. At 64 bit every program carried the libc and ExWin inside: `pm` goes from
+  451 KB to 78 KB, `/bin` from 5.7 MB to 2.8 MB, `/exwin/bin` from 10 MB to 1.2 MB, the ISO from
+  39 MB to 28 MB.
+- **The twelve libraries are ELF shared objects** (ET_DYN, `-fPIC`, no text relocations): exwin,
+  exdlg, eximg, exfont, exhtml, excss, exjs, quickjs, exdom, exhttp, exsuono, exzip. What each
+  offers is its version script, `lib/<name>/<name>.ver` (the same names as the old tables). A
+  program names the ones it cannot live without (`exwin.so`, `exdlg.so`, `exhttp.so`,
+  `exhtml.so`, `exdom.so`, `exzip.so`) and the interpreter loads them; the optional ones (`excss`,
+  `exsuono`, the two JavaScript engines) keep a small stub that opens them with `dlopen` and lives
+  without them. `exlib_apri()` and `exlib_simbolo()` are still there, on top of
+  `dlopen`/`dlsym`.
+- **Gone:** `libc.so` and its bridges (`lib/libc_ponti.c`, `tools/genlibc.py`), the loader
+  `lib/exlib/exlib.c`, the fixed library addresses between 0x04000000 and 0x08000000
+  (`lib/*/*.ld`, `tools/fette.py`) and the kernel's old library loader (`kernel/loader/lib.c`):
+  `SYS_LIB_APRI` (248) and `SYS_LIB_TROVA` (238) now return ENOSYS.
+- **The floppy too:** `ld-exos.so` is in `/rdboot/lib`, and the kernel looks for an interpreter
+  in `/lib/...` also under `/rdboot` and `/cdrom`, so a program on the floppy or on the CD starts
+  before anything is mounted on `/lib`.
+- **The address of a function is the same everywhere.** In a program built without `-fPIC` the
+  address of `strlen` is its PLT entry: `dlsym(RTLD_DEFAULT, "strlen")` gave the libc's and
+  `&strlen` the program's. Now, as in glibc, an undefined FUNC symbol with a value in the
+  program is the definition for every lookup except the JUMP_SLOT that fills that PLT entry.
+- **The stage 2 bounce buffer moved** (`RDSEG` 0x90000): it read the base system at 0x80000, on
+  top of the tail of a kernel larger than 448 KB, and the 64-bit kernel 0.351 (461,008 bytes)
+  died after "J" without a line on the serial port. The kernel can now be 512 KB, and the
+  Makefile refuses a larger one.
+- **exide 0.026** writes the link line of a program on `ld-exos.so` with the `.so` files of
+  `/exwin/lib` (or `/cdrom/exwin/lib`); the tools CD carries `libexos_avvio.a` and the public
+  headers, and only the stubs of the optional libraries.
+- ! A program built before 0.351 against `libc.so` or a library stub does not start any more:
+  rebuild it, or take it again with `netupdate`.
+
+### The shared libc: /lib/ld-exos.so, and the kernel starts the interpreter (kernel 0.350, voce 105) — tested in QEMU
+
+The third step of voce 105. Until now every program carried the libc inside it (`libc.a`), and a
+program linked to shared objects loaded them itself at start. Now there is a shared libc, as on
+every Unix, and a program linked without `-static` uses it.
+
+- **The kernel honours PT_INTERP** (0.350). A program that names an interpreter gets it mapped
+  after its own image (an ET_DYN, read once into the process), an auxv at the top of the stack
+  (`AT_PHDR`, `AT_PHENT`, `AT_PHNUM`, `AT_PAGESZ`, `AT_BASE`, `AT_ENTRY`) whose address goes in the
+  first of the four words the program starts from (0 before, and still 0 for a static program),
+  and starts there. Until 0.349 PT_INTERP was ignored.
+- **/lib/ld-exos.so is the libc and its own interpreter**, as musl does it (`lib/libc_ld.c`): it
+  relocates itself, loads the program's `DT_NEEDED` with the same loader as `dlopen`
+  (`lib/libc_dl.c`), relocates the program (COPY relocations too), binds its own variables to the
+  program's copies (`environ`, `optarg`, `stdout`...), runs its constructors and the libraries',
+  and jumps to the program. The program keeps its own start (`libexos_avvio.a`: `_libc_start`,
+  its constructors, `main`); in the sysroot `libc.so` is a linker script that joins the two.
+  `-static` still takes `libc.a`.
+- **The order of the global scope is Linux's:** the libc enters where a `DT_NEEDED` names it, so a
+  library before it wins (VLC's `libvlc` defines `putenv`, `setlocale`... for its plugins).
+- **`dlsym(RTLD_NEXT)` is real:** the first definition after the caller's module. Until now it
+  was the global scope, and a library that wraps a libc function found itself again.
+- **VLC uses its `bin/override.c` as it is**: with `libc.a` inside, its `putenv`, `setlocale`,
+  `strerror`... were a second definition of the libc's names and the file was replaced by an empty
+  one; now the program's win, and reach the libc's with `dlsym(RTLD_NEXT)`. `tools/vlc-exos/prova.sh`
+  as before at 32 and 64 bit (the FLAC file waits for step 4, VLC's plugins as `.so`).
+- A program built before, with `libc.a` inside and its own `.so`, also has PT_INTERP but does not
+  name `ld-exos.so`: the interpreter lets it start as before. ! With kernel 0.350
+  `/lib/ld-exos.so` must be there: kernel and libc go together.
+- Built by `tools/costruisci-ld.sh` (the two sysroots, `/lib` of both CDs, the libc of today of
+  the third-party builds). Tests: `tools/prova_ld.sh` 10/10 at 32 and 64 bit; `tools/prova-dl/`
+  (start, dlopen, 40 libraries with TLS and threads, C++ with exceptions, QuickJS) passes with
+  the libc inside and with the shared one (`LIBC_CONDIVISA=1` for `prova-tante.sh`).
+- **The ports are on it**: bzip2, xz, lz4, zstd, PCRE2, Expat, OpenSSL, ncurses, FFmpeg,
+  MariaDB, httpd, PHP, Valkey, Mesa, nano and VLC are built without `-static`, every program
+  with PT_INTERP `/lib/ld-exos.so` and the shared libraries it names. The tests of each pass at
+  32 and 64 bit (nano, Valkey, EGL, OpenSSL, httpd with PHP, MariaDB with the four connectors,
+  the MariaDB service on a disk installed from the CD, the compressors, VLC). `[mariadb]` now
+  wants `bzip2`, `xz`, `lz4` and `pcre2` too: `mariadbd` names them. ! A test that copies the
+  libraries a program names skips `ld-exos.so`: it is the system's, in `/lib` of the CD.
 
 ### pthread_cancel stops a thread that waits, FD_CLOEXEC closes at exec, posix_spawn (kernel 0.349, ip.drv 0.027, voce 105) — tested in QEMU
 
@@ -5808,6 +5990,11 @@ limit — 512 lines, 200 columns — follows from the bump allocator, where
 
 ### Shared libraries: `exwin.so`, `exdlg.so`, `libc.so`
 
+> **History.** This is how libraries worked until kernel 0.350. Since 0.351 the libc is
+> `/lib/ld-exos.so` and the EX-OS libraries are ELF shared objects: see
+> [Writing a shared library](#writing-a-shared-library). `SYS_LIB_APRI`, `libc.so`, the bridges
+> and the fixed addresses below are gone.
+
 | | |
 |---|---|
 | `SYS_LIB_APRI` (248): the kernel maps a library **once** and attaches it to whoever asks | tested |
@@ -6627,7 +6814,7 @@ before acting — see below.
 |-----|---------------|--------------|----------|-----|----------------|
 | 246 | video_info    | `VideoInfo*` | —        | —   | where the framebuffer is and what shape it has |
 | 247 | log           | `const char*`| length   | —   | one line on the kernel log, i.e. on the **serial port** |
-| 248 | lib_apri      | `const char*`| —        | —   | map a shared library, return its export table |
+| 248 | lib_apri      | `const char*`| —        | —   | map a shared library, return its export table (**retired in 0.351**: ENOSYS) |
 
 `log` is not a duplicate of `printf`, and the difference matters: `printf`
 writes to the process's console, and if that console is not the one on screen
@@ -8076,79 +8263,65 @@ replacement in hand.
 
 ## Writing a shared library
 
-An EX-OS library is a perfectly ordinary ELF, linked at a reserved address,
-whose **entry point is not code**: it is a table of names.
+Since kernel 0.351 an EX-OS library is an ordinary ELF shared object, as on any Unix: position
+independent code, a dynamic symbol table, and `/lib/ld-exos.so` (the libc and the interpreter)
+loads it. The kernel keeps a single copy of its code for the whole system.
 
-**The library source** declares what it exports:
-
-```c
-#include "exlib.h"
-
-static const char *const nomi[] = { "pippo", "pluto" };
-static void *const dove[]       = { (void *)pippo, (void *)pluto };
-
-EXLIB_TESTA(mia_tabella, nomi, dove);
-```
-
-**The linker script** puts it at the base of its slice:
+**Build it** with `-fPIC`, and say what it exports with a version script:
 
 ```
-ENTRY(mia_tabella)
+gcc -m32 -ffreestanding -fno-builtin -nostdlib -fPIC -O2 -I lib/include -c mialib.c -o mialib.o
+ld -m elf_i386 -shared --hash-style=both -z defs -z text -z noexecstack -z separate-code \
+   -soname mialib.so --version-script mialib.ver mialib.o \
+   /lib/ld-exos.so libexos_avvio.a -o mialib.so
+```
 
-SECTIONS
+```
+/* mialib.ver */
 {
-    . = 0x04C00000;             /* the first free slice */
-
-    .exlib_testa : { KEEP(*(.exlib_testa)) }
-    .text        : { *(.text) *(.text.*) }
-    .rodata      : { *(.rodata) *(.rodata.*) }
-
-    . = ALIGN(4096);            /* mandatory, see below */
-
-    .data : { *(.data) *(.data.*) }
-    .bss  : { *(.bss) *(.bss.*) *(COMMON) }
-}
+    global: pippo; pluto;
+    local:  *;
+};
 ```
 
-**Whoever uses it** asks for the names it needs:
+**A program that needs it** names it when it is linked, and the interpreter loads it at start
+(`DT_NEEDED`):
+
+```
+gcc -m32 -ffreestanding -fno-builtin -nostdlib -fno-pic -fno-pie \
+    -Wl,-Ttext-segment=0x08000000 -Wl,-z,separate-code -Wl,--hash-style=both \
+    -Wl,-dynamic-linker,/lib/ld-exos.so \
+    start.S programma.c /exwin/lib/mialib.so libexos_avvio.a /lib/ld-exos.so -o programma
+```
+
+**A program that can live without it** opens it when it wants it:
 
 ```c
-const ExLibTesta *t = exlib_apri("/lib/mialib.so");
-void (*pippo)(void) = exlib_simbolo(t, "pippo");
+void *h = dlopen("/exwin/lib/mialib.so", RTLD_NOW);
+void (*pippo)(void) = h ? (void (*)(void))dlsym(h, "pippo") : NULL;
 ```
 
-In practice you do not do this by hand: you write a **stub** — a file with the
-same functions as the library, each one a thunk to the resolved pointer — and
-applications link against that. Their source does not change by a single line.
-See `lib/exwin/exwin_stub.c` as the model.
+(`exlib_apri()` and `exlib_simbolo()` of `exlib.h` do the same, and `exlib_apri_fra()` tries a
+list of paths.) The stubs of `excss`, `exsuono` and `exjs` are the model: the same functions as
+the library, each one opening it at the first call.
 
-### The three rules you cannot break
+### The rules
 
-! **`. = ALIGN(4096)` BEFORE `.data`.** The kernel shares read-only pages and
-gives a private copy of writable ones, and it works in **whole pages**. If the
-end of `.rodata` and the start of `.data` sat in the same page, that page would
-be writable — that is, copied for every process — and half of `.rodata` would
-quietly stop being shared **with nobody saying so**.
+! **`-z defs` AND `-z text`.** The first refuses a library with a name nobody defines (the link
+says it, not the program at start); the second refuses code that would need writing to at load,
+which would be a private copy in every process instead of one copy for all.
 
-! **ONE SLICE PER LIBRARY, ASSIGNED IN ONE PLACE.** The map lives in
-`lib/exwin/exwin.ld`. Two libraries at the same base would overwrite each other
-inside the process that uses both.
+! **`ld-exos.so` BEFORE `libexos_avvio.a`** when linking a library: everything comes from the
+shared libc, and from the archive only `__stack_chk_fail_local`, the hidden name that
+`-fstack-protector` uses in PIC code.
 
-! **YOU ADD, YOU DO NOT REMOVE.** Adding functions, reordering them and
-rewriting their bodies is always allowed: already-compiled applications keep
-working. Removing a name breaks them — and they say so, naming the missing
-symbol, instead of jumping into nothing.
+! **YOU ADD, YOU DO NOT REMOVE.** Adding functions and rewriting their bodies is always allowed:
+programs already built find them by name. Removing a name from the version script breaks them,
+and the interpreter says which name is missing.
 
-### If the library uses another library
-
-A program has `_start`, and there is a natural place there to attach what it
-needs. **A library does not start**: its functions are simply called. If it
-needs other libraries, it exports the optional name `__lib_avvio`:
-`exlib_apri()` looks it up and calls it, and that is the only moment at which
-the library is known to have just been mapped.
-
-That is how `exwin.so` and `exdlg.so` use `libc.so` without carrying a copy of
-it inside.
+! **A library's constructors run before the program's `main`**, in the order of the libraries
+(the ones it needs first): a library that needs another names it with `DT_NEEDED` too (`exdlg.so`
+names `exwin.so`), it does not open it by hand.
 
 ---
 

@@ -1022,7 +1022,18 @@
  * now fork + exec handed the new program every descriptor. And
  * pthread_cancel cuts short a thread asleep in a cancellation point: the
  * libc marks the call with SYS_PUNTO, the wait ends EINTR. */
-#define EXOS_VERSION    "0.349"
+/* 0.349 -> 0.350 (voce 105, the shared libc): PT_INTERP is no longer
+ * ignored. The kernel maps the interpreter (ET_DYN, resident) after the
+ * program, puts an auxv at the top of the stack - AT_PHDR, AT_PHENT,
+ * AT_PHNUM, AT_PAGESZ, AT_BASE, AT_ENTRY - and its address in the first of
+ * the four words (the fake return address, 0 before and still 0 for a
+ * static program), and starts the interpreter. */
+/* 0.350 -> 0.351 (voce 105): the shared objects in one copy for the whole
+ * machine (loader/condivise.c). The read-only pages of an ET_DYN are the
+ * cache's frames in every process, at any base; the writable ones a copy,
+ * pure .bss a promise. The interpreter comes from there, and SYS_SO_MAPPA
+ * (274) gives the same to dlopen. Key: VFS identity, size, mtime. */
+#define EXOS_VERSION    "0.351"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

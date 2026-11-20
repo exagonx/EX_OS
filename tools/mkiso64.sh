@@ -117,6 +117,11 @@ if [ "$QUALE" = "intero" ]; then
         rm -f "$RADICE/exwin/bin/exilla" "$RADICE/exwin/bin/vlcapri"
         [ -f build-64/drivers/wserver.drv ] && cp build-64/drivers/wserver.drv "$RADICE/exwin/bin/wserver"
     fi
+    # /lib/ld-exos.so (voce 105): the shared libc and the interpreter that
+    # the kernel (0.350) starts for every program linked without -static
+    bash tools/costruisci-ld.sh 64 build-64/ld > /dev/null || exit 1
+    mkdir -p "$RADICE/lib"
+    cp build-64/ld/ld-exos.so "$RADICE/lib/"
     # libm.so.4 (openlibm, 3 November 2026): programs linked to shared
     # objects and the libraries they load take their math from it
     # (lib/libc_dl.c). Only the file DT_NEEDED names: no symbolic links here.

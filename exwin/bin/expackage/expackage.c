@@ -16,7 +16,9 @@
  * register, the checksums, the dependency chain and the removal of orphans
  * are all in bin/netupdate, and they stay there: this program runs
  *
- *     netupdate -install:list -tab        the list (one line per package)
+ *     netupdate -install:list -tab        the list (one line per package;
+ *                                         0.002: version, build, updatable)
+ *     netupdate -check -yes               Upgrade: what is installed, up to date
  *     netupdate -install:<id> -yes        an install, with its chain
  *     netupdate -remove:<id> -yes         a removal, with its orphans
  *     netupdate -set:<TIPO> <indirizzo>   the repository
@@ -48,7 +50,7 @@
 #include "exinfo.h"
 #include "kbd_proto.h"
 
-#define VERSIONE_APP "0.001"
+#define VERSIONE_APP "0.002"
 EX_VERSIONE("expackage", VERSIONE_APP);
 
 #define FIN_W       660
@@ -81,6 +83,8 @@ typedef struct {
     int  sempre;
     int  segno;
     int  dipendenza;          /* needed by a marked one, not installed */
+    char versione[24];        /* (0.002) on the server, "" from a netupdate < 0.050 */
+    int  aggiornabile;        /* installed, and the server has a newer build */
 } App;
 
 /* ! AS MANY AS THE REPOSITORY HAS: the array grows with the list (the rule
@@ -103,6 +107,7 @@ static int      g_root;
 #define J_SET       4
 #define J_VERIFICA  5     /* a list after J_SET: is there a catalogue? */
 #define J_RIPRISTINA 6    /* -set back to the old repository */
+#define J_AGGIORNA  7     /* (0.002) Upgrade: netupdate -check -yes */
 typedef struct { int tipo; char a[200]; char b[16]; } Lavoro;
 
 static Lavoro *g_coda;
@@ -172,6 +177,10 @@ static int avvia(const Lavoro *l)
         snprintf(arg1, sizeof(arg1), "-install:%s", l->a);
         av[n++] = arg1; av[n++] = (char *)"-yes";
         snprintf(titolo, sizeof(titolo), "Installo %s...", l->a);
+        break;
+    case J_AGGIORNA:
+        av[n++] = (char *)"-check"; av[n++] = (char *)"-yes";
+        snprintf(titolo, sizeof(titolo), "Aggiorno le applicazioni installate...");
         break;
     case J_TOGLI:
         snprintf(arg1, sizeof(arg1), "-remove:%s", l->a);
@@ -263,12 +272,14 @@ static App *cerca(const char *id)
 /* split one "PKG\t..." line (see riga_tab in bin/netupdate/netupdate.c) */
 static void leggi_pkg(char *riga)
 {
-    char *campo[8];
+    char *campo[13];
     int   n = 0, k;
     App  *a;
     char *p = riga, *v;
 
-    while (n < 8) {
+    /* ! 8 COLUMNS FROM A netupdate BEFORE 0.050, 13 FROM 0.050: versione,
+     * build, aggiornabile, versione qui, grafica at the end */
+    while (n < 13) {
         campo[n++] = p;
         p = strchr(p, '\t');
         if (!p) break;
@@ -313,6 +324,10 @@ static void leggi_pkg(char *riga)
     k = (int)strlen(campo[7]);
     while (k > 0 && (campo[7][k - 1] == '\n' || campo[7][k - 1] == '\r')) campo[7][--k] = 0;
     snprintf(a->dice, sizeof(a->dice), "%s", strcmp(campo[7], "-") ? campo[7] : "");
+    if (n >= 11) {
+        snprintf(a->versione, sizeof(a->versione), "%s", strcmp(campo[8], "-") ? campo[8] : "");
+        a->aggiornabile = atoi(campo[10]);
+    }
     g_n++;
 }
 
@@ -417,9 +432,11 @@ static void lista_riempi(void)
         else if (a->dipendenza)           s = "[d]";
         else if (a->installato)           s = "[x]";
         else                              s = "[ ]";
-        if (a->installato) stato = a->sempre ? "del sistema" : "installato";
+        if (a->aggiornabile) stato = "aggiornabile";
+        else if (a->installato) stato = a->sempre ? "del sistema" : "installato";
         else stato = "";
-        snprintf(r, sizeof(r), "%s %-12s %-11s %5ld  %s", s, a->id, stato, a->mb, a->nome);
+        snprintf(r, sizeof(r), "%s %-12s %-12s %5ld  %s%s%s", s, a->id, stato, a->mb, a->nome,
+                 a->versione[0] ? " " : "", a->versione);
         ex_list_add(g_lista, r);
     }
     if (scelta < (unsigned int)g_n) ex_list_select(g_lista, scelta);
@@ -536,21 +553,38 @@ static int serve_root(const char *cosa)
     return 1;
 }
 
+/* (0.002) Upgrade: the installed ones with a newer build on the server are
+ * brought up to date (netupdate -check -yes), then the [-] go and the [+]
+ * come with their [d]. Update (ID_AGGIORNA) only reads the list again. */
 static void applica(void)
 {
     char t[1200];
-    int  i, metti = 0, togli = 0;
+    int  i, metti = 0, togli = 0, nuovi = 0;
     size_t l;
 
     if (occupato()) { messaggio("netupdate sta ancora lavorando."); return; }
     for (i = 0; i < g_n; i++) {
         if (g_app[i].segno == SEGNO_METTI) metti++;
         if (g_app[i].segno == SEGNO_TOGLI) togli++;
+        if (g_app[i].aggiornabile) nuovi++;
     }
-    if (!metti && !togli) { messaggio("Niente da fare: segna prima qualcosa (Invio o doppio clic)."); return; }
-    if (serve_root("Installare e togliere")) return;
+    if (!metti && !togli && !nuovi) {
+        messaggio("Niente da fare: tutto aggiornato, e nessun segno (Update rilegge l'elenco).");
+        return;
+    }
+    if (serve_root("Aggiornare, installare e togliere")) return;
 
     t[0] = 0;
+    if (nuovi) {
+        strcat(t, "Aggiorno:");
+        for (i = 0; i < g_n; i++)
+            if (g_app[i].aggiornabile) {
+                l = strlen(t);
+                snprintf(t + l, sizeof(t) - l, " %s%s%s", g_app[i].id,
+                         g_app[i].versione[0] ? " " : "", g_app[i].versione);
+            }
+        strncat(t, "\n", sizeof(t) - strlen(t) - 1);
+    }
     if (metti) {
         long mb = 0;
 
@@ -574,10 +608,11 @@ static void applica(void)
             }
         strncat(t, "\ne le librerie che non usa piu' nessuno.\n", sizeof(t) - strlen(t) - 1);
     }
-    if (!ex_dlg_conferma("Applica", t, "Procedi", "Annulla")) return;
+    if (!ex_dlg_conferma("Upgrade", t, "Procedi", "Annulla")) return;
 
     g_n_coda = g_prossimo = 0;
     g_errori = 0;
+    if (nuovi) accoda(J_AGGIORNA, 0, 0);
     for (i = 0; i < g_n; i++) if (g_app[i].segno == SEGNO_TOGLI) accoda(J_TOGLI, g_app[i].id, 0);
     for (i = 0; i < g_n; i++) if (g_app[i].segno == SEGNO_METTI) accoda(J_INSTALLA, g_app[i].id, 0);
     accoda(J_LISTA, 0, 0);
@@ -764,7 +799,7 @@ static void lavoro_finito(int stato)
         repo_esito("Nessun elenco li': il repository e' tornato quello di prima.");
         accoda(J_LISTA, 0, 0);
         break;
-    default:                                    /* J_INSTALLA, J_TOGLI */
+    default:                                    /* J_INSTALLA, J_TOGLI, J_AGGIORNA */
         if (codice != 0) g_errori++;
         break;
     }
@@ -778,12 +813,16 @@ static void controlla_lavoro(void)
     if (g_pid > 0) {
         r = waitpid(g_pid, &stato, WNOHANG);
         if (r == 0) {
-            if (g_tipo_corrente == J_INSTALLA || g_tipo_corrente == J_TOGLI) {
+            if (g_tipo_corrente == J_INSTALLA || g_tipo_corrente == J_TOGLI ||
+                g_tipo_corrente == J_AGGIORNA) {
                 char riga[160];
 
                 ultima_riga(riga, sizeof(riga));
-                snprintf(t, sizeof(t), "%s %s: %s", g_tipo_corrente == J_TOGLI ? "Tolgo" : "Installo",
-                         g_coda[g_prossimo - 1].a, riga);
+                if (g_tipo_corrente == J_AGGIORNA)
+                    snprintf(t, sizeof(t), "Aggiorno: %s", riga);
+                else
+                    snprintf(t, sizeof(t), "%s %s: %s", g_tipo_corrente == J_TOGLI ? "Tolgo" : "Installo",
+                             g_coda[g_prossimo - 1].a, riga);
                 messaggio(t);
             }
             return;
@@ -824,6 +863,8 @@ static void istruzioni(void)
         "  [ ] non installata        [x] installata\n"
         "  [+] da installare         [-] da togliere\n"
         "  [d] da installare perche' serve a una segnata [+]\n"
+        "Lo stato \"aggiornabile\": e' installata e il repository ne ha una "
+        "build piu' nuova. Accanto al nome, la versione del repository.\n"
         "\n"
         "SEGNARE\n"
         "Invio, doppio clic o il pulsante Segna cambiano il segno della riga "
@@ -831,8 +872,13 @@ static void istruzioni(void)
         "[d]; una installata diventa [-], se nessun'altra la usa. Sotto "
         "l'elenco: cosa vuole e chi la usa.\n"
         "\n"
-        "APPLICA\n"
-        "Toglie le [-], poi installa le [+] con le [d]. Lo fa netupdate, in "
+        "UPDATE\n"
+        "Rilegge dal repository l'elenco delle applicazioni e le loro "
+        "versioni: non installa niente.\n"
+        "\n"
+        "UPGRADE\n"
+        "Aggiorna le applicazioni installate che sono aggiornabili, poi "
+        "toglie le [-] e installa le [+] con le [d]. Lo fa netupdate, in "
         "disparte: la riga in fondo dice dove e' arrivato, e Visualizza > "
         "Registro di netupdate mostra tutto quello che ha scritto. Serve root.\n"
         "\n"
@@ -843,7 +889,8 @@ static void istruzioni(void)
         "rimette quello di prima.\n"
         "\n"
         "DA RIGA DI COMANDO\n"
-        "  netupdate -install:list -p    l'elenco, una pagina per volta\n"
+        "  netupdate -list -p            l'elenco, una pagina per volta\n"
+        "  netupdate -check -yes         aggiorna quel che e' installato\n"
         "  netupdate -install:<app>      installa\n"
         "  netupdate -remove:<app>       toglie\n");
 }
@@ -921,8 +968,8 @@ int main(void)
                     FIN_W, FIN_H, 0, 0, proc);
     if (!g_f) return 1;
     mb = ex_menu_bar(g_f);
-    ex_menu_add_item(mb, "File", "Aggiorna l'elenco", ID_AGGIORNA);
-    ex_menu_add_item(mb, "File", "Applica", ID_APPLICA);
+    ex_menu_add_item(mb, "File", "Update: elenco e versioni", ID_AGGIORNA);
+    ex_menu_add_item(mb, "File", "Upgrade: aggiorna e installa", ID_APPLICA);
     ex_menu_add_item(mb, "File", "-", 0);
     ex_menu_add_item(mb, "File", "Esci", ID_ESCI);
     ex_menu_add_item(mb, "Repository", "Imposta e verifica...", ID_REPO);
@@ -933,7 +980,7 @@ int main(void)
     y = 28;
     g_repo_lbl = ex_create("label", "", EX_CHILD, 10, y, FIN_W - 20, 18, g_f, 0, 0);
     y += 22;
-    ex_create("label", "    PACCHETTO    STATO          MB  COS'E'", EX_CHILD, 10, y, FIN_W - 20, 18, g_f, 0, 0);
+    ex_create("label", "    PACCHETTO    STATO           MB  COS'E'", EX_CHILD, 10, y, FIN_W - 20, 18, g_f, 0, 0);
     y += 20;
     g_lista = ex_create("lista", "", EX_CHILD, 10, y, FIN_W - 20, 250, g_f, ID_LISTA, 0);
     y += 256;
@@ -943,8 +990,8 @@ int main(void)
     y += 24;
     ex_create("button", "Segna", EX_CHILD, 10, y, 100, 24, g_f, ID_SEGNA, 0);
     ex_create("button", "Togli i segni", EX_CHILD, 116, y, 120, 24, g_f, ID_PULISCI, 0);
-    ex_create("button", "Aggiorna", EX_CHILD, 242, y, 100, 24, g_f, ID_AGGIORNA, 0);
-    g_bt_applica = ex_create("button", "Applica", EX_CHILD, FIN_W - 110, y, 100, 24, g_f, ID_APPLICA, 0);
+    ex_create("button", "Update", EX_CHILD, 242, y, 100, 24, g_f, ID_AGGIORNA, 0);
+    g_bt_applica = ex_create("button", "Upgrade", EX_CHILD, FIN_W - 110, y, 100, 24, g_f, ID_APPLICA, 0);
     y += 32;
     g_msg = ex_create("label", "", EX_CHILD, 10, y, FIN_W - 20, 18, g_f, 0, 0);
 

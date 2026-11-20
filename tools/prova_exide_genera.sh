@@ -147,10 +147,10 @@ done
 for albero in build/iso/exos dist/netinst/file/exos; do
     [ -d "$albero/include" ] || { echo "        ($albero non c'e': salto)"; continue; }
     diversi=""
-    for f in lib/exwin/exwin.h lib/exwin/exwin_stub.c lib/include/libc.h lib/exdlg/exdlg.h; do
+    for f in lib/exwin/exwin.h lib/include/exlib.h lib/include/libc.h lib/exdlg/exdlg.h; do
         cmp -s "$f" "$albero/include/$(basename "$f")" || diversi="$diversi $(basename "$f")"
     done
-    [ -z "$diversi" ] && ok "$albero ha gli header e gli stub di oggi" \
+    [ -z "$diversi" ] && ok "$albero ha gli header di oggi" \
                       || no "$albero e' rimasto indietro:$diversi (make netinst li rinfresca)"
 done
 

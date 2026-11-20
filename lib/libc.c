@@ -284,6 +284,7 @@ typedef char stat_56_byte[sizeof(Stat) == 56 ? 1 : -1];
 #define SYS_EXEC        11
 #define SYS_MMAP        90
 #define SYS_MUNMAP      91
+#define SYS_SO_MAPPA   274   /* a shared object from the kernel's cache (0.351) */
 #define SYS_SBRK        45
 #define SYS_SCHED_YIELD 158
 #define SYS_SLEEP       162
@@ -3822,7 +3823,7 @@ void exit(int code)
         if (g_distruttori_prog) {
             g_distruttori_prog();
         }
-#ifndef EXOS_LIBC_SO
+#if !defined(EXOS_LIBC_SO) && !defined(EXOS_LIBC_ELF)
         /* ! DENTRO LA LIBRERIA QUESTA RIGA NON C'E'. _libc_distruttori() sta in
          * libc_avvio.c, che la libreria non compila apposta (percorrerebbe il
          * __fini_array della LIBRERIA invece che quello del programma). Chi si
@@ -11550,38 +11551,17 @@ static int shmfd_munmap(void *addr)
 }
 
 /* =============================================================================
- * dlopen, dlsym, dlclose, dlerror — on EX-OS libraries (@DLOPEN, 29 Sept 2026)
+ * dlopen, dlsym, dlclose, dlerror (@DLOPEN, 29 Sept 2026)
  *
- * An EX-OS shared library is not an ELF shared object with a dynamic symbol
- * table: it is linked at its own address and exports a table of names and
- * addresses, ExLibTesta (lib/include/exlib.h), that SYS_LIB_APRI maps and
- * hands back. dlopen is exlib_apri with a search path, dlsym is a look-up in
- * that table. It is what a ported program needs to open an OPTIONAL library
- * and carry on without it when it is not there — which is how Firefox uses
- * dlopen almost everywhere.
+ * Ordinary ELF shared objects, loaded by lib/libc_dl.c (since 14 October
+ * 2026) from the kernel's cache of shared objects (0.351).
  *
- * ! AND SINCE 14 OCTOBER 2026 ALSO AN ELF LOADER: an ordinary .so (PIC,
- * DT_NEEDED, relocations) is loaded by lib/libc_dl.c, tried first; this
- * ExLibTesta way is what is left for EX-OS libraries, which are ET_EXEC
- * linked at their own address.
- *
- * ! THE SAME CODE AS lib/exlib/exlib.c, with other names: system programs
- * link libc.c AND exlib.c, and the same names twice would not link. The
- * checks (magic, version) and the call to __lib_avvio are the same, and for
- * the same reasons, written there.
+ * ! THE EX-OS LIBRARIES ARE ELF SHARED OBJECTS TOO SINCE 19 NOVEMBER 2026
+ * (voce 105): exwin.so, eximg.so and the others were ET_EXEC linked at
+ * their own address, with a table of names (ExLibTesta) that SYS_LIB_APRI
+ * mapped, and dlopen had a second way for them. That way is gone, and the
+ * exlib_* calls below are three lines over dlopen.
  * ============================================================================= */
-#define SYS_LIB_APRI_DL   248
-#define DL_MAGIA          0x424C5845u     /* EXLIB_MAGIA */
-#define DL_VERSIONE       1u              /* EXLIB_VERSIONE */
-
-typedef struct {
-    unsigned int        magia;
-    unsigned int        versione;
-    unsigned int        n;
-    const char *const  *nomi;
-    void *const        *indirizzi;
-} DlTesta;                               /* ExLibTesta, duplicated by hand */
-
 static const char *g_dl_errore = 0;
 static char        g_dl_testo[160];
 
@@ -11593,125 +11573,102 @@ static void dl_sbaglio(const char *cosa, const char *chi)
 
 #include "libc_dl.c"         /* ordinary ELF shared objects (14 October 2026) */
 
-static void *dl_cerca(const DlTesta *t, const char *nome)
-{
-    unsigned int i;
+/* ! THE HANDLE OF THE PROGRAM ITSELF (dlopen(NULL)): dlsym on it is the
+ * global scope, as RTLD_DEFAULT. */
+static const char g_dl_programma = 0;
 
-    for (i = 0; i < t->n; i++)
-        if (t->nomi[i] && strcmp(t->nomi[i], nome) == 0) return t->indirizzi[i];
-    return 0;
-}
-
-/* The table, or 0; *esiste says whether the file could be mapped at all. */
-static const DlTesta *dl_apri_uno(const char *percorso, int *esiste)
-{
-    int            r = (int)_syscall1(SYS_LIB_APRI_DL, (uintptr_t)percorso);
-    const DlTesta *t;
-
-    if (r <= 0) return 0;
-    *esiste = 1;
-    t = (const DlTesta *)(uintptr_t)(unsigned int)r;
-    if (t->magia != DL_MAGIA || t->versione != DL_VERSIONE ||
-        t->n == 0 || t->nomi == 0 || t->indirizzi == 0)
-        return 0;
-    {
-        void (*avvia)(void) = (void (*)(void))dl_cerca(t, "__lib_avvio");
-        if (avvia) avvia();
-    }
-    return t;
-}
-
-/* ! THE HANDLE OF THE PROGRAM ITSELF (dlopen(NULL)) exists, because code
- * asks for it before looking anything up; but a static program has no symbol
- * table at run time, so dlsym on it finds nothing — said by dlerror. */
-static const DlTesta g_dl_programma = { 0, 0, 0, 0, 0 };
+#define DL_RTLD_NOW     0x0002          /* RTLD_NOW of lib/include/libc.h */
+#define DL_RTLD_NOLOAD  0x0004          /* RTLD_NOLOAD */
 
 void *dlopen(const char *nome, int flag)
 {
-    static const char *const dove[] = {
-        "/lib/", "/rdboot/lib/", "/exwin/lib/", "/cdrom/lib/", "/cdrom/exwin/lib/", 0
-    };
-    const DlTesta *t = 0;
-    int            esiste = 0, i;
-    char           percorso[256];
+    DlModulo *m;
 
-    (void)flag;                 /* RTLD_LAZY/NOW/GLOBAL: everything is bound */
+    /* RTLD_LAZY/NOW/GLOBAL: everything is bound */
     if (nome == 0) return (void *)&g_dl_programma;
 
-    /* An ordinary ELF shared object first (lib/libc_dl.c). An EX-OS library
-     * is an ET_EXEC linked at its own address: the loader leaves it to the
-     * way below, which asks the kernel to map it. */
-    {
-        DlModulo *m;
-
-        mutex_prendi(&g_dl_lucchetto);
-        g_dl_non_dyn = 0;
-        g_dl_errore = 0;
-        {
-            int da = g_dl_n_da_avviare;     /* 0, unless dlopen from a constructor */
-
-            m = dl_carica(nome, 0, 0);
-            if (!m) dl_lascia_coda(da);
-            else if (dl_finisci(da, 0, 0, 0, 0, 0) != 0) m = 0;
-        }
+    mutex_prendi(&g_dl_lucchetto);
+    if (flag & DL_RTLD_NOLOAD) {               /* only if someone already loaded it */
+        m = dl_gia(nome);
+        if (m) m->conta++;
         mutex_lascia(&g_dl_lucchetto);
-        if (m) return (void *)m;
-        if (!g_dl_non_dyn && g_dl_errore && !strstr(g_dl_errore, "not found")) return 0;
-        g_dl_errore = 0;
+        if (!m) dl_sbaglio("not loaded (RTLD_NOLOAD)", nome);
+        return (void *)m;
     }
+    g_dl_non_dyn = 0;
+    g_dl_errore = 0;
+    {
+        int da = g_dl_n_da_avviare;     /* 0, unless dlopen from a constructor */
 
-    if (strchr(nome, '/')) {
-        t = dl_apri_uno(nome, &esiste);
-    } else {
-        const char *extra = getenv("LD_LIBRARY_PATH");
-
-        if (extra && *extra && strlen(extra) + strlen(nome) + 2 < sizeof(percorso)) {
-            snprintf(percorso, sizeof(percorso), "%s/%s", extra, nome);
-            t = dl_apri_uno(percorso, &esiste);
-        }
-        for (i = 0; !t && dove[i]; i++) {
-            snprintf(percorso, sizeof(percorso), "%s%s", dove[i], nome);
-            t = dl_apri_uno(percorso, &esiste);
-        }
+        m = dl_carica(nome, 0, 0);
+        if (!m) dl_lascia_coda(da);
+        else if (dl_finisci(da, 0, 0, 0, 0, 0) != 0) m = 0;
     }
-    if (!t) {
-        dl_sbaglio(esiste ? "not an EX-OS library (no ExLibTesta): only EX-OS "
-                            "libraries can be opened, see dlopen in lib/libc.c"
-                          : "cannot open shared object file (missing, or not an ELF the kernel can map)",
-                   nome);
-        return 0;
-    }
-    return (void *)t;
+    mutex_lascia(&g_dl_lucchetto);
+    if (!m && g_dl_non_dyn)
+        dl_sbaglio("not a shared object (an ET_EXEC: a program, or an EX-OS library "
+                   "from before 19 November 2026)", nome);
+    else if (!m && !g_dl_errore)
+        dl_sbaglio("cannot open shared object file (missing, or not an ELF the kernel can map)", nome);
+    return (void *)m;
 }
 
 void *dlsym(void *h, const char *nome)
 {
-    const DlTesta *t = (const DlTesta *)h;
-    void          *p;
+    void *p;
 
     if (!nome) { dl_sbaglio("no symbol name", "dlsym"); return 0; }
-    if (t && t != (const DlTesta *)-1 && ((const DlModulo *)h)->magia == DL_MOD_MAGIA) {
-        p = dl_nel_grafo((DlModulo *)h, nome);
+    if (h == (void *)-1) {                   /* RTLD_NEXT: after the caller's module */
+        p = dl_dopo(__builtin_return_address(0), nome);
         if (!p) dl_sbaglio("undefined symbol", nome);
         return p;
     }
-    if (t == 0 || t == &g_dl_programma || t == (const DlTesta *)-1) {
+    if (h == 0 || h == (void *)&g_dl_programma) {
         /* the global scope: the program's table, the libc's, the libraries */
         DlModulo    *chi;
         const DlSim *s = 0;
 
-        p = dl_globale(nome, &chi, &s);
+        p = dl_globale(nome, &chi, &s, 0);
         if (!p) dl_sbaglio("undefined symbol", nome);
         return p;
     }
-    p = dl_cerca(t, nome);
+    if (((const DlModulo *)h)->magia != DL_MOD_MAGIA) { dl_sbaglio("not a handle from dlopen", "dlsym"); return 0; }
+    p = dl_nel_grafo((DlModulo *)h, nome);
     if (!p) dl_sbaglio("undefined symbol", nome);
     return p;
 }
 
-/* An ELF library (lib/libc_dl.c) is unmapped at its last dlclose, after its
- * DT_FINI_ARRAY. EX-OS libraries stay mapped until the program ends: the
- * kernel shares them between processes and has no per-process unload. */
+#include "include/exlib.h"
+
+/* exlib_* (lib/include/exlib.h): what the EX-OS programs and libraries call
+ * to open an OPTIONAL library (eximg.so, exfont.so, exsuono.so, excss.so,
+ * the two JavaScript engines). The handle is dlopen's; ExLibTesta is only
+ * its name. Until 19 November 2026 lib/exlib/exlib.c, linked into each. */
+const ExLibTesta *exlib_apri(const char *percorso)
+{
+    if (percorso == 0 || percorso[0] == '\0') return 0;
+    return (const ExLibTesta *)dlopen(percorso, DL_RTLD_NOW);
+}
+
+const ExLibTesta *exlib_apri_fra(const char *const *percorsi, int quanti)
+{
+    int i;
+
+    for (i = 0; i < quanti; i++) {
+        const ExLibTesta *t = exlib_apri(percorsi[i]);
+        if (t) return t;
+    }
+    return 0;
+}
+
+void *exlib_simbolo(const ExLibTesta *t, const char *nome)
+{
+    if (t == 0 || nome == 0) return 0;
+    return dlsym((void *)t, nome);
+}
+
+/* A library is unmapped at its last dlclose, after its DT_FINI_ARRAY
+ * (lib/libc_dl.c). */
 int dlclose(void *h)
 {
     if (h && h != (void *)-1 && h != (void *)&g_dl_programma &&

@@ -14,6 +14,7 @@
 #include "syscall.h"
 #include "extaskbar_abi.h"
 #include "sched.h"
+#include "condivise.h"   /* SYS_SO_MAPPA (0.351) */
 #include "vfs.h"   /* vfs_sync: chi esce interrotto riversa come chi esce da se' */
 
 static SyscallFn syscall_table[SYSCALL_COUNT];
@@ -167,6 +168,7 @@ void syscall_init(void)
     syscall_table[SYS_GETPID]      = sys_getpid;
     syscall_table[SYS_GETPPID]     = sys_getppid;
     syscall_table[SYS_MMAP]        = sys_mmap_gruppo;
+    syscall_table[SYS_SO_MAPPA]    = sys_so_mappa_gruppo;
     syscall_table[SYS_MPROTECT]    = sys_mprotect;
     syscall_table[SYS_SEG_AZIONE]   = sys_seg_azione;
     syscall_table[SYS_SEG_MASCHERA] = sys_seg_maschera;
@@ -258,8 +260,7 @@ void syscall_init(void)
     syscall_table[SYS_VIDEO_CAMBIA] = sys_video_cambia;
     syscall_table[SYS_MODULO]       = sys_modulo;
     syscall_table[SYS_LOG]          = sys_log;
-    syscall_table[SYS_LIB_APRI]     = sys_lib_apri;
-    syscall_table[SYS_LIB_TROVA]    = sys_lib_trova;
+    /* SYS_LIB_APRI (248), SYS_LIB_TROVA (238): retired in 0.351 */
     syscall_table[SYS_FB_MAP]       = sys_fb_map_gruppo;
     syscall_table[SYS_INTERROMPI]   = sys_interrompi;
     syscall_table[SYS_PTY_APRI]     = sys_pty_apri;

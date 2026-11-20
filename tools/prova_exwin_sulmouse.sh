@@ -132,7 +132,9 @@ int main(void)
 FINEC
 R=/cdrom/exos
 cat > "$D/prima/compila.sh" <<FINESH
-$R/bin/gcc -m32 -ffreestanding -fno-builtin -nostdlib -fno-pic -fno-pie -O2 -Wall -I $R/include -I inc -T $R/programma.ld $R/start.S src/finestra.c src/finestra_gen.c $R/include/exwin_stub.c $R/libc_ponti_asm.o $R/libc_ponti_c.o $R/libc_ponti_avvio.o $R/libc_ponti_exlib.o -o bin/nuovo
+SO=/exwin/lib; [ -f \$SO/exwin.so ] || SO=/cdrom/exwin/lib
+LDX=/lib/ld-exos.so; [ -f \$LDX ] || LDX=/rdboot/lib/ld-exos.so; [ -f \$LDX ] || LDX=/cdrom/lib/ld-exos.so
+$R/bin/gcc -m32 -ffreestanding -fno-builtin -nostdlib -fno-pic -fno-pie -O2 -Wall -I $R/include -I inc -Wl,-Ttext-segment=0x08000000 -Wl,-z,separate-code -Wl,--hash-style=both -Wl,-dynamic-linker,/lib/ld-exos.so $R/start.S src/finestra.c src/finestra_gen.c \$SO/exwin.so $R/libexos_avvio.a \$LDX -o bin/nuovo
 FINESH
 "$DEBUGFS" -w -R "write $D/prima/finestra.dis nuovo/src/finestra.dis" "$OFF" > /dev/null 2>&1
 "$DEBUGFS" -w -R "write $D/prima/finestra.c nuovo/src/finestra.c" "$OFF" > /dev/null 2>&1

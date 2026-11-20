@@ -95,6 +95,11 @@ DATA=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 echo "=== $FUORI: il sistema $VERSIONE ($ARCH) da pubblicare ==="
 
+# the app.txt before: its builds stay for the applications that did not change
+# (tools/netinst/archivio_app.py)
+APP_PRIMA=$(mktemp)
+if [ -f "$FUORI/app.txt" ]; then cp "$FUORI/app.txt" "$APP_PRIMA"; else rm -f "$APP_PRIMA"; fi
+
 rm -rf "$FUORI"
 mkdir -p "$FUORI/file"
 
@@ -601,6 +606,23 @@ if ls tools/netinst/verifiche/*.sh > /dev/null 2>&1; then
     VER_SHA=$(sha256sum "$FUORI/verifiche.txt" | cut -d' ' -f1)
 fi
 
+# --- l'archivio per applicazione (netupdate 0.050, voce 107) ----------------
+#
+# app.txt and app/<id>.txt: every application with its version, its build and
+# its own list of files. The netupdates before 0.050 keep reading catalogo.txt
+# and elenco.txt, which from here on name only [avvio] and [sistema]: they
+# bring the system - and the new netupdate in it - up to date, and the new one
+# reads app.txt. See tools/netinst/archivio_app.py.
+BYTE_TUTTI=$(grep -v "^#" "$ELE" | awk -F"\t" "{ s += \$2 } END { printf \"%d\", s }")
+python3 tools/netinst/archivio_app.py "$FUORI" "$VERSIONE" "${APP_PRIMA:--}" \
+    "$(date -u +%Y%m%d%H%M)" || { echo "mknetinst: app.txt non si scrive" >&2; exit 1; }
+rm -f "$APP_PRIMA"
+# ! EVERY LIBRARY ASKED FOR MUST COME WITH ITS CHAIN OF vuole (20 November
+# 2026): Qt 5 wanted libpng16, freetype and harfbuzz, which had no package,
+# and a VLC installed by netupdate did not start. Said loudly, not fatal.
+python3 tools/netinst/controlla_dipendenze.py "$FUORI" \
+    || echo "mknetinst: ! qui sopra, librerie che i programmi chiedono e che netupdate non porta"
+
 # --- il file di versione ----------------------------------------------------
 #
 # ! E' IL PRIMO E IL PIU' PICCOLO, ed e' voluto: netupdate lo scarica a ogni
@@ -613,9 +635,10 @@ fi
     echo "arch      = $ARCH"
     echo "data      = $DATA"
     echo "file      = $N_FILE"
-    echo "byte      = $(grep -v "^#" "$ELE" | awk -F"\t" "{ s += \$2 } END { printf \"%d\", s }")"
+    echo "byte      = $BYTE_TUTTI"
     echo "catalogo  = $(sha256sum "$CAT" | cut -d' ' -f1)"
     echo "elenco    = $(sha256sum "$ELE" | cut -d' ' -f1)"
+    echo "app       = $(sha256sum "$FUORI/app.txt" | cut -d' ' -f1)"
     [ -z "$VER_SHA" ] || echo "verifiche = $VER_SHA"
 } > "$FUORI/versione.txt"
 
@@ -628,7 +651,7 @@ printf '%s\n' "$CONTI" | sed 's/^/    /'
 # I pacchetti dichiarati nel catalogo che non possiedono nessun file. Vedi il
 # commento sopra CONTI: si vedono solo contando.
 VUOTI=""
-for id in $(grep '^\[' "$CAT" | tr -d '[]'); do
+for id in $(grep '^\[' "$FUORI/app.txt" | tr -d '[]'); do
     printf '%s\n' "$CONTI" | awk -v i="$id" '$2 == i { trovato = 1 }
                                               END { exit !trovato }' || VUOTI="$VUOTI $id"
 done
@@ -702,7 +725,8 @@ fi
 chmod -R a+rX "$FUORI"
 echo ""
 echo "Da pubblicare cosi' com'e': la radice del server e' $FUORI,"
-echo "e netupdate cerchera' versione.txt, catalogo.txt, elenco.txt e file/."
+echo "e netupdate cerchera' versione.txt, app.txt, app/ e file/ (catalogo.txt"
+echo "ed elenco.txt, col solo sistema, per i netupdate prima della 0.050)."
 if [ -d "$FUORI/report" ]; then
     echo ""
     echo "  E report/ e' il punto di raccolta dei referti:"

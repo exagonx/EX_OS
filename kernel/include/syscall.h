@@ -271,7 +271,7 @@ typedef struct {
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   274     /* la piu' alta e' SYS_IPC_RECV_SEG_R = 273 */
+#define SYSCALL_COUNT   275     /* la piu' alta e' SYS_SO_MAPPA = 274 */
 
 /* =============================================================================
  * Codici errno
@@ -400,6 +400,11 @@ typedef struct {
  * ============================================================================= */
 #define SYS_IPC_RECV_SEG   272
 #define SYS_IPC_RECV_SEG_R 273
+
+/* (0.351, voce 105) a shared object from the cache of kernel/loader/
+ * condivise.c: ebx = fd open for reading, ecx = SoEsito * (base, inizio,
+ * misura, entry), edx = its path, for the log only. 0 or -errno. */
+#define SYS_SO_MAPPA       274
 
 /* =============================================================================
  * Console virtuali (vedi kernel/arch/x86/vga.c)
@@ -931,51 +936,18 @@ typedef struct {
 #define SYS_LOG_MAX       200
 
 /* ==========================================================================
- * SYS_LIB_APRI (248) — aggancia una libreria condivisa a questo processo
+ * SYS_LIB_APRI (248) and SYS_LIB_TROVA (238): RETIRED in 0.351 (voce 105)
  *
- *     ebx = const char *percorso      es. "/exwin/lib/exwin.so"
- *     rende l'indirizzo della TABELLA DI ESPORTAZIONE, o un -errno
- *
- * ! RENDE UN INDIRIZZO, NON UNA MANIGLIA, e va bene che sia positivo: la
- * fascia delle librerie e' 0x04000000-0x08000000, quindi il valore non puo'
- * mai essere confuso con un -errno. Una maniglia vorrebbe una tabella per
- * processo per tradurla, e non servirebbe a niente: quello che il chiamante
- * vuole e' proprio l'indirizzo da cui leggere i nomi.
- *
- * ! LA LIBRERIA SI CARICA UNA VOLTA SOLA per tutto il sistema; il secondo
- * processo che la chiede si vede mappare LE STESSE pagine di codice. Vedi
- * kernel/loader/lib.c per cosa si condivide e cosa no.
- *
- * La tabella e' un ExLibTesta — vedi lib/include/exlib.h.
+ * They mapped an EX-OS library - an ET_EXEC at its own address between
+ * 0x04000000 and 0x08000000 with a table of names (ExLibTesta) - once for
+ * the whole system, and said whether a process had it already. The
+ * libraries are ELF shared objects now, mapped by SYS_SO_MAPPA (274) from
+ * the cache of kernel/loader/condivise.c and loaded by the libc's dlopen;
+ * "already loaded" is dlopen(RTLD_NOLOAD). The numbers stay taken: a
+ * program from before 0.351 gets ENOSYS, not somebody else's call.
  * ========================================================================== */
-#define SYS_LIB_APRI      248   /* ebx = const char* */
-
-/* ==========================================================================
- * SYS_LIB_TROVA (238) — «questa libreria ce l'ho GIA' dentro?»
- *
- *     ebx = const char *percorso
- *     rende l'indirizzo della tabella se e' gia' agganciata a questo
- *     processo, -ENOENT se non lo e'. NON la carica e non la aggancia.
- *
- * ! SERVE PERCHE' UN PROCESSO PUO' AVERE PIU' STUB, E OGNUNO HA I PROPRI
- * DATI. Ogni programma e ogni libreria si portano dentro le poche righe che
- * risolvono i nomi, e sono copie separate per costruzione. Finche' la
- * libreria da aprire e' una sola non fa differenza; ma da quando ce ne sono
- * DUE che offrono la stessa interfaccia — exjs.so e quickjs.so, i due motori
- * JavaScript — due stub possono sceglierne una ciascuno, e allora nello
- * stesso processo girano due motori che non si vedono. Il sintomo e' stato un
- * page fault dentro il primo, con in mano un contesto costruito dal secondo.
- *
- * ! E LA RISPOSTA NON PUO' DARSELA RING 3: un programma non ha modo di sapere
- * quali pagine gli sono mappate senza provare a leggerle, e provare vuol dire
- * un fault. Il caricatore invece lo sa — la tavola delle pagine del processo
- * E' l'elenco.
- *
- * ! IL NUMERO E' 238 E NON 256: la tabella e' piena fino a 255, e 238 era un
- * buco lasciato da una syscall tolta. Meglio riempire un buco che allargare
- * una tabella che entra in una pagina.
- * ========================================================================== */
-#define SYS_LIB_TROVA     238   /* ebx = const char* */
+#define SYS_LIB_APRI      248   /* retired: ENOSYS */
+#define SYS_LIB_TROVA     238   /* retired: ENOSYS */
 
 /* ==========================================================================
  * SYS_FB_MAP (249) — il framebuffer, e SOLO quello
@@ -2050,8 +2022,6 @@ int32_t sys_video_scheda(InterruptFrame *f);
 int32_t sys_video_cambia(InterruptFrame *f);
 int32_t sys_modulo(InterruptFrame *f);
 int32_t sys_log(InterruptFrame *f);
-int32_t sys_lib_apri(InterruptFrame *f);
-int32_t sys_lib_trova(InterruptFrame *f);
 int32_t sys_interrompi(InterruptFrame *f);
 int32_t sys_pty_apri(InterruptFrame *f);
 int32_t sys_pty_ctl(InterruptFrame *f);

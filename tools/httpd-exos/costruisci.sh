@@ -113,7 +113,7 @@ APU
     # shellcheck disable=SC2086
     ( cd "$B/obj" && env $CACHE "$SRC/configure" --host=$T --build="$("$SRC/build/config.guess")" \
         --prefix=/exos/apache2 CC=$CC AR=$AR RANLIB=$RANLIB CFLAGS="$CFLAGS $PHPCFLAGS" \
-        LDFLAGS="-static -Wl,-u,main" \
+        LDFLAGS="-Wl,-u,main" \
         LIBS="$PHPLIBS -lssl -lcrypto -lexpat -lpthread" $PHPOPZ \
         --with-apr="$APR/bin/apr-1-config" --with-apr-util="$B/bin/apu-1-config" \
         --with-pcre="$B/bin/pcre2-config" --with-mpm=worker --enable-mpms-shared=no \

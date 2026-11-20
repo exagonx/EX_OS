@@ -112,6 +112,15 @@ S="$TC64/$TARGET"
 for f in crt0.o libc.a libm.a libstdc++.a libsupc++.a libpthread.a libdl.a librt.a; do
     [ -f "$S/lib/$f" ] && cp -p "$S/lib/$f" "$E/lib/"
 done
+# ! WITHOUT -static THE NATIVE gcc LINKS DYNAMIC (voce 105, 19 November 2026):
+# its specs ask for -lc (the libc.so script: ld-exos.so + libexos_avvio.a)
+# and -lgcc_s, and with only libc.a here every gcc on EX-OS died with
+# "cannot find -lgcc_s". The program runs on the system's /lib/ld-exos.so.
+for f in ld-exos.so libc.so libexos_avvio.a libm.so libm.so.4 libgcc_s.so libgcc_s.so.1 \
+         libstdc++.so libstdc++.so.6; do
+    [ -e "$S/lib/$f" ] || fail "missing $S/lib/$f: run tools/gcc-exos/cross64.sh"
+    cp -pL "$S/lib/$f" "$E/lib/"
+done
 for f in crtbegin.o crtend.o crtbeginS.o crtendS.o crti.o crtn.o libgcc.a; do
     [ -f "$G/$f" ] && cp -p "$G/$f" "$E/lib/"
 done

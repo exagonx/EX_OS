@@ -228,7 +228,11 @@ def vai(mon, tx, ty, a=None):
         return None
     # ! ONLY A SMALL CORRECTION: a first changed pixel far away is something
     # else that changed (a control lit up under the pointer), not the tip.
-    if (punta_x, punta_y) != (tx, ty) and abs(tx - punta_x) <= 15 and abs(ty - punta_y) <= 15:
+    # ! QEMU's SHORTFALL IS THE SAME IN x AND y, and at 32 bits it is 20 or 30
+    # (ExPackage's Procedi missed by 20 on 20 November 2026): that one is
+    # trusted up to 40, anything else only up to 15.
+    ddx, ddy = tx - punta_x, ty - punta_y
+    if (ddx, ddy) != (0, 0) and ((abs(ddx) <= 15 and abs(ddy) <= 15) or (0 < ddx == ddy <= 40)):
         mon.rapidi(["mouse_move %d %d" % (tx - punta_x, ty - punta_y)], passo=0.05)
     return (tx - punta_x, ty - punta_y)
 

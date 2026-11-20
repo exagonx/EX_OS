@@ -192,6 +192,10 @@ GRUPPO  VOCI             COSA
  --     61 76            solo se ricompare (76: orologio in FAULT, 3/11)
  --     77               seguiti del 3-4/11: H.264 Firefox, Firefox 32, repo 64 da
                          pubblicare, ExPackage sul portatile, statici rimasti
+ --     107              (20/11) netupdate nuovo: archivio per app con versione+build,
+                         -list, -install con menu, file non scaricati ritentati; SUBITO dopo il .253
+ --     106              (20/11) ExPackage: Update (elenco e versioni) e Upgrade
+                         (aggiorna l'installato e installa i nuovi segnati)
  --     103              (18/11) porting di Thunderbird: script che scarica gli ultimi sorgenti,
                          patch, costruzione a 32 e 64 bit sopra il lavoro di Exilla
  --     87               (6/11) ExWin all'avvio: -autostart, F1-F4 shell, F5 grafica,
@@ -10508,6 +10512,108 @@ tools/netinst/velocita tolto da netinst.
       17/11, DOPO IL RIAVVIO NELLA 0.343: il telnetd 0.015 dell'avvio, porta
       23, telnet_piu_prova.py 6 su 6.
 
+  107. IL NUOVO NETUPDATE: UN ARCHIVIO NUOVO, PER APPLICAZIONE (l'utente, 20/11
+      mattina: "netupdate non leggera' piu il vecchio archivio ma ne cerchera'
+      uno nuovo parallelo dove contiene, nome del programma i file che
+      necessita, librerie, hash dei files, versione, eventuale crc di
+      controllo, memorizzare in locale se uno o piu files non vengono
+      scaricati correttamente e la richiesta di ritentare il download dopo i
+      tentativi automatici di default, aggiorna solo i files piu vecchi [...]
+      -list[:stringa] [...] -install:nome con tutte le sue dipendenze creando
+      anche le voci del menu nel program manager se e' una app grafica [...]
+      anche expackage gestira' queste nuove opzioni"). DA FARE SUBITO DOPO
+      L'AGGIORNAMENTO DEL .253 (scelto dall'utente: la voce 105 aspetta).
+      OGGI: versione.txt (radice di fiducia: sha256 di catalogo, elenco,
+      verifiche), elenco.txt (percorso, byte, sha256, pacchetto
+      [essenziale]: 7825 righe a 64 bit), catalogo.txt (i pacchetti, vuole =
+      dipendenze, sempre = si per avvio e sistema), file/, pacchetti/ (gli
+      archivi .tar_gz di alcuni), verifiche/.
+      DECISO (20/11, risposte dell'utente):
+      - "piu' vecchio" = versione dell'app + NUMERO DI BUILD, che mknetinst
+        aumenta quando i file dell'app cambiano (una ricostruzione con la
+        stessa versione, come i porting su ld-exos.so del 19/11, arriva;
+        un'app uguale non si scarica). Il sha256 resta il controllo di ogni
+        file scaricato.
+      - -check aggiorna solo cio' che e' installato; -check -yes senza
+        chiedere; -yesall in piu' installa senza chiedere le dipendenze
+        NUOVE che mancano alle app installate. Le app nuove solo con
+        -install:nome.
+      - il VECCHIO elenco.txt da ora porta solo avvio, sistema e il
+        netupdate nuovo: un netupdate vecchio aggiorna quelli, e al giro dopo
+        e' il nuovo a leggere l'archivio nuovo (con la 0.351 kernel e sistema
+        devono restare interi: i programmi vogliono PT_INTERP).
+      DA FARE:
+      - l'archivio nuovo accanto al vecchio (versione.txt ne porta lo
+        sha256): per ogni app nome, descrizione, versione, build, grafica
+        si/no con la voce del menu, dipendenze (app e librerie), e i suoi
+        file con byte e sha256 (il crc non aggiunge niente allo sha256: si
+        tiene solo lo sha256, a meno che l'utente non lo voglia).
+      - in locale: l'elenco delle app installate e aggiornabili con
+        versione e build; i file non scaricati bene in un registro, ritentati
+        da soli N volte (N in netupdate.cnf), poi la domanda "ritento?" e,
+        al giro dopo, -check li riprende per primi.
+      - -list e -list:stringa (tutte le app del server o quelle col nome
+        che contiene la stringa, con lo stato: installata, aggiornabile, no).
+      - -install:nome con le dipendenze, la voce del menu del program
+        manager per le app grafiche (come fa oggi -install:mesa/exilla col
+        menu), e l'app nel registro delle installate.
+      - ExPackage (voce 106: Update = elenco e versioni, Upgrade) sopra le
+        opzioni nuove.
+      - mknetinst.sh scrive i due archivi; tools/prova_expackage.sh,
+        prova_verifiche.sh, prova_menu_netupdate.sh sulle opzioni nuove, piu'
+        una prova del passaggio vecchio -> nuovo; manuali, help, verifica sh.
+      FATTO (20/11, nel clone ~/exa_os_libc, da provare fino in fondo):
+      - tools/netinst/archivio_app.py (da mknetinst): app.txt + app/<id>.txt,
+        versione (chiave versione, o il primo numero di dice), build
+        AAAAMMGGhhmm UTC tenuta finche' l'elenco dell'app non cambia,
+        grafica = si con il menu; catalogo.txt ed elenco.txt ridotti ad
+        avvio e sistema; versione.txt con app = sha256.
+      - netupdate 0.050: app.txt se versione.txt ha `app`; le app con la
+        stessa build non si guardano (blocco del registro copiato); il
+        registro scrive versione e build; -yesall porta le dipendenze nuove,
+        -check le dice; tentativi (3) da soli poi la domanda;
+        /boot/netupdate.err; -list, -list:pezzo, -tab con 5 colonne in fondo;
+        un file senza impronta nel registro ma giusto sul disco non si
+        riscarica (disco_giusto: il salto da 0.049 avrebbe riscaricato 700 MB).
+      - expackage 0.002: Update e Upgrade (voce 106).
+      - sistema.sh: registro senza build, /boot/netupdate.err.
+      - TROVATO provando il salto del .253: VLC non partiva. Qt 5 vuole
+        libpng16, freetype, harfbuzz (porting fatti, MAI sul CD ne' nel
+        repository: le prove di VLC le copiavano a mano), zlib, pcre2, zstd
+        (mancavano nel vuole); il gcc di base vuole libz e libzstd, nasm
+        libz. Ora: [libpng] [freetype] [harfbuzz], i vuole giusti, zlib e
+        zstd senza vuole = base (niente giro, nasm resta senza compilatore),
+        tools/netinst/controlla_dipendenze.py in mknetinst (readelf -d contro
+        la catena di vuole).
+      - TROVATO: toolinst 0.006 teneva 12 gruppi, 10 solo, 4 file, 8 nota,
+        4 vuole e leggeva 16 KB di catalogo (che ne ha 38 e 25 KB): 0.007
+        senza tetti. tools/prova_toolinst.sh.
+      - TROVATO (vecchio, D12): stage2.bin "da verificare" per sempre con
+        un modo video diverso da quello del server.
+      - prove: tools/prova_netupdate_app.sh (nuova), prova_expackage.sh col
+        pulsante Upgrade e app.txt.
+
+  106. ExPackage: DUE PULSANTI, UPDATE E UPGRADE, AL POSTO DI "Aggiorna"
+      (l'utente, 20/11 mattina: "il pulsante aggiorna, effettua l'aggiornamento
+      della lista delle app, serve sostituirli con due pulsanti update (dove
+      aggiorna la lista delle app e le versioni) upgrade dove esegue
+      l'aggiornamento e l'installazione delle applicazioni nuove
+      selezionate.")
+      Oggi (exwin/bin/expackage/expackage.c, righe 924-947): "Aggiorna"
+      (ID_AGGIORNA) rilegge solo l'elenco, "Applica" (ID_APPLICA) installa o
+      toglie i pacchetti segnati. Da fare:
+      - Update: rilegge catalogo ed elenco dal server e confronta le versioni
+        con quelle installate; nella colonna STATO dice cosa ha una versione
+        nuova (come netupdate -check).
+      - Upgrade: in un giro solo aggiorna tutto cio' che e' installato ed e'
+        cambiato, e installa i pacchetti nuovi segnati (cio' che oggi fa
+        Applica per i segnati, piu' l'aggiornamento di quelli gia' presenti).
+      - le stesse due voci nel menu File; chi toglie un pacchetto (segno di
+        rimozione) lo vede fatto dall'Upgrade.
+      - la prova: tools/prova_expackage.sh (parte B, sulla scrivania) con un
+        pacchetto cambiato sul server di prova; manuale e help di ExPackage.
+      In coda, non cominciata.
+
   105. LE PARTI CHE MANCANO A EX-OS, AL POSTO DEI RIPIEGHI DEL PORT DI VLC
       (l'utente, 19/11: "Invece di creare modifiche per compatibilita',
       implementa le parti mancanti"; poi: "Ogni cosa che manca implementala
@@ -10535,6 +10641,131 @@ tools/netinst/velocita tolto da netinst.
       RESTA DEL 1-2: la libc nuova nei sysroot e i porting ricostruiti
       (si fa col passo 3, che rifa' comunque tutti i programmi). In coda: sigpending risponde sempre "nessuno" (manca
       la syscall), fchdir non c'e'.
+      PASSO 3 IN CORSO (19/11, nel clone ~/exa_os_libc, ramo
+      libc-condivisa): kernel 0.350 con PT_INTERP (l'interprete ET_DYN
+      caricato dopo il programma, l'auxv in cima allo stack, il suo
+      indirizzo nella prima parola); /lib/ld-exos.so = la libc -fPIC che e'
+      anche l'interprete (lib/libc_ld.c: si riloca da se', carica i
+      DT_NEEDED con il caricatore di libc_dl.c, riloca il programma con le
+      COPY, ricollega le proprie variabili alle copie del programma, poi i
+      costruttori); libexos_avvio.a = l'avvio del programma (_libc_start,
+      i costruttori del programma); libc.so = GROUP dei due nella sysroot.
+      La libc entra nell'ambito globale dove la nomina un DT_NEEDED, come
+      su Linux; dlsym(RTLD_NEXT) cerca davvero dopo il modulo di chi chiama
+      (prima era l'ambito globale). tools/costruisci-ld.sh li fa (sysroot
+      in prepara-cross.sh e cross64.sh, /lib dei due CD, la libc di oggi
+      di comune.sh). Un programma con libc.a dentro e PT_INTERP (le .so
+      di prima) non nomina ld-exos.so: l'interprete lo lascia fare da se'.
+      PROVE in QEMU a 32 e 64: tools/prova_ld.sh 10 su 10; prova-avvio,
+      prova-dl, prova-tante (anche LIBC_CONDIVISA=1: 40 librerie con TLS e
+      fili sulla libc condivisa), prova-cxx (C++, eccezioni), prova-js
+      buone con il kernel 0.350 nei due modi. VLC con bin/override.c
+      com'e' (via la sostituzione in costruisci.sh), sulla libc condivisa:
+      prova.sh a 32 e 64 come prima (solo il FLAC [NO], passo 4). VLC
+      compila con -fvisibility=hidden, come su Linux le sue putenv,
+      setlocale... non escono dal programma: le usano i plugin, che qui sono
+      dentro, e la vera la trovano con dlsym(RTLD_NEXT). Trovato:
+      __stack_chk_fail_local (i386, PIC con il canarino) e' nascosta e non
+      puo' venire da ld-exos.so: sta in libexos_avvio.a, come glibc la
+      tiene in libc_nonshared.a.
+      PORTING SULLA LIBC CONDIVISA (19/11 sera): bzip2, xz, lz4, zstd,
+      pcre2, expat, openssl, ncurses, ffmpeg, mariadb, httpd, php, valkey,
+      mesa, nano e vlc ricostruiti senza -static, ogni programma a 32 e 64
+      con PT_INTERP /lib/ld-exos.so. Prove in QEMU a 32 e 64: nano 12 su
+      12, valkey, prova-egl, prova_openssl 16 su 16, prova_httpd (con PHP),
+      prova_mariadb (server, client, connettori C, C++, Rust, FreeBASIC),
+      prova_mariadb_svc (disco installato dal CD nuovo, riavvio),
+      prova_librerie, vlc (solo il FLAC [NO], passo 4). Trovato e
+      riparato: le prove cercavano ogni DT_NEEDED fra le librerie dei
+      porting e si fermavano su ld-exos.so, che e' del sistema (/lib del
+      CD); prova_mariadb copiava quattro librerie scritte a mano e metteva
+      LD_LIBRARY_PATH dopo l'avvio del server (andava, finche' mariadbd
+      era statico): ora segue i DT_NEEDED. [mariadb] in strumenti.txt
+      vuole anche bzip2, xz, lz4, pcre2 (mariadbd li chiede adesso).
+      httpd a 32 una volta su tre "reset by peer" a 4996 con ab dall'host:
+      e' quello della voce 33 g, gia' visto con httpd statico.
+      ! Il floppy: ld-exos.so a 32 bit ha 220 KB di codice, libc.so 110
+      (il caricatore e le parti portabili): /bin su ld-exos.so nel
+      sistema di base del dischetto costa circa 100 KB in piu' prima di
+      lz4. Da decidere con l'utente al passo di /bin.
+      In coda: toolinst ha ancora i tetti fissi (GRUPPI_MAX 12 col
+      catalogo a 35 gruppi, SOLO_MAX 10, VUOLE_MAX 4: [apache] ne ha 5,
+      [mariadb] adesso 5); netupdate non li ha dalla 0.041.
+      RESTA DEL 3: il netupdate (ld-exos.so con il kernel 0.350, script di
+      verifica), /bin da libc.so ai ponti a ld-exos.so, il ritorno
+      nell'albero principale.
+      PASSO 3b, /bin E TUTTO IL RESTO SU ld-exos.so (l'utente, 19/11:
+      "ld-exos.so anche sul floppy", e "Tutto in una volta": via libc.so,
+      i ponti ed exlib; poi "il consiglio basalo sull'efficienza non sui
+      tempi necessari"). Misurato: 36 comandi in bin, 50 in bin-cd, 19 in
+      /exwin/bin, exilla, vlcapri, i terzi, circa 25 driver, 12 librerie
+      native a indirizzo fisso (exwin exdlg eximg exttf exhtml exjs exqjs
+      exdom excss exhttp exsuono exzip). Floppy: 342 KB liberi oggi,
+      ld-exos.so compressa 153 KB contro 69 di libc.so: ci sta.
+      ! Oggi ld-exos.so e ogni .so di dlopen sono una COPIA PER PROCESSO
+      (mmap anonima + read); libc.so e le native invece il kernel le
+      condivide (kernel/loader/lib.c). Spostare tutto senza altro
+      costerebbe 270 KB a processo e una copia di exwin.so per ogni
+      finestra. Quindi, in ordine:
+      a. kernel 0.351: una cache delle .so ET_DYN (kernel/loader/
+         condivise.c, 32 e 64 bit): le pagine dei segmenti di sola
+         lettura sono le stesse in tutti i processi (PIC: a basi
+         diverse), quelle scrivibili una copia dal modello; chiave
+         ident+dimensione+mtime (un netupdate che rimpiazza il file non
+         serve la vecchia); elenco che cresce, nessun tetto. SYS_SO_MAPPA
+         274. elf_interprete e dl_da_file la usano. Nessuna delle 158 .so
+         dei porting ne' ld-exos.so ha TEXTREL; se servisse, mprotect fa
+         gia' COW sulle pagine condivise. Prova: memoria libera con N
+         processi prima e dopo.
+         FATTO 19/11 sera (kernel 0.351): kernel/loader/condivise.c,
+         SYS_SO_MAPPA, elf_interprete e dl_da_file dalla cache. Misurato
+         con tools/prova_ld.sh (11 su 11 a 32 e 64): sei copie di ldprova
+         addormentate costano 208 KB l'una a 32 bit (215 a 64) contro 219
+         (231) dello stesso programma -static: la libc non si ricopia.
+         prova-dl, prova-avvio, prova-tante (anche LIBC_CONDIVISA=1),
+         prova-cxx, prova-js buone a 32 e 64. Trovati e riparati per via:
+         ! lo stage 2 leggeva il sistema di base nel rimbalzo a 0x80000,
+         sopra la coda di un kernel di piu' di 448 KB: il kernel a 64 bit
+         0.351 (461008 byte) moriva dopo "J" senza una riga sulla seriale.
+         RDSEG a 0x90000, il kernel puo' arrivare a 512 KB, e il Makefile
+         rifiuta un kernel piu' grande (KERNEL_STA). In coda: caricare il
+         kernel sopra 1 MB passando dal rimbalzo, e il tetto sparisce.
+         ! l'indirizzo di una funzione in un programma non-PIC e' il suo
+         PLT: dlsym(RTLD_DEFAULT, "strlen") e &strlen erano diversi
+         (prova-dl, appena prova-dl e' diventato dinamico). Ora come in
+         glibc il simbolo indefinito FUNC con valore del programma vale
+         per tutti tranne il JUMP_SLOT che riempie il PLT.
+      b. le 12 native diventano .so ET_DYN vere su ld-exos.so (via gli
+         stub e la tabella EXLIB: si collegano per nome con DT_NEEDED, o
+         dlopen dove si aprono a richiesta).
+      c. comandi, applicazioni, exilla, vlcapri, terzi su ld-exos.so (a
+         32 dai .ld di oggi, a 64 da costruisci-utente64.sh); i driver
+         statici con libc.a; login, install, sh statici.
+      d. /rdboot/lib/ld-exos.so (32 e 64), il kernel cerca l'interprete
+         anche li' avviando dal floppy; via libc.so, i ponti, genlibc,
+         exlib, lib.c se nessuno li usa piu'.
+      e. prove di tutto a 32 e 64, floppy compreso; manuali; netupdate.
+         FATTO 19/11 notte (b, c, d, kernel 0.351): le 12 native ET_DYN
+         -fPIC con il loro version script (lib/<nome>/<nome>.ver), senza
+         TEXTREL; exwin, exdlg, exhttp, exhtml, exdom, exzip per DT_NEEDED,
+         excss, exsuono, exjs/quickjs con lo stub che fa dlopen (exlib_apri
+         sopra dlopen nella libc). Ogni programma su ld-exos.so a 32 (LD_DIN
+         nel Makefile, il .ld di ognuno buttava .gnu* e .rel*) e a 64
+         (costruisci-utente64.sh riscritto: libexos_din.a senza le native);
+         statici i driver, login, install, soccorso, sh, extaskbar, wifid,
+         hello, prova64, readlink (verifica-statici guarda PT_INTERP). A 64
+         bit pm da 451 a 78 KB, /bin da 5,7 a 2,8 MB, /exwin/bin da 10 a
+         1,2 MB, l'ISO da 39 a 28 MB. /rdboot/lib/ld-exos.so (mkrdboot), e
+         elf_interprete prova /rdboot e /cdrom davanti a /lib/... Tolti
+         libc.so, libc_ponti.c, genlibc.py, exlib.c, fette.py, i .ld delle
+         librerie, gli stub delle sei, i *_esporta.c, kernel/loader/lib.c
+         (SYS_LIB_APRI/TROVA: ENOSYS). exide 0.026 collega le .so e
+         ld-exos.so, il CD strumenti porta libexos_avvio.a e gli header;
+         le prove di exide con la riga nuova. Restano su disco i .ld dei
+         programmi dinamici (solo prerequisiti, nessuno li usa): da togliere
+         con calma. sistema.sh dice di /lib/libc.so rimasto.
+      ! Con il kernel 0.350 /lib/ld-exos.so deve esserci: i programmi con
+      .so di prima hanno gia' PT_INTERP. Kernel e libc vanno insieme.
       PASSI, in quest'ordine:
       1. libc: clock_nanosleep, strerror_l, posix_spawn/posix_spawnp con le
          file_actions e gli attr. VLC torna a src/posix/error.c e netconf.c.
@@ -10549,6 +10780,32 @@ tools/netinst/velocita tolto da netinst.
       4. VLC normale: libvlc.so, libvlccore.so e i plugin .so con dlopen.
          Via il programma unico, il rinomina-simboli, le sed su swscale e
          puzzle.
+         FATTO 20/11 sera (nel clone): bin/vlc su libvlc.so.5 e
+         libvlccore.so.9, 241 moduli .so in /exos/lib/vlc/plugins
+         (--prefix=/exos), aout_exos e vout_exos plugin .so come gli
+         altri; vlc-cache-gen in /exos/lib/vlc, plugins.dat lo scrive
+         tools/netinst/verifiche/vlc.sh (nuovo) quando manca. prova.sh a 32
+         e 64: 12 su 12, FLAC compreso, plugins.dat controllato. Trovato e
+         riparato per via: libtool non conosceva exos (dynamic_linker=no:
+         solo archivi statici per ogni porting autoconf) ->
+         lib_libtool_exos in comune.sh; gcc -shared non collegava la libc
+         (specs del tempo di libc.a): i C++ di libtool (-nostdlib) senza
+         libc -> %{shared:-lc} in specs-condivise.sh, e la libc statica
+         salta il DT_NEEDED ld-exos.so (dl_libc_nominata in libc_dl.c);
+         libstdc++.la diceva "solo statica" e puntava alla costruzione di
+         GCC -> tools/librerie-exos/la-condivisa.sh (anche nei sysroot di
+         ~/cross_build); ncurses solo statica e non PIC -> libncurses.so.6
+         e le altre (configure di ncurses: exos dove c'e' linux), [curses]
+         con le .so, [vlc] vuole curses; sincos/sincosf/sincosl mancavano in
+         math.h (openlibm le ha). ld-exos.so e libexos_avvio.a dei sysroot
+         del clone rifatti (erano di prima del 19/11: __stack_chk_fail_local
+         in avvio.o). glspectrum resta fuori: nessuna libGL su EX-OS.
+         DA FARE: nano, mariadb e gli altri su ncurses, quando si
+         ricostruiscono, prendono libncurses.so.6: [nano] e [mariadb]
+         vorranno curses (controlla_dipendenze.py lo dice); math.h e
+         ld-exos.so nuovi nei sysroot veri (prepara-cross.sh/cross64.sh);
+         complex.h non c'e' (le cabs, cexp... di openlibm senza header);
+         ISO e netinst del clone da rifare.
       5. Il video dentro la finestra di VLC: una finestra figlia in ExWin,
          un modulo finestra di VLC per ExWin, la piattaforma exwin
          nell'interfaccia Qt. Via la sed su embedded-video.

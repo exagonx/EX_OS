@@ -50,6 +50,8 @@ grep -aq '6 \$? dopo false' "$S" || { echo "  NO 6: \\\$ fra virgolette non e' u
 grep -aq "manca fi alla fine dello script" "$S" && echo "  ok lo script senza fi lo dice" || { echo "  NO messaggio 'manca fi'"; esito=1; }
 grep -aq "dentro lo script rotto" "$S" || { echo "  NO lo script rotto non e' partito"; esito=1; }
 grep -aq "^prova-sh: fine" "$S" || { echo "  NO non e' arrivato alla fine"; esito=1; }
-grep -aq "0\.012" "$S" && echo "  ok sh 0.012" || { echo "  NO la shell del CD non e' la 0.012"; esito=1; }
+# the sh of the tree (bin/sh/shell.c SH_VERSIONE), not the one this test came with
+SV=$(sed -n 's/^#define SH_VERSIONE *"\(.*\)"/\1/p' bin/sh/*.c | head -1)
+grep -aqF "$SV" "$S" && echo "  ok sh $SV" || { echo "  NO la shell del CD non e' la $SV"; esito=1; }
 [ $esito = 0 ] && echo "=== [OK] ===" || { echo "=== [NO] ==="; echo "  la seriale: $S"; }
 exit $esito

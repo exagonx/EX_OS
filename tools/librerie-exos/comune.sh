@@ -122,6 +122,10 @@ lib_libc_di_oggi() {
         -ffunction-sections -fdata-sections -DEXOS_LIBC_PORTATI -I"$R/lib/include" \
         -c "$R/lib/libc.c" -o "$B/libc/libc.o" 2> "$B/libc/libc.log" || { tail "$B/libc/libc.log"; exit 1; }
     rm -f "$B/libc/libc.a"; ar rcs "$B/libc/libc.a" "$B/libc/libc.o"
+    # and the shared one (voce 105): with -L"$B/libc" a program links to
+    # /lib/ld-exos.so of today (libc.so comes before libc.a); -static still
+    # takes libc.a
+    bash "$R/tools/costruisci-ld.sh" $BIT "$B/libc" > /dev/null || exit 1
     rm -rf "$B/libc/include"
     cp -r "$R/lib/include" "$B/libc/include"
     rm -f "$B/libc/include/limits.h"
@@ -251,6 +255,20 @@ lib_config_sub() {
             -e 's/^\(\t *| .*\)| mint\* \\$/\1| mint* | exos* \\/' "$f"
         [ "$("$f" $T)" = "${T%-exos}-pc-exos" ] || { echo "$f non riconosce exos"; exit 1; }
     done
+}
+
+# libtool learns that EX-OS makes shared objects (voce 105, 20 November 2026):
+# an ELF system with GNU ld and a dynamic linker (/lib/ld-exos.so), so in
+# every per-system case of libtool's code in configure exos* goes where
+# linux* is. Without it libtool says "dynamic_linker=no" and builds only
+# static archives. On the disk there are no symbolic links: the real file
+# goes under its soname name (lib_condivisa_sua does it).
+lib_libtool_exos() {
+    local f=${1:-$SRC/configure}
+    grep -q 'linux\* | exos\* ' "$f" && return
+    sed -i -E -e 's/^([ \t]*)linux\* \| (k\*bsd\*-gnu|gnu\*)/\1linux* | exos* | \2/' \
+        -e 's/^([ \t]*)gnu\* \| linux\* \| tpf\*/\1gnu* | linux* | exos* | tpf*/' "$f"
+    grep -q 'linux\* | exos\* ' "$f" || { echo "$f: libtool non ha imparato exos"; exit 1; }
 }
 
 # a CMake toolchain file for EX-OS in $B/exos.cmake. ! CMake is told the

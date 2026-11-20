@@ -46,6 +46,8 @@ while [ -n "$nomi" ]; do
     nuovi=""
     for l in $nomi; do
         [ -f "$T/lib/$l" ] && continue
+        # the shared libc is the system's, in /lib of the CD (voce 105)
+        [ "$l" = ld-exos.so ] && continue
         f=$(ls cross_build/*-exos$BIT/exos/lib/"$l" 2>/dev/null | head -1)
         [ -n "$f" ] || { echo "manca $l (a $BIT bit)" >&2; exit 1; }
         cp "$f" "$T/lib/"

@@ -10,9 +10,18 @@
 # it replace the built-in specs, so this writes one there instead of
 # rebuilding the compiler:
 #
-#   with -shared     ld -shared, no crt0/crtbegin/crtend and no -lc: the
-#                    library takes the libc from the program that opens it
-#                    (lib/libc_esportati.h), so it must not carry a copy;
+#   with -shared     ld -shared, no crt0/crtbegin/crtend, and -lc as on
+#                    Linux (20 November 2026, voce 105): -lc is the shared
+#                    libc /lib/ld-exos.so (the sysroot's libc.so), so the
+#                    library gets DT_NEEDED ld-exos.so and its libc symbols
+#                    are checked at link time (-z defs). Until then there was
+#                    no -lc: the library took the libc from the program that
+#                    opened it (lib/libc_esportati.h), a static program with
+#                    libc.a; such a program now skips that DT_NEEDED
+#                    (dl_libc_nominata in lib/libc_dl.c). Without -lc
+#                    libtool's C++ links (-nostdlib and the libraries g++
+#                    names) had no libc at all: VLC's Qt plugin, "undefined
+#                    reference to strcmp";
 #                    crtbeginS.o first and crtendS.o last, built here from
 #                    tools/gcc-exos/crtstuff-condivise.c: they register the
 #                    library's unwind tables (16 October 2026, see there);
@@ -84,7 +93,7 @@ def link(v):
 sezione("link", link)
 sezione("startfile", lambda v: "%{shared:crtbeginS.o%s} %{!shared:" + v + "}")
 sezione("endfile", lambda v: "%{shared:crtendS.o%s} %{!shared:" + v + "}")
-sezione("lib", lambda v: "%{!shared:" + v + "}")
+sezione("lib", lambda v: "%{shared:-lc} %{!shared:" + v + "}")
 # the shared unwinder (tools/librerie-exos/cxx-condivise.sh), where the
 # sysroot has it: not with -static or -static-libgcc; --as-needed, so a
 # program or library that throws nothing gets no DT_NEEDED

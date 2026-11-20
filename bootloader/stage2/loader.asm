@@ -16,7 +16,9 @@
 ; Layout memoria usato:
 ;   0x7E00          root dir   (caricata da Stage1)
 ;   0xA000          FAT1       (caricata da Stage1)
-;   0x10000         kernel.bin caricato qui via INT 13h (segmento 0x1000)
+;   0x10000         kernel.bin caricato qui via INT 13h (segmento 0x1000),
+;                   al piu' fino a 0x90000: 512 KB (vedi RDSEG)
+;   0x90000         il rimbalzo del sistema di base, 32 KB al piu'
 ;   0xC000          BootInfo struct
 ;   0x0A00          GDT (3 descrittori: null, data flat, code flat)
 ;   0x100000        destinazione finale del kernel (copiata in Real Mode
@@ -64,7 +66,13 @@
 %define RBDEST  0x00A00000  ; 10 MB: rdboot.lz4 cosi' com'e'
 %define RBMAX   (RDDEST - RBDEST)   ; 2 MB: oltre toccherebbe il volume intero
 %define RDM_MAX 64          ; le voci di rdmappa (RD_MAX_EXT in bootinst.c)
-%define RDSEG   0x8000      ; il rimbalzo, a 512 KB: sotto c'e' il kernel
+; ! THE BOUNCE AT 576 KB, NOT 512 (19 November 2026, kernel 0.351): at
+; 0x80000 it sat on the tail of a 64-bit kernel bigger than 448 KB, and the
+; first read of rdboot ate the kernel's last 2 KB - a machine dead after "J"
+; with nothing on the serial line. Now the kernel can be up to 512 KB
+; (0x10000-0x90000); the bounce (64 sectors, 32 KB) ends at 0x98000, under the
+; stack (0x9F000) and the EBDA. The Makefile refuses a bigger kernel.
+%define RDSEG   0x9000      ; il rimbalzo, a 576 KB: sotto c'e' il kernel
 ; La misura del dischetto, come in bootloader/stage1/boot.asm (-DDISCHETTO=288
 ; per il 2,88 MB: 36 settori per traccia, l'area dei dati piu' avanti). Di
 ; serie e' 1,44 MB e niente cambia.
@@ -884,7 +892,7 @@ _start:
     ; limitato a ~57.8 KB per il wrapping a 16 bit di DI — superata
     ; quella soglia il kernel veniva troncato silenziosamente (schermo
     ; nero). In PM32 usiamo ESI/EDI/ECX a 32 bit e copiamo ksiz byte
-    ; esatti senza alcun limite pratico (fino a ~600 KB di kernel).
+    ; esatti: il limite e' la zona fra 0x10000 e il rimbalzo (RDSEG), 512 KB.
 
     ; ---- GDT a GDTB: null / data flat (0x08) / code flat (0x10) -------
     cli
@@ -962,7 +970,7 @@ _start:
 ; con indirizzi a 32 bit ci arriva.
 ;
 ; ! MA INT 13h VUOLE ES:BX, e ES ce l'ha grande. Percio' a ogni traccia si fa
-; il giro due volte: ES normale per leggere nel rimbalzo a 512 KB, ES grande
+; il giro due volte: ES normale per leggere nel rimbalzo a 576 KB, ES grande
 ; per copiare in alto. Sono centosessanta giri, e ognuno costa dieci
 ; istruzioni: meno di quanto costi la lettura stessa.
 ;
@@ -1169,7 +1177,7 @@ ramdisco:
 ; carica troncata: chi costruisce la chiavetta (tools/mkchiave.sh) la fa
 ; della misura giusta.
 ;
-; ! SI LEGGE CON INT 13h/42h, 64 settori per volta, nel rimbalzo a 512 KB, e
+; ! SI LEGGE CON INT 13h/42h, 64 settori per volta, nel rimbalzo a 576 KB, e
 ; da li' si copia in alto col «modo reale grande» come per il dischetto.
 ; =============================================================================
 %define RDMAXSET (24 * 2048)
@@ -1713,7 +1721,7 @@ carattere:
 ; RBDEST (10 MB). Se e' 'EXLZ' lo espande il kernel a 6 MB
 ; (kernel/boot/rdlz4.c), che ha lo spazio e il tempo che qui non ci sono.
 ;
-; ! LA STESSA STRADA DELLA CHIAVETTA: si legge nel rimbalzo a 512 KB - da
+; ! LA STESSA STRADA DELLA CHIAVETTA: si legge nel rimbalzo a 576 KB - da
 ; disco INT 13h/42h al piu' 64 settori per volta, dal floppy INT 13h/02h al
 ; piu' fino alla fine della traccia - poi si copia in alto col modo reale
 ; grande A INTERRUPT SPENTI (il perche' e' accanto a .dcopia). Il kernel lo
@@ -2229,7 +2237,7 @@ rdap:
 rdap_cnt:
     dw   1
     dw   0                ; offset nel rimbalzo
-    dw   RDSEG            ; il rimbalzo, a 512 KB
+    dw   RDSEG            ; il rimbalzo, a 576 KB
 rdap_lba:
     dd   0
     dd   0

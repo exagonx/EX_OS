@@ -17,6 +17,7 @@
 #include "paging.h"
 #include "sched.h"
 #include "kmalloc.h"
+#include "condivise.h"  /* the interpreter from the cache (0.351) */
 /* Per ERR()/ENOENT: il motivo del fallimento di vfs_open viene reso al
  * chiamante invece di essere appiattito su -1. Vedi elf_carica. */
 #include "syscall.h"
@@ -180,6 +181,83 @@ static int percorso_di_driver(const char *path)
            nome[len - 2] == 'r' && nome[len - 1] == 'v';
 }
 
+/* =============================================================================
+ * THE INTERPRETER (kernel 0.350, voce 105) - PT_INTERP, as on every Unix
+ *
+ * A program linked to the shared libc names /lib/ld-exos.so in PT_INTERP:
+ * the kernel maps that ET_DYN too, at `base`, and starts there instead of at
+ * the program's entry. The interpreter relocates itself, then the program
+ * and its libraries, and jumps to the program's entry (lib/libc_ld.c).
+ * Until 0.349 PT_INTERP was ignored: the libc inside the program did it.
+ *
+ * ! RESIDENT, NOT ON DEMAND: the pages on demand come from the one file a
+ * process keeps open (exe_handle), and this is a second file. Up to 0.350 it
+ * was read into the process's own pages, 270 KB of libc per process; since
+ * 0.351 it comes from the cache of loader/condivise.c, shared like libc.so's.
+ * ============================================================================= */
+static int elf_scrivi(void *pd, uint32_t vaddr, const void *src, uint32_t n)
+{
+    const uint8_t *q = (const uint8_t *)src;
+
+    while (n > 0) {
+        uint32_t off  = vaddr & 0xFFFu;
+        uint32_t take = PAGE_SIZE - off;
+        paddr_t  phys = paging_get_physical(pd, vaddr);
+        uint8_t *dst;
+        uint32_t k;
+
+        if (take > n) take = n;
+        if (phys == 0) return -1;
+        dst = (uint8_t *)paging_finestra_apri(phys - off);
+        for (k = 0; k < take; k++) dst[off + k] = q[k];
+        paging_finestra_chiudi();
+        vaddr += take; q += take; n -= take;
+    }
+    return 0;
+}
+
+/* Maps `path` (ET_DYN) at `base`. 0, the entry and the first address past
+ * it; -1 with a log line. Since 0.351 from the cache of the shared objects
+ * (loader/condivise.c): the libc's code is the same frames in every process. */
+static int elf_interprete(const char *path, Process *proc, uint32_t base,
+                          uint32_t *entry, uint32_t *fine)
+{
+    /* ! /lib IS NOT THERE ON EVERY BOOT: from the floppy the base system is
+     * in /rdboot, from the CD in /cdrom (0.351). The same places, in the same
+     * order, where the libc's bridges looked for libc.so. */
+    static const char *const altrove[] = { "/rdboot", "/cdrom" };
+    char    alt[160];
+    SoEsito e;
+    int     h, rc;
+    uint32_t i;
+
+    h = vfs_open(path, 0x0000);
+    for (i = 0; h < 0 && i < sizeof(altrove) / sizeof(altrove[0]) &&
+                path[0] == '/' && path[1] == 'l' && path[2] == 'i' && path[3] == 'b' && path[4] == '/'; i++) {
+        uint32_t a = 0, k = 0;
+        while (altrove[i][a] && a < sizeof(alt) - 1) { alt[a] = altrove[i][a]; a++; }
+        while (path[k] && a < sizeof(alt) - 1) alt[a++] = path[k++];
+        alt[a] = '\0';
+        if (path[k]) break;                      /* too long: no fallback */
+        h = vfs_open(alt, 0x0000);
+    }
+    if (h < 0) {
+        klog(LOG_ERROR, "ELF: interprete '%s' non trovato (err=%d)", path, h);
+        return -1;
+    }
+    rc = so_mappa(h, path, proc, base, &e);
+    vfs_close(h);
+    if (rc != 0) {
+        klog(LOG_ERROR, "ELF: interprete '%s' non mappato (err=%d)", path, rc);
+        return -1;
+    }
+    *entry = e.entry;
+    *fine  = e.inizio + e.misura;
+    klog(LOG_INFO, "ELF: interprete '%s' a 0x%08x-0x%08x, entry=0x%08x",
+         path, e.inizio, *fine, *entry);
+    return 0;
+}
+
 static int elf_carica(const char *path, Process *proc, ElfLoadResult *result,
                       int residente, uint32_t stack_extra)
 {
@@ -190,6 +268,11 @@ static int elf_carica(const char *path, Process *proc, ElfLoadResult *result,
     uint32_t      i;
     int           ret = -1;
     int           toccato = 0;      /* 1 = the caller's image already let go */
+    char          interp_path[128];
+    uint32_t      interp_base = 0, interp_entry = 0;
+
+    interp_path[0] = '\0';
+    result->aux = 0;
 
     klog(LOG_INFO, "ELF: caricamento '%s'...", path);
 
@@ -272,6 +355,25 @@ klog(LOG_INFO, "ELF: header valido, entry=0x%08x, phnum=%u",
     if (vfs_read(handle, phdrs, phdrs_size, hdr.e_phoff) != (int)phdrs_size) {
         klog(LOG_ERROR, "ELF: impossibile leggere program headers");
         goto cleanup;
+    }
+
+    /* (0.350) PT_INTERP: the path, read now, before the old image goes */
+    for (i = 0; i < hdr.e_phnum; i++) {
+        if (phdrs[i].p_type != PT_INTERP) continue;
+        if (phdrs[i].p_filesz < 2 || phdrs[i].p_filesz > sizeof(interp_path) ||
+            vfs_read(handle, interp_path, (uint32_t)phdrs[i].p_filesz,
+                     (uint32_t)phdrs[i].p_offset) != (int)phdrs[i].p_filesz ||
+            interp_path[phdrs[i].p_filesz - 1] != '\0') {
+            klog(LOG_ERROR, "ELF: '%s': PT_INTERP non leggibile", path);
+            interp_path[0] = '\0';
+            goto cleanup;
+        }
+        if (residente) {
+            /* a driver is resident and alone: it cannot wait for /lib */
+            klog(LOG_ERROR, "ELF: '%s' chiede un interprete, ma si carica residente", path);
+            goto cleanup;
+        }
+        break;
     }
 
     /* exec sostituisce l'immagine: l'eseguibile di prima non serve piu' e
@@ -723,6 +825,17 @@ if (n <= 0) {
             uint32_t end = ALIGN_UP(phdrs[i].p_vaddr + phdrs[i].p_memsz, PAGE_SIZE);
             if (end > heap_start) heap_start = end;
         }
+        /* (0.350) the interpreter right after the program, past a guard
+         * page, and the heap after it */
+        result->aux = 0;
+        if (interp_path[0] != '\0') {
+            uint32_t ientry, ifine, ibase = heap_start + PAGE_SIZE;
+
+            if (elf_interprete(interp_path, proc, ibase, &ientry, &ifine) != 0) goto cleanup;
+            heap_start = ifine;
+            interp_base  = ibase;
+            interp_entry = ientry;
+        }
         proc->heap_start = heap_start;
         proc->heap_end   = heap_start;
 
@@ -784,7 +897,38 @@ if (n <= 0) {
     if (proc != NULL) proc->io_diretto = 0;     /* the new program asks again (0.324) */
 
     result->entry_point = hdr.e_entry;
-    klog(LOG_INFO, "ELF: '%s' caricato con successo, entry=0x%08x", path, hdr.e_entry);
+    if (interp_entry != 0) {
+        /* ! THE auxv AT THE TOP OF THE STACK, under the four words the
+         * stack builders start from; its address goes in their first word */
+        uintptr_t aux[14];
+        uint32_t  phdr_va = 0, dove;
+
+        for (i = 0; i < hdr.e_phnum; i++)
+            if (phdrs[i].p_type == PT_PHDR) phdr_va = (uint32_t)phdrs[i].p_vaddr;
+        if (phdr_va == 0)
+            for (i = 0; i < hdr.e_phnum; i++)
+                if (phdrs[i].p_type == PT_LOAD && phdrs[i].p_offset <= hdr.e_phoff &&
+                    hdr.e_phoff < phdrs[i].p_offset + phdrs[i].p_filesz) {
+                    phdr_va = (uint32_t)(phdrs[i].p_vaddr + (hdr.e_phoff - phdrs[i].p_offset));
+                    break;
+                }
+        aux[0]  = AT_PHDR;   aux[1]  = phdr_va;
+        aux[2]  = AT_PHENT;  aux[3]  = sizeof(ElfPhdr);
+        aux[4]  = AT_PHNUM;  aux[5]  = hdr.e_phnum;
+        aux[6]  = AT_PAGESZ; aux[7]  = PAGE_SIZE;
+        aux[8]  = AT_BASE;   aux[9]  = interp_base;
+        aux[10] = AT_ENTRY;  aux[11] = (uintptr_t)hdr.e_entry;
+        aux[12] = AT_NULL;   aux[13] = 0;
+        dove = (result->user_stack_top - (uint32_t)sizeof(aux)) & ~15u;
+        if (phdr_va == 0 || elf_scrivi(proc->page_directory, dove, aux, sizeof(aux)) != 0) {
+            klog(LOG_ERROR, "ELF: '%s': auxv non scritto (phdr 0x%08x)", path, phdr_va);
+            goto cleanup;
+        }
+        result->user_stack_top = dove;
+        result->aux            = dove;
+        result->entry_point    = interp_entry;
+    }
+    klog(LOG_INFO, "ELF: '%s' caricato con successo, entry=0x%08x", path, result->entry_point);
     ret = 0;
 
 cleanup:

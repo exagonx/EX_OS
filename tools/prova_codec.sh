@@ -38,6 +38,7 @@ if [ ! -x "$H/ffmpeg" ]; then
 fi
 
 {
+    echo "export LD_LIBRARY_PATH=/a/lib"
     for c in $CAMPIONI; do
         cp "firefox-main/dom/media/test/$c" "$D/albero/m/"
         echo "/a/ffmpeg -nostdin -hide_banner -loglevel error -threads 1 -bitexact -i /a/m/$c -map 0 -flags +bitexact -c:a pcm_s16le -f framemd5 /a/r/$c.md5"
@@ -47,6 +48,23 @@ fi
     echo "echo CODEC-FINITO"
 } > "$D/albero/fa.sh"
 cp "$FF" "$D/albero/ffmpeg"; chmod 755 "$D/albero/ffmpeg"
+# ! ffmpeg is on /lib/ld-exos.so with its own .so files since 19 November 2026
+# (voce 105) and the EX-OS CD has none of them: the ones DT_NEEDED names, and
+# theirs, go to /a/lib, found through LD_LIBRARY_PATH, as in prova_librerie.sh
+mkdir -p "$D/albero/lib"
+nomi=$(readelf -d "$FF" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')
+while [ -n "$nomi" ]; do
+    nuovi=""
+    for l in $nomi; do
+        [ -f "$D/albero/lib/$l" ] && continue
+        [ "$l" = ld-exos.so ] && continue    # the system's, in /lib of the CD
+        f=$(ls cross_build/*-exos$BIT/exos/lib/"$l" 2>/dev/null | head -1)
+        [ -n "$f" ] || { echo "manca $l (a $BIT bit)" >&2; exit 1; }
+        cp "$f" "$D/albero/lib/"
+        nuovi="$nuovi $(readelf -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')"
+    done
+    nomi=$nuovi
+done
 IMG="$D/hd.img"; P="$D/p.img"
 $SBIN/mke2fs -q -F -t ext2 -b 4096 -m 0 -L codec -d "$D/albero" "$P" 200M || exit 1
 qemu-img create -f raw "$IMG" 202M > /dev/null

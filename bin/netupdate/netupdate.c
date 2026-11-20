@@ -21,10 +21,31 @@
  * Dall'altra parte c'e' `make netinst`, che prepara dist/netinst/: una
  * directory da appoggiare su un server FTP o HTTP, con dentro
  *
- *     versione.txt   versione, data, e l'impronta degli altri due
- *     catalogo.txt   i pacchetti: nome, cosa contengono, da cosa dipendono
- *     elenco.txt     un file per riga: percorso, byte, sha256, pacchetto
+ *     versione.txt   versione, data, e l'impronta degli altri
+ *     app.txt        (0.050) le applicazioni: nome, versione, build, da
+ *                    cosa dipendono, dove sta l'elenco dei loro file
+ *     app/<id>.txt   (0.050) i file di un'applicazione: percorso, byte,
+ *                    sha256, pacchetto
+ *     catalogo.txt   l'archivio di prima, per i netupdate prima della
+ *     elenco.txt     0.050: dal 20/11/2026 solo [avvio] e [sistema]
  *     file/...       l'albero, coi percorsi che avra' sul disco
+ *
+ * -----------------------------------------------------------------------------
+ * ! L'ARCHIVIO PER APPLICAZIONE (netupdate 0.050, voce 107)
+ *
+ * Un'applicazione installata con la stessa VERSIONE E BUILD del server non si
+ * guarda nemmeno: il suo elenco non si scarica e il suo blocco del registro
+ * resta com'e'. La build e' il momento in cui i suoi file sono cambiati
+ * l'ultima volta (tools/netinst/archivio_app.py): una ricostruzione con la
+ * stessa versione - i porting su ld-exos.so del 19/11, VLC sempre 3.0.24 -
+ * arriva lo stesso. Quelle cambiate si confrontano file per file come prima.
+ *   -check           aggiorna solo cio' che e' installato
+ *   -check -yesall   e installa le dipendenze NUOVE che mancano a chi c'e'
+ *   -list[:pezzo]    le applicazioni del server (che contengono il pezzo)
+ *   -install:<app>   l'applicazione con le sue dipendenze e la voce di menu
+ * I file che non arrivano si ritentano da soli `tentativi` volte
+ * (netupdate.cnf, 3 se non lo dice), poi si chiede; quelli rimasti vanno in
+ * /boot/netupdate.err e il -check dopo li dice per primi.
  *
  * -----------------------------------------------------------------------------
  * ! SI CONFRONTA FILE PER FILE, NON PACCHETTO PER PACCHETTO
@@ -44,7 +65,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.049");
+EX_VERSIONE("netupdate", "0.050");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -126,6 +147,7 @@ typedef struct {
     char tipo[8];        /* HTTP, FTP, HTTPS, FTPS                       */
     char url[URL_MAX];   /* la radice: dentro ci sono versione.txt e file/ */
     int  automatico;     /* 1 = controlla al primo accesso                */
+    int  tentativi;      /* (0.050) giri da soli per i file non arrivati  */
 } Config;
 
 /* -----------------------------------------------------------------------------
@@ -191,6 +213,8 @@ static int config_leggi(Config *c)
             c->automatico = (valore[0] == 's' || valore[0] == 'S' ||
                              valore[0] == '1' ||
                              valore[0] == 'y' || valore[0] == 'Y');
+        } else if (strcasecmp(chiave, "tentativi") == 0) {
+            c->tentativi = atoi(valore);
         }
         /* ogni altra chiave: ignorata apposta, vedi sopra */
     }
@@ -243,6 +267,7 @@ static int config_scrivi(const Config *c)
     fprintf(f, "tipo       = %s\n", c->tipo);
     fprintf(f, "url        = %s\n", c->url);
     fprintf(f, "automatico = %s\n", c->automatico ? "si" : "no");
+    if (c->tentativi > 0) fprintf(f, "tentativi  = %d\n", c->tentativi);
 
     if (fclose(f) != 0) {
         fprintf(stderr, "netupdate: %s non si e' chiuso bene (%s)\n",
@@ -499,6 +524,10 @@ typedef struct {
     char prova[PERC_MAX];       /* un percorso che, se c'e', dice che c'e'    */
     char versione[16];
     char data[32];
+    /* (0.050) when the application's files last changed, YYYYMMDDhhmm: see
+     * the header. In the register: the build that is installed. */
+    char build[16];
+    int  grafica;
     /* L'archivio, quando c'e': quattro chiavi che stanno insieme o non
      * servono. `arcsrotolato` e' quanto occupa APERTO, e si legge prima di
      * scaricare: inflate() vuole tutto in memoria, e la decisione si prende
@@ -529,6 +558,41 @@ typedef struct {
     long n_ignoti;              /* di quelle, quante senza impronta           */
     int  c_e;                   /* la `prova` esiste sul disco (serve a crea) */
 } Pacchetto;
+
+#define TMPDIR   "/tmp/netupdate"
+
+/* (0.050) the repository has app.txt; -yesall; the applications left as they
+ * are (same build); the dependencies -yesall brings; those missing, said */
+static int   g_nuovo, g_yesall;
+static char (*g_fermi)[ID_MAX];
+static int   g_nfermi;
+static char (*g_aggiunti)[ID_MAX];
+static int   g_naggiunti;
+static char (*g_mancano)[ID_MAX];
+static int   g_nmancano;
+static int   g_daregistrare;   /* installed, looked at, with another build */
+static int   fra(char elenco[][ID_MAX], int n, const char *id);
+static void  copia_str(char *dst, const char *src, int max);
+
+static void lista_metti(char (**v)[ID_MAX], int *n, const char *id)
+{
+    void *nuovo;
+
+    if (fra(*v, *n, id)) return;
+    nuovo = realloc(*v, (size_t)(*n + 1) * ID_MAX);
+    if (nuovo == NULL) return;
+    *v = (char (*)[ID_MAX])nuovo;
+    copia_str((*v)[(*n)++], id, ID_MAX);
+}
+
+/* Builds are YYYYMMDDhhmm: as numbers, longer is newer. >0 if a is newer. */
+static int build_cmp(const char *a, const char *b)
+{
+    size_t la = strlen(a), lb = strlen(b);
+
+    if (la != lb) return la > lb ? 1 : -1;
+    return strcmp(a, b);
+}
 
 /* -----------------------------------------------------------------------------
  * Il lettore del formato a blocchi. UNO SOLO PER I DUE FILE: catalogo e
@@ -637,6 +701,8 @@ static int blocchi_leggi(const char *percorso, Pacchetto **pv)
         if ((val = valore_se(r, "prova"))    != NULL) { copia_str(p->prova, val, PERC_MAX); continue; }
         if ((val = valore_se(r, "versione")) != NULL) { copia_str(p->versione, val, 16); continue; }
         if ((val = valore_se(r, "data"))     != NULL) { copia_str(p->data, val, 32); continue; }
+        if ((val = valore_se(r, "build"))    != NULL) { copia_str(p->build, val, 16); continue; }
+        if ((val = valore_se(r, "grafica"))  != NULL) { p->grafica = (val[0] == 's' || val[0] == 'S'); continue; }
         if ((val = valore_se(r, "mbyte"))    != NULL) { p->mbyte = atol(val); continue; }
         if ((val = valore_se(r, "archivio")) != NULL) { copia_str(p->archivio, val, PERC_MAX); continue; }
         if ((val = valore_se(r, "arcbyte"))  != NULL) { p->arcbyte = atol(val); continue; }
@@ -1007,6 +1073,8 @@ static int esiste(const char *percorso, long *dim)
  * volte e' meno di un megabyte di letture. */
 static const char *registro_impronta(const char *percorso);
 
+static int disco_giusto(const char *percorso, long byte, const char *impronta_server);
+
 static long file_del_pacchetto(FILE *out, const char *elenco, const char *id,
                                long *mancano, long *diversi)
 {
@@ -1044,8 +1112,8 @@ static long file_del_pacchetto(FILE *out, const char *elenco, const char *id,
 
             uguale = dim == atol(sbyte);
             if (uguale && (mia == NULL || strcasecmp(mia, impronta) != 0))
-                uguale = impronta_locale(assoluto, esa) == 0 &&
-                         strcasecmp(esa, impronta) == 0;
+                uguale = disco_giusto(p, dim, impronta);   /* read once (0.050) */
+            (void)esa;
         }
 
         if (!uguale) {
@@ -1061,6 +1129,27 @@ static long file_del_pacchetto(FILE *out, const char *elenco, const char *id,
     }
     fclose(f);
     return scritti;
+}
+
+/* (0.050) the block of `id` from the register as it is: an application with
+ * the same build was not looked at, and its files stay as they were. */
+static int registro_copia(FILE *out, const char *id)
+{
+    FILE *f = fopen(REG, "r");
+    char  riga[RIGA_MAX], cerco[ID_MAX + 4];
+    int   dentro = 0, copiato = 0;
+
+    if (f == NULL) return 0;
+    snprintf(cerco, sizeof(cerco), "[%s]", id);
+    while (fgets(riga, sizeof(riga), f) != NULL) {
+        if (riga[0] == '[') {
+            dentro = strncmp(riga, cerco, strlen(cerco)) == 0;
+            if (dentro) { fputs("\n", out); copiato = 1; }
+        }
+        if (dentro && riga[0] != '\n') fputs(riga, out);
+    }
+    fclose(f);
+    return copiato;
 }
 
 static int comando_registro_crea(const char *albero)
@@ -1081,6 +1170,14 @@ static int comando_registro_crea(const char *albero)
     unisci(ver, sizeof(ver), albero, "versione.txt");
     unisci(cat, sizeof(cat), albero, "catalogo.txt");
     unisci(ele, sizeof(ele), albero, "elenco.txt");
+    /* a published tree with app.txt (0.050): that is the catalogue; the one
+     * downloaded is already in catalogo.txt (manifesto) */
+    if (strcmp(albero, TMPDIR) != 0) {
+        char app[PERC_MAX];
+
+        unisci(app, sizeof(app), albero, "app.txt");
+        if (access(app, F_OK) == 0) { copia_str(cat, app, PERC_MAX); g_nuovo = 1; }
+    }
 
     if (chiave_da_file(ver, "versione", versione, sizeof(versione)) != 0) {
         fprintf(stderr, "netupdate: %s non c'e' o non dice la versione.\n", ver);
@@ -1156,10 +1253,17 @@ static int comando_registro_crea(const char *albero)
 
         if (!v[i].c_e) continue;
 
+        if (fra(g_fermi, g_nfermi, v[i].id) && registro_copia(out, v[i].id)) {
+            printf("  %-12s uguale (versione %s, build %s)\n", v[i].id,
+                   v[i].versione, v[i].build);
+            continue;
+        }
+
         fprintf(out, "\n[%s]\n", v[i].id);
         fprintf(out, "nome     = %s\n", v[i].nome);
         if (v[i].dice[0]) fprintf(out, "dice     = %s\n", v[i].dice);
-        fprintf(out, "versione = %s\n", versione);
+        fprintf(out, "versione = %s\n", g_nuovo && v[i].versione[0] ? v[i].versione : versione);
+        if (v[i].build[0]) fprintf(out, "build    = %s\n", v[i].build);
         fprintf(out, "data     = %s\n", data);
         if (v[i].prova[0]) fprintf(out, "prova    = %s\n", v[i].prova);
         /* ! `sempre` VA NEL REGISTRO, non solo nel catalogo: e' `-remove` a
@@ -1442,7 +1546,7 @@ static int g_riga_essenziale;            /* set by riga_elenco, below */
 
 static int file_dovuto(const char *pac)
 {
-    return g_riga_essenziale || pacchetto_installato(pac);
+    return g_riga_essenziale || pacchetto_installato(pac) || fra(g_aggiunti, g_naggiunti, pac);
 }
 
 static const char *registro_impronta(const char *percorso)
@@ -1890,6 +1994,47 @@ static int verdetto(const char *percorso, const char *impronta_server)
     return UGUALE;
 }
 
+/* (0.050) A file the register does not know, or knows without a hash, that on
+ * the disk is ALREADY the server's one - same bytes, same sha256 - is not
+ * fetched again. ! THE JUMP TO app.txt NEEDS IT: netupdate 0.049 rewrites the
+ * register from the trimmed catalogue (avvio, sistema), the blocks of vlc,
+ * php, qt5... go, and the first -check of 0.050 would have downloaded every
+ * one of their files again, 700 MB on the .253. The answer is remembered
+ * (g_buoni), so the update loop does not read the file a second time. */
+typedef struct Buono { struct Buono *dopo; char percorso[1]; } Buono;
+static Buono *g_buoni[1024];
+
+static unsigned int buono_h(const char *s)
+{
+    unsigned int h = 5381;
+
+    while (*s) h = h * 33 + (unsigned char)*s++;
+    return h & 1023;
+}
+
+static int disco_giusto(const char *percorso, long byte, const char *impronta_server)
+{
+    char         assoluto[PERC_MAX], esa[72];
+    long         dim = 0;
+    unsigned int h = buono_h(percorso);
+    Buono       *b;
+    size_t       l;
+
+    for (b = g_buoni[h]; b != NULL; b = b->dopo)
+        if (strcmp(b->percorso, percorso) == 0) return 1;
+    unisci(assoluto, sizeof(assoluto), "/", percorso);
+    if (!esiste(assoluto, &dim) || dim != byte) return 0;
+    if (impronta_locale(assoluto, esa) != 0 || strcasecmp(esa, impronta_server) != 0) return 0;
+    l = strlen(percorso);
+    b = (Buono *)malloc(sizeof(Buono) + l);
+    if (b != NULL) {
+        memcpy(b->percorso, percorso, l + 1);
+        b->dopo = g_buoni[h];
+        g_buoni[h] = b;
+    }
+    return 1;
+}
+
 /* Per -install: il file va scaricato? Un file che il registro non conosce ma
  * che sul disco e' GIA' quello giusto - stessi byte, stessa impronta - non si
  * riscarica: e' quel che resta di un'installazione caduta a meta', e per un
@@ -2229,18 +2374,65 @@ static int elenchi_aggiungi(const Config *c, const char *cat, const char *ele)
         catena = calloc((size_t)n + 1, ID_MAX);
         if (catena != NULL) ncatena = catena_vuole(v, n, g_anche, catena, n + 1);
     }
+    /* (0.050) what is installed, and what its installed applications want
+     * that is not here: -yesall brings it, -check says it */
+    if (g_nuovo && n > 0) {
+        static Pacchetto *r = NULL;
+        char (*dip)[ID_MAX] = calloc((size_t)n + 1, ID_MAX);
+        int  *qui = calloc((size_t)n + 1, sizeof(int));
+        int   nr = blocchi_leggi(REG, &r), j, nd;
+
+        if (nr < 0) nr = 0;
+        g_nfermi = g_nmancano = 0;
+        for (i = 0; qui && i < n; i++) {
+            if (v[i].prova[0]) {
+                unisci(assoluto, sizeof(assoluto), "/", v[i].prova);
+                qui[i] = esiste(assoluto, NULL);
+            }
+            if (!qui[i]) qui[i] = cerca(r, nr, v[i].id) != NULL;
+        }
+        for (i = 0; dip && qui && i < n; i++) {
+            if (!qui[i]) continue;
+            nd = catena_vuole(v, n, v[i].id, dip, n + 1);
+            for (j = 0; j < nd; j++) {
+                Pacchetto *d = cerca(v, n, dip[j]);
+
+                if (d == NULL || qui[d - v]) continue;
+                if (g_yesall) lista_metti(&g_aggiunti, &g_naggiunti, d->id);
+                else          lista_metti(&g_mancano, &g_nmancano, d->id);
+            }
+        }
+        /* the same build as the one installed: nothing of it is looked at.
+         * ! THE OTHERS GO IN THE REGISTER EVEN WITH NO FILE CHANGED: a build
+         * that only moved (or a register from before 0.050, with none) would
+         * otherwise stay "aggiornabile" for ever */
+        g_daregistrare = 0;
+        for (i = 0; qui && i < n; i++) {
+            Pacchetto *q = qui[i] ? cerca(r, nr, v[i].id) : NULL;
+
+            if (q && q->build[0] && v[i].build[0] && build_cmp(q->build, v[i].build) >= 0 &&
+                strcmp(v[i].id, g_anche) != 0 && !fra(catena, ncatena, v[i].id))
+                lista_metti(&g_fermi, &g_nfermi, v[i].id);
+            else if (qui[i] && v[i].build[0])
+                g_daregistrare++;
+        }
+        free(dip);
+        free(qui);
+    }
+
     for (i = 0; i < n; i++) {
         FILE *in, *out;
         char  riga[RIGA_MAX];
         int   c_e = 0;
 
         if (v[i].elenco[0] == '\0') continue;
+        if (fra(g_fermi, g_nfermi, v[i].id)) continue;
         if (v[i].prova[0]) {
             unisci(assoluto, sizeof(assoluto), "/", v[i].prova);
             c_e = esiste(assoluto, NULL);
         }
         if (!c_e && strcmp(v[i].id, g_anche) != 0 && !fra(catena, ncatena, v[i].id)
-            && !nel_registro(v[i].id)) continue;
+            && !nel_registro(v[i].id) && !fra(g_aggiunti, g_naggiunti, v[i].id)) continue;
 
         snprintf(suo, sizeof(suo), "%s/elenco-%s.txt", TMPDIR, v[i].id);
         if (prendi_verifica_scrivi(c, v[i].elenco,
@@ -2268,10 +2460,12 @@ static int elenchi_aggiungi(const Config *c, const char *cat, const char *ele)
     return 0;
 }
 
+static int g_tentativi = 3;
+
 static int manifesto(Config *c, char *ver, char *cat, char *ele,
                      char *versione, char *data)
 {
-    char h_cat[72], h_ele[72];
+    char h_cat[72], h_ele[72], h_app[72];
 
     if (!config_leggi(c)) {
         if (!g_zitto) {
@@ -2323,6 +2517,24 @@ static int manifesto(Config *c, char *ver, char *cat, char *ele,
     if (chiave_da_file(ver, "data", data, 40) != 0)
         copia_str(data, "?", 40);
     if (arch_giusta(ver) != 0) return 1;
+    if (c->tentativi > 0) g_tentativi = c->tentativi;
+
+    /* (0.050) the archive by application: app.txt takes the place of the
+     * catalogue (same blocks, a few keys more), and the list is only the
+     * files of the applications that have to be looked at */
+    if (chiave_da_file(ver, "app", h_app, sizeof(h_app)) == 0) {
+        FILE *e;
+
+        g_nuovo = 1;
+        if (prendi_verifica_scrivi(c, "app.txt", h_app, cat) != 0) return 1;
+        e = fopen(ele, "w");
+        if (e == NULL) return 1;
+        fputs("# percorso<TAB>byte<TAB>sha256<TAB>pacchetto[<TAB>essenziale]\n", e);
+        fclose(e);
+        if (elenchi_aggiungi(c, cat, ele) != 0) return 1;
+        if (!g_zitto) printf("  server: sistema %s del %s\n", versione, data);
+        return 0;
+    }
 
     if (chiave_da_file(ver, "catalogo", h_cat, sizeof(h_cat)) != 0 ||
         chiave_da_file(ver, "elenco",   h_ele, sizeof(h_ele)) != 0) {
@@ -2916,9 +3128,11 @@ static long ritenta(Config *c, int chiedi, long *fatti, long *saltati,
         printf("\nNon sono arrivati:\n");
         for (r = g_ritenta; r != NULL; r = r->dopo)
             printf("  ! %s\n", r->percorso);
-        if (chiedi) {
-            if (!chiedi_si("Riprovo adesso?", giro == 0)) break;
-        } else if (giro > 0) {
+        /* (0.050) `tentativi` rounds by themselves, then whoever is there is
+         * asked; -yes has nobody to ask and stops */
+        if (giro < g_tentativi) {
+            printf("  ritento da solo (%d di %d)\n", giro + 1, g_tentativi);
+        } else if (!chiedi || !chiedi_si("Riprovo ancora?", 0)) {
             break;
         }
         giro++;
@@ -2937,6 +3151,45 @@ static long ritenta(Config *c, int chiedi, long *fatti, long *saltati,
         }
     }
     return arrivati;
+}
+
+/* (0.050) the files that did not arrive, for the next -check: one line each,
+ * "percorso TAB byte TAB sha256". Written when some are left, removed when a
+ * -check ends with none. */
+#define ERR_FILE "/boot/netupdate.err"
+
+static void errori_scrivi(void)
+{
+    Ritenta *r;
+    FILE    *f;
+
+    if (g_ritenta == NULL) { remove(ERR_FILE); return; }
+    f = fopen(ERR_FILE, "w");
+    if (f == NULL) return;
+    for (r = g_ritenta; r != NULL; r = r->dopo)
+        fprintf(f, "%s\t%ld\t%s\n", r->percorso, r->byte, r->impronta);
+    fclose(f);
+    printf("\n  Quelli che mancano sono scritti in %s: il prossimo\n"
+           "  netupdate -check li riprende.\n", ERR_FILE);
+}
+
+static void errori_dici(void)
+{
+    FILE *f = fopen(ERR_FILE, "r");
+    char  riga[RIGA_MAX];
+    int   n = 0;
+
+    if (f == NULL) return;
+    while (fgets(riga, sizeof(riga), f) != NULL) {
+        char *t = strchr(riga, '\t');
+
+        if (t) *t = '\0';
+        if (n++ == 0) printf("L'ultima volta non sono arrivati:\n");
+        if (n <= 12) printf("  ! %s\n", riga);
+    }
+    fclose(f);
+    if (n > 12) printf("  ... (%d in tutto)\n", n);
+    if (n) printf("  Il confronto qui sotto li ripropone.\n\n");
 }
 
 /* =============================================================================
@@ -3525,6 +3778,8 @@ static int guarda(Config *c, char *ver, char *cat, char *ele,
 
         if (!riga_elenco(riga, &p, &byte, &impronta, &pac)) continue;
         v = verdetto(p, impronta);
+        if ((v == SCONOSCIUTO || v == DA_VERIFICARE) && disco_giusto(p, byte, impronta))
+            v = UGUALE;
 
         if (v == UGUALE)         { k->uguali++; continue; }
         /* The machine's own files first: a missing one (boot/telnetd.cfg on a
@@ -3959,12 +4214,35 @@ static int comando_check(int senza_chiedere)
                    "  netupdate -avvio; se fallisce ancora, `install` da un altro supporto.\n\n");
     }
 
+    errori_dici();
+    g_yesall = (senza_chiedere == 2);
     if (guarda(&c, ver, cat, ele, versione, data, &k) != 0) return 1;
+
+    if (g_nuovo) {
+        int i;
+
+        if (g_nfermi)
+            printf("  %d applicazion%s con la stessa versione e build del server:\n"
+                   "  non le guardo.\n", g_nfermi, g_nfermi == 1 ? "e" : "i");
+        for (i = 0; i < g_naggiunti; i++)
+            printf("  -yesall: installo %s, che serve a chi c'e' gia'\n", g_aggiunti[i]);
+        if (g_nmancano) {
+            printf("\n  ! Alle applicazioni installate servono anche:");
+            for (i = 0; i < g_nmancano; i++) printf(" %s", g_mancano[i]);
+            printf("\n    netupdate -check -yesall le installa (o -install:<nome>).\n");
+        }
+    }
 
     if (k.cambiati + k.verif + k.scon + k.nuovi == 0) {
         printf("\nNiente da fare");
         if (k.config) printf(" (a parte la configurazione, che e' tua)");
         printf(".\n");
+        remove(ERR_FILE);
+        if (g_nuovo && g_daregistrare) {
+            printf("\nScrivo nel registro le build nuove di %d applicazion%s.\n\n",
+                   g_daregistrare, g_daregistrare == 1 ? "e" : "i");
+            comando_registro_crea(TMPDIR);
+        }
         verifiche_esegui(&c, ver, NULL, 0, 0);
         return 0;
     }
@@ -3979,7 +4257,8 @@ static int comando_check(int senza_chiedere)
         fai_nuovi    = (senza_chiedere == 2 && k.nuovi > 0);
         printf("\n  %s: aggiorno i file cambiati%s, senza chiedere.\n",
                senza_chiedere == 2 ? "-yesall" : "-yes",
-               senza_chiedere == 2 ? " e installo quelli che mancano"
+               senza_chiedere == 2 ? (g_nuovo ? " e installo le dipendenze nuove"
+                                              : " e installo quelli che mancano")
                                    : "; quelli mai installati restano fuori");
     } else {
     fai_cambiati = (k.cambiati + k.verif + k.scon > 0)
@@ -4084,6 +4363,8 @@ static int comando_check(int senza_chiedere)
             }
 
             v = verdetto(p, impronta);
+            if ((v == SCONOSCIUTO || v == DA_VERIFICARE) && disco_giusto(p, byte, impronta))
+                v = UGUALE;
 
             if (v == UGUALE) continue;
             if (e_configurazione(p)) continue;      /* e' di questa macchina */
@@ -4126,6 +4407,7 @@ static int comando_check(int senza_chiedere)
 
     falliti -= ritenta(&c, !senza_chiedere, &fatti, &saltati,
                        &kernel_nuovo, &stage2_nuovo);
+    errori_scrivi();
 
     /* --- 6. l'avvio, per ultimo ------------------------------------------- */
     if (kernel_nuovo || stage2_nuovo) {
@@ -4147,7 +4429,7 @@ static int comando_check(int senza_chiedere)
     if (saltati) printf(", %ld saltati perche' troppo grossi", saltati);
     printf(".\n");
 
-    if (fatti > 0) {
+    if (fatti > 0 || (g_nuovo && g_daregistrare)) {
         printf("\nRiscrivo il registro, che adesso deve dire un'altra cosa.\n\n");
         comando_registro_crea(TMPDIR);
     }
@@ -4632,14 +4914,25 @@ static int pagina_riga(void)
  * prints before them (the server, the version) is ignored by whoever reads.
  * The last line is "FINE\t<n>" so that a list cut short is not taken for a
  * short list. */
-static void riga_tab(const Pacchetto *p, int c_e)
+/* (0.050) installed, and the server has a newer build of it */
+static int aggiornabile(const Pacchetto *server, const Pacchetto *qui)
+{
+    if (qui == NULL || !server->build[0]) return 0;
+    return !qui->build[0] || build_cmp(server->build, qui->build) > 0;
+}
+
+/* ! THE NEW COLUMNS GO AT THE END (0.050): ExPackage before 0.050 reads the
+ * first eight and ignores the rest. */
+static void riga_tab(const Pacchetto *p, const Pacchetto *qui)
 {
     int k;
 
-    printf("PKG\t%s\t%d\t%ld\t%d\t", p->id, c_e, p->mbyte, p->sempre);
+    printf("PKG\t%s\t%d\t%ld\t%d\t", p->id, qui != NULL, p->mbyte, p->sempre);
     if (p->n_vuole == 0) printf("-");
     for (k = 0; k < p->n_vuole; k++) printf("%s%s", k ? "," : "", p->vuole[k]);
-    printf("\t%s\t%s\n", p->nome, p->dice[0] ? p->dice : "-");
+    printf("\t%s\t%s\t%s\t%s\t%d\t%s\t%d\n", p->nome, p->dice[0] ? p->dice : "-",
+           p->versione[0] ? p->versione : "-", p->build[0] ? p->build : "-",
+           aggiornabile(p, qui), qui && qui->versione[0] ? qui->versione : "-", p->grafica);
 }
 
 static int comando_install_list(const char *pezzo, int pagine, int tab)
@@ -4661,7 +4954,7 @@ static int comando_install_list(const char *pezzo, int pagine, int tab)
     if (nr < 0) nr = 0;
 
     if (tab) {
-        for (i = 0; i < n; i++) riga_tab(&v[i], cerca(r, nr, v[i].id) != NULL);
+        for (i = 0; i < n; i++) riga_tab(&v[i], cerca(r, nr, v[i].id));
         printf("FINE\t%d\n", n);
         return 0;
     }
@@ -4670,16 +4963,18 @@ static int comando_install_list(const char *pezzo, int pagine, int tab)
     pagina_riga();
     printf("\n");
     pagina_riga();
-    printf("  %-12s %-11s %5s  %s\n", "PACCHETTO", "STATO", "MB", "COS'E'");
+    printf("  %-12s %-12s %5s  %s\n", "PACCHETTO", "STATO", "MB", "COS'E'");
     for (i = 0; i < n; i++) {
+        Pacchetto *q = cerca(r, nr, v[i].id);
+
         if (pezzo != NULL && pezzo[0] != '\0' &&
             strstr(v[i].id, pezzo) == NULL && strstr(v[i].nome, pezzo) == NULL)
             continue;
         mostrati++;
         if (pagina_riga()) continue;
-        printf("  %-12s %-11s %5ld  %s\n", v[i].id,
-               cerca(r, nr, v[i].id) ? "installato" : "no",
-               v[i].mbyte, v[i].nome);
+        printf("  %-12s %-12s %5ld  %s%s%s\n", v[i].id,
+               aggiornabile(&v[i], q) ? "aggiornabile" : q ? "installato" : "no",
+               v[i].mbyte, v[i].nome, v[i].versione[0] ? " " : "", v[i].versione);
         if (v[i].dice[0] && !pagina_riga())
             printf("  %-12s %-11s %5s  %s\n", "", "", "", v[i].dice);
     }
@@ -4693,7 +4988,7 @@ static int comando_install_list(const char *pezzo, int pagine, int tab)
     printf("\n  %d pacchett%s. Per installarne uno:  netupdate -install:<nome>\n",
            mostrati, mostrati == 1 ? "o" : "i");
     printf("  E i sorgenti del sistema:            netupdate -install:sourcecode\n");
-    if (!pagine) printf("  Una pagina per volta:                netupdate -install:list -p\n");
+    if (!pagine) printf("  Una pagina per volta:                netupdate -list -p\n");
     return 0;
 }
 
@@ -5410,8 +5705,8 @@ static void uso(void)
     printf("     netupdate -check                   cosa e' cambiato sul server\n");
     printf("     netupdate -check -yes              aggiorna i file cambiati senza\n");
     printf("                                        chiedere; non aggiunge niente\n");
-    printf("     netupdate -check -yesall           lo stesso, e installa anche i\n");
-    printf("                                        file che qui mancano\n");
+    printf("     netupdate -check -yesall           lo stesso, e installa anche le\n");
+    printf("                                        dipendenze nuove di chi c'e'\n");
     printf("     netupdate -check:guarda            lo stesso, senza toccare niente\n");
     printf("     netupdate -auto                    l'occhiata dell'avvio: zitta,\n");
     printf("                                        e solo se automatico = si\n");
@@ -5424,10 +5719,13 @@ static void uso(void)
     printf("     netupdate -registro                cosa c'e' installato qui\n");
     printf("     netupdate -registro:<pacchetto>    uno solo, coi suoi file\n");
     printf("     netupdate -registro:crea <albero>  il registro da una copia locale\n");
-    printf("     netupdate -install:list <pezzo>    le app il cui nome lo contiene\n");
-    printf("     netupdate -install:list -p         una pagina per volta\n");
-    printf("     netupdate -install:list -tab       una riga per app, per i programmi\n");
-    printf("     netupdate -install:<app>           l'app e cio' che le serve\n");
+    printf("     netupdate -list                    le app del server, con lo stato\n");
+    printf("     netupdate -list:<pezzo>            quelle il cui nome lo contiene\n");
+    printf("     netupdate -list -p                 una pagina per volta\n");
+    printf("     netupdate -list -tab               una riga per app, per i programmi\n");
+    printf("                                        (-install:list resta uguale)\n");
+    printf("     netupdate -install:<app>           l'app, cio' che le serve e la\n");
+    printf("                                        sua voce nel menu\n");
     printf("     netupdate -remove:<app>            l'app e le librerie di nessun altro\n");
     printf("     netupdate -install:<app> -yes      senza chiedere (anche -remove)\n");
     printf("     netupdate -set:<TIPO> <indirizzo>  -set senza domande\n");
@@ -5594,6 +5892,19 @@ int main(int argc, char **argv)
             percorsi_segna();
             return rc;
         }
+
+    /* (0.050) -list, -list:<pezzo>: the applications of the server, as
+     * -install:list (which stays) */
+    if (strcmp(argv[1], "-list") == 0 || strncmp(argv[1], "-list:", 6) == 0) {
+        const char *pezzo = argv[1][5] == ':' ? argv[1] + 6 : "";
+        int         pagine = 0, tab = 0;
+
+        for (i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "-p") == 0)        pagine = 1;
+            else if (strcmp(argv[i], "-tab") == 0) tab = 1;
+        }
+        return comando_install_list(pezzo, pagine, tab);
+    }
 
     if (strncmp(argv[1], "-install:", 9) == 0) {
         const char *coda = argv[1] + 9;

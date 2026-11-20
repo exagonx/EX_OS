@@ -9,36 +9,22 @@
  * See the LICENSE file in the project root for the full license text.
  * =============================================================================
  *
- * LIBRERIE CONDIVISE — il patto fra chi le scrive e chi le usa
+ * OPTIONAL LIBRARIES — open one, ask it for a name, carry on without it
  *
- * Una libreria di EX-OS e' un ELF normalissimo, collegato a un indirizzo
- * riservato nella fascia 0x04000000-0x08000000, il cui PUNTO D'INGRESSO non e'
- * codice: e' la struttura ExLibTesta qui sotto. Il kernel la mappa (una volta
- * per tutto il sistema, vedi kernel/loader/lib.c) e rende quell'indirizzo.
+ * The EX-OS libraries (exwin.so, eximg.so, exfont.so, ...) are ordinary ELF
+ * shared objects on the shared libc /lib/ld-exos.so (voce 105, 19 November
+ * 2026). A program that cannot live without one names it at link time
+ * (DT_NEEDED) and calls it like any function. These three calls are for the
+ * OPTIONAL ones: a program that can show a BMP without eximg.so, or draw with
+ * the bitmap font without exfont.so, opens them when it needs them.
  *
- * ! SI RISOLVE PER NOME, NON PER POSIZIONE, ed e' tutto il punto. Con una
- * tabella posizionale — «la funzione 7 e' ex_draw_text» — riordinare le voci o
- * toglierne una in mezzo romperebbe ogni applicazione gia' compilata, e nessun
- * errore lo direbbe: si chiamerebbe semplicemente la funzione sbagliata. Coi
- * nomi si puo' aggiungere, riordinare e riscrivere il corpo di qualunque
- * funzione, e le applicazioni continuano a funzionare senza essere
- * ricompilate. Solo TOGLIERE un nome le rompe — ed e' esattamente il patto di
- * una DLL di Windows.
+ * They are dlopen and dlsym under another name (lib/libc.c), and the handle
+ * is dlopen's. Until 19 November 2026 a library was an ET_EXEC at its own
+ * address whose entry point was a table of names (ExLibTesta), mapped by the
+ * kernel (SYS_LIB_APRI): that is gone, and so are the table and its macro.
  *
- * ! IL COSTO E' UNA RICERCA ALL'AVVIO, e si paga una volta sola: l'applicazione
- * risolve i nomi che le servono la prima volta che li usa e poi chiama
- * attraverso un puntatore. Non c'e' niente di dinamico nel percorso caldo.
- *
- * Come si scrive una libreria:
- *
- *     #include "exlib.h"
- *
- *     static const char *const nomi[] = { "pippo", "pluto" };
- *     static void *const dove[]       = { (void *)pippo, (void *)pluto };
- *
- *     EXLIB_TESTA(mia_tabella, nomi, dove);
- *
- * e nel linker script:  ENTRY(mia_tabella)  con la base a 0x04000000.
+ * ! A NAME CAN BE MISSING, and the caller MUST check: it is how a program
+ * finds out that the library installed is older than itself.
  * ============================================================================= */
 
 #ifndef EXLIB_H
@@ -48,56 +34,18 @@
 extern "C" {
 #endif
 
-/* 'EXLB' in little-endian. Serve a distinguere una libreria vera da un
- * eseguibile qualunque che il kernel abbia mappato: senza, il primo campo
- * letto sarebbe codice interpretato come un numero di funzioni. */
-#define EXLIB_MAGIA     0x424C5845u
+/* Opaque: a dlopen handle. */
+typedef struct ExLibTesta ExLibTesta;
 
-/* La versione del PATTO, non della libreria. Cambia solo se cambia la forma di
- * questa struttura, e allora le applicazioni vecchie devono rifiutarsi invece
- * di leggere campi che stanno da un'altra parte. */
-#define EXLIB_VERSIONE  1
-
-typedef struct {
-    unsigned int             magia;      /* EXLIB_MAGIA */
-    unsigned int             versione;   /* EXLIB_VERSIONE */
-    unsigned int             n;          /* quante funzioni sono esportate */
-    const char *const       *nomi;       /* n stringhe */
-    void *const             *indirizzi;  /* n puntatori, nello stesso ordine */
-} ExLibTesta;
-
-/* -----------------------------------------------------------------------------
- * ! LA TESTA VA IN UNA SEZIONE SUA, e il linker script la tiene con KEEP(). Con
- * --gc-sections il collegamento parte dal simbolo d'ingresso: se la tabella
- * finisse in .rodata insieme a tutto il resto, basterebbe un giro di
- * ottimizzazione perche' il collegamento la spostasse e l'indirizzo d'ingresso
- * non fosse piu' il suo. In una sezione dedicata sta dove e' stata messa.
- * --------------------------------------------------------------------------- */
-#define EXLIB_TESTA(simbolo, vett_nomi, vett_indirizzi)                        \
-    __attribute__((section(".exlib_testa"), used))                             \
-    const ExLibTesta simbolo = {                                               \
-        EXLIB_MAGIA, EXLIB_VERSIONE,                                           \
-        (unsigned int)(sizeof(vett_nomi) / sizeof((vett_nomi)[0])),            \
-        (vett_nomi), (vett_indirizzi)                                          \
-    }
-
-/* -----------------------------------------------------------------------------
- * Il lato di chi la usa
- *
- * exlib_apri()    chiede al kernel di mappare la libreria e rende la testa,
- *                 oppure 0. Chiamarla due volte con lo stesso percorso e'
- *                 innocuo ma inutile: e' gia' mappata.
- *
- * exlib_simbolo() cerca un nome. Rende 0 se non c'e' — e chi lo riceve DEVE
- *                 controllarlo: e' il modo in cui si accorge che la libreria
- *                 installata e' piu' vecchia del programma.
- * --------------------------------------------------------------------------- */
+/* The library at `percorso` (absolute, or a name searched as dlopen does),
+ * or 0. Twice is harmless: the same handle. */
 const ExLibTesta *exlib_apri(const char *percorso);
+
+/* A name in it, or 0. */
 void             *exlib_simbolo(const ExLibTesta *t, const char *nome);
 
-/* Comodita': prova i percorsi uno dopo l'altro e rende il primo che risponde.
- * Serve perche' su un sistema installato le librerie stanno in /exwin/lib e
- * avviando dal CD stanno sotto /cdrom — la stessa regola del program manager. */
+/* The first of `percorsi` that opens: /exwin/lib on an installed system,
+ * /cdrom/exwin/lib when started from the CD. */
 const ExLibTesta *exlib_apri_fra(const char *const *percorsi, int quanti);
 
 #ifdef __cplusplus

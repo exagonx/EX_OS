@@ -14,6 +14,7 @@
 # __thread variable, and 8 threads read every one: 40 modules, 40 DT_NEEDED
 # in the program, 40 TLS modules, 320 blocks. Then dlopen of one more,
 # dlsym, dlclose. Against a libc.a built HERE from today's lib/libc.c
+# (LIBC_CONDIVISA=1: the shared libc built here, tools/costruisci-ld.sh)
 # (as tools/prova_dl.sh does), not the one installed in the toolchain.
 # Must print "prova-tante: 0 NO".
 # =============================================================================
@@ -37,6 +38,12 @@ set -e
 gcc $CF -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie -Wall -O2 -std=c11 \
     -ffunction-sections -fdata-sections -DEXOS_LIBC_PORTATI -Ilib/include -c lib/libc.c -o "$D/lib/libc.o"
 ar rcs "$D/lib/libc.a" "$D/lib/libc.o"
+# LIBC_CONDIVISA=1: the same against /lib/ld-exos.so (voce 105): -lc finds
+# libc.so in $D/lib before libc.a. The CD must carry the same ld-exos.so.
+rm -f "$D/lib/libc.so" "$D/lib/ld-exos.so" "$D/lib/libexos_avvio.a"
+if [ -n "$LIBC_CONDIVISA" ]; then
+    bash tools/costruisci-ld.sh "${1:-64}" "$D/lib" || exit 1
+fi
 LIBS=""; DECL=""; CHIAMA=""
 for i in $(seq 1 $N); do
     printf '__thread int t_%d = %d;\nint f_%d(void) { return t_%d++; }\n' $i $i $i $i > "$D/so/l$i.c"

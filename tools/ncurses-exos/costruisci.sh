@@ -9,8 +9,9 @@
 #     tools/ncurses-exos/costruisci.sh 32|64      one only
 #
 # The real curses library, for every program that draws a full screen on a
-# terminal (MariaDB's client, editors, menus): libncurses.a (and libcurses.a,
-# the same), libpanel, libmenu, libform, libncurses++, the headers, the
+# terminal (MariaDB's client, editors, menus): libncurses.so.6 (and
+# libncurses.a for -static programs; libcurses the same), libpanel, libmenu,
+# libform, libncurses++, the headers, the
 # terminfo database, and tic, infocmp, tput, clear, reset, tset for EX-OS.
 # It needs the termios of kernel 0.279: without it a curses program cannot
 # read a key without Enter.
@@ -23,6 +24,11 @@
 #
 # What changes for EX-OS, all from here (the archive stays as it is):
 #   - config.sub learns "exos" (one line, like binutils, make and nasm);
+#   - configure learns that exos makes shared libraries as Linux does
+#     (20 November 2026, voce 105: VLC's ncurses interface is a plugin .so,
+#     and a .so cannot carry the non-PIC libncurses.a). On the disk the real
+#     file goes under its soname (libncurses.so.6), libncurses.so is an ld
+#     script: EX-OS has no symbolic links;
 #   - exos.ti, the console's entry "vga", is appended to terminfo.src;
 #   - the fallbacks (entries compiled into the library): vga, linux, xterm,
 #     xterm-256color, vt100, vt220, ansi, screen, dumb. A program works with
@@ -74,6 +80,12 @@ if ! grep -q '| exos\* ' "$SRC/config.sub"; then
     sed -i 's/^\t| mint\* \\$/\t| mint* \\\n\t| exos* \\/' "$SRC/config.sub"
 fi
 [ "$("$SRC/config.sub" x86_64-exos)" = x86_64-pc-exos ] || { echo "config.sub non riconosce exos"; exit 1; }
+# the shared libraries: exos where linux is, in the soname/rpath cases
+if ! grep -q '|exos\*)' "$SRC/configure"; then
+    sed -i -e 's/^\t(linux\*|gnu\*|k\*bsd\*-gnu)$/\t(linux*|gnu*|k*bsd*-gnu|exos*)/' \
+        -e 's/^\t(linux\*|gnu\*|k\*bsd\*-gnu|freebsd\*)$/\t(linux*|gnu*|k*bsd*-gnu|freebsd*|exos*)/' "$SRC/configure"
+fi
+[ "$(grep -c '|exos\*)' "$SRC/configure")" -ge 2 ] || { echo "configure non sa delle .so di exos"; exit 1; }
 cat "$SRC/misc/terminfo.src" "$QUI/exos.ti" > "$LAVORO/terminfo.src"
 
 # --- a native tic, for the fallbacks and the database ---------------------------
@@ -106,12 +118,12 @@ costruisci() {
     ( cd "$B" && PATH="$CROSS/bin:$PATH" "$SRC/configure" \
         --host=$T --build="$("$SRC/config.guess")" --prefix=/exos \
         CC=$T-gcc CXX=$T-g++ AR=$T-ar RANLIB=$T-ranlib STRIP=$T-strip \
-        BUILD_CC=gcc BUILD_CPPFLAGS="-include wchar.h" CFLAGS="-O2 $MARCH" CXXFLAGS="-O2 $MARCH" LDFLAGS=-static \
+        BUILD_CC=gcc BUILD_CPPFLAGS="-include wchar.h" CFLAGS="-O2 $MARCH" CXXFLAGS="-O2 $MARCH" \
         --with-database="$LAVORO/terminfo.src" \
         --with-default-terminfo-dir=/exos/share/terminfo \
         --with-terminfo-dirs=/exos/share/terminfo \
         --with-fallbacks=$FALLBACKS --with-tic-path="$TIC" --with-infocmp-path="$INFOCMP" \
-        --without-shared --with-normal --without-debug --without-ada \
+        --with-shared --with-cxx-shared --with-normal --without-debug --without-ada \
         --without-manpages --without-tests --enable-overwrite --disable-widec \
         --disable-stripping --disable-pc-files --disable-home-terminfo \
         --without-pkg-config ) > "$B/configura.log" 2>&1 \
@@ -133,12 +145,27 @@ costruisci() {
     for l in lib/libcurses.a include/ncurses.h bin/reset; do
         cp --remove-destination "$(readlink -f "$OUT/exos/$l")" "$OUT/exos/$l"
     done
+    # the shared libraries: the real file under its soname, libNAME.so an ld
+    # script, no TEXTREL (the kernel shares their code pages)
+    local f so n
+    find "$OUT/exos/lib" -maxdepth 1 -type l -name 'lib*.so*' -delete
+    for f in "$OUT"/exos/lib/lib*.so.*.*; do
+        so=$("$CROSS/bin/$T-readelf" -d "$f" | sed -n 's/.*Library soname: \[\(.*\)\]/\1/p')
+        [ -n "$so" ] || { echo "$f senza soname"; exit 1; }
+        "$CROSS/bin/$T-readelf" -d "$f" | grep -q TEXTREL && { echo "$f ha TEXTREL"; exit 1; }
+        mv "$f" "$OUT/exos/lib/$so"
+        n=${so%.so.*}
+        printf '/* GNU ld script: -l%s is %s (tools/ncurses-exos) */\nINPUT(%s)\n' "${n#lib}" "$so" "$so" > "$OUT/exos/lib/$n.so"
+    done
+    printf '/* GNU ld script: -lcurses is libncurses.so.6 (tools/ncurses-exos) */\nINPUT(libncurses.so.6)\n' > "$OUT/exos/lib/libcurses.so"
+    [ -f "$OUT/exos/lib/libncurses.so.6" ] || { echo "manca libncurses.so.6"; exit 1; }
 
     # into the sysroots: -lncurses (-lcurses) and <curses.h> in a cross build
     local S
     for S in "$CROSS/$T" "$ALTRO/$T"; do
         [ -d "$S/lib" ] || continue
         cp -p "$OUT"/exos/lib/lib*.a "$S/lib/"
+        cp -p --remove-destination "$OUT"/exos/lib/lib*.so* "$S/lib/"
         cp -rp "$OUT"/exos/include/. "$S/include/"
     done
     ls "$OUT"/exos/lib "$OUT"/exos/bin | tr '\n' ' '; echo

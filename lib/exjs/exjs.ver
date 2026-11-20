@@ -1,0 +1,44 @@
+/* lib/exjs/exjs.ver - what quickjs.so and exjs.so offers to programs: everything else stays inside it.
+ * The ld version script of the library (voce 105, 19 November 2026); it
+ * took the place of the name table of exjs_esporta.c, with the same names.
+ * ! A NEW PUBLIC FUNCTION GOES HERE TOO, or programs will not link to it. */
+{
+    global:
+        exjs_quanto_serve;
+        exjs_apri;
+        exjs_chiudi;
+        exjs_esegui;
+        exjs_indefinito;
+        exjs_nullo;
+        exjs_booleano;
+        exjs_numero;
+        exjs_stringa;
+        exjs_oggetto;
+        exjs_vettore;
+        exjs_nativa;
+        exjs_costruttore;
+        exjs_tipo;
+        exjs_a_numero;
+        exjs_a_booleano;
+        exjs_a_stringa;
+        exjs_metti;
+        exjs_prendi;
+        exjs_indice_metti;
+        exjs_indice_prendi;
+        exjs_lunghezza;
+        exjs_esotico;
+        exjs_esotico_dato;
+        exjs_proto_metti;
+        exjs_uscita_metti;
+        exjs_globale;
+        exjs_chiama;
+        exjs_invoca;
+        exjs_accoda;
+        exjs_disdici;
+        exjs_pompa;
+        exjs_lavori_in_attesa;
+        exjs_memoria;
+        exjs_orologio_metti;
+        exjs_fuso_metti;
+    local: *;
+};

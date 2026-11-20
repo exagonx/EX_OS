@@ -1,0 +1,24 @@
+/* lib/exdlg/exdlg.ver - what exdlg.so offers to programs: everything else stays inside it.
+ * The ld version script of the library (voce 105, 19 November 2026); it
+ * took the place of the name table of exdlg_esporta.c, with the same names.
+ * ! A NEW PUBLIC FUNCTION GOES HERE TOO, or programs will not link to it. */
+{
+    global:
+        ex_dlg_apri;
+        ex_dlg_salva;
+        ex_dlg_avviso;
+        ex_dlg_conferma;
+        ex_dlg_riga;
+        ex_dlg_percorso;
+        ex_dlg_chiedi;
+        ex_dlg_scegli;
+        ex_scarico_avvia;
+        ex_scarico_info;
+        ex_scarico_ferma;
+        ex_scarichi_in_corso;
+        ex_scarichi_ferma_tutti;
+        ex_scarichi_finestra;
+        ex_scarichi_alla_fine;
+        ex_dlg_testo;
+    local: *;
+};

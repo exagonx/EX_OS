@@ -3860,8 +3860,8 @@ int     ftruncate64(int fd, off64_t lung);
  * name without '/' is looked for in $LD_LIBRARY_PATH, DT_RUNPATH ($ORIGIN),
  * /lib, /exos/lib, /exwin/lib and the same under /cdrom. A library finds the
  * libc in the program through the libc's own table (lib/libc_esportati.h);
- * dlsym(RTLD_DEFAULT) searches it too. EX-OS libraries (an ExLibTesta table,
- * lib/include/exlib.h, @DLOPEN 29 September 2026) still open the old way. */
+ * dlsym(RTLD_DEFAULT) searches it too. The EX-OS libraries are shared
+ * objects as well since 19 November 2026 (voce 105, lib/include/exlib.h). */
 #define RTLD_LAZY       0x0001
 #define RTLD_NOW        0x0002
 #define RTLD_NOLOAD     0x0004

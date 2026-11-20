@@ -52,7 +52,7 @@
 
 /* +0.001 a ogni modifica, aggiunta o prova: `exide -version` la stampa.
  * Vedi EX_VERSIONE in libc.h; la stessa stringa la mostra «Informazioni su». */
-#define VERSIONE_APP "0.025"
+#define VERSIONE_APP "0.026"
 EX_VERSIONE("exide", VERSIONE_APP);
 
 /* -----------------------------------------------------------------------------
@@ -460,11 +460,13 @@ static void dico(const char *s) { ex_set_text(g_stato, s); }
 /* =============================================================================
  * LE LIBRERIE — quel che si collega insieme al progetto
  *
- * ! UNA LIBRERIA CONDIVISA SI COLLEGA CON IL SUO STUB, non con un archivio. In
- * EX-OS una .so non si linka: si collega dentro il programma un file di poche
- * righe — lo stub — che alla prima chiamata apre la libreria e risolve i nomi.
- * Percio' «scegliere una libreria» qui vuol dire «aggiungere il suo stub alla
- * riga di compilazione», e niente altro: nessun -l, nessun percorso di ricerca.
+ * ! UNA LIBRERIA CONDIVISA SI COLLEGA COME .so, DAL 19 NOVEMBRE 2026 (voce
+ * 105): exwin.so, exdlg.so, exhttp.so, exhtml.so ed exdom.so sono oggetti
+ * condivisi ELF veri, e il programma li nomina (DT_NEEDED) accanto alla libc
+ * /lib/ld-exos.so. Si prendono da /exwin/lib, o da /cdrom/exwin/lib partendo
+ * dal CD. Prima si collegava lo «stub» di ognuna, poche righe che aprivano la
+ * libreria alla prima chiamata; restano gli stub delle FACOLTATIVE (excss,
+ * exjs), che la aprono con dlopen e sanno farne a meno.
  *
  * ! exwin C'E' SEMPRE E NON SI TOGLIE. Un programma disegnato con questo
  * ambiente e' fatto di finestre: senza il toolkit non si collega, e offrire di
@@ -472,31 +474,33 @@ static void dico(const char *s) { ex_set_text(g_stato, s); }
  *
  * ! E GLI STUB STANNO SUL CD DEGLI STRUMENTI dal 3 settembre 2026: prima non
  * c'erano, e chi compilava dentro EX-OS poteva solo tirarsi dentro exwin.c
- * intero. Il percorso e' <radice degli strumenti>/include/<nome>_stub.c.
+ * intero. Il percorso e' <radice degli strumenti>/include/<nome>_stub.c; dal
+ * 19 novembre 2026 ci sono solo quelli di excss ed exjs.
  * ============================================================================= */
 #define LIB_MAX      12
 #define LIB_NOME_MAX 40
 
 static struct {
     char nome[LIB_NOME_MAX];    /* come si legge nel pannello */
-    char stub[PERC_MAX];        /* il file da compilare; vuoto = solo un nome */
+    char stub[PERC_MAX];        /* un .so di /exwin/lib, o lo stub da compilare */
     int  base;                  /* 1 = c'e' sempre */
     int  scelta;
 } g_lib[LIB_MAX] = {
-    { "exwin   finestre e controlli", "include/exwin_stub.c",  1, 1 },
-    { "exdlg   dialoghi (apri, salva)", "include/exdlg_stub.c",  0, 0 },
-    { "exhttp  rete e http",          "include/exhttp_stub.c", 0, 0 },
-    { "exhtml  albero HTML",          "include/exhtml_stub.c", 0, 0 },
+    { "exwin   finestre e controlli", "exwin.so",              1, 1 },
+    { "exdlg   dialoghi (apri, salva)", "exdlg.so",              0, 0 },
+    { "exhttp  rete e http",          "exhttp.so",             0, 0 },
+    { "exhtml  albero HTML",          "exhtml.so",             0, 0 },
     { "excss   fogli di stile",       "include/excss_stub.c",  0, 0 },
     { "exjs    JavaScript",           "include/exjs_stub.c",   0, 0 },
-    { "exdom   il ponte JS-pagina",   "include/exdom_stub.c",  0, 0 },
+    { "exdom   il ponte JS-pagina",   "exdom.so",              0, 0 },
 };
 
 static int g_lib_n = 7;
 
 /* La radice dell'albero degli strumenti: da qui si ricava tutto il resto —
- * il compilatore, gli header, lo start.S, i ponti della libc, il linker
- * script. Un campo solo invece di sei, e i due casi veri sono due valori. */
+ * il compilatore, gli header, lo start.S, l'avvio della libc
+ * (libexos_avvio.a). Un campo solo invece di sei, e i due casi veri sono due
+ * valori. */
 static char g_cc_radice[PERC_MAX] = "/cdrom/exos";
 
 /* ! LE OPZIONI OBBLIGATORIE NON STANNO NELLA CASELLA, e c'e' un motivo preciso.
@@ -4050,8 +4054,8 @@ static void informazioni(void)
  * che qualcosa non torna, non si ha nessun appiglio.
  *
  * ! E LA RADICE DEGLI STRUMENTI E' UN CAMPO SOLO. Da li' si ricavano il
- * compilatore, gli header, lo start.S, i ponti della libc e il linker script:
- * sono cinque percorsi che stanno o tutti sul CD (/cdrom/exos) o tutti sul
+ * compilatore, gli header, lo start.S e l'avvio della libc (libexos_avvio.a):
+ * sono quattro percorsi che stanno o tutti sul CD (/cdrom/exos) o tutti sul
  * disco dopo `toolinst` (/exos). Sei campi da tenere d'accordo sarebbero sei
  * modi di sbagliarne uno.
  *
@@ -4093,43 +4097,74 @@ static void cc_radice_scegli(void)
     }
 }
 
+/* ! A PROGRAM ON /lib/ld-exos.so (voce 105): the same link as LD_DIN in the
+ * Makefile. The base is 0x08000000 as with lib/programma.ld, and the code in
+ * pages of its own; programma.ld itself would throw away .gnu.hash and .rel*,
+ * which a dynamic program cannot do without. */
+#define CC_DINAMICO \
+    "-Wl,-Ttext-segment=0x08000000 -Wl,-z,separate-code -Wl,--hash-style=both" \
+    " -Wl,-dynamic-linker,/lib/ld-exos.so"
+
+/* The first of `dove` + `nome` that exists, or the first one anyway (the
+ * link will say what is missing). */
+static void dove_sta(const char *const *dove, int quanti, const char *nome,
+                     char *out, unsigned int max)
+{
+    int k;
+
+    for (k = 0; k < quanti; k++) {
+        snprintf(out, max, "%s%s", dove[k], nome);
+        if (access(out, F_OK) == 0) return;
+    }
+    snprintf(out, max, "%s%s", dove[0], nome);
+}
+
 /* Compone la riga di compilazione. Rende quanti caratteri ha scritto. */
 static unsigned int riga_compila(char *out, unsigned int max)
 {
-    char r[PERC_MAX];
+    static const char *const so_dove[] = { "/exwin/lib/", "/cdrom/exwin/lib/" };
+    static const char *const ld_dove[] = { "/lib/", "/rdboot/lib/", "/cdrom/lib/" };
+    char r[PERC_MAX], p[PERC_MAX];
     int  i;
+    unsigned int n;
 
     strncpy(r, g_cc_radice, sizeof(r) - 1);
     r[sizeof(r) - 1] = '\0';
 
     out[0] = '\0';
     snprintf(out, max,
-             "%s/bin/gcc " CC_OBBLIGATORIE " %s -I %s/include -I inc"
-             " -T %s/programma.ld %s/start.S"
+             "%s/bin/gcc " CC_OBBLIGATORIE " %s -I %s/include -I inc "
+             CC_DINAMICO " %s/start.S"
              " src/finestra.c src/finestra_gen.c",
-             r, g_cc_opzioni, r, r, r);
+             r, g_cc_opzioni, r, r);
 
     for (i = 0; i < g_lib_n; i++) {
-        if (!g_lib[i].scelta || g_lib[i].stub[0] == '\0') continue;
+        const char *s = g_lib[i].stub;
+
+        if (!g_lib[i].scelta || s[0] == '\0') continue;
         strncat(out, " ", max - strlen(out) - 1);
-        /* Uno stub dell'albero degli strumenti si scrive relativo alla radice;
-         * una libreria aggiunta a mano e' gia' un percorso intero. */
-        if (g_lib[i].stub[0] != '/') {
+        n = (unsigned int)strlen(s);
+        if (s[0] == '/') {
+            /* una libreria aggiunta a mano e' gia' un percorso intero */
+            strncat(out, s, max - strlen(out) - 1);
+        } else if (n > 3 && strcmp(s + n - 3, ".so") == 0) {
+            dove_sta(so_dove, 2, s, p, sizeof(p));
+            strncat(out, p, max - strlen(out) - 1);
+        } else {
+            /* uno stub dell'albero degli strumenti, relativo alla radice */
             strncat(out, r, max - strlen(out) - 1);
             strncat(out, "/", max - strlen(out) - 1);
+            strncat(out, s, max - strlen(out) - 1);
         }
-        strncat(out, g_lib[i].stub, max - strlen(out) - 1);
     }
 
+    /* the program's start, then the shared libc */
     strncat(out, " ", max - strlen(out) - 1);
     strncat(out, r, max - strlen(out) - 1);
-    strncat(out, "/libc_ponti_asm.o ", max - strlen(out) - 1);
-    strncat(out, r, max - strlen(out) - 1);
-    strncat(out, "/libc_ponti_c.o ", max - strlen(out) - 1);
-    strncat(out, r, max - strlen(out) - 1);
-    strncat(out, "/libc_ponti_avvio.o ", max - strlen(out) - 1);
-    strncat(out, r, max - strlen(out) - 1);
-    strncat(out, "/libc_ponti_exlib.o -o bin/", max - strlen(out) - 1);
+    strncat(out, "/libexos_avvio.a ", max - strlen(out) - 1);
+    dove_sta(ld_dove, 3, "ld-exos.so", p, sizeof(p));
+    strncat(out, p, max - strlen(out) - 1);
+    strncat(out, " -o bin/", max - strlen(out) - 1);
     strncat(out, binario(), max - strlen(out) - 1);
 
     return (unsigned int)strlen(out);

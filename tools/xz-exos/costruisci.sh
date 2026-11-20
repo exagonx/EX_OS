@@ -28,7 +28,7 @@ costruisci() {
     lib_config_sub
     mkdir -p "$B/obj"
     ( cd "$B/obj" && "$SRC/configure" --host=$T --build="$("$SRC/build-aux/config.guess")" \
-        --prefix=/exos CC=$CC AR=$AR RANLIB=$RANLIB CFLAGS="$CFLAGS" LDFLAGS=-static \
+        --prefix=/exos CC=$CC AR=$AR RANLIB=$RANLIB CFLAGS="$CFLAGS" \
         --disable-shared --enable-static --disable-nls --disable-scripts --disable-doc \
         --enable-threads=posix ) > "$B/configura.log" 2>&1 \
         || { tail -20 "$B/configura.log"; exit 1; }

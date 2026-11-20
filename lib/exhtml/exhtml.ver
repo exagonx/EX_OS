@@ -1,0 +1,25 @@
+/* lib/exhtml/exhtml.ver - what exhtml.so offers to programs: everything else stays inside it.
+ * The ld version script of the library (voce 105, 19 November 2026); it
+ * took the place of the name table of exhtml_esporta.c, with the same names.
+ * ! A NEW PUBLIC FUNCTION GOES HERE TOO, or programs will not link to it. */
+{
+    global:
+        html_prepara;
+        html_analizza;
+        html_nome;
+        html_testo;
+        html_attr;
+        html_crea_elemento;
+        html_crea_testo;
+        html_aggiungi;
+        html_inserisci_prima;
+        html_togli;
+        html_attr_metti;
+        html_attr_togli;
+        html_testo_metti;
+        html_versione;
+        html_analizza_in;
+        html_svuota;
+        html_serializza;
+    local: *;
+};

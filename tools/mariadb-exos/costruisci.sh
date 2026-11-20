@@ -137,7 +137,7 @@ set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 set(CMAKE_C_FLAGS_INIT "$MARCH -D__unix__ -DEXOS_SOLO_POSIX -fcommon")
 set(CMAKE_CXX_FLAGS_INIT "$MARCH -D__unix__ -DEXOS_SOLO_POSIX")
-set(CMAKE_EXE_LINKER_FLAGS_INIT "-static")
+set(CMAKE_EXE_LINKER_FLAGS_INIT "")
 set(ENV{PKG_CONFIG_LIBDIR} /nessuno)
 set(ENV{PKG_CONFIG_PATH} "")
 EOF
@@ -274,7 +274,7 @@ tappa_installa() {
     # sysroots (this one and tools/mariadb-connector-c-exos) would overwrite
     # each other by build order. C programs get it from [mariadb-connector].
     # the service (libcrypto: the TLS certificate it makes at -install)
-    $T-gcc $MARCH -O2 -Wall -static -o "$D/bin/mariadb-svc" "$R/tools/mariadb-exos/mariadb-svc.c" \
+    $T-gcc $MARCH -O2 -Wall -o "$D/bin/mariadb-svc" "$R/tools/mariadb-exos/mariadb-svc.c" \
         -lcrypto -lpthread > "$B/mariadb-svc.log" 2>&1 || { cat "$B/mariadb-svc.log"; exit 1; }
     $T-strip "$D/bin/mariadb-svc"
     # the sources: the archive and everything this directory adds to it

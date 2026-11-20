@@ -30,6 +30,9 @@
  *                                         cambiano di una virgola
  *     libc.so lo esclude               -> con -DEXOS_LIBC_SO
  *     lo stub della libc condivisa     -> lo compila per conto suo
+ *     /lib/ld-exos.so (0.350)         -> con -DEXOS_LIBC_ELF tiene solo le
+ *                                         variabili e il canarino; l'avvio
+ *                                         sta nel programma (libexos_avvio.a)
  *
  * Includere un .c e' insolito, e la ragione e' precisa: la libc viene
  * compilata da una ventina di regole diverse del Makefile, e una definizione
@@ -83,6 +86,7 @@ char *program_invocation_short_name = "";
 
 /* La versione dello strumento: la dichiara EX_VERSIONE() in libc.h. Deboli
  * apposta — vedi il blocco su `-v` piu' sotto. */
+#ifndef EXOS_LIBC_ELF
 extern const char *const __ex_nome     __attribute__((weak));
 extern const char *const __ex_versione __attribute__((weak));
 
@@ -105,6 +109,8 @@ static void scrivi_versione(const char *s)
     __asm__ volatile ("int $0x80" :: "a"(4), "b"(1), "c"(s), "d"(n)
                       : "memory");
 }
+
+#endif /* !EXOS_LIBC_ELF */
 
 /* ! DICHIARATO QUI E NON INCLUDENDO libc.h. Questo file si compila in due
  * contesti: dentro libc.c (che la libc se la dichiara da se') e da solo, nello
@@ -187,6 +193,11 @@ void __stack_chk_fail(void)
  * ogni funzione della libc, in modo condiviso, e' un salto attraverso un
  * puntatore che fino a qui vale zero.
  * ============================================================================= */
+/* The "local" __stack_chk_fail of i386 for programs and libraries on
+ * /lib/ld-exos.so: lib/libc_chk_locale.c, a member of its own in
+ * libexos_avvio.a (19 November 2026). In libc.a it is in libc.c. */
+
+#ifndef EXOS_LIBC_ELF
 __attribute__((weak)) void __libc_ponti_avvia(void) { }
 
 /* =============================================================================
@@ -274,9 +285,13 @@ void _libc_distruttori(void)
     }
 }
 
+#endif /* !EXOS_LIBC_ELF */
+
 __attribute__((weak, noreturn))
 /* The program's own name, for dladdr (libc.c, dl_addr_programma). */
 char *__exos_argv0;
+
+#ifndef EXOS_LIBC_ELF
 
 void _libc_start(int argc, char **argv, char **envp)
 {
@@ -371,3 +386,4 @@ void _libc_start(int argc, char **argv, char **envp)
     exit(main(argc, argv, envp));
     for (;;);
 }
+#endif /* !EXOS_LIBC_ELF */

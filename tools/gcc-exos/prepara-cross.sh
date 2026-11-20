@@ -154,6 +154,11 @@ rm -f "$PREFISSO/i386-exos/lib/libc.a"
 ar rcs "$PREFISSO/i386-exos/lib/libc.a" "$PREFISSO/i386-exos/lib/libc.o"
 rm -f "$PREFISSO/i386-exos/lib/libc.o"
 
+# ! LA LIBC CONDIVISA ACCANTO (voce 105): /lib/ld-exos.so, l'avvio del
+# programma e lo script libc.so. Da qui un programma collegato senza -static
+# usa la libc di /lib (PT_INTERP, kernel 0.350); con -static resta libc.a.
+bash tools/costruisci-ld.sh 32 "$PREFISSO/i386-exos/lib" || exit 1
+
 # ! LIBRERIE VUOTE per -lpthread, -ldl e -lrt (30 settembre 2026): i thread,
 # dlopen e i tempi stanno nella libc, ma il codice portato da Linux (NSS fra i
 # primi) le chiede per nome, e il linker si ferma su «cannot find -lpthread».

@@ -1,0 +1,22 @@
+/* lib/exsuono/exsuono.ver - what exsuono.so offers to programs: everything else stays inside it.
+ * The ld version script of the library (voce 105, 19 November 2026); it
+ * took the place of the name table of exsuono_esporta.c, with the same names.
+ * ! A NEW PUBLIC FUNCTION GOES HERE TOO, or programs will not link to it. */
+{
+    global:
+        exsuono_durata;
+        exsuono_apri;
+        exsuono_chiudi;
+        exsuono_suona;
+        exsuono_pausa;
+        exsuono_vai;
+        exsuono_passo;
+        exsuono_posizione;
+        exsuono_in_corso;
+        exsuono_volume;
+        exsuono_avvia_file;
+        exsuono_ferma_file;
+        exsuono_mix_leggi;
+        exsuono_mix_metti;
+    local: *;
+};

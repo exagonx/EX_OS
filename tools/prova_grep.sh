@@ -20,7 +20,10 @@ fi
 export EXOS_ISTANZA=grep EXOS_NO_FLOPPY=1 EXOS_RAM="${EXOS_RAM:-256M}"
 F=boot/kernel.txt
 T=/boot/kernel.txt
-timeout 200 python3 tools/qemu_drive.py \
+# ! "echo attendo" first: ntp and automount write on the console at the end of
+# the boot, and a command typed meanwhile has its echo cut in two
+# ("g" ... "rep -c kernel", 20 November 2026): the answer then is not found
+timeout 200 python3 tools/qemu_drive.py "echo attendo@15" \
     "grep -c kernel $T@3" "grep -c -i KERNEL $T@3" "grep -c -v kernel $T@3" \
     "grep -c -E '^(#|=)' $T@3" "grep -c 'a\\{2,3\\}' $T@3" \
     "cat $T | grep -c kernel@3" "grep -n -m zzz $T@3" "grep nonesiste $T@3" \

@@ -64,6 +64,23 @@ T="$D/albero"
 rm -rf "$T"; mkdir -p "$T/bin"
 cp -rp "$N/mariadb" "$T/"
 cp -p "$N"/bin/* "$T/bin/"
+# ! and the groups it wants (voce 105: the programs are on the shared libc
+# and the libraries now): their .so in /exos/lib, as netupdate brings them.
+# ld-exos.so and the C++ runtime are in /lib of the installed system.
+mkdir -p "$T/lib"
+nomi=$(for f in "$T"/bin/* "$T"/mariadb/bin/*; do readelf -d "$f" 2>/dev/null; done | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')
+while [ -n "$nomi" ]; do
+    nuovi=""
+    for l in $nomi; do
+        case $l in ld-exos.so|libm.so.4|libstdc++.so.6|libgcc_s.so.1) continue ;; esac
+        [ -f "$T/lib/$l" ] && continue
+        f=$(ls cross_build/*-exos32/exos/lib/"$l" 2>/dev/null | head -1)
+        [ -n "$f" ] || { echo "manca $l (a 32 bit)"; exit 1; }
+        cp -L "$f" "$T/lib/"
+        nuovi="$nuovi $(readelf -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')"
+    done
+    nomi=$nuovi
+done
 # debugfs writes a name into the current directory: a cd before each file
 {
     echo "mkdir /exos"

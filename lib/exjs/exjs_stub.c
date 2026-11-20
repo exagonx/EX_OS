@@ -26,27 +26,22 @@
 
 #include "exjs.h"
 
-#if defined(__x86_64__)
-/* ! AT 64 BIT THE TWO ENGINES ARE ORDINARY ELF SHARED OBJECTS (14 October
- * 2026), built by tools/costruisci-utente64.sh and opened by the libc's
- * dlopen (lib/libc_dl.c); there are no EX-OS libraries at 64 bit. The rest
- * of this file is the same: these few names stand in for exlib. And there is
- * one stub per process - the libraries that call ExJs are in the program's
- * archive, not in libraries of their own - so "already open by someone
- * else" cannot happen. */
+/* ! THE TWO ENGINES ARE ORDINARY ELF SHARED OBJECTS, opened by the libc's
+ * dlopen through exlib (at 64 bit since 14 October 2026, at 32 since 19
+ * November, voce 105). "Already open by someone else" is a question for
+ * the stub in exdom.so and the one in the browser: RTLD_NOLOAD. */
 #include "libc.h"
-typedef void ExLibTesta;
-static const ExLibTesta *exlib_apri_fra(const char *const *percorsi, int quanti)
+#include "exlib.h"
+
+static int lib_gia_aperta(const char *percorso)
 {
-    int i;
-    for (i = 0; i < quanti; i++) {
-        void *h = dlopen(percorsi[i], RTLD_NOW);
-        if (h) return h;
-    }
-    return 0;
+    void *h = dlopen(percorso, RTLD_NOW | RTLD_NOLOAD);
+
+    if (!h) return 0;
+    dlclose(h);
+    return 1;
 }
-#define exlib_simbolo(t, nome) dlsym((void *)(t), (nome))
-static int lib_gia_aperta(const char *percorso) { (void)percorso; return 0; }
+
 static void grida_e_muori(const char *s)
 {
     const char *e = dlerror();
@@ -54,36 +49,6 @@ static void grida_e_muori(const char *s)
     if (e) { write(2, "      ", 6); write(2, e, strlen(e)); write(2, "\n", 1); }
     _exit(1);
 }
-#else
-#include "exlib.h"
-
-#define SYS_WRITE       4
-#define SYS_EXIT        1
-#define SYS_LIB_TROVA   238
-
-/* ! LA SYSCALL SI CHIAMA A MANO, come tutto in questo file: lo stub non
- * dipende dalla libc — e' l'unico pezzo che deve funzionare PRIMA che una
- * libreria qualunque sia aperta. Vedi la nota in testa a exlib.c. */
-static int lib_gia_aperta(const char *percorso)
-{
-    int r;
-
-    __asm__ volatile ("int $0x80"
-                      : "=a"(r)
-                      : "a"(SYS_LIB_TROVA), "b"(percorso)
-                      : "memory");
-    return r > 0;
-}
-
-static void grida_e_muori(const char *s)
-{
-    unsigned int n = 0;
-    while (s[n]) n++;
-    __asm__ volatile ("int $0x80" :: "a"(SYS_WRITE), "b"(2), "c"(s), "d"(n) : "memory");
-    __asm__ volatile ("int $0x80" :: "a"(SYS_EXIT), "b"(1) : "memory");
-    for (;;) { }
-}
-#endif /* __x86_64__ */
 
 /* I due motori, e i due posti per ognuno: sul sistema installato e sul CD. */
 static const char *const g_dove_exjs[] = {

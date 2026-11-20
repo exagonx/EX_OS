@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.349
+**Versione:** 0.351
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -112,6 +112,197 @@ propri header senza che nessuno glielo dica, e concatena da sé cc1, `as`,
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### VLC come su Linux: libvlc.so, libvlccore.so e ogni modulo una .so aperta con dlopen (voce 105, passo 4) — testato in QEMU
+
+`/exos/bin/vlc` ora gira su `/exos/lib/libvlc.so.5` e `libvlccore.so.9`, e ognuno dei suoi 241
+moduli e' una `.so` in `/exos/lib/vlc/plugins/<tipo>/`, aperta con dlopen quando serve, come su
+Linux. Finora VLC era un programma solo con tutti i moduli dentro: tre moduli con lo stesso nome
+si perdevano (VLC chiama un modulo come il suo sorgente: flac, vc1, file), due tabelle andavano
+rese static con sed, e mancava il packetizer FLAC, quindi nessun FLAC suonava. Il file FLAC di
+`tools/vlc-exos/prova.sh` ora suona a 32 e 64 bit come gli altri.
+
+- **libtool impara EX-OS** (`lib_libtool_exos` in `tools/librerie-exos/comune.sh`): in ogni caso
+  per sistema del codice di libtool dentro un configure, `exos*` va dove c'e' `linux*`. Prima
+  libtool diceva "dynamic_linker=no" e faceva solo archivi statici, per ogni porting autoconf.
+- **`gcc -shared` collega la libc** come su Linux (`tools/gcc-exos/specs-condivise.sh`): `-lc` e'
+  `/lib/ld-exos.so`, quindi una libreria ha `DT_NEEDED ld-exos.so` e i suoi simboli della libc si
+  controllano quando la si collega. Senza, i collegamenti C++ di libtool (`-nostdlib`, poi le
+  librerie che nomina g++) non avevano nessuna libc. Un programma statico con `libc.a` che apre
+  una di queste librerie salta quel `DT_NEEDED` e presta la sua libc, come prima
+  (`lib/libc_dl.c`).
+- **libstdc++.la dice il vero** (`tools/librerie-exos/la-condivisa.sh`, da `cxx-condivise.sh`):
+  il libtool di GCC aveva scritto "solo statica", e ogni oggetto condiviso C++ collegato sopra Qt
+  prendeva `libstdc++.a`, che non e' PIC.
+- **ncurses e' una libreria condivisa**: `libncurses.so.6`, `libpanel`, `libmenu`, `libform`,
+  `libncurses++` (i `.a` restano per i programmi `-static`). L'interfaccia di testo di VLC e' un
+  modulo, e una `.so` non puo' portarsi dentro l'archivio non PIC. `tic`, `tput` e gli altri ora
+  la usano.
+- **`sincos`, `sincosf`, `sincosl`** dichiarate in `<math.h>` (con `_GNU_SOURCE`): openlibm le
+  aveva, l'header no; l'uscita OpenGL di VLC chiama `sincosf`.
+- **L'elenco dei moduli** `plugins.dat` lo scrive sulla macchina
+  `/exos/lib/vlc/vlc-cache-gen` (una costruzione incrociata non puo' eseguirlo): il controllo di
+  netupdate per VLC (`tools/netinst/verifiche/vlc.sh`) lo fa quando manca. Senza, VLC parte lo
+  stesso ma apre tutti i moduli a ogni avvio.
+- Solo `glspectrum` non si costruisce: EX-OS ha EGL e GLES2, nessuna libGL per `-lGL` (l'uscita
+  OpenGL di VLC prende le sue funzioni da EGL e c'e').
+
+`tools/vlc-exos/prova.sh` a 32 e 64 bit: i tre file audio confrontati con FFmpeg (FLAC
+compreso), l'interfaccia ncurses e il suo volume, i tre video nella loro finestra, `vlc-cache-gen`
+che scrive `plugins.dat`, l'interfaccia Qt col cono: tutto `[OK]`.
+
+### L'archivio per applicazione: netupdate aggiorna solo cio' che e' cambiato, ExPackage ha Update e Upgrade (netupdate 0.050, expackage 0.002, voci 106 e 107) — testato in QEMU e sul PC di prova
+
+- **Il repository ha un archivio nuovo accanto al vecchio.** `app.txt` ha un blocco per applicazione:
+  nome, cosa vuole, **versione** (quella del programma: VLC 3.0.24, nano 9.3) e **build**, il
+  momento (UTC, `AAAAMMGGhhmm`) in cui i suoi file sono cambiati l'ultima volta; `app/<id>.txt`
+  ha i suoi file con byte e sha256. `versione.txt` porta l'impronta di `app.txt` (`app = ...`).
+  La build si muove da sola quando si muove l'elenco (`tools/netinst/archivio_app.py`, lanciato
+  da `mknetinst.sh`): una ricostruzione con la stessa versione — tutti i porting su ld-exos.so
+  del 19/11 — arriva lo stesso.
+- **Il vecchio `catalogo.txt` e `elenco.txt` hanno solo `[avvio]` e `[sistema]`.** Un netupdate
+  di prima della 0.050 aggiorna kernel e sistema (dentro c'e' netupdate 0.050), e dal giro dopo
+  legge `app.txt`. Kernel e sistema restano interi.
+- **Un'applicazione con la stessa build di quella installata non si guarda**: il suo elenco non
+  si scarica e il suo blocco nel registro resta com'e' ("N applicazioni con la stessa versione e
+  build del server: non le guardo"). Le altre si confrontano file per file come prima, e il
+  registro (`/boot/netupdate.reg`) scrive versione e build di ognuna.
+- **`-check`** aggiorna solo cio' che e' installato, e dice le dipendenze nuove che mancano;
+  **`-check -yes`** lo fa senza chiedere; **`-check -yesall`** installa anche quelle dipendenze.
+  Le applicazioni nuove arrivano solo con `-install:<app>`, con tutto cio' che vogliono e la loro
+  voce nel menu di avvio se sono grafiche (`grafica = si` in `app.txt`).
+- **`netupdate -list`** le applicazioni del server con lo stato (no, installato, **aggiornabile**)
+  e la versione; **`-list:<pezzo>`** quelle il cui nome lo contiene; `-p` una pagina per volta,
+  `-tab` per i programmi (cinque colonne in piu' in fondo: versione, build, aggiornabile, versione
+  installata, grafica). `-install:list` resta uguale.
+- **I file che non arrivano** si ritentano da soli `tentativi` volte (`/boot/netupdate.cnf`,
+  3 se non lo dice), poi netupdate chiede (con `-yes` smette); quelli rimasti vanno in
+  `/boot/netupdate.err`, e il `-check` dopo li dice per primi. Il file sparisce quando un `-check`
+  finisce senza mancanti. La verifica `sistema.sh` lo segnala.
+- **ExPackage**: **Update** rilegge l'elenco e le versioni, senza installare niente; **Upgrade**
+  aggiorna le installate aggiornabili (`netupdate -check -yes`), poi toglie le `[-]` e installa le
+  `[+]` con le `[d]`. Accanto al nome, la versione del repository; lo stato "aggiornabile".
+- **Guasto trovato (prova del salto 0.346 -> 0.351):** fra l'aggiornamento e il riavvio gira
+  ancora il kernel di prima, che non conosce `/lib/ld-exos.so`: `ls`, `sync` e ogni programma
+  nuovo cadono con un page fault a 0. Non e' un danno: `reboot` e' dentro la shell, e dopo il
+  riavvio va tutto. Dopo "IL KERNEL E' CAMBIATO" si riavvia e basta.
+- **Guasto trovato: VLC installato da netupdate non partiva.** Qt 5 vuole libpng16, FreeType e
+  HarfBuzz, porting fatti ma mai finiti sul CD ne' nel repository (le prove di VLC li copiavano a
+  mano), e zlib, pcre2, zstd che il suo `vuole` non diceva; il gcc di `base` vuole libz e libzstd,
+  nasm libz. Ora ci sono i pacchetti `[libpng]` `[freetype]` `[harfbuzz]`, i `vuole` giusti (zlib e
+  zstd non vogliono piu' `base`: nasm resta senza compilatore), e `mknetinst` controlla con
+  `tools/netinst/controlla_dipendenze.py` che ogni libreria chiesta (`readelf -d`) arrivi con la
+  catena di `vuole`. Su una macchina gia' aggiornata: `netupdate -check -yesall`.
+- **Guasto trovato: toolinst (0.007)** teneva 12 gruppi, 10 `solo`, 4 `file`, 8 `nota`, 4 `vuole`
+  e leggeva 16 KB di catalogo: il CD strumenti ne ha 38 e 25 KB, e da libpng in poi non si
+  sceglieva niente. Ora ogni elenco cresce col file (`tools/prova_toolinst.sh`).
+- **Il primo -check della 0.050 non riscarica cio' che e' gia' giusto**: un file che il registro
+  non conosce ma che sul disco ha byte e sha256 del server resta (sul PC di prova 5141 file
+  riconosciuti, 2672 davvero cambiati).
+- **Guasto trovato: fra l'aggiornamento e il riavvio nessuno entrava piu' da telnet.** Per ogni
+  connessione telnetd rilancia `/bin/telnetd`, che era dinamico: con `/lib/ld-exos.so` gia' nuovo
+  e il kernel ancora vecchio cadeva a EIP 0 e la sessione si chiudeva senza un byte (sul PC di
+  prova e in QEMU). Ora **telnetd, sshd e netupdate sono statici** come login, install e sh
+  (`STATICI_OBBLIGATI` nel Makefile, `STATICI` in `tools/costruisci-utente64.sh`): da una
+  sessione nuova si entra, si aggiorna e `reboot` (dentro la shell) riavvia. Gli altri comandi
+  dinamici (`ps`, `ls`...) col kernel vecchio cadono ancora: si riavvia e basta.
+- Prove: `tools/prova_netupdate_app.sh` (A: -list, -list:nan, -install:nano con la voce di menu,
+  -check che non guarda le uguali; B: una build nuova con un file guasto sul server, tre giri da
+  soli e `/boot/netupdate.err`; C: nano che vuole fmt, -check che lo dice, -yesall che lo
+  installa), `tools/prova_expackage.sh` con Upgrade.
+
+### Ogni programma su /lib/ld-exos.so, le librerie di EX-OS sono .so vere (kernel 0.351, voce 105) — testato in QEMU
+
+Il resto del terzo passo della voce 105. Fino a oggi la libc condivisa serviva ai porting; i
+programmi del sistema si portavano ancora dentro `libc.c` (a 64 bit) o passavano da `libc.so` e
+dai suoi ponti (a 32 bit), e le dodici librerie di EX-OS erano ET_EXEC a indirizzi fissi con una
+tabella di nomi. Adesso la strada e' una, quella di Unix.
+
+- **Il kernel tiene una copia sola di ogni oggetto condiviso** (`kernel/loader/condivise.c`,
+  `SYS_SO_MAPPA` 274): codice e dati in sola lettura si leggono una volta per tutto il sistema e
+  si mappano in ogni processo che carica il file, solo la parte scrivibile e' privata.
+  `ld-exos.so` e le librerie che carica (`DT_NEEDED`, `dlopen`) vengono da li'. Misurato con
+  `tools/prova_ld.sh` (11 su 11 a 32 e 64 bit): sei copie addormentate di un programma costano
+  208 KB l'una a 32 bit (215 a 64) contro 219 (231) dello stesso programma `-static`.
+- **Ogni comando, ogni applicazione di ExWin, exilla e vlcapri sono su `/lib/ld-exos.so`**, a 32 e
+  64 bit. Restano statici i driver (partono prima che ci sia un filesystem da cui leggere una
+  libreria), `login`, `install`, `soccorso` e `sh` (la via d'ingresso e quella per riparare), e
+  `extaskbar`, `wifid`, `hello`, `prova64`, `readlink`. `make verifica-statici` li controlla
+  cercando PT_INTERP. A 64 bit ogni programma si portava dentro la libc ed ExWin: `pm` passa da
+  451 KB a 78 KB, `/bin` da 5,7 MB a 2,8 MB, `/exwin/bin` da 10 MB a 1,2 MB, l'ISO da 39 MB a
+  28 MB.
+- **Le dodici librerie sono oggetti condivisi ELF** (ET_DYN, `-fPIC`, nessuna rilocazione nel
+  codice): exwin, exdlg, eximg, exfont, exhtml, excss, exjs, quickjs, exdom, exhttp, exsuono,
+  exzip. Cio' che ognuna offre e' il suo version script, `lib/<nome>/<nome>.ver` (gli stessi nomi
+  delle tabelle di prima). Un programma nomina quelle di cui non puo' fare a meno (`exwin.so`,
+  `exdlg.so`, `exhttp.so`, `exhtml.so`, `exdom.so`, `exzip.so`) e l'interprete le carica; le
+  facoltative (`excss`, `exsuono`, i due motori JavaScript) hanno ancora un piccolo stub che le
+  apre con `dlopen` e vive senza. `exlib_apri()` ed `exlib_simbolo()` ci sono ancora, sopra
+  `dlopen`/`dlsym`.
+- **Tolti:** `libc.so` e i suoi ponti (`lib/libc_ponti.c`, `tools/genlibc.py`), il caricatore
+  `lib/exlib/exlib.c`, gli indirizzi fissi delle librerie fra 0x04000000 e 0x08000000
+  (`lib/*/*.ld`, `tools/fette.py`) e il vecchio caricatore di librerie del kernel
+  (`kernel/loader/lib.c`): `SYS_LIB_APRI` (248) e `SYS_LIB_TROVA` (238) adesso rendono ENOSYS.
+- **Anche il floppy:** `ld-exos.so` sta in `/rdboot/lib`, e il kernel cerca un interprete in
+  `/lib/...` anche sotto `/rdboot` e `/cdrom`, cosi' un programma del floppy o del CD parte prima
+  che su `/lib` sia montato qualcosa.
+- **L'indirizzo di una funzione e' lo stesso dappertutto.** In un programma compilato senza
+  `-fPIC` l'indirizzo di `strlen` e' la sua voce del PLT: `dlsym(RTLD_DEFAULT, "strlen")` dava
+  quello della libc e `&strlen` quello del programma. Adesso, come in glibc, un simbolo FUNC
+  indefinito con un valore nel programma e' la definizione per ogni ricerca tranne il JUMP_SLOT
+  che riempie quella voce del PLT.
+- **Il rimbalzo dello stage 2 si e' spostato** (`RDSEG` 0x90000): leggeva il sistema di base a
+  0x80000, sopra la coda di un kernel piu' grande di 448 KB, e il kernel a 64 bit 0.351 (461.008
+  byte) moriva dopo "J" senza una riga sulla seriale. Il kernel adesso puo' arrivare a 512 KB, e
+  il Makefile ne rifiuta uno piu' grande.
+- **exide 0.026** scrive la riga di collegamento di un programma su `ld-exos.so` con le `.so` di
+  `/exwin/lib` (o `/cdrom/exwin/lib`); il CD degli strumenti porta `libexos_avvio.a` e gli header
+  pubblici, e solo gli stub delle librerie facoltative.
+- ! Un programma costruito prima della 0.351 su `libc.so` o sullo stub di una libreria non parte
+  piu': va ricostruito, o ripreso con `netupdate`.
+
+### La libc condivisa: /lib/ld-exos.so, e il kernel avvia l'interprete (kernel 0.350, voce 105) — testato in QEMU
+
+Il terzo passo della voce 105. Fino a oggi ogni programma si portava dentro la libc (`libc.a`), e
+un programma collegato a librerie condivise se le caricava da se' all'avvio. Adesso c'e' una libc
+condivisa, come su ogni Unix, e un programma collegato senza `-static` usa quella.
+
+- **Il kernel rispetta PT_INTERP** (0.350). Un programma che nomina un interprete se lo trova
+  caricato dopo la propria immagine (un ET_DYN, letto una volta nel processo), con un auxv in
+  cima allo stack (`AT_PHDR`, `AT_PHENT`, `AT_PHNUM`, `AT_PAGESZ`, `AT_BASE`, `AT_ENTRY`) il cui
+  indirizzo va nella prima delle quattro parole da cui parte il programma (prima era 0, e per un
+  programma statico lo e' ancora), e parte da li'. Fino alla 0.349 PT_INTERP era ignorato.
+- **/lib/ld-exos.so e' la libc e il suo stesso interprete**, come fa musl (`lib/libc_ld.c`): si
+  riloca da se', carica i `DT_NEEDED` del programma con lo stesso caricatore di `dlopen`
+  (`lib/libc_dl.c`), riloca il programma (anche le COPY), lega le proprie variabili alle copie
+  del programma (`environ`, `optarg`, `stdout`...), fa girare i costruttori suoi e delle
+  librerie, e salta al programma. Il programma tiene il suo avvio (`libexos_avvio.a`:
+  `_libc_start`, i suoi costruttori, `main`); nella sysroot `libc.so` e' uno script del linker che
+  unisce i due. `-static` prende ancora `libc.a`.
+- **L'ordine dell'ambito globale e' quello di Linux:** la libc entra dove la nomina un
+  `DT_NEEDED`, e una libreria prima di lei vince (`libvlc` definisce `putenv`, `setlocale`... per
+  i suoi plugin).
+- **`dlsym(RTLD_NEXT)` e' vero:** la prima definizione dopo il modulo di chi chiama. Finora era
+  l'ambito globale, e una libreria che avvolge una funzione della libc ritrovava se stessa.
+- **VLC usa il suo `bin/override.c` com'e'**: con `libc.a` dentro, le sue `putenv`, `setlocale`,
+  `strerror`... erano una seconda definizione dei nomi della libc e il file veniva sostituito da uno
+  vuoto; adesso vincono quelle del programma, che trovano le vere con `dlsym(RTLD_NEXT)`.
+  `tools/vlc-exos/prova.sh` come prima a 32 e 64 bit (il file FLAC aspetta il passo 4, i plugin di
+  VLC come `.so`).
+- Un programma costruito prima, con `libc.a` dentro e le sue `.so`, ha anch'esso PT_INTERP ma non
+  nomina `ld-exos.so`: l'interprete lo lascia partire come prima. ! Con il kernel 0.350
+  `/lib/ld-exos.so` deve esserci: kernel e libc vanno insieme.
+- La costruisce `tools/costruisci-ld.sh` (le due sysroot, `/lib` dei due CD, la libc di oggi dei
+  porting). Prove: `tools/prova_ld.sh` 10 su 10 a 32 e 64 bit; `tools/prova-dl/` (avvio, dlopen,
+  40 librerie con TLS e fili, C++ con le eccezioni, QuickJS) passa con la libc dentro e con
+  quella condivisa (`LIBC_CONDIVISA=1` per `prova-tante.sh`).
+- **I porting ci stanno sopra**: bzip2, xz, lz4, zstd, PCRE2, Expat, OpenSSL, ncurses, FFmpeg,
+  MariaDB, httpd, PHP, Valkey, Mesa, nano e VLC si costruiscono senza `-static`, ogni programma
+  con PT_INTERP `/lib/ld-exos.so` e le librerie condivise che nomina. Le prove di ciascuno
+  passano a 32 e 64 bit (nano, Valkey, EGL, OpenSSL, httpd con PHP, MariaDB con i quattro
+  connettori, il servizio MariaDB su un disco installato dal CD, i compressori, VLC). `[mariadb]`
+  adesso vuole anche `bzip2`, `xz`, `lz4` e `pcre2`: `mariadbd` li nomina. ! Una prova che copia
+  le librerie nominate da un programma salta `ld-exos.so`: e' del sistema, in `/lib` del CD.
 
 ### pthread_cancel ferma un filo che aspetta, FD_CLOEXEC chiude all'exec, posix_spawn (kernel 0.349, ip.drv 0.027, voce 105) — testato in QEMU
 
@@ -5926,6 +6117,11 @@ conseguenza dell'allocatore a bump, dove `free()` non restituisce niente.
 
 ### Le librerie condivise: `exwin.so`, `exdlg.so`, `libc.so`
 
+> **Storia.** Cosi' funzionavano le librerie fino al kernel 0.350. Dalla 0.351 la libc e'
+> `/lib/ld-exos.so` e le librerie di EX-OS sono oggetti condivisi ELF: vedi
+> [Scrivere una libreria condivisa](#scrivere-una-libreria-condivisa). `SYS_LIB_APRI`, `libc.so`,
+> i ponti e gli indirizzi fissi qui sotto non ci sono piu'.
+
 | | |
 |---|---|
 | `SYS_LIB_APRI` (248): il kernel mappa una libreria **una volta** e la aggancia a chi la chiede | testato |
@@ -6757,7 +6953,7 @@ agire — vedi sotto.
 |-----|---------------|--------------|-----------|-----|--------------|
 | 246 | video_info    | `VideoInfo*` | —         | —   | dov'è il framebuffer e che forma ha |
 | 247 | log           | `const char*`| lunghezza | —   | una riga sul log del kernel, cioè sulla **seriale** |
-| 248 | lib_apri      | `const char*`| —         | —   | mappa una libreria condivisa e rende la sua tabella |
+| 248 | lib_apri      | `const char*`| —         | —   | mappa una libreria condivisa e rende la sua tabella (**tolta nella 0.351**: ENOSYS) |
 
 `log` non è un doppione di `printf`, e la differenza conta: `printf` scrive
 sulla console del processo, e se quella console non è quella a video il
@@ -8204,79 +8400,66 @@ senza uscita, mentre chi arriva da `dup2` il rimpiazzo ce l'ha già.
 
 ## Scrivere una libreria condivisa
 
-Una libreria di EX-OS è un ELF normalissimo, collegato a un indirizzo
-riservato, il cui **punto d'ingresso non è codice**: è una tabella di nomi.
+Dal kernel 0.351 una libreria di EX-OS e' un normale oggetto condiviso ELF, come su ogni Unix:
+codice indipendente dalla posizione, una tabella dinamica dei simboli, e `/lib/ld-exos.so` (la
+libc e l'interprete) la carica. Il kernel tiene una copia sola del suo codice per tutto il
+sistema.
 
-**Il sorgente della libreria** dichiara cosa esporta:
-
-```c
-#include "exlib.h"
-
-static const char *const nomi[] = { "pippo", "pluto" };
-static void *const dove[]       = { (void *)pippo, (void *)pluto };
-
-EXLIB_TESTA(mia_tabella, nomi, dove);
-```
-
-**Il linker script** la mette alla base della sua fetta:
+**Si costruisce** con `-fPIC`, e cio' che esporta lo dice un version script:
 
 ```
-ENTRY(mia_tabella)
+gcc -m32 -ffreestanding -fno-builtin -nostdlib -fPIC -O2 -I lib/include -c mialib.c -o mialib.o
+ld -m elf_i386 -shared --hash-style=both -z defs -z text -z noexecstack -z separate-code \
+   -soname mialib.so --version-script mialib.ver mialib.o \
+   /lib/ld-exos.so libexos_avvio.a -o mialib.so
+```
 
-SECTIONS
+```
+/* mialib.ver */
 {
-    . = 0x04C00000;             /* la prima fetta libera */
-
-    .exlib_testa : { KEEP(*(.exlib_testa)) }
-    .text        : { *(.text) *(.text.*) }
-    .rodata      : { *(.rodata) *(.rodata.*) }
-
-    . = ALIGN(4096);            /* obbligatorio, vedi sotto */
-
-    .data : { *(.data) *(.data.*) }
-    .bss  : { *(.bss) *(.bss.*) *(COMMON) }
-}
+    global: pippo; pluto;
+    local:  *;
+};
 ```
 
-**Chi la usa** chiede i nomi che gli servono:
+**Un programma che ne ha bisogno** la nomina quando si collega, e l'interprete la carica alla
+partenza (`DT_NEEDED`):
+
+```
+gcc -m32 -ffreestanding -fno-builtin -nostdlib -fno-pic -fno-pie \
+    -Wl,-Ttext-segment=0x08000000 -Wl,-z,separate-code -Wl,--hash-style=both \
+    -Wl,-dynamic-linker,/lib/ld-exos.so \
+    start.S programma.c /exwin/lib/mialib.so libexos_avvio.a /lib/ld-exos.so -o programma
+```
+
+**Un programma che sa farne a meno** la apre quando la vuole:
 
 ```c
-const ExLibTesta *t = exlib_apri("/lib/mialib.so");
-void (*pippo)(void) = exlib_simbolo(t, "pippo");
+void *h = dlopen("/exwin/lib/mialib.so", RTLD_NOW);
+void (*pippo)(void) = h ? (void (*)(void))dlsym(h, "pippo") : NULL;
 ```
 
-Nella pratica non lo fa a mano: si scrive uno **stub** — un file con le stesse
-funzioni della libreria, ognuna un ponte verso il puntatore risolto — e le
-applicazioni si collegano a quello. Il loro sorgente non cambia di una riga.
-Vedi `lib/exwin/exwin_stub.c` come modello.
+(`exlib_apri()` ed `exlib_simbolo()` di `exlib.h` fanno lo stesso, ed `exlib_apri_fra()` prova un
+elenco di percorsi.) Il modello sono gli stub di `excss`, `exsuono` ed `exjs`: le stesse funzioni
+della libreria, e ognuna la apre alla prima chiamata.
 
-### Le tre regole che non si possono violare
+### Le regole
 
-! **`. = ALIGN(4096)` PRIMA DI `.data`.** Il kernel condivide le pagine di sola
-lettura e ne dà una copia privata di quelle scrivibili, e lavora a **pagine
-intere**. Se la fine di `.rodata` e l'inizio di `.data` stessero nella stessa
-pagina, quella pagina sarebbe scrivibile — cioè copiata per ogni processo — e
-mezza `.rodata` smetterebbe di essere condivisa **senza che nessuno lo dica**.
+! **`-z defs` E `-z text`.** La prima rifiuta una libreria con un nome che nessuno definisce (lo
+dice il collegamento, non il programma alla partenza); la seconda rifiuta codice che andrebbe
+scritto al caricamento, cioe' una copia privata in ogni processo invece di una per tutti.
 
-! **UNA FETTA PER LIBRERIA, ASSEGNATA IN UN POSTO SOLO.** La mappa sta in
-`lib/exwin/exwin.ld`. Due librerie alla stessa base si sovrascriverebbero
-dentro il processo che le usa tutt'e due.
+! **`ld-exos.so` PRIMA DI `libexos_avvio.a`** quando si collega una libreria: tutto viene dalla
+libc condivisa, e dall'archivio solo `__stack_chk_fail_local`, il nome nascosto che
+`-fstack-protector` usa nel codice PIC.
 
-! **SI AGGIUNGE, NON SI TOGLIE.** Aggiungere funzioni, riordinarle e riscriverne
-il corpo è sempre lecito: le applicazioni già compilate continuano a
-funzionare. Togliere un nome le rompe — e lo dicono, con il nome che manca,
-invece di saltare nel vuoto.
+! **SI AGGIUNGE, NON SI TOGLIE.** Aggiungere funzioni e riscriverne il corpo e' sempre permesso:
+i programmi gia' costruiti le trovano per nome. Togliere un nome dal version script li rompe, e
+l'interprete dice quale nome manca.
 
-### Se la libreria ne usa un'altra
-
-Un programma ha `_start`, e lì c'è un posto naturale in cui agganciare ciò che
-gli serve. **Una libreria non parte**: le sue funzioni vengono chiamate e
-basta. Se ha bisogno di altre librerie, esporta il nome facoltativo
-`__lib_avvio`: `exlib_apri()` lo cerca e lo chiama, ed è l'unico momento in cui
-si sa che la libreria è appena stata mappata.
-
-È così che `exwin.so` ed `exdlg.so` usano `libc.so` senza portarsene dentro una
-copia.
+! **I costruttori di una libreria girano prima del `main` del programma**, nell'ordine delle
+librerie (prima quelle che servono): una libreria che ha bisogno di un'altra la nomina anche lei
+con `DT_NEEDED` (`exdlg.so` nomina `exwin.so`), non la apre a mano.
 
 ---
 

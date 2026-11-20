@@ -46,7 +46,7 @@
 #include "excrypt.h"
 
 /* +0.001 a ogni modifica: `sshd -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("sshd", "0.002");
+EX_VERSIONE("sshd", "0.003");
 
 /* ! WHAT THE PTY DID NOT TAKE WAITS HERE (0.002, kernel 0.331, analisi voce
  * 53): the master takes what fits in the input and says how much; the rest

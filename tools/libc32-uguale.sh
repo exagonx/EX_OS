@@ -42,9 +42,9 @@ uno() {     # $1 = sorgente, $2 = nome, il resto = opzioni in piu'
 }
 impronte() {
     uno lib/libc.c       libc
-    uno lib/libc.c       libc_so -fno-stack-protector -DEXOS_LIBC_SO
+    # /lib/ld-exos.so (voce 105): libc.so and its bridges are gone
+    uno lib/libc.c       ld_exos -fPIC -fno-stack-protector -DEXOS_LIBC_ELF -DEXOS_LIBC_PORTATI
     uno lib/libc_avvio.c libc_avvio
-    uno lib/libc_ponti.c libc_ponti
     for s in lib/rete.c lib/dns.c lib/audio.c lib/wifi.c lib/ex*/*.c bin/*/*.c; do
         uno "$s" "$(echo "$s" | tr '/' '_')" -I"$(dirname "$s")"
     done

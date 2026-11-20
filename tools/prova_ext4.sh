@@ -185,7 +185,12 @@ controlla() {   # $1 name, $2 image, $3 1 = with the written files, $4 extent de
     $SBIN/debugfs -R "stat /da-togliere.txt" "$f" 2>&1 | grep -q "not found" \
         && ok "$n: /da-togliere.txt tolto" || no "$n: /da-togliere.txt c'e' ancora"
     $SBIN/debugfs -R "ls /molti" "$f" > "$D/$n-molti.txt" 2>&1
-    grep -q "aggiunto.txt" "$D/$n-molti.txt" && ! grep -q "lungo-007 " "$D/$n-molti.txt" \
+    # ! not a grep of the listing: a removed entry that was the first of its
+    # block keeps its name with inode 0 (the format's "nothing here"), and
+    # debugfs ls shows it - where 007 lands moves with the htree hash seed,
+    # so the test said NO once in five (20 November 2026). Ask the lookup.
+    grep -q "aggiunto.txt" "$D/$n-molti.txt" \
+        && $SBIN/debugfs -R "stat /molti/un-nome-abbastanza-lungo-007" "$f" 2>&1 | grep -q "not found" \
         && [ "$($SBIN/debugfs -R "cat /molti/un-nome-abbastanza-lungo-399" "$f" 2>/dev/null)" = "file 399" ] \
         && ok "$n: /molti: aggiunto, tolto, gli altri al loro posto" || no "$n: /molti (vedi $D/$n-molti.txt)"
     $SBIN/debugfs -R "dump /est.bin $D/$n-est.bin" "$f" > /dev/null 2>&1

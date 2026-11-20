@@ -38,7 +38,7 @@ along with GCC; see the file COPYING3.  If not see
  *
  * PERCHE' 0x08000000. E' l'indirizzo a cui il caricatore ELF del kernel
  * mappa i programmi utente, ed e' scritto in ogni script di link di /bin
- * (vedi bin/ls/ls.ld). I programmi non girano mai in concorrenza allo
+ * (vedi lib/programma.ld). I programmi non girano mai in concorrenza allo
  * stesso indirizzo: il kernel ne carica uno per processo, nello spazio di
  * indirizzamento di quel processo.
  *

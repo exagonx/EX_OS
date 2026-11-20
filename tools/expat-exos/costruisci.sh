@@ -30,7 +30,7 @@ costruisci() {
     # marks its functions public only when it builds its own .so; this .so is
     # made by lib_condivisa from the archive, and without it exported nothing
     ( cd "$B/obj" && "$SRC/configure" --host=$T --build="$("$SRC/conftools/config.guess")" \
-        --prefix=/exos CC=$CC AR=$AR RANLIB=$RANLIB CFLAGS="$CFLAGS" LDFLAGS=-static \
+        --prefix=/exos CC=$CC AR=$AR RANLIB=$RANLIB CFLAGS="$CFLAGS" \
         CPPFLAGS=-DXML_ENABLE_VISIBILITY=1 \
         --disable-shared --enable-static --without-docbook --without-examples \
         --without-tests ) \

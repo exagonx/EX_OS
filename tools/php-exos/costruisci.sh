@@ -8,7 +8,7 @@
 #     tools/php-exos/costruisci.sh [32|64]     both by default
 #
 # PHP 8.5 thread safe (ZTS), laid out as on EX-OS under /exos/php:
-#     bin/php            the command line, one static program
+#     bin/php            the command line (on /lib/ld-exos.so, voce 105)
 #     lib/libphp.a       the engine with its extensions and the Apache 2
 #                        handler (everything of mod_php but the module
 #                        record), for tools/httpd-exos/costruisci.sh
@@ -27,7 +27,7 @@
 # build, so the host needs re2c (cross_build/re2c-host, built from its GitHub
 # clone in cross_build/terze-parti/re2c, tag 4.6).
 #
-# ! HOW IT SITS IN APACHE: httpd on EX-OS is one static program in one process
+# ! HOW IT SITS IN APACHE: httpd on EX-OS is one program in one process
 # with the worker MPM (threads), and there is no dlopen of modules. So PHP is
 # thread safe (--enable-zts, TSRM on the libc's pthread keys and __thread),
 # built as the static embed library, and the four files of
@@ -86,7 +86,7 @@ costruisci() {
     ( cd "$B/obj" && env $CACHE "$SRC/configure" --host=$T --build="$("$SRC/build/config.guess")" \
         --prefix=/exos/php --with-config-file-path=/exos/php/etc \
         CC=$CC CXX=$CXX AR=$AR RANLIB=$RANLIB CFLAGS="$CFLAGS" RE2C="$RE2C" \
-        LDFLAGS="-static" LIBS="-lpthread" \
+        LIBS="-lpthread" \
         PCRE2_CFLAGS="-I$S/include" PCRE2_LIBS="-lpcre2-8" \
         OPENSSL_CFLAGS="-I$S/include" OPENSSL_LIBS="-lssl -lcrypto" \
         ZLIB_CFLAGS="-I$S/include" ZLIB_LIBS="-lz" \

@@ -73,7 +73,7 @@
 #include "libc.h"
 
 /* +0.001 a ogni modifica: `toolinst -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("toolinst", "0.006");
+EX_VERSIONE("toolinst", "0.007");
 
 #define PERC_MAX   320
 #define BLOCCO     4096
@@ -106,39 +106,83 @@ static long n_uguali = 0, n_nuovi = 0;
  * catalogo_di_scorta().
  * ───────────────────────────────────────────────────────────────────────── */
 
-#define GRUPPI_MAX   12
-#define SOLO_MAX     10
-#define NOMI_MAX     4
-#define NOTE_MAX     8
+/* ! NO CEILING ON GROUPS AND LINES (0.007, 20 November 2026): there were 12
+ * groups, 10 `solo`, 4 `file`, 8 `nota`, 4 `vuole`, and the CD's catalogue
+ * has 38 groups, 30 `solo` in ffmpeg, 18 `file` in curses, 7 `vuole` in qt5:
+ * everything past the twelfth group could not be chosen at all. Now every
+ * list grows with the file (lista_metti). */
 #define ID_MAX       24
 #define ETICH_MAX    48
 #define DICE_MAX     96
 #define VOCE_MAX     96
-#define VUOLE_MAX    4               /* "vuole" per gruppo, come netupdate */
 
 typedef struct {
     char id[ID_MAX];                 /* "cpp", dalle quadre */
     char nome[ETICH_MAX];            /* "C++" */
     char dice[DICE_MAX];             /* la riga di descrizione */
     char prova[VOCE_MAX];            /* percorso che ne attesta la presenza */
-    char vuole[VUOLE_MAX][ID_MAX];   /* id dei gruppi da cui dipende */
+    char (*vuole)[ID_MAX];           /* id dei gruppi da cui dipende */
     int  n_vuole;
     long mbyte;
     int  sempre;                     /* non si puo' togliere */
 
-    char solo[SOLO_MAX][VOCE_MAX];   /* percorsi suoi e di nessun altro */
+    char (*solo)[VOCE_MAX];          /* percorsi suoi e di nessun altro */
     int  n_solo;
-    char file[NOMI_MAX][ID_MAX];     /* nomi di file, ovunque si trovino */
+    char (*file)[ID_MAX];            /* nomi di file, ovunque si trovino */
     int  n_file;
-    char nota[NOTE_MAX][VOCE_MAX];   /* avvertimenti da stampare */
+    char (*nota)[VOCE_MAX];          /* avvertimenti da stampare */
     int  n_note;
 
     int  c_e;                        /* trovato davvero sul CD */
     int  voluto;
 } Gruppo;
 
-static Gruppo g_gruppo[GRUPPI_MAX];
-static int    g_ngruppi = 0;
+static void copia_str(char *dst, const char *src, int max);
+
+static Gruppo *g_gruppo;
+static int    g_ngruppi = 0, g_capgruppi = 0;
+
+/* one more line in a list of a group; out of memory: the line is lost, said */
+static void *lista_metti(void *v, int *n, size_t largo, const char *val)
+{
+    char *nuovo = (char *)realloc(v, (size_t)(*n + 1) * largo);
+
+    if (nuovo == NULL) { printf("  ! memoria finita: ignoro '%s'\n", val); return v; }
+    copia_str(nuovo + (size_t)(*n) * largo, val, (int)largo);
+    (*n)++;
+    return nuovo;
+}
+#define METTI(g, campo, n, val) \
+    ((g)->campo = lista_metti((g)->campo, &(g)->n, sizeof(*(g)->campo), (val)))
+
+/* a new empty group at the end; NULL when memory is over */
+static Gruppo *gruppo_nuovo(void)
+{
+    Gruppo *g;
+
+    if (g_ngruppi >= g_capgruppi) {
+        int   cap = g_capgruppi ? g_capgruppi * 2 : 16;
+        void *nuovo = realloc(g_gruppo, (size_t)cap * sizeof(Gruppo));
+
+        if (nuovo == NULL) return NULL;
+        g_gruppo = (Gruppo *)nuovo;
+        g_capgruppi = cap;
+    }
+    g = &g_gruppo[g_ngruppi++];
+    memset(g, 0, sizeof(*g));
+    return g;
+}
+
+static void gruppi_azzera(void)
+{
+    int i;
+
+    for (i = 0; i < g_ngruppi; i++) {
+        free(g_gruppo[i].vuole); free(g_gruppo[i].solo);
+        free(g_gruppo[i].file);  free(g_gruppo[i].nota);
+    }
+    g_ngruppi = 0;
+}
 static int    g_da_catalogo = 0;     /* 0 = catalogo di scorta */
 
 /* Dove cercare l'albero quando -s non lo dice. Come per i driver, non e'
@@ -276,7 +320,6 @@ static char *valore_se(char *riga, const char *chiave)
 static void catalogo_di_scorta(void)
 {
     Gruppo *g;
-    int     k;
 
     /* ! SI AZZERA PRIMA. Ci si arriva anche DOPO un tentativo di lettura
      * andato a male a meta' — un catalogo che c'e' ma non contiene nessun
@@ -284,12 +327,10 @@ static void catalogo_di_scorta(void)
      * raccolti da quel giro: n_solo diverso da zero farebbe accodare i
      * percorsi di scorta a quelli letti, cioe' un catalogo che non ha mai
      * scritto nessuno. */
-    for (k = 0; k < (int)sizeof(g_gruppo); k++) ((char *)g_gruppo)[k] = 0;
-
-    g_ngruppi = 0;
+    gruppi_azzera();
     g_da_catalogo = 0;
 
-    g = &g_gruppo[g_ngruppi++];
+    if ((g = gruppo_nuovo()) == NULL) return;
     copia_str(g->id, "base", ID_MAX);
     copia_str(g->nome, "C", ETICH_MAX);
     copia_str(g->dice, "gcc, cpp, as, ld, la libc e gli header", DICE_MAX);
@@ -297,50 +338,64 @@ static void catalogo_di_scorta(void)
     g->sempre = 1;
     g->mbyte  = 0;
 
-    g = &g_gruppo[g_ngruppi++];
+    if ((g = gruppo_nuovo()) == NULL) return;
     copia_str(g->id, "cpp", ID_MAX);
     copia_str(g->nome, "C++", ETICH_MAX);
     copia_str(g->dice, "cc1plus, libstdc++", DICE_MAX);
     copia_str(g->prova, "bin/g++", VOCE_MAX);
-    copia_str(g->vuole[g->n_vuole++], "base", ID_MAX);
-    copia_str(g->solo[g->n_solo++], "bin/g++", VOCE_MAX);
-    copia_str(g->solo[g->n_solo++], "include/c++", VOCE_MAX);
-    copia_str(g->solo[g->n_solo++], "lib/libstdc++.a", VOCE_MAX);
-    copia_str(g->file[g->n_file++], "cc1plus", ID_MAX);
+    METTI(g, vuole, n_vuole, "base");
+    METTI(g, solo, n_solo, "bin/g++");
+    METTI(g, solo, n_solo, "include/c++");
+    METTI(g, solo, n_solo, "lib/libstdc++.a");
+    METTI(g, file, n_file, "cc1plus");
 
-    g = &g_gruppo[g_ngruppi++];
+    if ((g = gruppo_nuovo()) == NULL) return;
     copia_str(g->id, "fb", ID_MAX);
     copia_str(g->nome, "FreeBASIC", ETICH_MAX);
     copia_str(g->dice, "fbc, libfb e i .bi", DICE_MAX);
     copia_str(g->prova, "bin/fbc", VOCE_MAX);
-    copia_str(g->vuole[g->n_vuole++], "base", ID_MAX);
-    copia_str(g->solo[g->n_solo++], "bin/fbc", VOCE_MAX);
-    copia_str(g->solo[g->n_solo++], "include/freebasic", VOCE_MAX);
-    copia_str(g->solo[g->n_solo++], "lib/freebasic", VOCE_MAX);
+    METTI(g, vuole, n_vuole, "base");
+    METTI(g, solo, n_solo, "bin/fbc");
+    METTI(g, solo, n_solo, "include/freebasic");
+    METTI(g, solo, n_solo, "lib/freebasic");
 
-    g = &g_gruppo[g_ngruppi++];
+    if ((g = gruppo_nuovo()) == NULL) return;
     copia_str(g->id, "ssl", ID_MAX);
     copia_str(g->nome, "OpenSSL", ETICH_MAX);
     copia_str(g->dice, "libcrypto e i suoi header", DICE_MAX);
     copia_str(g->prova, "lib/libcrypto.a", VOCE_MAX);
-    copia_str(g->vuole[g->n_vuole++], "base", ID_MAX);
-    copia_str(g->solo[g->n_solo++], "lib/libcrypto.a", VOCE_MAX);
-    copia_str(g->solo[g->n_solo++], "include/openssl", VOCE_MAX);
+    METTI(g, vuole, n_vuole, "base");
+    METTI(g, solo, n_solo, "lib/libcrypto.a");
+    METTI(g, solo, n_solo, "include/openssl");
 }
 
 /* Rende 0 se ha letto un catalogo dal CD. */
 static int leggi_catalogo(const char *albero)
 {
-    static char testo[16384];
+    /* ! THE WHOLE FILE (0.007): it was read into 16384 bytes, the catalogue
+     * is 25 KB, and the groups after libpng were cut off in the middle. */
+    static char *testo = NULL;
+    static int   cap = 0;
     char   perc[PERC_MAX];
-    int    fd, n, i;
+    int    fd, n = 0, i, r;
     Gruppo *g = NULL;
 
     unisci(perc, albero, "strumenti.txt");
     fd = open(perc, O_RDONLY);
     if (fd < 0) return -1;
 
-    n = (int)read(fd, testo, sizeof(testo) - 1);
+    for (;;) {
+        if (n + 4096 + 1 > cap) {
+            char *nuovo = (char *)realloc(testo, (size_t)(cap ? cap * 2 : 32768));
+
+            if (nuovo == NULL) break;
+            testo = nuovo;
+            cap = cap ? cap * 2 : 32768;
+        }
+        r = (int)read(fd, testo + n, (unsigned int)(cap - n - 1));
+        if (r <= 0) break;
+        n += r;
+    }
     close(fd);
     if (n <= 0) return -1;
     testo[n] = '\0';
@@ -363,19 +418,15 @@ static int leggi_catalogo(const char *albero)
         /* Intestazione di gruppo: [id] e nient'altro sulla riga. */
         if (r[0] == '[') {
             char *fine = r;
-            int   k;
 
             while (*fine && *fine != ']') fine++;
             if (*fine != ']' || *ripulisci(fine + 1) != '\0') continue;
             *fine = '\0';
 
-            if (g_ngruppi >= GRUPPI_MAX) {
-                printf("  ! piu' di %d gruppi nel catalogo: ignoro il resto\n",
-                       GRUPPI_MAX);
+            if ((g = gruppo_nuovo()) == NULL) {
+                printf("  ! memoria finita: ignoro il resto del catalogo\n");
                 break;
             }
-            g = &g_gruppo[g_ngruppi++];
-            for (k = 0; k < (int)sizeof(Gruppo); k++) ((char *)g)[k] = 0;
             copia_str(g->id, ripulisci(r + 1), ID_MAX);
             /* Il nome per esteso e' facoltativo: senza, si mostra l'id.
              * Meglio "[fb] si'" che una colonna vuota accanto a una
@@ -394,7 +445,7 @@ static int leggi_catalogo(const char *albero)
          * OpenSSL, zlib, zstd and C++ at once. Up to 0.003 only the last
          * line counted. */
         if ((v = valore_se(r, "vuole")) != NULL) {
-            if (g->n_vuole < VUOLE_MAX) copia_str(g->vuole[g->n_vuole++], v, ID_MAX);
+            METTI(g, vuole, n_vuole, v);
             continue;
         }
         if ((v = valore_se(r, "mbyte")) != NULL) { g->mbyte = atol(v); continue; }
@@ -403,17 +454,15 @@ static int leggi_catalogo(const char *albero)
             continue;
         }
         if ((v = valore_se(r, "solo")) != NULL) {
-            if (g->n_solo < SOLO_MAX) copia_str(g->solo[g->n_solo++], v, VOCE_MAX);
-            else printf("  ! %s: piu' di %d 'solo', ignoro '%s'\n", g->id, SOLO_MAX, v);
+            METTI(g, solo, n_solo, v);
             continue;
         }
         if ((v = valore_se(r, "file")) != NULL) {
-            if (g->n_file < NOMI_MAX) copia_str(g->file[g->n_file++], v, ID_MAX);
-            else printf("  ! %s: piu' di %d 'file', ignoro '%s'\n", g->id, NOMI_MAX, v);
+            METTI(g, file, n_file, v);
             continue;
         }
         if ((v = valore_se(r, "nota")) != NULL) {
-            if (g->n_note < NOTE_MAX) copia_str(g->nota[g->n_note++], v, VOCE_MAX);
+            METTI(g, nota, n_note, v);
             continue;
         }
         /* Chiave sconosciuta: si ignora. Vedi il commento in testa. */
