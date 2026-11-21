@@ -65,7 +65,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.051");
+EX_VERSIONE("netupdate", "0.052");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -2012,6 +2012,41 @@ static unsigned int buono_h(const char *s)
     return h & 1023;
 }
 
+static int leggi_tutto(const char *nome, unsigned char *buf, int max);
+static int firma_video(const unsigned char *b, int n);
+
+/* ! stage2.bin ON THE DISK NEVER HASHES LIKE THE LIST, AND IT IS STILL THE
+ * SERVER'S ONE: bootinstall writes the sectors of rdboot.lz4 in its RDMAPPA
+ * table (bootloader/stage2/loader.asm, kernel/boot/bootinst.c), and svga.drv
+ * the video mode after 'SVGAMODE' (porta_modo_video). Taken as different,
+ * every -check rewrote it, the boot sector with it, and said "riavvia" (the
+ * .253, 21 November 2026). The file is the server's if, with the table empty
+ * as published, one value of the mode byte gives the server's hash. */
+#define RDMAPPA_BYTE (8 + 4 + 2 + 64 * 6)    /* firma, byte, voci, RD_MAX_EXT */
+
+static int stage2_come_server(const char *assoluto, const char *impronta_server)
+{
+    static unsigned char buf[16384];
+    char esa[72];
+    int  n = leggi_tutto(assoluto, buf, sizeof(buf)), pos, v, k;
+
+    if (n <= 0 || n >= (int)sizeof(buf)) return 0;
+    for (k = 0; k + 8 <= n; k += 512)
+        if (memcmp(buf + k, "RDMAPPA", 8) == 0) {
+            memset(buf + k + 8, 0, (size_t)((n - k < RDMAPPA_BYTE ? n - k : RDMAPPA_BYTE) - 8));
+            break;
+        }
+    sha256_esa(buf, (size_t)n, esa);
+    if (strcasecmp(esa, impronta_server) == 0) return 1;
+    if ((pos = firma_video(buf, n)) < 0) return 0;
+    for (v = 0; v < 256; v++) {
+        buf[pos] = (unsigned char)v;
+        sha256_esa(buf, (size_t)n, esa);
+        if (strcasecmp(esa, impronta_server) == 0) return 1;
+    }
+    return 0;
+}
+
 static int disco_giusto(const char *percorso, long byte, const char *impronta_server)
 {
     char         assoluto[PERC_MAX], esa[72];
@@ -2024,7 +2059,10 @@ static int disco_giusto(const char *percorso, long byte, const char *impronta_se
         if (strcmp(b->percorso, percorso) == 0) return 1;
     unisci(assoluto, sizeof(assoluto), "/", percorso);
     if (!esiste(assoluto, &dim) || dim != byte) return 0;
-    if (impronta_locale(assoluto, esa) != 0 || strcasecmp(esa, impronta_server) != 0) return 0;
+    if (impronta_locale(assoluto, esa) != 0 || strcasecmp(esa, impronta_server) != 0) {
+        if (strcmp(percorso, "boot/stage2.bin") != 0 ||
+            !stage2_come_server(assoluto, impronta_server)) return 0;
+    }
     l = strlen(percorso);
     b = (Buono *)malloc(sizeof(Buono) + l);
     if (b != NULL) {

@@ -1,0 +1,6761 @@
+# EX-OS — Novità
+
+[🇬🇧 English](novita.md) · **🇮🇹 Italiano**
+
+[← README](../README.it.md) · [Tutti i manuali](../README.it.md#i-manuali)
+
+**Indice**
+
+- [netupdate 0.051 e 0.052: avvio e sistema si guardano sempre — testato in QEMU e sul PC di prova](#netupdate-0051-e-0052-avvio-e-sistema-si-guardano-sempre--testato-in-qemu-e-sul-pc-di-prova)
+- [Kernel 0.352: a 64 bit le chiamate di sistema girano con gli interrupt accesi — testato in QEMU e sul PC di prova](#kernel-0352-a-64-bit-le-chiamate-di-sistema-girano-con-gli-interrupt-accesi--testato-in-qemu-e-sul-pc-di-prova)
+- [exide compila anche a 64 bit (exide 0.027) — testato in QEMU e sul PC di prova](#exide-compila-anche-a-64-bit-exide-0027--testato-in-qemu-e-sul-pc-di-prova)
+- [VLC come su Linux: libvlc.so, libvlccore.so e ogni modulo una .so aperta con dlopen (voce 105, passo 4) — testato in QEMU e sul PC di prova](#vlc-come-su-linux-libvlcso-libvlccoreso-e-ogni-modulo-una-so-aperta-con-dlopen-voce-105-passo-4--testato-in-qemu-e-sul-pc-di-prova)
+- [L'archivio per applicazione: netupdate aggiorna solo cio' che e' cambiato, ExPackage ha Update e Upgrade (netupdate 0.050, expackage 0.002, voci 106 e 107) — testato in QEMU e sul PC di prova](#larchivio-per-applicazione-netupdate-aggiorna-solo-cio-che-e-cambiato-expackage-ha-update-e-upgrade-netupdate-0050-expackage-0002-voci-106-e-107--testato-in-qemu-e-sul-pc-di-prova)
+- [Ogni programma su /lib/ld-exos.so, le librerie di EX-OS sono .so vere (kernel 0.351, voce 105) — testato in QEMU](#ogni-programma-su-libld-exosso-le-librerie-di-ex-os-sono-so-vere-kernel-0351-voce-105--testato-in-qemu)
+- [La libc condivisa: /lib/ld-exos.so, e il kernel avvia l'interprete (kernel 0.350, voce 105) — testato in QEMU](#la-libc-condivisa-libld-exosso-e-il-kernel-avvia-linterprete-kernel-0350-voce-105--testato-in-qemu)
+- [pthread_cancel ferma un filo che aspetta, FD_CLOEXEC chiude all'exec, posix_spawn (kernel 0.349, ip.drv 0.027, voce 105) — testato in QEMU](#pthread_cancel-ferma-un-filo-che-aspetta-fd_cloexec-chiude-allexec-posix_spawn-kernel-0349-ipdrv-0027-voce-105--testato-in-qemu)
+- [Qt 5 su EX-OS, e VLC con i suoi menu (tools/qt5-exos, kernel 0.348, voce 85) — testato in QEMU](#qt-5-su-ex-os-e-vlc-con-i-suoi-menu-toolsqt5-exos-kernel-0348-voce-85--testato-in-qemu)
+- [GNU nano 9.3 (tools/nano-exos) — testato in QEMU](#gnu-nano-93-toolsnano-exos--testato-in-qemu)
+- [Via i tetti fissi che restavano (kernel 0.347, voce 35) — testato in QEMU](#via-i-tetti-fissi-che-restavano-kernel-0347-voce-35--testato-in-qemu)
+- [Un segnale interrompe un'attesa su un socket (kernel 0.346, ip.drv 0.026, voce 37) — testato in QEMU e sul PC di prova](#un-segnale-interrompe-unattesa-su-un-socket-kernel-0346-ipdrv-0026-voce-37--testato-in-qemu-e-sul-pc-di-prova)
+- [Lo spegnimento del PC di prova: cosa fa prima il suo BIOS (voce 102, in corso)](#lo-spegnimento-del-pc-di-prova-cosa-fa-prima-il-suo-bios-voce-102-in-corso)
+- [Ogni driver ha -install e -remove (voce 24) — testato in QEMU](#ogni-driver-ha--install-e--remove-voce-24--testato-in-qemu)
+- [Una sessione telnet si porta via quello che ha lanciato (telnetd 0.016, voci 21 e 100) — testato in QEMU e sul PC di prova](#una-sessione-telnet-si-porta-via-quello-che-ha-lanciato-telnetd-0016-voci-21-e-100--testato-in-qemu-e-sul-pc-di-prova)
+- [ATA: un FLUSH CACHE fallito si ritenta, BSY e DMA aspettano 30 s (kernel 0.345, voci 40 e 70) — testato in QEMU e sul PC di prova](#ata-un-flush-cache-fallito-si-ritenta-bsy-e-dma-aspettano-30-s-kernel-0345-voci-40-e-70--testato-in-qemu-e-sul-pc-di-prova)
+- [`cachedisco` in kernel.cfg vale (kernel 0.344, voce 27) — testato in QEMU e sul PC di prova](#cachedisco-in-kernelcfg-vale-kernel-0344-voce-27--testato-in-qemu-e-sul-pc-di-prova)
+- [netupdate riprova una mappa d'avvio fallita (netupdate 0.049, voci 60, 49, 47) — testato in QEMU](#netupdate-riprova-una-mappa-davvio-fallita-netupdate-0049-voci-60-49-47--testato-in-qemu)
+- [Exilla: la barra dell'indirizzo del primo tab funziona anche dal secondo avvio (voce 73) — testato in QEMU, il pacchetto e' da pubblicare](#exilla-la-barra-dellindirizzo-del-primo-tab-funziona-anche-dal-secondo-avvio-voce-73--testato-in-qemu-il-pacchetto-e-da-pubblicare)
+- [telnetd serve piu' sessioni insieme (telnetd 0.015, voce 62) — testato in QEMU e sul PC di prova](#telnetd-serve-piu-sessioni-insieme-telnetd-0015-voce-62--testato-in-qemu-e-sul-pc-di-prova)
+- [Nessun tetto ai volumi montati (kernel 0.343, mount 0.005, automount 0.005, voce 50) — testato in QEMU, gira sul PC di prova](#nessun-tetto-ai-volumi-montati-kernel-0343-mount-0005-automount-0005-voce-50--testato-in-qemu-gira-sul-pc-di-prova)
+- [cpufreq legge le due coppie che un Core 2 dichiara, e non scrive niente (kernel 0.342, voce 78) — testato sul PC di prova](#cpufreq-legge-le-due-coppie-che-un-core-2-dichiara-e-non-scrive-niente-kernel-0342-voce-78--testato-sul-pc-di-prova)
+- [ExEditor stampa, fa vedere l'anteprima, e ha barra e righello anche per i file di testo (ExEditor 0.009, exwin.so 0.022, lpt.drv 0.004, voce 81) — testato in QEMU](#exeditor-stampa-fa-vedere-lanteprima-e-ha-barra-e-righello-anche-per-i-file-di-testo-exeditor-0009-exwinso-0022-lptdrv-0004-voce-81--testato-in-qemu)
+- [lpt.drv trova le schede parallele PCI (lpt.drv 0.003, voce 98) — testato](#lptdrv-trova-le-schede-parallele-pci-lptdrv-0003-voce-98--testato)
+- [munmap non puo' piu' fermare la macchina (kernel 0.341)](#munmap-non-puo-piu-fermare-la-macchina-kernel-0341)
+- [L'ora dei programmi e' quella universale vera: EX-OS conosce il suo fuso orario (kernel 0.340)](#lora-dei-programmi-e-quella-universale-vera-ex-os-conosce-il-suo-fuso-orario-kernel-0340)
+- [stat() dice i permessi, il proprietario, i collegamenti e le date veri, e i file scritti su FAT hanno la loro data (kernel 0.339)](#stat-dice-i-permessi-il-proprietario-i-collegamenti-e-le-date-veri-e-i-file-scritti-su-fat-hanno-la-loro-data-kernel-0339)
+- [Dormite lunghe quanto chiesto, un timer che guarda solo quando serve, i processi trovati per PID subito, i CD letti tre volte piu' in fretta, un programma che esce mentre i fili leggono non ferma piu' i file (kernel 0.334-0.338, analisi_kernel voci 6, 21, 22, 24, 27, 28, 75)](#dormite-lunghe-quanto-chiesto-un-timer-che-guarda-solo-quando-serve-i-processi-trovati-per-pid-subito-i-cd-letti-tre-volte-piu-in-fretta-un-programma-che-esce-mentre-i-fili-leggono-non-ferma-piu-i-file-kernel-0334-0338-analisi_kernel-voci-6-21-22-24-27-28-75)
+- [Il disco con meno lavoro inutile: ext2, il giornale di ext4, AHCI e FAT (kernel 0.333, ext4.mod 0.006, analisi_kernel voci 56, 63, 73, 74, 75)](#il-disco-con-meno-lavoro-inutile-ext2-il-giornale-di-ext4-ahci-e-fat-kernel-0333-ext4mod-0006-analisi_kernel-voci-56-63-73-74-75)
+- [Un incolla in telnet o ssh non si tronca piu', i file del floppy aperti due volte, un vero generatore di numeri casuali (kernel 0.332, telnetd 0.014, sshd 0.002, analisi_kernel voci 53, 55, 67, 70)](#un-incolla-in-telnet-o-ssh-non-si-tronca-piu-i-file-del-floppy-aperti-due-volte-un-vero-generatore-di-numeri-casuali-kernel-0332-telnetd-0014-sshd-0002-analisi_kernel-voci-53-55-67-70)
+- [Un puntatore cattivo uccide il programma e non la macchina, e altri venti varchi del kernel chiusi (kernel 0.331, analisi_kernel)](#un-puntatore-cattivo-uccide-il-programma-e-non-la-macchina-e-altri-venti-varchi-del-kernel-chiusi-kernel-0331-analisi_kernel)
+- [Un utente qualunque non legge e non scrive piu' il kernel, ne' scrive un file aperto in lettura (kernel 0.330, analisi_kernel voci 1-4 e 46)](#un-utente-qualunque-non-legge-e-non-scrive-piu-il-kernel-ne-scrive-un-file-aperto-in-lettura-kernel-0330-analisi_kernel-voci-1-4-e-46)
+- [La GeForce 210 col suo motore 2D, un driver per le NV4x, e `shutdown -r` che riavvia (kernel 0.327-0.329, nv50.drv 0.011, nv40.drv 0.005, sh 0.012, voce 99)](#la-geforce-210-col-suo-motore-2d-un-driver-per-le-nv4x-e-shutdown--r-che-riavvia-kernel-0327-0329-nv50drv-0011-nv40drv-0005-sh-0012-voce-99)
+- [Uno script e il suo figlio in sottofondo non si cancellano piu' le righe (kernel 0.326, sh 0.011, voce 94), e `mount` scrive /proc come proc (kernel 0.325, mount 0.004, voce 93)](#uno-script-e-il-suo-figlio-in-sottofondo-non-si-cancellano-piu-le-righe-kernel-0326-sh-0011-voce-94-e-mount-scrive-proc-come-proc-kernel-0325-mount-0004-voce-93)
+- [Nessun fronte perso con due processori, e la porta parallela senza chiamate di sistema (kernel 0.324, lpt.drv 0.002, voce 98)](#nessun-fronte-perso-con-due-processori-e-la-porta-parallela-senza-chiamate-di-sistema-kernel-0324-lptdrv-0002-voce-98)
+- [Un driver solo per la porta parallela (kernel 0.323, lpt.drv 0.001, voce 98)](#un-driver-solo-per-la-porta-parallela-kernel-0323-lptdrv-0001-voce-98)
+- [Exilla scrive il cinese, il giapponese e il coreano (pacchetto font-cjk, netupdate 0.047)](#exilla-scrive-il-cinese-il-giapponese-e-il-coreano-pacchetto-font-cjk-netupdate-0047)
+- [Con due processori il disco non si ferma piu' per sempre (kernel 0.322)](#con-due-processori-il-disco-non-si-ferma-piu-per-sempre-kernel-0322)
+- [L'invio non e' piu' fermo a 4 KB, e TCP controlla la congestione (ip.drv 0.024, ipcfg 0.006)](#linvio-non-e-piu-fermo-a-4-kb-e-tcp-controlla-la-congestione-ipdrv-0024-ipcfg-0006)
+- [La frequenza del processore segue il carico (kernel 0.311, cpufreq.drv 0.001)](#la-frequenza-del-processore-segue-il-carico-kernel-0311-cpufreqdrv-0001)
+- [Il C++ come librerie condivise, e un caricatore senza un numero fisso di librerie (voce 85, la strada per Qt 5)](#il-c-come-librerie-condivise-e-un-caricatore-senza-un-numero-fisso-di-librerie-voce-85-la-strada-per-qt-5)
+- [VLC e' nel menu di avvio (vlcapri 0.001, voce 79)](#vlc-e-nel-menu-di-avvio-vlcapri-0001-voce-79)
+- [Lo schermo si spegne quando nessuno lo usa (kernel 0.312, dpms.drv 0.002, voce 78 b)](#lo-schermo-si-spegne-quando-nessuno-lo-usa-kernel-0312-dpmsdrv-0002-voce-78-b)
+- [Il suono del portatile parte da solo, e ls elenca tutti i nomi (audio 0.005, ls 0.003)](#il-suono-del-portatile-parte-da-solo-e-ls-elenca-tutti-i-nomi-audio-0005-ls-0003)
+- [Il settore di avvio non torna piu' al kernel vecchio dopo un aggiornamento (netupdate 0.043, voce 75)](#il-settore-di-avvio-non-torna-piu-al-kernel-vecchio-dopo-un-aggiornamento-netupdate-0043-voce-75)
+- [netupdate porta i file nuovi dei pacchetti installati, e VLC trova le sue librerie (netupdate 0.042)](#netupdate-porta-i-file-nuovi-dei-pacchetti-installati-e-vlc-trova-le-sue-librerie-netupdate-0042)
+- [ExPackage, e netupdate legge tutto il catalogo (netupdate 0.041, expackage 0.001)](#expackage-e-netupdate-legge-tutto-il-catalogo-netupdate-0041-expackage-0001)
+- [Le librerie di terzi sono condivise, e i programmi le caricano all'avvio](#le-librerie-di-terzi-sono-condivise-e-i-programmi-le-caricano-allavvio)
+- [Audio e video: i codec, VLC, e tre guasti che tenevano muto ogni lettore (ac97.drv 0.003, hdaudio.drv 0.006, sb.drv 0.002, es1371.drv 0.002)](#audio-e-video-i-codec-vlc-e-tre-guasti-che-tenevano-muto-ogni-lettore-ac97drv-0003-hdaudiodrv-0006-sbdrv-0002-es1371drv-0002)
+- [I driver finiti non scrivono piu' nei programmi degli altri (kernel 0.309 e 0.310, chkdsk 0.004)](#i-driver-finiti-non-scrivono-piu-nei-programmi-degli-altri-kernel-0309-e-0310-chkdsk-0004)
+- [Un errore del disco e' un errore (kernel 0.308, date 0.004, netupdate 0.040)](#un-errore-del-disco-e-un-errore-kernel-0308-date-0004-netupdate-0040)
+- [Meno FLUSH: il giornale non chiude a ogni operazione (kernel 0.307)](#meno-flush-il-giornale-non-chiude-a-ogni-operazione-kernel-0307)
+- [La cache di lettura dei dischi (kernel 0.304)](#la-cache-di-lettura-dei-dischi-kernel-0304)
+- [I contatori dei dischi (kernel 0.303, disk 0.003, /proc/disco)](#i-contatori-dei-dischi-kernel-0303-disk-0003-procdisco)
+- [reboot, halt e poweroff smontano le unita' (kernel 0.302) — provato in QEMU a 32 e 64 bit](#reboot-halt-e-poweroff-smontano-le-unita-kernel-0302--provato-in-qemu-a-32-e-64-bit)
+- [Un modulo vecchio non blocca piu' il disco; netupdate ritenta (kernel 0.293, netupdate 0.038, install 0.011, hwconfig 0.009, nv50.drv 0.009) — provato in QEMU, da provare sul ferro](#un-modulo-vecchio-non-blocca-piu-il-disco-netupdate-ritenta-kernel-0293-netupdate-0038-install-0011-hwconfig-0009-nv50drv-0009--provato-in-qemu-da-provare-sul-ferro)
+- [ext3 ed ext4 anche negli strumenti (kernel 0.292, mkfs 0.002, chkdsk 0.003) — provato in QEMU, da provare sul ferro](#ext3-ed-ext4-anche-negli-strumenti-kernel-0292-mkfs-0002-chkdsk-0003--provato-in-qemu-da-provare-sul-ferro)
+- [Lucchetti veri sui file (kernel 0.291) — provato in QEMU, Firefox ancora da ricollegare](#lucchetti-veri-sui-file-kernel-0291--provato-in-qemu-firefox-ancora-da-ricollegare)
+- [L'ora arriva dalla rete a ogni accensione (date 0.003) — provato in QEMU](#lora-arriva-dalla-rete-a-ogni-accensione-date-0003--provato-in-qemu)
+- [Cancellare una cartella non si ferma piu' al primo errore (filemgr 0.015) — provato in QEMU](#cancellare-una-cartella-non-si-ferma-piu-al-primo-errore-filemgr-0015--provato-in-qemu)
+- [/proc nel sistema di base (kernel 0.290, /bin/readlink) — testato in QEMU](#proc-nel-sistema-di-base-kernel-0290-binreadlink--testato-in-qemu)
+- [grep (/bin/grep) — testato](#grep-bingrep--testato)
+- [I sorgenti di terzi confrontati con quelli ufficiali (tools/aggiorna-sorgenti.sh) — testato senza una versione nuova](#i-sorgenti-di-terzi-confrontati-con-quelli-ufficiali-toolsaggiorna-sorgentish--testato-senza-una-versione-nuova)
+- [I sorgenti di Firefox dall'ultima versione pubblicata (tools/exilla/sorgenti.sh) — testato su Firefox 160.0.1](#i-sorgenti-di-firefox-dallultima-versione-pubblicata-toolsexillasorgentish--testato-su-firefox-16001)
+- [Il tasto Stamp salva lo schermo in un PNG (kbd.drv 0.008, wserver 0.015, pm 0.026, /bin/cattura) — testato in QEMU](#il-tasto-stamp-salva-lo-schermo-in-un-png-kbddrv-0008-wserver-0015-pm-0026-bincattura--testato-in-qemu)
+- [Anelli di rete dalla RAM su tutti i driver (e1000.drv 0.005, nforce.drv 0.015, rtl8169.drv 0.004, pcnet.drv 0.004, sis900.drv 0.020, ne2k.drv 0.004, ar5k.drv 0.004) — e1000, pcnet e ne2k testati in QEMU; nforce, rtl8169, sis900 e ar5k **da testare**](#anelli-di-rete-dalla-ram-su-tutti-i-driver-e1000drv-0005-nforcedrv-0015-rtl8169drv-0004-pcnetdrv-0004-sis900drv-0020-ne2kdrv-0004-ar5kdrv-0004--e1000-pcnet-e-ne2k-testati-in-qemu-nforce-rtl8169-sis900-e-ar5k-da-testare)
+- [Tastiera nuova in ExWin: lettere accentate, pressioni e rilasci (kbd.drv 0.007, wserver 0.014, exwin.so 0.021) — testato in QEMU](#tastiera-nuova-in-exwin-lettere-accentate-pressioni-e-rilasci-kbddrv-0007-wserver-0014-exwinso-0021--testato-in-qemu)
+- [ExWin senza tetti fissi: finestre, elenco, oggetti (kernel 0.289, wserver 0.013, exwin.so 0.020) — testato in QEMU](#exwin-senza-tetti-fissi-finestre-elenco-oggetti-kernel-0289-wserver-0013-exwinso-0020--testato-in-qemu)
+- [PHP 8.5 con PDO dentro Apache, e 2048 client per 10 minuti (kernel 0.286)](#php-85-con-pdo-dentro-apache-e-2048-client-per-10-minuti-kernel-0286)
+- [fsync vero, e alla pari con Linux (kernel 0.284-0.285)](#fsync-vero-e-alla-pari-con-linux-kernel-0284-0285)
+- [Nessun tetto fisso, e Apache 2.4 (kernel 0.281-0.283, ip.drv 0.017-0.019)](#nessun-tetto-fisso-e-apache-24-kernel-0281-0283-ipdrv-0017-0019)
+- [1024 connessioni a MariaDB: epoll, un gruppo di fili, una casella giusta (kernel 0.280, ip.drv 0.016)](#1024-connessioni-a-mariadb-epoll-un-gruppo-di-fili-una-casella-giusta-kernel-0280-ipdrv-0016)
+- [MariaDB 11.8 LTS gira in EX-OS (0.279)](#mariadb-118-lts-gira-in-ex-os-0279)
+- [OpenSSL 4.1.0 con socket e fili, e 127.0.0.1](#openssl-410-con-socket-e-fili-e-127001)
+- [Sette librerie come librerie vere di EX-OS: zlib, bzip2, xz, lz4, zstd, PCRE2, {fmt}](#sette-librerie-come-librerie-vere-di-ex-os-zlib-bzip2-xz-lz4-zstd-pcre2-fmt)
+- [ncurses 6.6: programmi a schermo intero sulla console e in telnet](#ncurses-66-programmi-a-schermo-intero-sulla-console-e-in-telnet)
+- [Un terminale vero: termios sulla console e in telnet (0.279)](#un-terminale-vero-termios-sulla-console-e-in-telnet-0279)
+- [Una sessione telnet che non torna, e lo schermo della NVIDIA integrata (0.278)](#una-sessione-telnet-che-non-torna-e-lo-schermo-della-nvidia-integrata-0278)
+- [Fili che leggono lo stesso file: `pread` vero e i flussi col lucchetto (0.277)](#fili-che-leggono-lo-stesso-file-pread-vero-e-i-flussi-col-lucchetto-0277)
+- [Lo swap funziona (kernel 0.276) — provato in QEMU, da provare sotto pressione sul ferro](#lo-swap-funziona-kernel-0276--provato-in-qemu-da-provare-sotto-pressione-sul-ferro)
+- [Le chiavette sono `/USB/USB0`, `/USB/USB1`... — provato in QEMU](#le-chiavette-sono-usbusb0-usbusb1--provato-in-qemu)
+- [La barra di stato: `extaskbar` (kernel 0.255) — provata in QEMU](#la-barra-di-stato-extaskbar-kernel-0255--provata-in-qemu)
+- [WiFi: la prima scheda vera, Atheros AR2425 (`ar5k.drv`) — provato](#wifi-la-prima-scheda-vera-atheros-ar2425-ar5kdrv--provato)
+- [Librerie: un caricatore dinamico vero, OpenSSL a 64 bit, iconv](#librerie-un-caricatore-dinamico-vero-openssl-a-64-bit-iconv)
+- [WiFi: il comando `wifi` e l'icona accanto all'orologio (kernel 0.250)](#wifi-il-comando-wifi-e-licona-accanto-allorologio-kernel-0250)
+- [ExWin: ogni controllo si nasconde e si spegne](#exwin-ogni-controllo-si-nasconde-e-si-spegne)
+- [Installare senza lettore CD: `make installa`, e la guida (kernel 0.240)](#installare-senza-lettore-cd-make-installa-e-la-guida-kernel-0240)
+- [Una scheda madre vera: disco SATA e rete NVIDIA (kernel 0.239)](#una-scheda-madre-vera-disco-sata-e-rete-nvidia-kernel-0239)
+- [Piu' processori, tappe 1 e 2 (kernel 0.237 e 0.238)](#piu-processori-tappe-1-e-2-kernel-0237-e-0238)
+- [exide: miniature, puntatore, codice non modale; e tiscali.it si apre](#exide-miniature-puntatore-codice-non-modale-e-tiscaliit-si-apre)
+- [Quattro giochi: EXKlondike, EXSpider, EXMajong, EXGO](#quattro-giochi-exklondike-exspider-exmajong-exgo)
+- [L'API di ExWin e' in inglese, ed exide e' coerente](#lapi-di-exwin-e-in-inglese-ed-exide-e-coerente)
+- [Firefox in una finestra di ExWin](#firefox-in-una-finestra-di-exwin)
+- [Firefox disegna la sua prima pagina dentro EX-OS](#firefox-disegna-la-sua-prima-pagina-dentro-ex-os)
+- [Kernel 0.228–0.236: quello che Firefox ha trovato](#kernel-02280236-quello-che-firefox-ha-trovato)
+- [Il floppy ha di nuovo spazio](#il-floppy-ha-di-nuovo-spazio)
+- [Selezionare e copiare il testo in EXBrowser](#selezionare-e-copiare-il-testo-in-exbrowser)
+- [Il puntatore sopra i collegamenti](#il-puntatore-sopra-i-collegamenti)
+- [EXBrowser e Wikipedia](#exbrowser-e-wikipedia)
+- [JPEG progressivi](#jpeg-progressivi)
+- [ExEditor, menu a comparsa, schede](#exeditor-menu-a-comparsa-schede)
+- [ExEditor scrive in RTF](#exeditor-scrive-in-rtf)
+- [exide](#exide)
+- [Le cartelle del profilo](#le-cartelle-del-profilo)
+- [toolinst](#toolinst)
+- [`dlopen` e `dlsym`](#dlopen-e-dlsym)
+- [La memoria condivisa di POSIX](#la-memoria-condivisa-di-posix)
+- [La grafica non sfarfalla piu'](#la-grafica-non-sfarfalla-piu)
+- [I segnali arrivano davvero, e c'e' `mprotect`](#i-segnali-arrivano-davvero-e-ce-mprotect)
+- [I socket BSD](#i-socket-bsd)
+- [La `std` di Rust gira dentro EX-OS](#la-std-di-rust-gira-dentro-ex-os)
+- [Il navigatore parte anche a 32 MB](#il-navigatore-parte-anche-a-32-mb)
+- [ExJs ha le espressioni regolari](#exjs-ha-le-espressioni-regolari)
+- [Le schede: nell'editor, in exide e nel navigatore](#le-schede-nelleditor-in-exide-e-nel-navigatore)
+- [ExJs legge il JavaScript di oggi](#exjs-legge-il-javascript-di-oggi)
+- [ExJs: `throw`, `try`, `switch` e i prototipi](#exjs-throw-try-switch-e-i-prototipi)
+- [Il tasto destro, il trascinare e le associazioni](#il-tasto-destro-il-trascinare-e-le-associazioni)
+- [Pennello scrive](#pennello-scrive)
+- [Pennello, il programma di disegno](#pennello-il-programma-di-disegno)
+- [EXBrowser dispone la pagina](#exbrowser-dispone-la-pagina)
+- [La ricerca di Wikipedia](#la-ricerca-di-wikipedia)
+- [Calctor da ufficio](#calctor-da-ufficio)
+- [La rotella del mouse](#la-rotella-del-mouse)
+- [Il mouse veloce non ferma più la scrivania](#il-mouse-veloce-non-ferma-più-la-scrivania)
+- [gfedit: F5 e l'INPUT del BASIC](#gfedit-f5-e-linput-del-basic)
+- [ExJs: `Date` e `valueOf`](#exjs-date-e-valueof)
+- [ExJs: `toString` implicito e `join` senza tetto](#exjs-tostring-implicito-e-join-senza-tetto)
+- [I moduli verso pagine locali, e il pulsante immagine](#i-moduli-verso-pagine-locali-e-il-pulsante-immagine)
+- [Gli `onclick=` girano anche senza `<script>`](#gli-onclick-girano-anche-senza-script)
+- [Le GIF animate si muovono](#le-gif-animate-si-muovono)
+- [Il clic nelle caselle delle pagine mette il cursore lì](#il-clic-nelle-caselle-delle-pagine-mette-il-cursore-lì)
+- [EXBrowser capisce em, rem e %](#exbrowser-capisce-em-rem-e-)
+- [EXBrowser disegna i bordi del CSS, e il padding](#exbrowser-disegna-i-bordi-del-css-e-il-padding)
+- [Immagini, il visualizzatore, e le PNG di ogni tipo](#immagini-il-visualizzatore-e-le-png-di-ogni-tipo)
+- [Ctrl+C sulla console di testo chiede, e poi ferma](#ctrlc-sulla-console-di-testo-chiede-e-poi-ferma)
+- [La ricerca su Wikipedia, e le regole @media](#la-ricerca-su-wikipedia-e-le-regole-media)
+- [Calctor, la calcolatrice](#calctor-la-calcolatrice)
+- [La scrivania: la cartella del profilo, le unità, il registro](#la-scrivania-la-cartella-del-profilo-le-unità-il-registro)
+- [L'editor cerca e sostituisce](#leditor-cerca-e-sostituisce)
+- [Archivi apre i tar, e il file manager rinomina](#archivi-apre-i-tar-e-il-file-manager-rinomina)
+- [`runbas`: i programmi QBASIC girano da soli](#runbas-i-programmi-qbasic-girano-da-soli)
+- [I percorsi dei programmi in un file](#i-percorsi-dei-programmi-in-un-file)
+- [HTTPS: da 23 a 28 siti su 30 — AES-GCM, P-256 e TLS 1.2](#https-da-23-a-28-siti-su-30--aes-gcm-p-256-e-tls-12)
+- [La finestra Download, nel toolkit](#la-finestra-download-nel-toolkit)
+- [EXBrowser chiede «apri o scarica», e Archivi prende le cartelle](#exbrowser-chiede-apri-o-scarica-e-archivi-prende-le-cartelle)
+- [Certificati: la catena si ferma alla prima radice, e se ne aggiungono](#certificati-la-catena-si-ferma-alla-prima-radice-e-se-ne-aggiungono)
+- [Il navigatore si chiama EXBrowser](#il-navigatore-si-chiama-exbrowser)
+- [Le icone: un'API del toolkit, e il menu della scrivania che la usa](#le-icone-unapi-del-toolkit-e-il-menu-della-scrivania-che-la-usa)
+- [Gli archivi ZIP: una libreria, un comando e una finestra](#gli-archivi-zip-una-libreria-un-comando-e-una-finestra)
+- [Archivi: una tabella vera, e l'archivio che si costruisce da sé](#archivi-una-tabella-vera-e-larchivio-che-si-costruisce-da-sé)
+- [Ridurre a icona, e la barra dei programmi aperti](#ridurre-a-icona-e-la-barra-dei-programmi-aperti)
+- [tar, gzip e gunzip](#tar-gzip-e-gunzip)
+- [La pagina d'accesso non si fa più coprire dai messaggi dell'avvio](#la-pagina-daccesso-non-si-fa-più-coprire-dai-messaggi-dellavvio)
+- [Il progetto nuovo di EX-IDE sceglie dove, e se lo ricorda](#il-progetto-nuovo-di-ex-ide-sceglie-dove-e-se-lo-ricorda)
+- [`wserver` usa il motore 2D dove c'è, e disegna da sé dove non c'è](#wserver-usa-il-motore-2d-dove-cè-e-disegna-da-sé-dove-non-cè)
+- [Il motore 2D della SiS disegna: 14x sulla copia schermo→schermo](#il-motore-2d-della-sis-disegna-14x-sulla-copia-schermoschermo)
+- [L'orologio si può rimettere: kernel 0.218 e `/bin/date`](#lorologio-si-può-rimettere-kernel-0218-e-bindate)
+- [`ls` nudo dice anche quando e che cosa](#ls-nudo-dice-anche-quando-e-che-cosa)
+- [Le chiavette USB si tolgono, non si strappano: `eject`](#le-chiavette-usb-si-tolgono-non-si-strappano-eject)
+- [Una sessione remota che non diventa sorda ne' muta: `telnetd` 0.008](#una-sessione-remota-che-non-diventa-sorda-ne-muta-telnetd-0008)
+- [Un aggiornamento a meta' non deve lasciare una macchina morta](#un-aggiornamento-a-meta-non-deve-lasciare-una-macchina-morta)
+- [File grandi su linee che cadono: la ripresa](#file-grandi-su-linee-che-cadono-la-ripresa)
+- [`ftpswap`: una directory e un server FTP, allineati](#ftpswap-una-directory-e-un-server-ftp-allineati)
+- [NASM sul CD degli strumenti, e l'altra sintassi](#nasm-sul-cd-degli-strumenti-e-laltra-sintassi)
+- [La pila di un filo cresce su richiesta](#la-pila-di-un-filo-cresce-su-richiesta)
+- [La casella «Cerca», e due caselle nella stessa barra](#la-casella-cerca-e-due-caselle-nella-stessa-barra)
+- [La directory è di tutti e due (e l'ambiente lo era già)](#la-directory-è-di-tutti-e-due-e-lambiente-lo-era-già)
+- [Fermare un filo è chiederglielo](#fermare-un-filo-è-chiederglielo)
+- [Le condizioni e i semafori, sopra l'attesa che dorme](#le-condizioni-e-i-semafori-sopra-lattesa-che-dorme)
+- [I fili: più flussi dentro lo stesso programma](#i-fili-più-flussi-dentro-lo-stesso-programma)
+- [Le scorciatoie degli editor, e una cosa che avevo scritto sbagliata](#le-scorciatoie-degli-editor-e-una-cosa-che-avevo-scritto-sbagliata)
+- [Taglia e incolla: un controllo si sposta fra le maschere](#taglia-e-incolla-un-controllo-si-sposta-fra-le-maschere)
+- [Rifai: la stessa funzione con le due pile scambiate](#rifai-la-stessa-funzione-con-le-due-pile-scambiate)
+- [Si cerca davvero, e non serviva portare un browser](#si-cerca-davvero-e-non-serviva-portare-un-browser)
+- [L'impaginato esce da browser.c, e la prova è che non si vede](#limpaginato-esce-da-browserc-e-la-prova-è-che-non-si-vede)
+- [Il manuale di EX-IDE diventa una pagina, con l'indice](#il-manuale-di-ex-ide-diventa-una-pagina-con-lindice)
+- [Le ancore: un link che porta a un punto della pagina](#le-ancore-un-link-che-porta-a-un-punto-della-pagina)
+- [Annulla: si fotografa tutto, non si registra cosa](#annulla-si-fotografa-tutto-non-si-registra-cosa)
+- [Le maniglie si tirano, e il manuale spiega davvero](#le-maniglie-si-tirano-e-il-manuale-spiega-davvero)
+- [Più di una finestra: il disegnatore impara a contare](#più-di-una-finestra-il-disegnatore-impara-a-contare)
+- [Salva con nome, Sostituisci, e un nome che restava indietro](#salva-con-nome-sostituisci-e-un-nome-che-restava-indietro)
+- [Files e Directory: una finestra nuova, e una che non serviva scrivere](#files-e-directory-una-finestra-nuova-e-una-che-non-serviva-scrivere)
+- [La scheda del progetto, e una riscrittura che non doveva esserci](#la-scheda-del-progetto-e-una-riscrittura-che-non-doveva-esserci)
+- [La finestra del compilatore: GCC vero, dentro EX-OS, da un disegno](#la-finestra-del-compilatore-gcc-vero-dentro-ex-os-da-un-disegno)
+- [Tre difetti visti usandolo, e nessuno stava dove sembrava](#tre-difetti-visti-usandolo-e-nessuno-stava-dove-sembrava)
+- [EX-IDE: si disegna una finestra, esce del C che gira](#ex-ide-si-disegna-una-finestra-esce-del-c-che-gira)
+- [Finestre dentro una finestra: il contenitore MDI](#finestre-dentro-una-finestra-il-contenitore-mdi)
+- [Il testo colorato, e una seconda area di testo che non è nata](#il-testo-colorato-e-una-seconda-area-di-testo-che-non-è-nata)
+- [Il toolkit impara cinque controlli, e il posto dove si aggiungono](#il-toolkit-impara-cinque-controlli-e-il-posto-dove-si-aggiungono)
+- [La finestra resta viva mentre scarica, e la posta ha un padrone](#la-finestra-resta-viva-mentre-scarica-e-la-posta-ha-un-padrone)
+- [Il navigatore esegue JavaScript, e i motori sono due](#il-navigatore-esegue-javascript-e-i-motori-sono-due)
+- [I biscotti, tutt'e due le metà](#i-biscotti-tutte-due-le-metà)
+- [Il suono: quattro schede e il MIDI](#il-suono-quattro-schede-e-il-midi)
+- [Google non è un bersaglio del navigatore, e adesso si sa perché](#google-non-è-un-bersaglio-del-navigatore-e-adesso-si-sa-perché)
+- [La scrivania ha una console sua, si spegne, e parla la tua lingua](#la-scrivania-ha-una-console-sua-si-spegne-e-parla-la-tua-lingua)
+- [Il browser regge una pagina vera: impaginazione, immagini, caratteri, moduli](#il-browser-regge-una-pagina-vera-impaginazione-immagini-caratteri-moduli)
+- [Utenti veri: due conti, `sudo`, e un recovery quando l'accesso è rotto](#utenti-veri-due-conti-sudo-e-un-recovery-quando-laccesso-è-rotto)
+- [`ls -l`: i permessi e i proprietari si vedono](#ls--l-i-permessi-e-i-proprietari-si-vedono)
+- [Lo schermo si ricompone solo dove è cambiato](#lo-schermo-si-ricompone-solo-dove-è-cambiato)
+- [Il browser: tabelle, elenchi, `<pre>` e i fogli di stile fino in fondo](#il-browser-tabelle-elenchi-pre-e-i-fogli-di-stile-fino-in-fondo)
+- [«Informazioni su», e l'orologio che non spariva](#informazioni-su-e-lorologio-che-non-spariva)
+- [Un browser: dalla rete allo schermo](#un-browser-dalla-rete-allo-schermo)
+- [I font: TrueType, misurato contro FreeType](#i-font-truetype-misurato-contro-freetype)
+- [`rename` sostituisce la destinazione, come POSIX](#rename-sostituisce-la-destinazione-come-posix)
+- [La barra: l'ora, e le applicazioni che si aggiungono da sole](#la-barra-lora-e-le-applicazioni-che-si-aggiungono-da-sole)
+- [L'interfaccia grafica: un server a finestre in ring 3](#linterfaccia-grafica-un-server-a-finestre-in-ring-3)
+- [La scrivania: `/exwin`, barra delle applicazioni e menu di avvio](#la-scrivania-exwin-barra-delle-applicazioni-e-menu-di-avvio)
+- [Le librerie condivise: `exwin.so`, `exdlg.so`, `libc.so`](#le-librerie-condivise-exwinso-exdlgso-libcso)
+- [L'installazione a componenti](#linstallazione-a-componenti)
+- [Quattro difetti vecchi, e cosa hanno in comune](#quattro-difetti-vecchi-e-cosa-hanno-in-comune)
+- [Driver: li sceglie la macchina, non li copia in blocco](#driver-li-sceglie-la-macchina-non-li-copia-in-blocco)
+- [Una shell più grande: modalità grafica VESA e `svga.drv`](#una-shell-più-grande-modalità-grafica-vesa-e-svgadrv)
+- [Due immagini, e niente resta fuori](#due-immagini-e-niente-resta-fuori)
+- [Gli strumenti si installano da soli: `toolinst`](#gli-strumenti-si-installano-da-soli-toolinst)
+- [Percorsi e messaggi: se ne dice uno solo, e vero](#percorsi-e-messaggi-se-ne-dice-uno-solo-e-vero)
+- [Rete — dal bus PCI a un client FTP](#rete--dal-bus-pci-a-un-client-ftp)
+- [CPU — SSE, SSE2, SSE3, MMX](#cpu--sse-sse2-sse3-mmx)
+- [Filesystem](#filesystem)
+- [Shell e comandi](#shell-e-comandi)
+- [libc](#libc)
+- [Catena di compilazione](#catena-di-compilazione)
+
+---
+
+## Novità
+
+Le voci sono marcate **testato** quando il lavoro è stato verificato girando
+dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
+quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### netupdate 0.051 e 0.052: avvio e sistema si guardano sempre — testato in QEMU e sul PC di prova
+
+Con la 0.050 un'applicazione con la stessa build di quella installata non si guardava piu', e
+cosi' anche `avvio` e `sistema`, che hanno i file essenziali (kernel, moduli, libc) controllati sul
+disco: un `ext4.mod` vecchio con un registro che lo diceva giusto restava, e il disco partiva in
+sola lettura. Le applicazioni `sempre` non si saltano mai. `tools/prova_modulo_disco.sh` 16 su 16;
+`prova_menu_netupdate.sh` e `prova_verifiche.sh` pubblicano il menu e il kernel nuovi anche in
+`app/<id>.txt` e `app.txt`, come `mknetinst.sh`, e non solo in `elenco.txt`.
+
+Guardando sempre `avvio`, sul .253 ogni `-check` proponeva `boot/stage2.bin` "da verificare", lo
+riscriveva insieme al settore di avvio e diceva "IL KERNEL E' CAMBIATO: riavvia". Sul disco
+`stage2.bin` non e' mai uguale all'elenco: `bootinstall` ci scrive i settori di `rdboot.lz4` nella
+tabella `RDMAPPA`, e `svga.drv` il modo video dopo `SVGAMODE`. Con la 0.052 il file e' quello del
+server se, con la tabella vuota come e' pubblicata e un valore del byte del modo, ha l'impronta del
+server. Sul .253 (0.352, 64 bit) `netupdate -check` dice "niente" e tutte le verifiche sono a posto.
+
+### Kernel 0.352: a 64 bit le chiamate di sistema girano con gli interrupt accesi — testato in QEMU e sul PC di prova
+
+`system -load` a 64 bit rimontava il disco, scriveva "Riaccendo:" e si fermava li': la macchina
+non rispondeva piu'. Il kernel girava per sempre in `ata_attesa_ms`, chiamata da `sys_mount` per il
+lettore CD vuoto di `kernel.cfg`, con gli interrupt spenti: l'orologio non avanzava e l'attesa non
+finiva mai. A 32 bit `int 0x80` e' una trap gate (0xEF), e la chiamata di sistema lascia accesi
+gli interrupt (`kernel/arch/x86/idt.c` lo spiega); a 64 bit era una interrupt gate (0xEE) dalla
+prima tappa, e ogni chiamata di sistema girava con IF=0. Ora e' una trap gate anche a 64 bit
+(`kernel/arch/x86_64/idt64.c`). `tools/prova_system.sh` a 64 bit: 8 su 8 (prima 7). Sul .253 (Q9650,
+64 bit) `system -unload -yes` e `system -load` dalla console: il disco torna radice in scrittura.
+
+Sistemate anche, nelle prove: `prova_sorgenti.sh` e `prova_pennello.sh` chiamano gli script con
+`sh`/`bash` (MEGA toglie il permesso di esecuzione); `libgit2-exos/prova.sh` prende header e
+libreria dalla costruzione e non dal sysroot; il disco di `prova-fb64-nativo.sh` cresce con
+l'albero degli strumenti (400 MB fissi non bastavano piu'); `prova_exbrowser_misura.sh` porta il
+puntatore sulla presa con `vai:`, che lo controlla, e non dice piu' `[OK]` se la finestra non si
+e' mossa.
+
+### exide compila anche a 64 bit (exide 0.027) — testato in QEMU e sul PC di prova
+
+Su EX-OS a 64 bit un progetto nuovo di exide non compilava: "`/exos/start.S`: file o directory
+inesistente" e "`exwin.h`: file o directory inesistente". Il CD degli strumenti a 64 bit
+(`tools/mktools64.sh`) non aveva gli header di ExWin e delle altre librerie, ne' `start.S` e
+`libexos_avvio.a`; e anche con quelli exide scriveva `-m32` nella riga di compilazione.
+
+- exide scrive la riga della sua architettura: `-m64` e le pagine da 4 KB a 64 bit, `-m32` a 32.
+- `mktools64.sh` copia gli stessi file del CD a 32 bit, con l'elenco `ESOS_STUB` letto dal
+  Makefile (un elenco solo).
+- `exhttp.h` include `http.h`, che non c'era su nessuno dei due CD: ora e' in `ESOS_STUB`.
+- Il CD a 32 bit non aveva le specs di `tools/gcc-exos/specs-condivise.sh`: il `gcc` nativo
+  collegava sempre `-static` ("attempted static link of dynamic object exwin.so"). Ora le ha,
+  con `ld-exos.so`, `libc.so`, `libgcc_s` e `libstdc++.so` in `/exos/lib`, come a 64 bit.
+
+Se un progetto vecchio non compila: in exide **Strumenti > Compilatore**, "Scrivi compila.sh", e
+la riga nuova sostituisce quella con `-m32`. `tools/prova_exide_compila.sh` (e `BIT=64`): exide
+genera, il gcc dentro EX-OS compila, la finestra si apre, a 32 e 64 bit. Sul PC di prova il
+progetto che non compilava ora apre la sua finestra.
+
+### VLC come su Linux: libvlc.so, libvlccore.so e ogni modulo una .so aperta con dlopen (voce 105, passo 4) — testato in QEMU e sul PC di prova
+
+`/exos/bin/vlc` ora gira su `/exos/lib/libvlc.so.5` e `libvlccore.so.9`, e ognuno dei suoi 241
+moduli e' una `.so` in `/exos/lib/vlc/plugins/<tipo>/`, aperta con dlopen quando serve, come su
+Linux. Finora VLC era un programma solo con tutti i moduli dentro: tre moduli con lo stesso nome
+si perdevano (VLC chiama un modulo come il suo sorgente: flac, vc1, file), due tabelle andavano
+rese static con sed, e mancava il packetizer FLAC, quindi nessun FLAC suonava. Il file FLAC di
+`tools/vlc-exos/prova.sh` ora suona a 32 e 64 bit come gli altri.
+
+- **libtool impara EX-OS** (`lib_libtool_exos` in `tools/librerie-exos/comune.sh`): in ogni caso
+  per sistema del codice di libtool dentro un configure, `exos*` va dove c'e' `linux*`. Prima
+  libtool diceva "dynamic_linker=no" e faceva solo archivi statici, per ogni porting autoconf.
+- **`gcc -shared` collega la libc** come su Linux (`tools/gcc-exos/specs-condivise.sh`): `-lc` e'
+  `/lib/ld-exos.so`, quindi una libreria ha `DT_NEEDED ld-exos.so` e i suoi simboli della libc si
+  controllano quando la si collega. Senza, i collegamenti C++ di libtool (`-nostdlib`, poi le
+  librerie che nomina g++) non avevano nessuna libc. Un programma statico con `libc.a` che apre
+  una di queste librerie salta quel `DT_NEEDED` e presta la sua libc, come prima
+  (`lib/libc_dl.c`).
+- **libstdc++.la dice il vero** (`tools/librerie-exos/la-condivisa.sh`, da `cxx-condivise.sh`):
+  il libtool di GCC aveva scritto "solo statica", e ogni oggetto condiviso C++ collegato sopra Qt
+  prendeva `libstdc++.a`, che non e' PIC.
+- **ncurses e' una libreria condivisa**: `libncurses.so.6`, `libpanel`, `libmenu`, `libform`,
+  `libncurses++` (i `.a` restano per i programmi `-static`). L'interfaccia di testo di VLC e' un
+  modulo, e una `.so` non puo' portarsi dentro l'archivio non PIC. `tic`, `tput` e gli altri ora
+  la usano.
+- **`sincos`, `sincosf`, `sincosl`** dichiarate in `<math.h>` (con `_GNU_SOURCE`): openlibm le
+  aveva, l'header no; l'uscita OpenGL di VLC chiama `sincosf`.
+- **L'elenco dei moduli** `plugins.dat` lo scrive sulla macchina
+  `/exos/lib/vlc/vlc-cache-gen` (una costruzione incrociata non puo' eseguirlo): il controllo di
+  netupdate per VLC (`tools/netinst/verifiche/vlc.sh`) lo fa quando manca. Senza, VLC parte lo
+  stesso ma apre tutti i moduli a ogni avvio.
+- Solo `glspectrum` non si costruisce: EX-OS ha EGL e GLES2, nessuna libGL per `-lGL` (l'uscita
+  OpenGL di VLC prende le sue funzioni da EGL e c'e').
+
+`tools/vlc-exos/prova.sh` a 32 e 64 bit: i tre file audio confrontati con FFmpeg (FLAC
+compreso), l'interfaccia ncurses e il suo volume, i tre video nella loro finestra, `vlc-cache-gen`
+che scrive `plugins.dat`, l'interfaccia Qt col cono: tutto `[OK]`. Sul PC di prova a 64 bit,
+aggiornato con netupdate: il FLAC e l'MP3 sulla scheda vera, l'interfaccia ncurses da telnet,
+gizmo.mp4 e vp9cake.webm nella finestra, Qt col cono; `plugins.dat` scritto dal controllo di
+netupdate. Le `.so` di ncurses non arrivavano sul CD degli strumenti
+(`tools/ncurses-exos/su-cd.sh` copiava solo i `.a`): ora si'.
+
+### L'archivio per applicazione: netupdate aggiorna solo cio' che e' cambiato, ExPackage ha Update e Upgrade (netupdate 0.050, expackage 0.002, voci 106 e 107) — testato in QEMU e sul PC di prova
+
+- **Il repository ha un archivio nuovo accanto al vecchio.** `app.txt` ha un blocco per applicazione:
+  nome, cosa vuole, **versione** (quella del programma: VLC 3.0.24, nano 9.3) e **build**, il
+  momento (UTC, `AAAAMMGGhhmm`) in cui i suoi file sono cambiati l'ultima volta; `app/<id>.txt`
+  ha i suoi file con byte e sha256. `versione.txt` porta l'impronta di `app.txt` (`app = ...`).
+  La build si muove da sola quando si muove l'elenco (`tools/netinst/archivio_app.py`, lanciato
+  da `mknetinst.sh`): una ricostruzione con la stessa versione — tutti i porting su ld-exos.so
+  del 19/11 — arriva lo stesso.
+- **Il vecchio `catalogo.txt` e `elenco.txt` hanno solo `[avvio]` e `[sistema]`.** Un netupdate
+  di prima della 0.050 aggiorna kernel e sistema (dentro c'e' netupdate 0.050), e dal giro dopo
+  legge `app.txt`. Kernel e sistema restano interi.
+- **Un'applicazione con la stessa build di quella installata non si guarda**: il suo elenco non
+  si scarica e il suo blocco nel registro resta com'e' ("N applicazioni con la stessa versione e
+  build del server: non le guardo"). Le altre si confrontano file per file come prima, e il
+  registro (`/boot/netupdate.reg`) scrive versione e build di ognuna.
+- **`-check`** aggiorna solo cio' che e' installato, e dice le dipendenze nuove che mancano;
+  **`-check -yes`** lo fa senza chiedere; **`-check -yesall`** installa anche quelle dipendenze.
+  Le applicazioni nuove arrivano solo con `-install:<app>`, con tutto cio' che vogliono e la loro
+  voce nel menu di avvio se sono grafiche (`grafica = si` in `app.txt`).
+- **`netupdate -list`** le applicazioni del server con lo stato (no, installato, **aggiornabile**)
+  e la versione; **`-list:<pezzo>`** quelle il cui nome lo contiene; `-p` una pagina per volta,
+  `-tab` per i programmi (cinque colonne in piu' in fondo: versione, build, aggiornabile, versione
+  installata, grafica). `-install:list` resta uguale.
+- **I file che non arrivano** si ritentano da soli `tentativi` volte (`/boot/netupdate.cnf`,
+  3 se non lo dice), poi netupdate chiede (con `-yes` smette); quelli rimasti vanno in
+  `/boot/netupdate.err`, e il `-check` dopo li dice per primi. Il file sparisce quando un `-check`
+  finisce senza mancanti. La verifica `sistema.sh` lo segnala.
+- **ExPackage**: **Update** rilegge l'elenco e le versioni, senza installare niente; **Upgrade**
+  aggiorna le installate aggiornabili (`netupdate -check -yes`), poi toglie le `[-]` e installa le
+  `[+]` con le `[d]`. Accanto al nome, la versione del repository; lo stato "aggiornabile".
+- **Guasto trovato (prova del salto 0.346 -> 0.351):** fra l'aggiornamento e il riavvio gira
+  ancora il kernel di prima, che non conosce `/lib/ld-exos.so`: `ls`, `sync` e ogni programma
+  nuovo cadono con un page fault a 0. Non e' un danno: `reboot` e' dentro la shell, e dopo il
+  riavvio va tutto. Dopo "IL KERNEL E' CAMBIATO" si riavvia e basta.
+- **Guasto trovato: VLC installato da netupdate non partiva.** Qt 5 vuole libpng16, FreeType e
+  HarfBuzz, porting fatti ma mai finiti sul CD ne' nel repository (le prove di VLC li copiavano a
+  mano), e zlib, pcre2, zstd che il suo `vuole` non diceva; il gcc di `base` vuole libz e libzstd,
+  nasm libz. Ora ci sono i pacchetti `[libpng]` `[freetype]` `[harfbuzz]`, i `vuole` giusti (zlib e
+  zstd non vogliono piu' `base`: nasm resta senza compilatore), e `mknetinst` controlla con
+  `tools/netinst/controlla_dipendenze.py` che ogni libreria chiesta (`readelf -d`) arrivi con la
+  catena di `vuole`. Su una macchina gia' aggiornata: `netupdate -check -yesall`.
+- **Guasto trovato: toolinst (0.007)** teneva 12 gruppi, 10 `solo`, 4 `file`, 8 `nota`, 4 `vuole`
+  e leggeva 16 KB di catalogo: il CD strumenti ne ha 38 e 25 KB, e da libpng in poi non si
+  sceglieva niente. Ora ogni elenco cresce col file (`tools/prova_toolinst.sh`).
+- **Il primo -check della 0.050 non riscarica cio' che e' gia' giusto**: un file che il registro
+  non conosce ma che sul disco ha byte e sha256 del server resta (sul PC di prova 5141 file
+  riconosciuti, 2672 davvero cambiati).
+- **Guasto trovato: fra l'aggiornamento e il riavvio nessuno entrava piu' da telnet.** Per ogni
+  connessione telnetd rilancia `/bin/telnetd`, che era dinamico: con `/lib/ld-exos.so` gia' nuovo
+  e il kernel ancora vecchio cadeva a EIP 0 e la sessione si chiudeva senza un byte (sul PC di
+  prova e in QEMU). Ora **telnetd, sshd e netupdate sono statici** come login, install e sh
+  (`STATICI_OBBLIGATI` nel Makefile, `STATICI` in `tools/costruisci-utente64.sh`): da una
+  sessione nuova si entra, si aggiorna e `reboot` (dentro la shell) riavvia. Gli altri comandi
+  dinamici (`ps`, `ls`...) col kernel vecchio cadono ancora: si riavvia e basta.
+- Prove: `tools/prova_netupdate_app.sh` (A: -list, -list:nan, -install:nano con la voce di menu,
+  -check che non guarda le uguali; B: una build nuova con un file guasto sul server, tre giri da
+  soli e `/boot/netupdate.err`; C: nano che vuole fmt, -check che lo dice, -yesall che lo
+  installa), `tools/prova_expackage.sh` con Upgrade.
+
+### Ogni programma su /lib/ld-exos.so, le librerie di EX-OS sono .so vere (kernel 0.351, voce 105) — testato in QEMU
+
+Il resto del terzo passo della voce 105. Fino a oggi la libc condivisa serviva ai porting; i
+programmi del sistema si portavano ancora dentro `libc.c` (a 64 bit) o passavano da `libc.so` e
+dai suoi ponti (a 32 bit), e le dodici librerie di EX-OS erano ET_EXEC a indirizzi fissi con una
+tabella di nomi. Adesso la strada e' una, quella di Unix.
+
+- **Il kernel tiene una copia sola di ogni oggetto condiviso** (`kernel/loader/condivise.c`,
+  `SYS_SO_MAPPA` 274): codice e dati in sola lettura si leggono una volta per tutto il sistema e
+  si mappano in ogni processo che carica il file, solo la parte scrivibile e' privata.
+  `ld-exos.so` e le librerie che carica (`DT_NEEDED`, `dlopen`) vengono da li'. Misurato con
+  `tools/prova_ld.sh` (11 su 11 a 32 e 64 bit): sei copie addormentate di un programma costano
+  208 KB l'una a 32 bit (215 a 64) contro 219 (231) dello stesso programma `-static`.
+- **Ogni comando, ogni applicazione di ExWin, exilla e vlcapri sono su `/lib/ld-exos.so`**, a 32 e
+  64 bit. Restano statici i driver (partono prima che ci sia un filesystem da cui leggere una
+  libreria), `login`, `install`, `soccorso` e `sh` (la via d'ingresso e quella per riparare), e
+  `extaskbar`, `wifid`, `hello`, `prova64`, `readlink`. `make verifica-statici` li controlla
+  cercando PT_INTERP. A 64 bit ogni programma si portava dentro la libc ed ExWin: `pm` passa da
+  451 KB a 78 KB, `/bin` da 5,7 MB a 2,8 MB, `/exwin/bin` da 10 MB a 1,2 MB, l'ISO da 39 MB a
+  28 MB.
+- **Le dodici librerie sono oggetti condivisi ELF** (ET_DYN, `-fPIC`, nessuna rilocazione nel
+  codice): exwin, exdlg, eximg, exfont, exhtml, excss, exjs, quickjs, exdom, exhttp, exsuono,
+  exzip. Cio' che ognuna offre e' il suo version script, `lib/<nome>/<nome>.ver` (gli stessi nomi
+  delle tabelle di prima). Un programma nomina quelle di cui non puo' fare a meno (`exwin.so`,
+  `exdlg.so`, `exhttp.so`, `exhtml.so`, `exdom.so`, `exzip.so`) e l'interprete le carica; le
+  facoltative (`excss`, `exsuono`, i due motori JavaScript) hanno ancora un piccolo stub che le
+  apre con `dlopen` e vive senza. `exlib_apri()` ed `exlib_simbolo()` ci sono ancora, sopra
+  `dlopen`/`dlsym`.
+- **Tolti:** `libc.so` e i suoi ponti (`lib/libc_ponti.c`, `tools/genlibc.py`), il caricatore
+  `lib/exlib/exlib.c`, gli indirizzi fissi delle librerie fra 0x04000000 e 0x08000000
+  (`lib/*/*.ld`, `tools/fette.py`) e il vecchio caricatore di librerie del kernel
+  (`kernel/loader/lib.c`): `SYS_LIB_APRI` (248) e `SYS_LIB_TROVA` (238) adesso rendono ENOSYS.
+- **Anche il floppy:** `ld-exos.so` sta in `/rdboot/lib`, e il kernel cerca un interprete in
+  `/lib/...` anche sotto `/rdboot` e `/cdrom`, cosi' un programma del floppy o del CD parte prima
+  che su `/lib` sia montato qualcosa.
+- **L'indirizzo di una funzione e' lo stesso dappertutto.** In un programma compilato senza
+  `-fPIC` l'indirizzo di `strlen` e' la sua voce del PLT: `dlsym(RTLD_DEFAULT, "strlen")` dava
+  quello della libc e `&strlen` quello del programma. Adesso, come in glibc, un simbolo FUNC
+  indefinito con un valore nel programma e' la definizione per ogni ricerca tranne il JUMP_SLOT
+  che riempie quella voce del PLT.
+- **Il rimbalzo dello stage 2 si e' spostato** (`RDSEG` 0x90000): leggeva il sistema di base a
+  0x80000, sopra la coda di un kernel piu' grande di 448 KB, e il kernel a 64 bit 0.351 (461.008
+  byte) moriva dopo "J" senza una riga sulla seriale. Il kernel adesso puo' arrivare a 512 KB, e
+  il Makefile ne rifiuta uno piu' grande.
+- **exide 0.026** scrive la riga di collegamento di un programma su `ld-exos.so` con le `.so` di
+  `/exwin/lib` (o `/cdrom/exwin/lib`); il CD degli strumenti porta `libexos_avvio.a` e gli header
+  pubblici, e solo gli stub delle librerie facoltative.
+- ! Un programma costruito prima della 0.351 su `libc.so` o sullo stub di una libreria non parte
+  piu': va ricostruito, o ripreso con `netupdate`.
+
+### La libc condivisa: /lib/ld-exos.so, e il kernel avvia l'interprete (kernel 0.350, voce 105) — testato in QEMU
+
+Il terzo passo della voce 105. Fino a oggi ogni programma si portava dentro la libc (`libc.a`), e
+un programma collegato a librerie condivise se le caricava da se' all'avvio. Adesso c'e' una libc
+condivisa, come su ogni Unix, e un programma collegato senza `-static` usa quella.
+
+- **Il kernel rispetta PT_INTERP** (0.350). Un programma che nomina un interprete se lo trova
+  caricato dopo la propria immagine (un ET_DYN, letto una volta nel processo), con un auxv in
+  cima allo stack (`AT_PHDR`, `AT_PHENT`, `AT_PHNUM`, `AT_PAGESZ`, `AT_BASE`, `AT_ENTRY`) il cui
+  indirizzo va nella prima delle quattro parole da cui parte il programma (prima era 0, e per un
+  programma statico lo e' ancora), e parte da li'. Fino alla 0.349 PT_INTERP era ignorato.
+- **/lib/ld-exos.so e' la libc e il suo stesso interprete**, come fa musl (`lib/libc_ld.c`): si
+  riloca da se', carica i `DT_NEEDED` del programma con lo stesso caricatore di `dlopen`
+  (`lib/libc_dl.c`), riloca il programma (anche le COPY), lega le proprie variabili alle copie
+  del programma (`environ`, `optarg`, `stdout`...), fa girare i costruttori suoi e delle
+  librerie, e salta al programma. Il programma tiene il suo avvio (`libexos_avvio.a`:
+  `_libc_start`, i suoi costruttori, `main`); nella sysroot `libc.so` e' uno script del linker che
+  unisce i due. `-static` prende ancora `libc.a`.
+- **L'ordine dell'ambito globale e' quello di Linux:** la libc entra dove la nomina un
+  `DT_NEEDED`, e una libreria prima di lei vince (`libvlc` definisce `putenv`, `setlocale`... per
+  i suoi plugin).
+- **`dlsym(RTLD_NEXT)` e' vero:** la prima definizione dopo il modulo di chi chiama. Finora era
+  l'ambito globale, e una libreria che avvolge una funzione della libc ritrovava se stessa.
+- **VLC usa il suo `bin/override.c` com'e'**: con `libc.a` dentro, le sue `putenv`, `setlocale`,
+  `strerror`... erano una seconda definizione dei nomi della libc e il file veniva sostituito da uno
+  vuoto; adesso vincono quelle del programma, che trovano le vere con `dlsym(RTLD_NEXT)`.
+  `tools/vlc-exos/prova.sh` come prima a 32 e 64 bit (il file FLAC aspetta il passo 4, i plugin di
+  VLC come `.so`).
+- Un programma costruito prima, con `libc.a` dentro e le sue `.so`, ha anch'esso PT_INTERP ma non
+  nomina `ld-exos.so`: l'interprete lo lascia partire come prima. ! Con il kernel 0.350
+  `/lib/ld-exos.so` deve esserci: kernel e libc vanno insieme.
+- La costruisce `tools/costruisci-ld.sh` (le due sysroot, `/lib` dei due CD, la libc di oggi dei
+  porting). Prove: `tools/prova_ld.sh` 10 su 10 a 32 e 64 bit; `tools/prova-dl/` (avvio, dlopen,
+  40 librerie con TLS e fili, C++ con le eccezioni, QuickJS) passa con la libc dentro e con
+  quella condivisa (`LIBC_CONDIVISA=1` per `prova-tante.sh`).
+- **I porting ci stanno sopra**: bzip2, xz, lz4, zstd, PCRE2, Expat, OpenSSL, ncurses, FFmpeg,
+  MariaDB, httpd, PHP, Valkey, Mesa, nano e VLC si costruiscono senza `-static`, ogni programma
+  con PT_INTERP `/lib/ld-exos.so` e le librerie condivise che nomina. Le prove di ciascuno
+  passano a 32 e 64 bit (nano, Valkey, EGL, OpenSSL, httpd con PHP, MariaDB con i quattro
+  connettori, il servizio MariaDB su un disco installato dal CD, i compressori, VLC). `[mariadb]`
+  adesso vuole anche `bzip2`, `xz`, `lz4` e `pcre2`: `mariadbd` li nomina. ! Una prova che copia
+  le librerie nominate da un programma salta `ld-exos.so`: e' del sistema, in `/lib` del CD.
+
+### pthread_cancel ferma un filo che aspetta, FD_CLOEXEC chiude all'exec, posix_spawn (kernel 0.349, ip.drv 0.027, voce 105) — testato in QEMU
+
+Il primo passo della voce 105: quello che il codice POSIX generico di VLC chiede a EX-OS,
+implementato invece che aggirato (finora VLC si costruiva sul sottoinsieme dei fili di Android e
+su un suo `netconf.c`).
+
+- **pthread_cancel interrompe un'attesa.** Fino alla 0.348 un filo addormentato in `read` o
+  `poll` veniva annullato solo all'arrivo dei dati: la richiesta non arrivava a un'attesa nel
+  kernel. Ora la libc segna i punti di cancellazione di POSIX (`read`, `write`, `poll`, `select`,
+  `epoll_wait`, `recv`, `send`, `accept`, `connect`, `nanosleep`, `sleep`, `usleep`,
+  `clock_nanosleep`, `sem_wait`, `sem_timedwait`, `waitpid`, `sigwait`, `sigsuspend`, `pause`,
+  `fcntl(F_SETLKW)`) con un bit nel numero della syscall (`SYS_PUNTO`); il kernel chiude
+  quell'attesa con EINTR come fa un segnale preso, o risponde subito EINTR se la richiesta c'e'
+  gia' (POSIX: anche una `read` con i dati pronti agisce), e la libc termina il filo con i suoi
+  gestori di pulizia. Con la cancellazione spenta non cambia niente. Un kernel prima della 0.349
+  risponde ENOSYS al bit, chiesto una volta: la cancellazione resta com'era.
+- **accept e connect si possono interrompere** (ip.drv 0.027): `IP_MSG_RITIRA` rispondeva solo
+  a un `poll` o un `epoll_wait` in sospeso; ora anche a un accept (-EINTR, anche se e' in coda
+  dietro l'accept di un altro processo) e a un connect (-EINTR, la connessione a meta' si butta).
+  Cosi' anche un segnale li interrompe, come su Linux (accept riparte con `SA_RESTART`, connect
+  mai).
+- **FD_CLOEXEC e' vero.** `fcntl(F_GETFD)` rispondeva 0 e l'exec teneva tutti i descrittori:
+  dopo `fork` + `exec` il figlio aveva i tubi del padre e chi li leggeva non ne vedeva mai la
+  fine. Ora il bit si tiene (`open(O_CLOEXEC)`, `pipe2(O_CLOEXEC)`, `F_SETFD`, `F_DUPFD_CLOEXEC`,
+  il nuovo `dup3`; `dup`, `dup2` e `F_DUPFD` lo tolgono), e l'exec chiude quei descrittori e
+  restituisce i numeri di quelli della libc (socket, epoll, shm), il cui stato restava nel
+  programma vecchio.
+- **posix_spawn e `<spawn.h>`:** fork, le azioni sui file nel figlio nell'ordine dato (open,
+  close, dup2, `addchdir_np`; una lista che cresce), gli attributi (maschera e predefiniti dei
+  segnali, `SETSID`, `SETPGROUP` per il proprio gruppo, `RESETIDS`; una politica sola,
+  `SCHED_OTHER` a priorita' 0), execve, o la ricerca nel `PATH` per `posix_spawnp`. L'errore
+  dell'exec torna da un tubo con O_CLOEXEC: `posix_spawn("/non/esiste")` e' ENOENT e non resta
+  nessun figlio.
+- **clock_nanosleep** (relativo, e `TIMER_ABSTIME` sul suo orologio; ENOTSUP su un orologio di
+  CPU) e **strerror_l** (una lingua sola per i messaggi: quelli di strerror).
+- Trovato per strada: il numero della syscall nel frame teneva il bit, e `ipc_recv_tmo`, che da
+  quel numero sceglie l'attesa che un segnale interrompe, prendeva quella che niente interrompe.
+
+`tools/prova_annulla.sh` (`tools/prove/annullaprova.c`): un filo annullato a 300 ms dentro
+ognuna di quelle attese finisce subito con `PTHREAD_CANCELED` e la sua pulizia fatta (nanosleep
+in 90 ms: il sonno del kernel guarda ogni 100 ms, come per `kill`), la cancellazione spenta
+lascia stare la `read`, una richiesta gia' fatta termina una `read` con i dati pronti,
+`FD_CLOEXEC` attraverso `fork` + `exec`, `posix_spawn` con `adddup2` di un tubo letto fino alla
+fine, `clock_nanosleep` e `strerror_l`: 21 su 21 a 32 e 64 bit. `prova_eintr.sh`,
+`prova_segnali.sh`, `prova_epoll.sh` e `prova_moltifili.sh` passano ancora.
+
+**VLC torna al suo codice POSIX:** `src/posix/thread.c` (`pthread_cancel` vero, `mwait` su
+`clock_nanosleep`, condizioni sull'orologio monotono), `error.c` (`strerror_l`) e `netconf.c`
+(`posix_spawnp`), come sono nell'archivio. Via da `tools/vlc-exos`: il sottoinsieme dei fili di
+Android, `indirizzi.c` (i sostituti dei futex) e un `netconf.c` suo; `<unistd.h>` ora dice
+`_POSIX_CLOCK_SELECTION` e `_POSIX_SPAWN`. `tools/vlc-exos/prova.sh` come prima a 32 e 64 bit,
+tranne `sin-441-1s-44100.flac`, `[NO]` finche' i plugin non sono `.so`: nel VLC a programma unico
+il decoder e il packetizer FLAC hanno lo stesso nome d'ingresso e il linker ne tiene uno (la
+rinomina dei simboli che lo nascondeva e' tolta: la voce 105 vuole la causa riparata). Poi: la
+libc condivisa, in un clone del repository.
+
+### Qt 5 su EX-OS, e VLC con i suoi menu (tools/qt5-exos, kernel 0.348, voce 85) — testato in QEMU
+
+La finestra di VLC non aveva menu né controlli: in VLC 3 sono l'interfaccia Qt, e Qt su EX-OS
+non c'era. Ora c'è, fatto come Apache, PHP e MariaDB: uno script, gli ultimi sorgenti, un gruppo
+sul CD strumenti, una verifica per netupdate, le prove a 32 e 64 bit.
+- **Qt 5.15.19** (qtbase e qtsvg, l'ultimo Qt 5 pubblico), `tools/qt5-exos/costruisci.sh [32|64]`:
+  Core, Gui, Widgets, Network con SSL (l'OpenSSL 4.1 del sysroot), Sql con SQLite, Xml, Svg,
+  PrintSupport, Concurrent, Test, tutte condivise, in `/exos/qt5`. I caratteri sono DejaVu 2.37
+  in `/exos/qt5/lib/fonts` (fontconfig non c'è). I sorgenti sono in `tools/sorgenti-terzi.txt`;
+  Qt non firma niente, quindi `aggiorna-sorgenti.sh` prende il `.sha256` pubblicato, solo per
+  questi due.
+- **Il plugin di piattaforma "exwin"** (`tools/qt5-exos/qpa-exwin`): ogni finestra di Qt è una
+  finestra di ExWin, disegnata nella zona condivisa del server; tastiera, mouse, rotella, tasto
+  destro, croce di chiusura, menu e suggerimenti (finestre comparsa del server). La mkspec è
+  `exos-g++`.
+- **Cosa è servito nella libc** (nei sysroot con il nuovo `tools/librerie-exos/aggiorna-sysroot.sh`):
+  `nfds_t`, `<byteswap.h>`, `O_LARGEFILE`, `_SC_SYMLOOP_MAX`, `statvfs64`, `CLD_*`, `waitid()`
+  con `WEXITED`/`WNOWAIT`, `<resolv.h>` (`res_init`), `struct ifreq`/`ifconf` e i numeri
+  `SIOCGIF*` (l'elenco delle interfacce è vuoto finché non hanno un nome, voce 101), le opzioni
+  IPv6 dei socket e `struct ipv6_mreq`.
+- **Kernel 0.348:** `waitpid` con `WNOWAIT` lascia lo zombie (per `waitid`), e **un filo può
+  leggere la console**: il controllo del primo piano guardava il pid del filo, quindi ogni filo
+  tranne il primo riceveva "fine dell'input" e i tasti andavano alla shell. L'interfaccia di
+  testo di VLC legge la tastiera da un filo: `q` non la chiudeva. Ora lo prova
+  `tools/prova_curses.sh` (`tools/prove/cursesfilo.c`).
+- **Ogni porting ricostruito** sulla libc nuova: `tools/librerie-exos/ricostruisci-tutto.sh`
+  (nuovo) fa ogni `tools/<nome>-exos/costruisci.sh` in ordine a 32 e 64 bit; Qt va prima di VLC.
+- **VLC:** `vlc -I qt film.mp4` apre la finestra di VLC con i menu, la barra del tempo, i
+  bottoni e il volume; il video resta nella sua finestra (`embedded-video` spento: VLC 3 lo mette
+  dentro l'interfaccia solo su X11, Windows e macOS). `vlc -I ncurses` è l'interfaccia di testo.
+  Il gruppo `[vlc]` ora vuole `[qt5]`; VLC trova Qt col suo RUNPATH `/exos/qt5/lib`.
+- **Non ancora in Qt:** QSharedMemory e QSystemSemaphore (niente semafori con nome o IPC fra
+  processi), QDnsLookup, QNetworkInterface (vuoto), le date dei file (`futimens`), inotify. moc,
+  rcc e uic girano solo sulla macchina che costruisce.
+- **A 32 bit Qt si costruisce con `-no-sse2`:** Qt 5 accende SSE2 da solo in tutte le sue
+  librerie e senza non parte; EX-OS a 32 bit gira su un Pentium MMX.
+- **Testato in QEMU a 32 e 64 bit:** `tools/qt5-exos/prova.sh` 9/9 (`ciaoqt`: la finestra, la
+  scrittura in una riga, un bottone, il menu File e il suo Esci, un'animazione, un PNG scritto e
+  riletto, nessun FAULT); `tools/vlc-exos/prova.sh` con `vlc -I qt` (il registro di VLC dice che
+  l'interfaccia "qt" è in uso, la sua finestra sullo schermo) e `vlc -I ncurses` (lo schermo
+  riletto, `q` esce), il suono e i tre video come prima; `tools/prova_curses.sh`,
+  `tools/prova_tetti.sh`, `tools/prova_segnali.sh` e `tools/prova_telnet_piu.sh` per il kernel
+  0.348.
+- **Il centro della finestra di VLC era nero, senza il cono** (19 novembre): il `winId()` del
+  plugin era l'id della finestra del server, che c'è solo da `setVisible`; Qt legge `winId()` una
+  volta, quando fa la finestra, e si teneva lo 0. Con 0 un widget figlio che si ridisegna da solo
+  (il cono che compare piano) non trova un genitore nativo, e Qt buttava la sua copia: dipinto,
+  mai sullo schermo. Ora `winId()` non è mai 0. Trovato con `QT_EXWIN_DEBUG=1` (il plugin dice
+  cosa dipinge e copia) e `QT_LOGGING_RULES=qt.widgets.painting=true`, che le due prove passano;
+  `ciaoqt` controlla `nativeParentWidget()` (QT-NATIVO) e la prova di VLC conta l'arancione del
+  cono.
+- `VLC_SOLO_COLLEGA=1 tools/vlc-exos/costruisci.sh` ora ricollega davvero e basta (9 s):
+  `lib_per` svuotava prima l'albero, quindi era una costruzione intera da sorgenti nuovi
+  (`LIB_TIENI=1` in `tools/librerie-exos/comune.sh`).
+- **Il volume di VLC segnava 0% e non faceva niente** (19 novembre): `aout_exos` non aveva
+  `volume_set`, quindi VLC non aveva nessun volume (il cursore di Qt a 0%, `----` o 0% in ncurses).
+  Ora è il volume software di VLC, come con ALSA (`modules/audio_output/volume.h`): il cursore,
+  `a`/`z` in ncurses e `--aout_exos-gain` (0..8) cambiano i campioni, VLC ricorda il livello per
+  l'avvio dopo, e il volume generale della scheda (`audio -v`, il pannello Volume) resta
+  dell'utente. Misurato su quello che suona la scheda, un tono da 1 kHz a 10000: 1250 con
+  `--aout_exos-gain=0.125`, 7303 dopo due `z` (90%, cioè 0,9 al cubo). La prova di VLC ora suona
+  quel tono in ncurses e controlla il WAV.
+- **La fine di ogni suono era tagliata, e uno corto non si sentiva per niente** (19 novembre):
+  alla fine `aout_exos` aspettava che il driver si fosse *preso* tutti i campioni, e chiudeva; ma
+  quello che il driver prende sta nelle due metà del buffer della scheda, non ancora suonato, e la
+  chiusura ferma il DMA lì sopra. Ogni file perdeva l'ultimo decimo di secondo, e un suono più
+  corto delle due metà (preso tutto alla partenza) non si sentiva affatto. Ora lo svuotamento
+  aspetta anche due sottoflussi dell'anello (`sottoflussi`, uno per interrupt senza più niente da
+  prendere): le due metà sono suonate. `small-shot.mp3`: prima 0,21 s su 0,31, ora tutto.
+- **La prova di VLC ora ascolta ogni file audio per conto suo:** `wavcapture` di QEMU registra la
+  scheda attorno a ognuno, e la registrazione si confronta con quello che FFmpeg di questa
+  macchina decodifica dal file: stessa durata, stessi secondi di suono, stesso picco. Il controllo
+  di prima contava i secondi di suono di tutta la prova, quindi passava anche con un file che non
+  arrivava alla scheda. `sound.ogg` è risultato silenzio (-91 dB: prova ancora il decodificatore
+  Vorbis, e il controllo vuole indietro silenzio), e `small-shot.flac` VLC 3.0.24 non lo
+  decodifica neanche su Linux (`cvlc --aout afile` scrive un WAV vuoto; FFmpeg sì): la prova usa
+  invece `sin-441-1s-44100.flac` di Firefox.
+
+### GNU nano 9.3 (tools/nano-exos) — testato in QEMU
+
+L'editor di testo di tutti i Linux, a 32 e 64 bit, sopra il ncurses di tools/ncurses-exos:
+`/exos/bin/nano`, il nanorc di sistema in `/exos/nano/nanorc` con la colorazione della sintassi
+di `/exos/nano/share/nano` (C, sh, Python, HTML, Makefile...). Gruppo `[nano]` del CD
+strumenti, `netupdate -install:nano`, e una verifica per netupdate
+(`tools/netinst/verifiche/nano.sh`).
+- **Sorgenti:** nano 9.3 da ftp.gnu.org, firmato da Benno Schulenberg (chiave
+  `168E6F4297BFD7A79AFD4496514BBE2EB8E1961F`, dal portachiavi GNU), in
+  `tools/sorgenti-terzi.txt`: `tools/aggiorna-sorgenti.sh -scarica nano` prende l'ultimo.
+- **Niente UTF-8:** libncurses è la libreria a byte, la libc non ha una localizzazione UTF-8, la
+  console è CP437 (voce 30).
+- **Cosa mancava alla libc, ora c'è (18 novembre):** `<stdio_ext.h>` (`__fseterr`, `__fpending`,
+  `__freading`, `__fpurge`... come musl: senza, il fseterr.c di gnulib è un `#error`);
+  `st_atim`, `st_mtim`, `st_ctim` in `struct stat` (POSIX 2008; i secondi di `st_mtime`,
+  `tv_nsec` 0); `pathconf`/`fpathconf` con `_PC_PIPE_BUF`, `_PC_MAX_CANON`, `_PC_MAX_INPUT`,
+  `_PC_VDISABLE`, e `fpathconf` su una pipe (rispondeva EBADF: una pipe non ha misura).
+- **struct stat è cresciuta ancora, senza rompere niente:** come per `st_rdev` il 7 novembre,
+  stat, lstat, fstat e le loro `*64` hanno un terzo simbolo (`__exos_stat3`, `__exos_stat64_3`...)
+  per il codice nuovo; `__exos_stat2` e i nomi vecchi restano e riempiono solo la struct che
+  conoscevano (scelta dell'utente).
+- nano si collega alla libc di oggi (`libc_di_oggi` nel suo script), non a quella più vecchia
+  dei sysroot.
+- **Provato:** `tools/nano-exos/prova.sh` 6 su 6 a 32 e 64 bit: `nano -V`, la barra del titolo e
+  le righe d'aiuto rilette dallo schermo, una riga scritta e salvata con ^O, `cat` la rilegge, il
+  nanorc di sistema con la sintassi apre un `.c`, nessun FAULT.
+
+### Via i tetti fissi che restavano (kernel 0.347, voce 35) — testato in QEMU
+
+Numeri fissi nel codice, contro la regola che un tetto viene dalla configurazione o
+dall'hardware. Adesso crescono tutti, come le tabelle dei processi e dei file dalla 0.282:
+- **spawn ed exec:** fino alla 0.346 al massimo 512 argomenti e 32 KB di stringhe, e **le
+  variabili d'ambiente dopo la trentaduesima sparivano senza dire niente** (un make o un mach
+  ne hanno di più). Ora il kernel misura quello che gli si passa e alloca esattamente quello;
+  il tetto è lo heap del kernel (e 1 GB per una riga di comando);
+- **dischi:** 16 dispositivi a blocchi in tutto, 16 partizioni per disco, 8 dischi serviti da
+  un processo (le chiavette USB): ora quanti ce ne sono. `disk` ne mostra ancora 16 per disco
+  (l'ABI di `DiskInfo`) e dice quando sono di più;
+- **kernel.cfg:** letto in 8 KB (oltre, le ultime sezioni si perdevano), 16 `[modules]`, 32
+  `[env]`: ora tutto il file e ogni riga;
+- **il floppy:** 64 file aperti; **shm_open:** 1024 zone per processo (libc);
+- **`dup()` e `fcntl(F_DUPFD)` di un socket** rispondevano EOPNOTSUPP: ora funzionano, il
+  socket si chiude con l'ultimo descrittore e una fork lo passa al figlio una volta sola.
+  `dup2` di un socket resta EOPNOTSUPP;
+- la tabella dell'ambiente in ogni descrittore di processo (32 × 128 byte) non la usava
+  nessuno: tolta, 4 KB in meno per processo nella fascia del kernel.
+- **Provato:** i nuovi `tools/prova_tetti.sh` (3000 argomenti e 200 variabili con `spawn_ex`
+  e con `fork`+`execve`, 1500 zone shm, il `dup` di un socket attraverso una fork, un disco con
+  22 partizioni logiche di cui l'ultima si monta e si legge) e `tools/prova_tetti_cfg.sh` (un
+  kernel.cfg da 13,6 KB con 20 moduli e 40 variabili in più, installato su disco), a 32 e 64 bit.
+- **Restano:** un ELF con più di 4 segmenti si carica tutto invece che su richiesta (più
+  lento, giusto); `gfedit` tiene 512 righe e 200 colonne (rifiuta di salvare un file che non ha
+  potuto aprire intero); al massimo 4 redirezioni per spawn (`SPAWN_MAX_AZIONI`, un'ABI); le
+  pile del kernel da 128 KB nei primi 64 MB (circa 450 compiti, una scelta da fare con l'utente).
+
+### Un segnale interrompe un'attesa su un socket (kernel 0.346, ip.drv 0.026, voce 37) — testato in QEMU e sul PC di prova
+
+- **poll, epoll_wait, recv e send su un socket rendono EINTR** quando arriva un segnale
+  catturato, come su Linux: recv e send ripartono dopo un gestore con SA_RESTART, poll ed
+  epoll_wait mai. Fino alla 0.345 un filo in poll su un socket non si svegliava con
+  `pthread_kill`: Apache e MariaDB lo aggiravano guardando ogni 100 ms.
+- **Come:** l'attesa sta in ip.drv, quindi interromperla solo nella libc lascerebbe la
+  risposta in ritardo di ip.drv nella casella, per la chiamata dopo. Il kernel ha un'attesa
+  IPC che un segnale catturato chiude (SYS_IPC_RECV_SEG 272, e _SEG_R 273 che SA_RESTART fa
+  ripartire); poi la libc manda IP_MSG_RITIRA e ip.drv risponde subito all'attesa in corso:
+  una risposta sola, quindi non resta niente di vecchio. Una libc nuova su un kernel o un
+  ip.drv vecchio torna all'attesa di prima.
+- **Provato:** il nuovo `tools/prova_eintr.sh` (`tools/prove/eintrprova.c`, contro una libc.a
+  fatta dai sorgenti di oggi), a 32 e 64 bit: poll, poll con SA_RESTART, epoll_wait, il poll
+  dopo trova subito il cliente, recv con SO_RCVTIMEO interrotta e ripartita, `pthread_kill`
+  su un filo in poll, un poll senza segnali aspetta la sua scadenza: 8 su 8.
+- **Sul PC di prova (.253, 64 bit, 18/11):** 0.346 e ip.drv 0.026 con netupdate, impronta del
+  kernel controllata prima del riavvio, `netupdate -verifica` tutto a posto; la stessa prova
+  sulla macchina: 8 su 8.
+- **Non ancora:** una recv o un accept bloccanti senza scadenza non si interrompono (la
+  richiesta resta in ip.drv finché arrivano dati); la libc.a della toolchain (sysroot) non è
+  rifatta, quindi i programmi costruiti con quella (Apache, MariaDB, Valkey) lo avranno quando
+  si ricollegano.
+
+### Lo spegnimento del PC di prova: cosa fa prima il suo BIOS (voce 102, in corso)
+
+- `shutdown` non spegne il .253. Le sue tabelle ACPI, lette con `sonda.drv -acpi` e
+  disassemblate con iasl, dicono che il `_PTS(5)` del BIOS accende due bit del chipset nForce
+  (porte 0x4401 e 0x4405, bit 7) che EX-OS non tocca; sulla macchina il secondo è spento. Se
+  sia questa la causa si prova con l'utente davanti alla macchina.
+- `sonda.drv` 0.011: `-porta:IND` legge una porta di I/O, `-porta:IND|=VAL` ci accende dei bit.
+
+### Ogni driver ha -install e -remove (voce 24) — testato in QEMU
+
+- **Ogni driver scrive il proprio avvio nel posto giusto** (la scelta dell'utente del
+  17/11): l'USB (ehci, ohci, uhci, xhci), cardbus, sis, ar5k e mouseser `[com1|com2]`
+  scrivono un blocco in `/boot/avvio.sh` che comincia con `# -install <driver>` e che hwconfig
+  riporta avanti. Le schede di rete (e1000, ne2k, pcnet, rtl8169, sis900, nforce) mettono la
+  loro riga subito prima di `ip.drv &` nella catena della rete, oppure scrivono la catena
+  intera (scheda, ip.drv, dhcp) se manca. Le schede audio (ac97, es1371, hdaudio, sb)
+  scrivono `audio = /dev/<driver>` in `[modules]` di `/boot/kernel.cfg`, come `audio -i` ma
+  senza il collaudo: solo se la sonda trova la scheda, e `-remove` toglie solo la voce che è
+  la loro.
+- **Una riga già scritta da hwconfig vale**: `-install` dice "gia' in /boot/avvio.sh (riga
+  N)" invece di accendere il driver due volte; `-remove` la commenta.
+- **I pezzi del sistema dicono chi li accende**: pci, ip, kbd, svga. Gli attrezzi di prova
+  (ramdisk, mappa, fetta, sonda, vgaprova, wifisim) si lanciano a mano.
+- Il codice sta nella libc (`driver_installa`, `driver_installa_rete`,
+  `driver_installa_modulo`, `driver_chi_accende`, `file_sostituisci`): ogni file si scrive in
+  `.nuovo` e poi si rinomina. 28 driver salgono di 0.001.
+- **Provato:** il nuovo `tools/prova_install.sh`, a 32 e 64 bit, con un disco installato dal
+  CD, i driver mancanti messi con debugfs e una Intel HDA: 40 su 40.
+- **Non ancora:** più schede di rete insieme, perché ogni driver si registra come "rete0" e
+  ip.drv ha un solo collegamento (voce 101, la richiesta dell'utente: un driver per ogni
+  scheda, tutte le schede di un modello servite).
+
+### Una sessione telnet si porta via quello che ha lanciato (telnetd 0.016, voci 21 e 100) — testato in QEMU e sul PC di prova
+
+- **A fine sessione telnetd ferma tutto l'albero, non solo la shell**, come SIGHUP su Unix
+  (la scelta dell'utente del 2/11). Un `dmesg -segui` o un lavoro lanciato con `&` restava
+  addormentato per sempre su un pty senza nessuno dall'altra parte. EX-OS non ha gruppi di
+  processi: telnetd legge pid e padre di ogni processo (`proc_uso`, come `ps`) prima di
+  fermare la shell, ferma ogni discendente e ripete finche' ne trova di nuovi. La console
+  dice "telnetd: chiusi N processi lanciati dalla sessione".
+- **Vanno via anche i lavori lanciati con `&` dalla sessione**: e' il prezzo, ed e' stato scelto.
+- **Provato:** `tools/prova_telnet_piu.sh` (32 e 64 bit) ora lancia in una sessione
+  `dmesg -segui &` e `sh -c 'dmesg -segui' &`, taglia la connessione e controlla da
+  un'altra sessione che in ps non resti nessun dmesg: 8 su 8. `tools/prova_telnet.sh`: tutto
+  a posto a 32 e 64 bit.
+- **Misurato, ancora aperto:** con quei lavori in corso la sessione risulta chiusa dopo
+  circa 22 s, non i 2-4 s di una sessione ferma: il ciclo non conta come riposo (voce 100).
+- **Sul PC di prova (.253, 64 bit, 17/11):** telnetd 0.016 con netupdate; la stessa prova
+  contro la macchina: 8 su 8, i dmesg della sessione spariti dopo 22 s anche li'.
+
+### ATA: un FLUSH CACHE fallito si ritenta, BSY e DMA aspettano 30 s (kernel 0.345, voci 40 e 70) — testato in QEMU e sul PC di prova
+
+- **FLUSH CACHE ritentato una volta dopo un azzeramento, come fa libata di Linux.** Un
+  flush che scadeva era un EIO al primo colpo, e un mount che fa il flush (journal ext3/ext4)
+  metteva il volume in sola lettura. Adesso dmesg dice "FLUSH CACHE fallito ... ci riprovo
+  una volta", il canale IDE si azzera e il flush riparte; AHCI riavvia gia' la porta.
+- **BSY e DMA aspettano 30 s** (erano 5 e 8), la scelta dell'utente del 2/11; le attese BSY
+  di un trasferimento PIO e dell'azzeramento del canale cedono il processore.
+- **"timeout BSY" dice chi e quanto:** i ms aspettati davvero, la funzione che ha chiamato
+  (addr2line su kernel-intero.elf), il pid e chi tiene il lucchetto del disco.
+- **Cosa ha trovato (voce 70):** il "Profile Missing" di Firefox in QEMU era il FLUSH CACHE
+  del mount che aspettava l'host mentre scriveva un'immagine nuova da 1,1 GB: 60 s misurati.
+  Le prove di Exilla ora fanno `sync` dell'immagine prima di QEMU;
+  `SENZA_SYNC=1 tools/exilla/prova-riapertura.sh` tiene apposta il flush lento: a 32 e 64
+  bit il primo flush scade, il secondo riesce e il volume si monta in lettura/scrittura.
+- **tools/exilla/prova-riapertura.sh riscritta:** prendeva un Firefox collegato prima della
+  0.339 e non provava niente. Ora impacchetta quello di adesso su un disco ext4 nuovo e
+  controlla la pagina ai due avvii, Ctrl+Q (codice 0) e prefs.js. In QEMU Firefox riparte
+  dopo Ctrl+Q a 32 e 64 bit; il guasto del portatile del 1/11 resta da provare sul portatile.
+- Le regressioni extfs, ext4, smonta, montaggi e cachedisco passano a 32 bit; extfs ed ext4
+  anche a 64.
+- **PC di prova (17/11):** aggiornato con netupdate, sha256 del kernel 517448e1... controllato
+  prima del riavvio; la 0.345 parte, radice ext4 in lettura/scrittura, nessun timeout BSY o
+  errore di flush in dmesg, cache delle pagine sempre a 1024 MB, `netupdate -verifica` tutto
+  a posto.
+
+### `cachedisco` in kernel.cfg vale (kernel 0.344, voce 27) — testato in QEMU e sul PC di prova
+
+- **Fino alla 0.343 `cachedisco` non veniva mai letto.** La cache delle pagine si faceva alla
+  prima lettura del disco, al PASSO 13a, e kernel.cfg si legge al 13b: sul PC di prova
+  `cachedisco = 1024` dava ancora 383 MB. Adesso la cache si fa dopo kernel.cfg
+  (`blk_cache_pagine_avvia`, o la prima lettura del disco se viene dopo).
+- **Perche' conta (misurato sul PC di prova il 17/11, kernel 0.343):** Exilla parte in
+  59,8 s a freddo, 4,0 s a caldo; dopo aver letto 587 MB di altri file, 32,3 s e 211 MB
+  riletti: 383 MB di cache non tengono Firefox. Con la 0.344 e `cachedisco = 1024` sullo
+  stesso PC: 32,0 s a freddo, 3,7 s a caldo, e **1,2 s dopo gli stessi 587 MB** (23 MB
+  letti). Il primo 59,8 s era il primo avvio dopo un aggiornamento di Exilla (390 flush); il
+  freddo vero e' circa 32 s in tutti e due i casi, ed e' quello che resta da fare (fault
+  sparsi da 4 KB, PIO).
+- **383 MB e' 1/8 della RAM che il kernel conta sotto i 4 GB** (3071 MB su una macchina da
+  4 GB), non la tabella da 4 MB: quella permette 512 MB a 64 bit, 682 a 32. La tabella sta
+  nella fascia del kernel da 64 MB; il valore di serie e dove mettere la tabella li decide
+  l'utente.
+- `bootinst` nei suoi errori nomina il file che mappa (anche `kernel.new`) (voce 60).
+- `tools/prova_cachedisco.sh`: il CD com'e' (63 MB, fatta dopo kernel.cfg, la seconda lettura
+  di un file da 4 MB dalla cache), `cachedisco = 48`, `cachedisco = 0`, e a 64 bit 4 GB con
+  `cachedisco = 1024`: 1024 MB. 5 su 5 a 32 bit, 6 su 6 a 64.
+
+### netupdate riprova una mappa d'avvio fallita (netupdate 0.049, voci 60, 49, 47) — testato in QEMU
+
+- **Una mappa fallita resta scritta** in `/boot/netupdate.avvio`. Il `netupdate -check` dopo
+  la riscrive per prima cosa, anche senza niente da aggiornare, e finche' il file c'e' tiene
+  `rdboot.lz4.old`, i settori a cui la mappa vecchia punta ancora. Fino alla 0.048 il
+  messaggio diceva "rilancia netupdate", e il giro dopo la mappa non la riscriveva.
+  `netupdate -avvio` fa lo stesso a mano. `tools/prova_verifiche.sh` fase E: 19 su 19 a 32 e
+  64 bit.
+- **La verifica del sistema (`sistema.sh`) guarda anche ExPackage**: `/exwin/bin/expackage`, e
+  la sua riga nel menu di avvio (un consiglio con la riga da aggiungere). Provata sul PC di
+  prova con un menu senza la riga.
+- **Le parti che una costruzione lascia fuori si dicono in un modo solo**: `tools/mancanti.sh`
+  scrive "MANCA nome | comando" (OpenSSL, libgit2, FreeBASIC, rustc, le librerie di terzi,
+  ncurses, Exilla, i caratteri CJK), e lo script di pubblicazione chiede a terminale quali
+  costruire, le costruisce e rifa' il repository.
+
+### Exilla: la barra dell'indirizzo del primo tab funziona anche dal secondo avvio (voce 73) — testato in QEMU, il pacchetto e' da pubblicare
+
+Dal secondo avvio di Firefox senza indirizzo, quello che si scriveva nella
+barra del primo tab non si apriva; in un tab nuovo si'. La causa e' in
+`Tabbrowser.sys.mjs`, riga 752. Quando la pagina iniziale e' ancora una
+promessa del ripristino della sessione, Firefox crea il primo `<browser>`
+come remoto, nel processo "privilegedabout". EX-OS non lancia processi
+figli, quindi quel browser non carica mai niente, e a Invio la console dice
+`aBrowser.frameLoader.remoteTab is null`. Ora il tipo remoto si sceglie
+solo se la finestra ha i processi di contenuto (`gMultiProcessBrowser`);
+senza, il browser resta nel processo principale, come quelli dei tab nuovi.
+La patch e' `tools/exilla/patch/browser_components_tabbrowser_Tabbrowser.sys.mjs.patch`.
+
+Provato con `tools/exilla/prova-primotab.sh` a 32 e 64 bit: due avvii
+sullo stesso profilo, l'indirizzo scritto nel primo tab e in un tab nuovo,
+la foto dopo Invio. 8 su 8 a 32 e a 64 bit; prima della correzione il
+secondo avvio dava `remoteTab is null`. Il primo tab parte bianco come i
+tab nuovi.
+
+Sul PC di prova, col pacchetto nuovo installato, il guasto restava: il
+profilo tiene il JavaScript gia' compilato (`startupCache`), e Firefox lo
+butta solo quando cambia il numero di build dentro il programma `firefox`,
+non quando cambia `omni.ja`. exilla 0.007 si ricorda dimensione e data di
+`firefox` e dei due `omni.ja` in `~/.exilla/installata` e, se sono cambiati,
+avvia Firefox una volta con `MOZ_PURGE_CACHES=1`: un avvio piu' lento dopo
+ogni aggiornamento, non a ogni avvio. Provato con
+`tools/exilla/prova-aggiornamento.sh`: un profilo usato con l'`omni.ja` di
+prima, poi aggiornato; senza exilla il primo tab resta morto, con exilla
+carica, e all'avvio dopo la cache resta. 14 su 14 a 64 e a 32 bit.
+
+### telnetd serve piu' sessioni insieme (telnetd 0.015, voce 62) — testato in QEMU e sul PC di prova
+
+Fino alla 0.014 telnetd serviva una sessione per volta: la seconda
+connessione veniva accettata e restava muta finche' la prima non usciva, e
+una sessione dimenticata chiudeva fuori tutti gli altri. Ora ogni connessione
+accettata va a una copia del programma (`telnetd -sessione N`), che la serve
+come prima, mentre il padre torna subito ad accettare. La connessione passa
+alla copia con `IP_MSG_EREDITA` (ip.drv 0.021). Una copia e non `fork()`
+perche' fork sta solo nella libc statica, e telnetd usa libc.so; e' lo stesso
+schema di ExWin. Nessun tetto: ogni sessione costa un processo, un pty e una
+shell. La barra di stato dice quante sono (`TELNET cnn 2`). Con un ip.drv piu'
+vecchio della 0.021 telnetd lo scrive e torna a servire una sessione per
+volta.
+
+Provato con `tools/prova_telnet_piu.sh` a 32 e 64 bit: tre sessioni aperte
+insieme rispondono ognuna al suo comando, se ne chiude una, ne entra una
+quarta e le due rimaste rispondono ancora (6 su 6). `prova_telnet.sh` e
+`prova_telnet_fine.sh` sono a posto a 32 e 64 bit.
+Sul PC di prova (17/11): `tools/telnet_piu_prova.py` 6 su 6, prima con una
+copia in ascolto sulla porta 2341 e poi col telnetd dell'avvio, porta 23,
+col kernel 0.343; `dmesg -segui` aperto mentre altre due sessioni
+rispondono. Visto li', e piu' vecchio della 0.015 (voce 100): quando una
+sessione si chiude, un `dmesg -segui` lanciato dalla sua shell resta vivo.
+
+### Nessun tetto ai volumi montati (kernel 0.343, mount 0.005, automount 0.005, voce 50) — testato in QEMU, gira sul PC di prova
+
+- **Le tabelle dei montaggi crescono**: erano 6 punti di montaggio in tutto (VFS), 4 volumi ext,
+  4 FAT, 2 ISO 9660 e 5 righe nella sezione `[mount]` di `kernel.cfg`, tutti `#define` contro
+  la regola "nessun tetto fisso". `prova_extfs` incontrava "nessuno slot di montaggio libero" al
+  quarto volume ext. Ora ogni tabella e' un vettore di puntatori a posti che raddoppia quando e'
+  pieno, come la tabella dei file aperti dalla 0.282 (`kernel/include/posti.h`): un posto non
+  si sposta mai, il vettore vecchio non si libera sotto chi lo sta leggendo. Il tetto e' la
+  memoria del kernel.
+- **Il modulo di scrittura ext4 tiene il suo stato di un volume nel volume** (il giornale, i
+  parametri delle somme, il superblocco che deve riscrivere), non in tabelle lunghe quanto il
+  vecchio tetto: l'interfaccia ext2 e' ora ABI 5, e `ext4.mod` deve essere quello dello stesso
+  kernel (lo era gia').
+- `mount` e `automount` spiegano l'errore nuovo (il kernel non ha memoria per un altro
+  montaggio) e dicono che "nessuno slot di montaggio libero" e' un kernel fino alla 0.342.
+- **`tools/prova_montaggi.sh`**: un disco con undici partizioni logiche fatte da Linux (3 ext2,
+  3 ext4, 5 FAT16), tutte montate insieme dal CD (con cd0, `/rdboot` e `/proc`: 14 punti di
+  montaggio), un file scritto e riletto su ognuna, tutte smontate, due rimontate; e2fsck e
+  fsck.fat di Linux trovano ogni volume pulito col suo file. 18 su 18 a 32 e 64 bit. Restano
+  fissi, scritti nella voce 50: `BLK_MAX_DEV` 16 dispositivi a blocchi, `MBR_MAX_PART` 16
+  partizioni per disco, `FAT_MAX_OPEN` 16 file FAT aperti.
+- Sul PC di prova (17/11): installato con netupdate dal server locale, l'impronta del kernel
+  quella pubblicata, riavviato; parte da hd2p1 (ext4) e `netupdate -verifica` trova tutto a
+  posto. Undici volumi insieme solo in QEMU: quel PC ha un disco solo.
+
+### cpufreq legge le due coppie che un Core 2 dichiara, e non scrive niente (kernel 0.342, voce 78) — testato sul PC di prova
+
+- **Su un Core 2 (famiglia 6, modelli 0Fh, 16h, 17h, 1Dh) con SpeedStep** il kernel legge le due
+  coppie moltiplicatore/VID che il processore dichiara, come lo speedstep di coreboot: la
+  massima da IA32_PERF_STATUS (198h, bit 44:32), la minima da MSR_THERM2_CTL (19Dh, bit 12:0), il
+  bus da MSR_FSB_FREQ (CDh). Le scrive in dmesg con i MHz, la coppia in uso adesso e i registri
+  grezzi (198h, 199h, 19Dh, 17h, CDh), e **non scrive niente**: `cpufreq.drv` dice "Core 2: le
+  coppie massima e minima sono lette". E' la scelta dell'utente: solo le due coppie dichiarate,
+  e usarle solo dopo averne guardato i numeri sulla macchina vera (il Q9650 del PC di prova).
+- **La riga di dmesg degli stati elenca gli n che ci sono**: "2 stati: 2100 1050 0 0 MHz" faceva
+  sembrare quattro stati due, due dei quali rotti.
+- QEMU non passa EIST nemmeno con `-cpu Penryn,+est` (misurato): li' si vede il modello 17h e
+  niente si ferma; il ramo Core 2 si vede solo sul PC di prova. `tools/prova_cpufreq.sh` ha il
+  giro Penryn, e controlla la versione del kernel da `version.h` (chiedeva ancora la 0.311).
+- **Sul PC di prova (Q9650, 17/11)**: modello 17h, SpeedStep acceso dal BIOS, bus 333 MHz;
+  massima 9 x VID 26h (2997 MHz), minima 6 x VID 16h (1998 MHz), ora 9 x. Se e come pilotare
+  le due coppie lo decide l'utente.
+
+### ExEditor stampa, fa vedere l'anteprima, e ha barra e righello anche per i file di testo (ExEditor 0.009, exwin.so 0.022, lpt.drv 0.004, voce 81) — testato in QEMU
+
+- **File > Stampa (Ctrl+P)** manda la scheda alla porta parallela (lpt0) come la stampa una
+  stampante a caratteri: 80 colonne e 60 righe per pagina, tre righe vuote sopra, il numero
+  della pagina in fondo, un salto pagina dopo ognuna (66 righe: stanno in Letter e in A4). Le
+  righe lunghe vanno a capo a 80, una tabulazione diventa gli spazi fino al multiplo di 8
+  successivo, le lettere accentate escono in CP437 (il set delle stampanti PC; una lettera che
+  CP437 non ha diventa `?`). Di un RTF si stampa solo il testo: i caratteri sulla carta vogliono
+  un driver di stampante grafica, che EX-OS non ha.
+- **L'editor non aspetta mai la stampante**: le pagine vanno a `lpt.drv -stampa -` per un tubo
+  scritto un pezzo alla volta a tempo, le sue parole tornano per un altro tubo, e l'ultima
+  ("lpt: N byte alla stampante", o cosa e' andato storto) va nella riga di stato o in un
+  avviso. Una stampante senza carta tiene lpt.drv 30 s; l'editor intanto lavora. Niente file
+  temporaneo: un CD avviato non ha dove scriverlo.
+- **File > Anteprima di stampa** mostra le stesse pagine su un foglio A4, una alla volta:
+  Prima/Dopo, PagSu/PagGiu o le frecce; Stampa da li' stampa.
+- **lpt.drv 0.004: `-stampa -` legge lo standard input** (`cat f | lpt.drv -stampa -`).
+- **Anche i file di testo hanno la barra**: Nuovo, Apri, Salva, Taglia, Copia, Incolla, Annulla,
+  Cerca; e un **righello a colonne di caratteri** con le tabulazioni ogni 8 e un segno sulla
+  colonna del cursore. Il menu Formato e' grigio su un file di testo (e' per l'RTF), e su un RTF
+  sono grigie le voci che li' non funzionano ancora (annulla, cerca, sostituisci).
+- **Tab scrive una tabulazione nel testo** e le colonne si allineano sotto il righello: l'area
+  disegna una tabulazione fino al multiplo di 8 successivo, e cursore, selezione e clic contano
+  le colonne dello schermo.
+- **exwin.so 0.022**: `ex_textarea_set_tab(area, n)` (n > 1: tabulazioni disegnate come fermi
+  ogni n colonne, e Tab va all'area invece di spostare il fuoco; 0 o 1 come prima),
+  `ex_textarea_get_column` (la colonna del cursore sullo schermo), `ex_menu_enable(menu, id, si)`
+  (voci grigie, disegnate ma non sceglibili). Un programma collegato con lo stub gira anche su
+  un exwin.so piu' vecchio: li' le tre non fanno niente.
+- In QEMU a 32 e 64 bit: `/boot/help.txt` stampato da ExEditor nel file parallelo di QEMU e',
+  byte per byte, quello che fa uno script su Linux con le stesse regole (30 pagine, 81239 byte),
+  dal menu e con Ctrl+P. `tools/prova_lpt.sh` 28 su 28 (la prova nuova: `-stampa FILE` e poi
+  `cat | -stampa -`, il file due volte), `tools/prova_rtf.sh` 6 su 6. Su una stampante vera: da
+  testare.
+
+### lpt.drv trova le schede parallele PCI (lpt.drv 0.003, voce 98) — testato
+
+- **Dopo 0x378, 0x278 e 0x3BC, ogni dispositivo di classe 07.01** che `pci.drv` conosce. Una
+  scheda PCI non ha base+0x400: il suo ECR sta in un BAR suo. La SUNIX/Lenovo 1fd4:1999
+  (sottosistema 17aa:0100, come la SUNIX 4008A) tiene la porta nel BAR1 e l'ECR nel BAR2, come
+  dice `parport_serial` di Linux; le altre schede prendono i primi due BAR di I/O, e decide la
+  sonda. Una linea PCI e' condivisa e a livello: niente IRQ se non lo chiede `-irq:N` (`-avvia`
+  dice quale linea ha la scheda).
+- **La sonda prende la porta se rilegge il registro dei dati O quello di controllo**, come
+  `parport_SPP_supported` di Linux: sulla SUNIX nSelectIn si rilegge sempre 0 (scritto 0x0C,
+  letto 0x04).
+- **Cio' che si scrive nel registro di controllo resta in memoria** (il `priv->ctr` di Linux), e
+  stampa, fronti, `-dati` e `-controllo` partono da li': rileggendolo, la SUNIX perdeva il
+  piedino 17 a ogni byte stampato.
+- **`-dati` e `-controllo` dicevano "0x00, 0x00"**, e `-prova-onda` non vedeva un'onda
+  interrotta: la risposta si leggeva dopo che quella di LASCIA l'aveva sovrascritta (dalla 0.001).
+- Sul PC di prova (64 bit, MCP73): `lpt0: 0xdc00, SPP PS/2 EPP ECP (PCI, ecr a 0xd882)`, `-dati`
+  riletto da `-pin`, `-id` e `-stampa` senza niente collegato si arrendono col loro messaggio.
+  L'onda di 2000 mezze onde da 200 us sulla porta vera: ritardo peggiore 4,8 us, nessuna oltre
+  10 us; rifatta mentre partiva ExWin, 22,8 ms (188 oltre 10 us): il processore riservato riceve
+  ancora il battito del timer (non misurato). `tools/prova_lpt.sh` 14 su 14 a 32 e 64 bit.
+
+### munmap non puo' piu' fermare la macchina (kernel 0.341)
+
+- **`munmap` guarda anche la fine dell'intervallo**, come gia' facevano `mmap` e `mprotect`.
+  Fino alla 0.340 controllava solo l'inizio: `munmap(0xBFFFF000, 0x44001000)` a 32 bit passava
+  sulle pagine del kernel, faceva il giro fino alla memoria del kernel e ne liberava le pagine
+  fisiche, e la macchina si fermava («PMM: pagina fuori range»). Bastava un utente qualunque. Ora
+  e' `EINVAL`. Trovato rileggendo la voce 17 di `analisi_kernel.txt`, provato prima in QEMU
+  (la macchina si fermava davvero); `tools/prove/varchiprova.c` ha i due casi.
+- **L'orologio a 12 ore**: con un CMOS in formato 12 ore la mezzanotte restava le 12 invece delle
+  0. E le due porte del CMOS (indice e dato) si usano a interrupt spenti: un cambio di processo in
+  mezzo faceva leggere un registro al posto di un altro (voce 77).
+- **Un programma parte coi registri a zero**: alla prima entrata in ring 3 i registri generali
+  tenevano valori del kernel (indirizzi suoi, a 32 e 64 bit). Ora sono azzerati; resta solo RDI a
+  64 bit, il primo argomento di un filo (voce 77).
+- **Le notifiche di interrupt perse si contano**: quando la cassetta del driver e' piena la
+  notifica cade, e fino alla 0.340 non lo diceva nessuno. Ora la prima caduta va nel registro
+  ("IRQn: notifica caduta per PID p") e `/proc/interrupts` dice `cadute N` accanto al conto. E'
+  la misura per la voce 14 (una scheda che tace dopo una notifica persa).
+- **Voce 76 verificata**: un file cancellato mentre e' aperto si legge e si scrive fino alla
+  chiusura (lo fa dal kernel 0.268). La prova nuova scrive 1 MB dopo `unlink` e rifa' il nome con
+  un altro file nel frattempo: a posto su ext2 e FAT32, 32 e 64 bit (`tools/prova_aperti.sh`).
+  Verificato anche che `rmdir /a/.` non lascia la cartella mezza cancellata su FAT.
+- **Una shell su un tubo non riaccende piu' il sistema** (sh 0.013). Un `/bin/sh` lanciato senza
+  argomenti con lo stdin su una pipe (`echo comando | sh`, la prova di interruzione di
+  `libctest`) si credeva la shell dell'avvio e rieseguiva `/boot/avvio.sh` e `/boot/autoexec.sh`:
+  tutti i driver una seconda volta. Sul PC di prova il secondo driver di rete ha tolto la rete al
+  primo e la macchina non rispondeva piu'. Ora la shell dell'avvio mette `EXOS_AVVIO=1`
+  nell'ambiente, e chi discende da lei non rifa' l'avvio.
+- **libctest 0.004 scrive i suoi file nella directory da cui parte**, non in `/`: da CD la radice
+  e' in sola lettura e un terzo delle prove fallivano per niente (lanciata da `/` fa come prima).
+  Le prove rimesse al passo: `sbrk` chiede 2 GB due volte (uno ci sta sotto il tetto di 3 GB, due
+  no) e li restituisce; `rename` fra directory sposta o dice ENOSYS/EXDEV; la `mmap` di un file
+  ne ha i byte con la libc statica (che la copia da ottobre) e dice ENODEV con quella condivisa, mai zeri. Da `/a` in QEMU: 354 prove su 354, a 32 e 64 bit.
+- **Provata sul ferro** (PC di prova, 64 bit, disco ext4): aggiornato dalla 0.340 con
+  `netupdate -check -yes` dal server locale, impronta del kernel uguale a quella pubblicata,
+  `netupdate -verifica` tutto a posto. `varchiprova`: munmap da' EINVAL e la macchina resta in
+  piedi; `fusoprova` a posto; il certificato fatto dall'openssl del pacchetto (ricollegato alla
+  libc della 0.340) ha l'ora UTC giusta e Linux lo verifica.
+
+### L'ora dei programmi e' quella universale vera: EX-OS conosce il suo fuso orario (kernel 0.340)
+
+- **`time()` da' i secondi UTC**, confrontabili con qualunque altra macchina (kernel 0.340).
+  L'orologio della macchina resta in ora locale, come su un PC che avvia anche Windows; il kernel
+  conosce il fuso (`/boot/fuso.cfg`, letto all'avvio, scritto da `date -fuso:`, di serie UTC+1 con
+  l'ora legale europea) e la libc converte: `localtime()` rimette l'ora locale con l'ora legale,
+  `mktime()` fa il contrario, `strftime` scrive `%z` e `%Z` (`+0200 CEST`), `tzset`, `timezone`,
+  `tzname` e `gettimeofday` dicono il fuso. Fino alla 0.339 `time()` contava l'ora locale come se
+  fosse UTC: un certificato fatto con `openssl` in EX-OS nasceva un'ora nel futuro e Linux lo
+  rifiutava («not yet valid»). **testato in QEMU** (tools/prova_fuso.sh, 32 e 64 bit: i due cambi
+  dell'ora legale, mktime dell'ora che manca e di quella doppia, i file nuovi, /boot/fuso.cfg letto all'avvio)
+- **Le date dei file sono in UTC**: su ext2 e ext4 l'inode tiene UTC, come lo scrive Linux; su FAT
+  resta l'ora locale, come la scrive Windows, e `stat` la converte; un CD dice il suo fuso e si usa
+  quello. **testato in QEMU**
+- **`date -fuso:` vale subito**, senza riavviare; da un CD, dove `/boot` non si scrive, vale fino
+  allo spegnimento. `date -fuso` dice anche il fuso in uso, se e' diverso da quello del file.
+- ! I programmi collegati alla libc di prima contano ancora l'ora locale come UTC finche' non
+  vengono ricollegati; arrivano ricollegati con l'aggiornamento.
+- Le prove in QEMU partono con l'orologio in ora locale (`-rtc base=localtime` in
+  `tools/qemu_drive.py`), come su una macchina vera.
+- `tools/prova_librerie.sh` e `tools/prova_openssl.sh` portano sul disco le librerie condivise che
+  usano: il CD di EX-OS non le ha, e dal 3 novembre le librerie di terzi sono condivise.
+- **Provato sul ferro** (il PC di prova con la scheda madre nForce MCP73, aggiornato con netupdate
+  dalla 0.328): `time()` a pochi secondi dall'UTC di un'altra macchina, i due cambi dell'ora
+  legale, il file nuovo su ext4 datato in UTC, `date -fuso:+5:30,no` che vale subito; un
+  certificato fatto da `openssl` ricollegato Linux lo accetta, quello di prima no.
+- **netupdate 0.048: le verifiche aspettano il riavvio** quando l'aggiornamento cambia il kernel.
+  Sotto il kernel di prima i programmi nuovi gli chiedono cose che non ha (lo stat della 0.339):
+  sul PC di prova, dalla 0.328 alla 0.340, ogni `[ -d ]` e `[ -f ]` dava falso e quattro
+  verifiche chiedevano di creare a mano cartelle che c'erano. Ora netupdate lo dice e chiede
+  `netupdate -verifica` dopo il riavvio. **testato in QEMU** (tools/prova_verifiche.sh, prova D:
+  un kernel nuovo sul server). `verifiche/sistema.sh` dice anche se manca `/boot/fuso.cfg`.
+- **L'ora locale anche dove si contava l'UTC per l'ora locale**, cercata in tutto il codice di
+  EX-OS (`gmtime` era uguale a `localtime` fino alla 0.339):
+  - **ExJs**: `getHours`, `setHours`, `new Date(a, m, g)`, `toString`, `toLocaleString` e le
+    stringhe senza fuso sono in ora locale, `getTimezoneOffset` dice -60 o -120; il fuso lo da'
+    chi ospita con `exjs_fuso_metti` (facoltativa: una exjs.so vecchia resta in UTC), EXBrowser
+    0.033 lo prende da `localtime_r`. L'ora che si ripete in autunno vale la prima volta, quella
+    che manca in primavera un'ora dopo. **testato sull'host** (`make prova-exjs`, 510 prove, 18
+    nuove col fuso di Roma 2026); `tools/prova_date.sh` guarda anche il fuso, coi due motori.
+  - **tar** elenca le date in ora locale, come GNU tar (l'archivio tiene UTC).
+  - **libctest 0.003**: le prove di `mktime` erano quelle di `timegm` (l'istante UTC) e la prova
+    di `strftime` lasciava `tm_gmtoff` sporco; ora `timegm` contro `gmtime` e `mktime` contro
+    `localtime`, d'inverno e d'estate.
+
+### stat() dice i permessi, il proprietario, i collegamenti e le date veri, e i file scritti su FAT hanno la loro data (kernel 0.339)
+
+- **`stat()` e `fstat()` riportano cio' che il volume tiene** (kernel 0.339): su ext2 e ext4
+  modo, proprietario, gruppo, numero di collegamenti e i tre tempi dell'inode; su /proc quelli dei
+  processi. Prima la libc si inventava `st_mode` (0644, 0755 o 0555), `st_uid` e `st_gid` a 0 e
+  `st_nlink` a 1, qualunque cosa dicesse il disco: `chmod 600` riusciva e `stat` diceva ancora
+  644. FAT e ISO 9660 non hanno proprietari: li' restano uid 0, un collegamento e i permessi di
+  sempre. La struttura che il kernel passa alla libc e' cambiata (56 byte, chiamate nuove 268 e
+  269); `struct stat` dei programmi no. **testato in QEMU** (tools/prova_stat.sh, 32 e 64 bit)
+- **I file creati o scritti da EX-OS su FAT16 e FAT32 hanno la data dell'orologio** invece del 1
+  gennaio 2026 fisso. **testato in QEMU**
+- ! **Un programma collegato alla libc di prima non trova piu' nessun file con `stat`**: le
+  chiamate vecchie (106 e 108) rispondono «funzione non implementata», e nel log del kernel c'e'
+  `SYSCALL: '<nome>' (PID n) usa lo stat di prima della 0.339: va ricollegato alla libc nuova`.
+  I programmi di EX-OS si ricompilano col sistema; quelli portati (gcc, MariaDB, Apache, Valkey,
+  PHP, Firefox...) vanno ricollegati alla `libc.a` nuova, e arrivano con l'aggiornamento.
+
+### Dormite lunghe quanto chiesto, un timer che guarda solo quando serve, i processi trovati per PID subito, i CD letti tre volte piu' in fretta, un programma che esce mentre i fili leggono non ferma piu' i file (kernel 0.334-0.338, analisi_kernel voci 6, 21, 22, 24, 27, 28, 75)
+
+- **Un processo si trova dal suo PID senza scorrere la tabella, e un filo che aspetta un mutex si
+  sveglia senza scorrerla** (voce 22, kernel 0.334): una tabella PID -> posto e una hash delle
+  attese per (processo, indirizzo), larghe quanto la tabella dei processi. MariaDB sotto carico
+  (KVM, 1 processore): da 1854/1743/1651 a 1935/1813/1665 istruzioni/s con 8/32/64 client.
+  **testato in QEMU**
+- **Il timer scorre la tabella dei processi solo quando e' arrivata la scadenza piu' vicina**
+  (voce 21, kernel 0.335) invece che a ogni battito. Con MariaDB (pochi processi) non cambia
+  niente: 0.334 1992/1825/1703, 0.335 1974/1784/1695 istruzioni/s, una corsa dopo l'altra.
+  **testato in QEMU**
+- **sleep, usleep e nanosleep durano almeno il tempo chiesto** (voce 27, kernel 0.336): una dormita
+  di 10 ms chiesta poco prima del battito tornava quasi subito, e `sleep(1)` poteva durare 990 ms.
+  Le attese sotto i 10 ms durano ancora 10-20 ms (il battito a 100 Hz). **testato in QEMU**
+- **I file di un CD si leggono tre volte piu' in fretta** (voce 75, la parte ISO, kernel 0.337):
+  un percorso si risolve una volta fino al montaggio dopo, e i blocchi interi vanno dritti nel
+  buffer del programma, fino a 128 KB per comando. Un file di 8 MB a pezzi da 64 KB: da 4,4 a
+  13,3 MB/s (QEMU con KVM). **testato in QEMU** (anche il gcc del CD degli strumenti)
+- **Un programma che esce mentre i suoi fili sono dentro il kernel non lascia piu' fermi i
+  file** (voce 6, kernel 0.338): i fili non si fermano piu' dove sono, con un lucchetto in mano;
+  ognuno finisce da se' uscendo dal kernel, e il filo principale li aspetta (al piu' 2 secondi).
+  E il lucchetto dei file passa al primo in coda invece che a una gara (voce 28): con un
+  processore chi lo lasciava lo riprendeva sempre, e gli altri aspettavano minuti. **testato in
+  QEMU** (`tools/prova_filimorti.sh`, 200 volte, 1 e 2 processori)
+- Provato e tolto: un messaggio a un processore in ozio quando un filo diventa pronto (voce 24).
+  Un filo svegliato partiva in microsecondi invece che in 10 ms (`tools/prova_palla.sh`: da 117 a
+  47729 giri al secondo), ma MariaDB con 2 processori andava peggio (1641 -> 1349 istruzioni/s con
+  64 client) perche' i due processori si contendono il lucchetto unico del kernel. Aspetta la
+  voce 30 in `fuori_uso/voce24-ipi.patch`.
+- Prove nuove: `tools/prova_sonno.sh` (`tools/prove/sonnoprova.c`), `tools/prova_iso_letture.sh`
+  (`tools/prove/isoletture.c`), `tools/prova_filimorti.sh` (`tools/prove/filimorti.c`), `tools/prova_palla.sh`
+  (`tools/prove/pallaprova.c`, fallisce apposta senza la patch della voce 24).
+
+### Il disco con meno lavoro inutile: ext2, il giornale di ext4, AHCI e FAT (kernel 0.333, ext4.mod 0.006, analisi_kernel voci 56, 63, 73, 74, 75)
+
+- **ext2 non ripercorre piu' il percorso a ogni lettura dopo una scrittura** (voce 56): la cache
+  dei percorsi si svuota solo quando cambia un nome (create, mkdir, rmdir, unlink, rename,
+  montaggio); quando cambia solo un inode si rilegge quell'inode. **testato in QEMU**
+- **Cancellare un file su ext3/ext4 non chiude piu' subito la transazione** (voce 74, ext4.mod
+  0.006): i blocchi liberati restano trattenuti fino al commit, cosi' nessun dato nuovo ci finisce
+  dentro prima. Una cancellazione arriva al disco come le altre operazioni: alla chiusura di un
+  file, con fsync, o entro 5 secondi; dopo uno spegnimento brusco il file cancellato puo' tornare,
+  intero e con i suoi byte. **testato in QEMU** (spegnimento a meta')
+- **L'attesa di un comando AHCI lascia girare gli altri programmi** (voce 63). **testato in QEMU,
+  da testare sul portatile e sul .247**
+- **Un file FAT letto o scritto a pezzi riparte dall'ultimo cluster raggiunto** (voce 75), invece
+  di ripercorrere la catena dall'inizio: le copie grandi da una chiavetta. **testato in QEMU**
+- `kernel/loader/dynlink.c` e `drvmgr.c`, mai chiamati, sono in `fuori_uso/loader/` (voce 73).
+- MariaDB sotto carico (QEMU con KVM, 1 processore, disco IDE ext2): da 1952/1662/1624 a
+  1972/1811/1701 istruzioni/s con 8/32/64 client, ma il p95 con 32 e 64 client e' salito (da 40 e
+  78 a 64 e 131 ms); una corsa sola, `tools/stress/risultati/20261113-*`.
+- Prove nuove: `tools/prova_nomi.sh` (`tools/prove/nomiprova.c`), il caso D di
+  `tools/prova_giornale_tempo.sh`.
+
+### Un incolla in telnet o ssh non si tronca piu', i file del floppy aperti due volte, un vero generatore di numeri casuali (kernel 0.332, telnetd 0.014, sshd 0.002, analisi_kernel voci 53, 55, 67, 70)
+
+- **Un incolla in telnet o in ssh non si tronca piu' a 1 KB** (voce 53, telnetd 0.014, sshd
+  0.002): l'ingresso pieno del pty mangiava i byte e la write diceva "tutto". Ora il master prende
+  quel che ci sta (4 KB, prima 1 KB), da' `EAGAIN` quando e' pieno, `poll` dice `POLLOUT` solo se
+  c'e' posto, e i due serventi tengono il resto e lo rimandano. Ctrl+C passa sempre.
+  **testato in QEMU**
+- **Due descrittori dello stesso file del floppy sono un file solo** (voce 70): il secondo
+  riscriveva la sua copia vecchia della voce e perdeva i cluster del primo; un file cancellato
+  mentre e' aperto si legge fino in fondo e i suoi cluster si liberano all'ultima chiusura; una
+  rinomina non viene piu' disfatta. **testato in QEMU**
+- **I numeri casuali vengono da un generatore** (voce 67): SHA-256 sopra il serbatoio, RDRAND
+  serve solo a riseminarlo, una chiave nuova dopo ogni richiesta; senza RDRAND (Core 2, il .247)
+  leggere il serbatoio non diceva piu' i numeri seguenti. **testato in QEMU** (`-cpu core2duo`)
+- **Il pty legge i byte e il termios del programma a interrupt accesi** (voce 55): una pagina
+  nello swap faceva un fault dentro la sezione critica. **testato in QEMU**
+- Prove nuove: `tools/prove/ptypienoprova.c`, `tools/prova_floppy.sh`, `tools/prova_caso.sh`.
+
+### Un puntatore cattivo uccide il programma e non la macchina, e altri venti varchi del kernel chiusi (kernel 0.331, analisi_kernel)
+
+- **Un programma che passa al kernel un puntatore a niente muore da solo** (voce 5): il page
+  fault dentro la chiamata di sistema era un panico del kernel; ora "PF: PID n ... passed a bad
+  pointer" e il programma finisce con -14, la macchina va avanti. **testato in QEMU**
+- **`O_EXCL`** (0x80, voce 47): `open(O_CREAT | O_EXCL)` di un file che c'e' da' `EEXIST`, su
+  ext2/ext4 e FAT; lo usano `mkstemp` e `shm_open`. **testato in QEMU**
+- **I buchi di un file FAT sono zeri** (voce 71): scrivere oltre la fine di un file su una
+  chiavetta FAT mostrava cio' che c'era prima sul disco, pezzi di file cancellati. I cluster
+  nuovi si azzerano quando la scrittura non li copre; `tools/prova_fatbuchi.sh` (nuovo).
+  **testato in QEMU**
+- **Solo i driver agganciano gli interrupt, solo i propri processi vanno in primo piano** (voci
+  13, 52, 43 per la console): `irq_bind`/`irq_fronti` da un programma danno `EPERM`,
+  `console_setfg` e il primo piano del pty di un processo altrui `EPERM`. **testato in QEMU**
+- **Il parser della console non prende piu' di 9999 e resta sullo schermo** (voce 64):
+  `ESC[2147483600B` scriveva fuori dal buffer del testo. **testato in QEMU**
+- **Una `exec` fallita lascia il programma intero** (voce 10), **waitpid e thread_attendi non
+  perdono risvegli** (7), **una pagina smontata rende il suo posto nello swap** (12), **niente
+  pagine utente sotto i 64 MB e il controllo delle misure ELF anche a 32 bit** (61), **un driver
+  di disco in ring 3 non puo' rispondere piu' settori di quelli chiesti** (50), **un albero
+  FAT12 o degli extent ext4 rovinato si rifiuta invece di girare a vuoto o leggere fuori** (65,
+  66). **testato in QEMU**
+- **Fili e processi** (voci 8, 9, 18): l'immagine TLS di un filo nuovo ha il suo lucchetto, un
+  filo che non parte rende le pagine del suo stack, due processi non ricevono mai lo stesso PID
+  e il numero dei processi in `sched_dump` non sale piu'. **testato in QEMU**
+- **Librerie, dischi in ring 3 e lucchetti** (voci 69, 68, 51, 54): la copia di una pagina di
+  libreria non si mescola con quella di un altro programma, un aggancio fallito libera la copia
+  del processo e non la pagina della libreria, la casella di un disco USB si libera quando muore
+  il programma che la usava, e i lucchetti del disco, dei file e del pty rimettono il flag degli
+  interrupt com'era. **testato in QEMU**
+- `tools/prove/varchiprova.c` ha i casi nuovi; `tools/prove/tlsfiliprova.c` (nuova): due programmi
+  con immagini `__thread` diverse fanno 300 fili ciascuno nello stesso momento.
+
+### Un utente qualunque non legge e non scrive piu' il kernel, ne' scrive un file aperto in lettura (kernel 0.330, analisi_kernel voci 1-4 e 46)
+
+- **I puntatori sotto i 64 MB nelle chiamate di sistema sono rifiutati** (`EFAULT`): li' c'e' il
+  kernel, mappato in ogni spazio, e `write(1, (void *)0x100000, n)` ne stampava il codice mentre
+  `read()` lo sovrascriveva. **testato**
+- **Il modo d'accesso dell'apertura conta**: `write`/`pwrite`/`ftruncate` su `O_RDONLY` danno
+  `EBADF`/`EINVAL`, `read`/`pread` su `O_WRONLY` `EBADF`; `open` chiede la scrittura per
+  `O_TRUNC`, `O_APPEND` e `O_RDWR` (lettura e scrittura), `truncate` il permesso di scrittura.
+  Prima aprire `/boot/utenti` in lettura e scriverci funzionava. **testato**
+- **`cld` negli ingressi a 32 bit**: un programma interrotto col flag di direzione alzato faceva
+  copiare all'indietro ogni `rep movs` del kernel. **testato**
+- **kmalloc, kfree e l'allocatore delle pagine a interrupt spenti**: il kernel e' prelazionabile,
+  e due processi potevano trovarsi a meta' dell'elenco dei liberi, o prendere la stessa pagina.
+  **testato in QEMU**
+- **Un lucchetto tenuto da un filo morto si riprende** (file, disco, shm, spazio degli
+  indirizzi), con un errore nel registro: un filo fatto zombie dentro una lettura teneva il
+  lucchetto dei file, e nessun file si apriva piu'. **testato in QEMU**
+- `tools/prove/varchiprova.c` (nuova): i varchi provati da uid 1000, 0 NO a 32 e 64 bit;
+  `tools/prove/filimorti.c` (nuova): 200 figli chiusi mentre 8 fili leggono, 200 su 200.
+
+### La GeForce 210 col suo motore 2D, un driver per le NV4x, e `shutdown -r` che riavvia (kernel 0.327-0.329, nv50.drv 0.011, nv40.drv 0.005, sh 0.012, voce 99)
+
+- **nv50.drv guida una GT218 dedicata (GeForce 210, N210) sul VGA**: `-modi`, `-provamodo LxA`,
+  `-modo LxA`, `-install LxA` (il modo e il servizio `accel2d` a ogni avvio). Tempi VESA
+  impacchettati come G80CrtcDoModeFixup, il PLL a uno stadio dei GT21x. Visto sul .247
+  (MCP73 + Q9650): 1024x768 pulito, ExWin e Firefox "fluido perfetto". `-2dmisura`: la CPU
+  scrive 2,8 GB/s, il motore riempie 1,1 GB/s e copia solo ~100 MB/s qualunque sia la forma
+  (da capire: probabilmente le superfici lineari). **testato**
+- **nv40.drv 0.005**: il motore 2D delle NV4x (GeForce 7100 IGP del MCP73), la RAM rubata
+  trovata con un segno, `-2dservizio`, `-install`. Il display dell'integrata sfarfalla con
+  bande di FIFO a ogni modo provato: su quella scheda madre la strada e' la N210.
+  **testato, sfarfallio aperto**
+- **Kernel 0.328**: la pagina 0xD000 (mappa E820 di Stage 2, modi VBE, nomi della scheda) la
+  tiene il PMM: con 4 GB di RAM e piu' il kernel la prendeva prima di copiarla, e
+  `svga.drv -lista` diceva "0x0 0 bit". **Kernel 0.327**: `mmio_map` mappa anche
+  0xA0000-0xFFFFF (il BIOS video di un'integrata). **testato**
+- **Kernel 0.329: uscire da ExWin sul framebuffer di un driver** (nv50, nv40) non passa piu'
+  al modo testo VGA 3, che quei display ignorano: lo schermo teneva l'ultimo fotogramma e la
+  macchina sembrava bloccata. Il framebuffer si pulisce e la console si ridisegna li' dentro.
+  **da testare sul .247**
+- **`shutdown -r` riavvia** (sh 0.012): lo `shutdown` interno della shell ignorava -r e
+  spegneva. Lo spegnimento ACPI segue ACPICA (GPE spenti, stati di risveglio azzerati, PM1
+  letto-modificato-scritto, SLP_TYP e poi SLP_EN) e stampa i registri PM1a se la macchina resta
+  accesa (il MCP73 restava acceso). **da testare sul .247**
+
+### Uno script e il suo figlio in sottofondo non si cancellano piu' le righe (kernel 0.326, sh 0.011, voce 94), e `mount` scrive /proc come proc (kernel 0.325, mount 0.004, voce 93)
+
+- **La posizione di un file aperto e' condivisa**, come vuole POSIX, fra tutti i descrittori
+  nati dalla stessa apertura: `dup`, `dup2`, spawn e fork. Sta nell'handle del VFS
+  (`VfsPosizione`), che `vfs_dup` divideva gia'; anche il suo lucchetto, che passa di mano se
+  chi lo teneva non c'e' piu'. Prima ognuno aveva la sua: `sh x.sh > log &` con dentro un
+  programma in sottofondo perdeva le righe del padre (visto sul portatile il 9/11).
+- **La shell scrive ogni riga con una `write` sola** (`echo`, i messaggi, la riga di uno script
+  che si ripete): con due processori padre e figlio scrivono davvero insieme, e una riga scritta
+  a pezzi usciva mescolata con quella dell'altro.
+- **`mount` scrive "proc"** per `/proc` invece di "FAT4294967295": `mountinfo` da' il tipo 10
+  (`VOL_FS_PROC`); anche toolinst 0.006 lo chiama per nome, e ISO 9660.
+- `tools/prova_sottofondo.sh` (nuova): 40 righe dello script e 40 del figlio in sottofondo nello
+  stesso file, su ext2 e su FAT16, a 32 e 64 bit, con uno e con due processori: 80 su 80.
+
+### Nessun fronte perso con due processori, e la porta parallela senza chiamate di sistema (kernel 0.324, lpt.drv 0.002, voce 98)
+
+- **L'EOI prima del lucchetto.** `irq_prima` (`kernel/arch/x86/isr.c`), chiamata dalle entrate
+  degli interrupt prima del lucchetto del kernel, annota l'istante, manda l'EOI e mette un fronte
+  nel suo anello (con un lucchetto suo). Prima l'EOI partiva dopo il lucchetto: un interrupt che
+  aspettava (il timer, un disco) teneva il suo bit in servizio nel PIC e fermava l'IRQ 7.
+- **Il processore 0 aspetta il lucchetto con le linee dei fronti aperte**, quando una linea e' in
+  modo fronti: il PIC ha per quel tempo una maschera con solo quelle linee, la priorita' dell'APIC
+  e' alzata, e un fronte arrivato nell'attesa si avvisa appena il lucchetto e' preso. Senza linee
+  in modo fronti l'attesa e' quella di prima.
+- **Il PIC dei due kernel in un file solo**, `kernel/arch/x86/pic.c`, con la maschera tenuta in
+  memoria e un lucchetto per il chip.
+- **La bitmap I/O nel TSS** (`SYS_IOPORT_DIRETTO` 267, `ioport_diretto()` nella libc): le finestre
+  date da `ioport_bind` a un driver si aprono a `in`/`out` in ring 3 mentre gira, e si richiudono a
+  ogni cambio di processo. Non da' porte nuove. lpt.drv 0.002 la usa.
+- `tools/prova_lpt.sh`: 13 su 13 a 32 e a 64 bit con un processore. Con `-smp 2`, sei giri: 300
+  fronti su 300 in quattro, 299 e 298 negli altri due (la prova li manda a 60-100 us l'uno
+  dall'altro; prima 297). L'onda: ritardo peggiore 58-254 us invece di 1,3 ms, una volta 1,9 ms.
+  Non ancora provato su una porta vera.
+
+### Un driver solo per la porta parallela (kernel 0.323, lpt.drv 0.001, voce 98)
+
+- **`/dev/lpt.drv`**: un driver per tutto cio' che si collega alla porta parallela (stampanti, lo
+  ZIP Iomega, gli scanner, il datasette del Commodore con un adattatore tipo C64S, le schede di
+  prova). `-avvia` trova le porte (0x378, 0x278, 0x3BC) e cosa sanno fare (SPP, PS/2, EPP, ECP) e
+  accende un servizio per porta (`lpt0`...); un cliente alla volta la tiene. Da' le operazioni di
+  base: la stampa con l'handshake Busy/nStrobe (`-stampa FILE`), i registri grezzi (`-pin`,
+  `-dati:V`, `-controllo:V`), il Device ID IEEE 1284 in modo nibble (`-id`), i fronti di nACK col
+  loro istante (`-fronti:S`), un'onda sulle linee dei dati con le durate date
+  (`-prova-onda:N:US`). `-install`/`-remove`. Il protocollo in `drivers/lpt/lpt_proto.h`.
+  `help lpt`, manuale 4.9.
+- **Kernel 0.323, i fronti degli IRQ col loro istante** (`SYS_IRQ_FRONTI` 266, `irq_fronti_*`
+  nella libc): le entrate degli interrupt annotano l'orologio fine (TSC, o il PIT su un 486) prima
+  di aspettare il lucchetto del kernel; una linea in questo modo tiene ogni fronte in un anello che
+  il driver legge, avvisa una volta finche' non legge, e non si maschera fra un fronte e l'altro.
+  Solo per l'unico proprietario di una linea a fronte. Un IRQ 7 o 15 "spurio" su una linea cosi'
+  conta come fronte (la richiesta e' scesa prima di essere presa).
+- I fili e i tempi del datasette vengono dai programmi mtap e ptap, letti solo come
+  documentazione: in EX-OS non c'e' niente del loro codice. Il programma del datasette e' la
+  voce 96.
+- `tools/prova_lpt.sh`: in QEMU con `-parallel file:`, 12 su 12 a 32 e a 64 bit con un
+  processore: `/boot/help.txt` stampato identico byte per byte, 300 fronti su 300, l'onda suonata.
+  ! Con `-smp 2`: 300 su 300 a 32 bit, 297 su 300 a 64 (294 a 32 prima di contare gli IRQ 7 spuri come fronti): il processore 0
+  aspetta il lucchetto del kernel a interrupt spenti, e due fronti arrivati in quell'attesa
+  diventano un interrupt solo nel PIC. L'onda e' uscita in ritardo al massimo di 0,26-1,3 ms. Non
+  ancora provato su una porta vera.
+
+### Exilla scrive il cinese, il giapponese e il coreano (pacchetto font-cjk, netupdate 0.047)
+
+- **I caratteri.** Il pacchetto nuovo `font-cjk` di netupdate porta Noto Sans CJK 2.004 e Noto Serif
+  CJK 2.003, normale e grassetto, in `/exwin/font` (90 MB, licenza SIL OFL 1.1). Ogni file e' una
+  raccolta con giapponese, coreano, cinese semplificato, tradizionale e di Hong Kong (e il Sans anche
+  i monospazio): quattro file coprono tutto. Gecko fa da se' gli altri pesi. Prima Exilla scriveva
+  quelle pagine a quadratini.
+- **Arriva con Exilla**: `netupdate -install:exilla` lo vuole (`vuole = font-cjk` nel catalogo); da
+  solo `netupdate -install:font-cjk`. Come Exilla ha l'elenco suo e i file a pezzi da 16 MB, quindi
+  `-check -yesall` non lo porta a chi non ha Exilla. Chi aveva gia' Exilla lo chiede a mano: la
+  verifica nuova `verifiche/exilla.sh`, alla fine di `-check`, lo ricorda.
+- **netupdate 0.047**: l'elenco a parte si scaricava solo per il pacchetto chiesto, non per quelli che
+  lui vuole; con la 0.046 `font-cjk` si sarebbe installato senza file.
+- **Quale carattere per ogni lingua**: `defaults/pref/exos-cjk.js` nel pacchetto di Exilla dice a Gecko
+  che il `serif` giapponese e' Noto Serif CJK JP, il `sans-serif` Noto Sans CJK JP, e cosi' per
+  coreano e cinese; senza, una pagina che chiede il serif riceveva il Sans.
+- **Da dove**: `tools/font-cjk/prepara.sh` scarica i due archivi dalle release di notofonts/noto-cjk,
+  controlla le impronte (`tools/font-cjk/IMPRONTE`: GitHub non ne da') e prende i quattro file;
+  `tools/mknetinst.sh` li pubblica.
+- **Testato** in QEMU a 32 e 64 bit con due processori: Exilla disegna cinese, giapponese (anche col
+  serif) e coreano (`tools/exilla/prova-gecko.sh`); `tools/prova_font_cjk.sh` 4 su 4: da un disco
+  installato dal CD `-install:exilla` porta i 5 file con le impronte giuste, il registro ha
+  `[font-cjk]`, la verifica dice a posto e, tolto un font, dice `-install:font-cjk`. **Da testare**
+  sul portatile.
+
+### Con due processori il disco non si ferma piu' per sempre (kernel 0.322)
+
+- **Il guasto.** Con due processori al lavoro (il default dalla 0.319) un programma a piu' fili che
+  legge e scrive file poteva fermare tutto il sistema: ogni file aspettava il disco, e il disco era
+  tenuto da `e1000.drv`, che non lo usa mai. Il codice del kernel puo' essere sospeso da un battito
+  e ripartire sull'altro processore; il kernel leggeva "chi sta girando" come numero del processore
+  e poi la voce di quel processore, e fra le due letture poteva spostarsi, prendendo il processo
+  del processore appena lasciato. Cosi' un filo che aveva preso il lucchetto del disco lo
+  restituiva a nome di un altro, la restituzione veniva rifiutata e il lucchetto restava preso.
+- **La correzione.** Il processo che gira si legge a interrupt spenti, cosi' non puo' spostarsi in
+  mezzo. Il lotto delle pagine liberate da `munmap` aveva lo stesso punto debole (era del
+  processore) e ora e' del processo.
+- **Trovato con una prova nuova**, `tools/prova-letture/prova-letture.sh [32]`: file noti riletti con
+  `read`, `pread` e `mmap` mentre altri fili e processi scrivono, allungano, riscrivono e cancellano
+  file nuovi, con molta RAM, con poca RAM e su ext4. Prima della correzione a 64 bit si fermava una
+  volta su due o tre; dopo, sei giri di fila finiti senza errori. La sonda della guardia ora dice
+  anche dove e' stato preso il lucchetto del disco, e il kernel avvisa una volta se qualcuno lo
+  restituisce senza tenerlo.
+- **I lucchetti della libc non cambiano piu' `errno`.** `pthread_mutex_lock`, `pthread_cond_wait` e
+  `sem_wait` scrivevano EAGAIN in `errno` quando il lucchetto cambiava appena prima di dormire; con
+  due fili davvero insieme (0.321) capitava quasi sempre, e `tools/prova_moltifili.sh` ha trovato
+  377 fili su 382 col loro `errno` cambiato. Ora le attese dentro la libc lo lasciano stare, come fa
+  glibc. E un filo che prende il suo posto di `errno` la prima volta usa il confronto e scambio,
+  cosi' due fili che partono insieme su due processori non possono piu' prendere lo stesso.
+- **Testato** in QEMU a 32 e 64 bit con due processori, e **sul portatile** (due core): la stessa
+  prova per 60 s, nessun errore e nessun blocco.
+
+### L'invio non e' piu' fermo a 4 KB, e TCP controlla la congestione (ip.drv 0.024, ipcfg 0.006)
+
+- **La coda d'invio cresce.** Fino alla 0.023 una connessione aveva al massimo 4 KB in volo in
+  uscita: verso un server a 50 ms voleva dire circa 80 KB/s, qualunque fosse la linea. Ora una
+  connessione parte coi 4 KB che ha dentro e prende una coda da 63 KB solo la prima volta che quella
+  si riempie: una richiesta o una risposta corta non costano niente di piu'. Alle code grandi va al
+  massimo un sedicesimo della RAM; oltre, la connessione lavora coi suoi 4 KB. `ip.drv -W KB` (da 4
+  a 63) sceglie la misura.
+- **Il controllo della congestione (RFC 5681, 6582, 6928).** Partenza lenta da dieci segmenti, un
+  segmento in piu' per andata e ritorno dopo la soglia, ritrasmissione al terzo ACK doppio (recupero
+  veloce, con gli ACK parziali di NewReno), e a tempo scaduto un segmento solo e di nuovo la
+  partenza lenta.
+- **Due guasti vecchi trovati per strada.** Dopo un tempo scaduto, un ACK che saltava oltre quel che
+  si stava rimandando lasciava la connessione zitta fino al tempo scaduto dopo. E chi riceve teneva
+  da parte al massimo 8 segmenti fuori ordine, anche quando erano uno dopo l'altro: dopo una perdita
+  il nono si buttava. Ora i segmenti contigui fanno un tratto solo (`drivers/ip/tcp_rx.inc`).
+- **Niente piu' segmenti da 120 byte.** Una `write()` arriva allo stack 1520 byte per messaggio, e
+  ogni messaggio partiva come un segmento pieno piu' uno da 120. Ora la libc dice quanto resta della
+  scrittura, e lo stack lo aspetta prima di tagliare un segmento corto. Una scrittura finita parte
+  subito.
+- `ipcfg` mostra `TCP rimandati` (subito / a tempo scaduto) e `TCP code grandi`.
+- **Testato in QEMU** con `tools/prova-invio/prova-invio.sh` (64 e 32 bit): due EX-OS uniti da
+  `rele.py`, un cavo con 25 ms per verso, 20 Mbit/s e la coda di un router. 2 MB, ogni byte
+  controllato: 853 KB/s su una linea pulita (57 KB/s con `-W 4`, come fino alla 0.023), e 464 KB/s
+  con l'1% dei frame persi (46 KB/s prima delle due correzioni). **Testato sul portatile** (nForce, 100 Mbit, kernel 0.322) verso un PC della LAN, 16 MB tre
+  volte per verso: dal PC al portatile 8,3-8,5 MB/s senza ritrasmissioni del PC (prima rimandava
+  circa il 20% dei segmenti), dal portatile al PC 11,2-11,5 MB/s, la linea piena. **Da testare**
+  verso Internet.
+
+### La frequenza del processore segue il carico (kernel 0.311, cpufreq.drv 0.001)
+
+- **Il kernel abbassa la frequenza, e con lei la tensione, quando c'e' poco da fare**
+  (`kernel/arch/x86/cpufreq.c`). Fino alla 0.310 l'unico risparmio era l'`hlt` dell'ozio, sempre a
+  frequenza piena. A ogni battito di ogni processore che lavora il kernel conta i tick d'ozio degli
+  ultimi 100 ms: dall'80% di carico in su va subito allo stato piu' veloce, sotto il 30% scende di
+  uno stato. Ogni processore scrive il proprio MSR: nessun messaggio fra processori.
+- **Su quali processori:** AMD dalla famiglia 10h con i P-state hardware (l'Athlon QL-64 del
+  portatile e' famiglia 11h) e Intel da Sandy Bridge con SpeedStep. Senza un interprete ACPI la
+  tabella la da' il processore stesso (AMD MSR C001_0064+, Intel MSR_PLATFORM_INFO). Non si tocca
+  niente in una macchina virtuale, con un TSC non invariante (il kernel misura le scadenze col TSC),
+  con SpeedStep spento dal BIOS o con HWP acceso: `cpufreq.drv` dice perche'.
+- **`/dev/cpufreq.drv`**: mostra gli stati e dove sta ogni processore; `-auto`, `-max`, `-min`,
+  `-fisso:N`, `-spento`, `-guarda`; `-install` scrive `cpufreq.drv -auto` in `/boot/avvio.sh`.
+  All'avvio il modo e' `spento`: non cambia niente finche' non lo si chiede. `help cpufreq`, manuale
+  4.9.
+- `tools/prova_cpufreq.sh`: in QEMU a 32 e 64 bit, con e senza il bit hypervisor (non si rompe
+  niente, i motivi sono giusti, -install e -remove), 16 su 16.
+- **Testato sul portatile** (Athlon QL-64, 4 novembre): il kernel trova 2 stati, 2100 e 1050 MHz;
+  `-min` va a 1050, `-max` a 2100; con `-auto` resta a 1050 a riposo, va a 2100 al 100% di carico per
+  tutti i 9 secondi di un `sha256sum` e torna a 1050 il secondo dopo.
+- ! **Solo il primo processore**: il secondo core del portatile e' acceso ma non fa ancora girare
+  programmi (`SMP: ... 0 dei quali lavorano`), quindi non ha battito e il suo P-state resta quello
+  lasciato dal BIOS.
+
+### Il C++ come librerie condivise, e un caricatore senza un numero fisso di librerie (voce 85, la strada per Qt 5)
+
+- **`libstdc++.so.6` e `libgcc_s.so.1`** (`tools/librerie-exos/cxx-condivise.sh`, nuovo): Qt e' un insieme
+  di librerie condivise C++, e vogliono sotto di se' anche il runtime del C++ condiviso. La
+  `libstdc++.a` della toolchain non e' PIC, quindi si ricostruisce con `-fPIC` accanto a lei (la `.a`
+  resta per i programmi `-static`). **L'unwinder delle eccezioni e' uno per tutti**: la libgcc statica
+  lo costruisce nascosto, ogni `.so` ne avrebbe avuto una copia sua che conosce solo le proprie
+  tabelle, e un'eccezione che attraversa due librerie finiva in `terminate()`. I suoi quattro file si
+  ricompilano senza i flag nascosti in `libgcc_s.so.1`, e le specs (`tools/gcc-exos/specs-condivise.sh`)
+  prendono `-lgcc_s --as-needed` dove il sysroot lo ha. Tutt'e due vanno in `/lib` dei CD, come
+  `libm.so.4`. Un programma C esce ancora statico.
+- **Il caricatore non ha piu' tetti fissi** (`lib/libc_dl.c`): via i 32 moduli per programma, i 16
+  `DT_NEEDED` per libreria, i 32 moduli TLS, i 256 blocchi dei fili, i 24 program header e i percorsi di
+  200 byte; le tabelle crescono (quelle lette senza lucchetto non si liberano quando crescono, cosi' chi
+  legge la copia vecchia legge memoria valida). VLC con l'interfaccia Qt carica piu' di 32 librerie.
+  Corretto anche: la prima variabile `__thread` esportata da una libreria (offset 0) era "undefined
+  symbol".
+- **Provato in QEMU a 64 bit**: `tools/prova-dl/prova-cxx.sh` (nuovo): eccezione della libreria presa nel
+  programma, eccezione del programma lanciata attraverso un frame della libreria, `std::bad_alloc` da
+  `libstdc++.so`, `std::thread`, `std::mutex`, una statica con lucchetto: 8 su 8.
+  `tools/prova-dl/prova-tante.sh` (nuovo): 40 e 100 librerie, 8 fili, ogni `__thread` giusto, poi il
+  `dlopen` di una in piu': OK.
+  ! A 32 bit la toolchain della macchina di costruzione non aveva i fili (Thread model: single), e Qt
+  li vuole: prima la rifa' `tools/exilla/gcc-fili.sh`.
+
+### VLC e' nel menu di avvio (vlcapri 0.001, voce 79)
+
+- **VLC installato da ExPackage non compariva nel Program Manager**: netupdate scrive una voce di
+  menu solo dalla chiave `menu` del catalogo, e il gruppo `[vlc]` di `tools/iso/strumenti.txt` non
+  l'aveva. Ora c'e' `menu = Multimedia/VLC | /exos/bin/vlcapri | /exos/share/vlc/vlc_64.ico` (la
+  chiave `menu` e' spiegata in testa a quel file).
+- **La voce avvia `vlcapri`, non `vlc`**: il Program Manager lancia una voce senza argomenti, e VLC
+  senza un file e senza la sua interfaccia Qt aprirebbe l'interfaccia a righe su una console che non
+  c'e', acceso e invisibile. `vlcapri` (`exwin/bin/vlcapri`, del pacchetto vlc come il lanciatore di
+  exilla) mostra la finestra "Apri", avvisa se il suono e' spento, e avvia
+  `vlc -I dummy --play-and-exit <file>`. `tools/librerie-exos/su-cd.sh` lo mette in `/exos/bin`, e
+  le icone in `/exos/share/vlc`, quando VLC e' costruito.
+- **L'icona** e' quella di VLC, `share/icons/256x256/vlc.png`, convertita da `tools/png2ico.py`
+  (nuovo, Python puro) nell'ICO di ExWin a 64 e 128 pixel (`tools/vlc-exos/icone`).
+- Il sistema a 64 bit non porta piu' `/exwin/bin/exilla` e `/exwin/bin/vlcapri`:
+  `costruisci-utente64.sh` costruisce ogni `exwin/bin/*`, e `tools/mkiso64.sh` adesso lascia fuori i
+  lanciatori dei pacchetti.
+- **Provato sul portatile**: `netupdate -check -yes` ha portato `vlcapri` e le icone al VLC gia'
+  installato e ha scritto la voce; dalla scrivania, Avvio > Multimedia > VLC, l'icona del cono,
+  `gizmo.mp4` scelto nella finestra: video in una finestra e suono, la finestra si chiude alla fine.
+- **La croce rossa non chiudeva VLC**: in VLC 3 l'evento di chiusura di un'uscita video non fa
+  niente (il FIXME in `src/video_output/event.h`). `tools/vlc-exos/src/vout_exos.c` adesso chiama
+  `libvlc_Quit()` su `WIN_EV_CHIUDI`, come chiudere la finestra principale nel VLC degli altri
+  sistemi. Provato sul portatile: la croce lo chiude. `tools/vlc-exos/costruisci.sh` ha
+  `VLC_SOLO_COLLEGA=1`, per ricollegare soltanto (un paio di minuti) dopo aver cambiato un nostro
+  modulo.
+- **La finestra non ha menu ne' controlli**: sono l'interfaccia Qt di VLC, e Qt su EX-OS non c'e'
+  ancora. Il porting di Qt 5 (libstdc++ condivisa, FreeType, HarfBuzz, libpng, Qt 5.15 con un plugin
+  QPA per ExWin, poi VLC con `--enable-qt`) e' la voce 85 della coda. (18 novembre: fatto, `vlc -I qt`.)
+  ! `toolinst` (l'installazione dal CD degli strumenti) non legge ancora la chiave `menu`.
+
+### Lo schermo si spegne quando nessuno lo usa (kernel 0.312, dpms.drv 0.002, voce 78 b)
+
+- **Il kernel sa quando la macchina e' stata usata l'ultima volta** (`SYS_ATTIVITA` 262): `kbd.drv`
+  0.010 a ogni tasto e a ogni pacchetto del mouse o del touchpad PS/2, i mouse USB (`usb_comune.c`:
+  `ohci.drv` 0.009, `uhci.drv` 0.005, `xhci.drv` 0.004) e `mouseser.drv` 0.002 chiamano
+  `attivita_tocca()`. Una scrittura nel kernel, nessun messaggio per evento. Un rapporto del mouse USB
+  che non dice niente di nuovo non conta. Su un kernel prima della 0.312 la chiamata non si fa
+  proprio (la libc chiede la versione una volta), quindi i driver nuovi non scrivono niente nel log di
+  un kernel vecchio.
+- **`/dev/dpms.drv`** (`-dopo:M`, `-spegni`, `-accendi`, `-ferma`, `-install [M]`, `-remove`): un
+  piccolo servizio che spegne lo schermo dopo M minuti senza tasti ne' mouse e lo riaccende al primo
+  tasto, clic o movimento. Sulle NVIDIA dalla G80 spegne il SOR che pilota il pannello, come
+  xf86-video-nv; su ogni altra scheda fa nera l'immagine coi registri VGA (SR01 e il bit PAS del
+  controller degli attributi: QEMU in un modo VBE rispetta solo il secondo). `help dpms`, manuale 4.9.
+- `tools/prova_dpms.sh`: in QEMU a 32 e 64 bit, guardando con le foto dello schermo (che non sono
+  tasti): spento a comando, riacceso con un tasto, spento da solo dopo un minuto, riacceso col mouse;
+  26 su 26.
+- **Provato sul portatile** (GeForce 8200M, 4 novembre): `-spegni` da telnet spegne il pannello,
+  retroilluminazione compresa; un tasto lo riaccende subito con l'immagine di prima; con `-dopo:1` si
+  e' spento da solo e il touchpad l'ha riacceso. Lasciato installato li' a 10 minuti.
+- **netupdate 0.043 provato** nello stesso aggiornamento (voce 75): il settore di avvio riletto da
+  fuori dopo `-check -yes` aveva la mappa della 0.312, uguale byte per byte a `/boot/kernel.bin`; dopo
+  `reboot`, 0.312 col disco scrivibile.
+
+### Il suono del portatile parte da solo, e ls elenca tutti i nomi (audio 0.005, ls 0.003)
+
+- **`audio -i` non provava la scheda del portatile.** L'HD Audio NVIDIA MCP78 (`10de:0774`, codec
+  Conexant `14f1:5051`) non era nella tabella di `lib/audio.c`: `audio -i` diceva "scheda audio non
+  riconosciuta" e provava solo la Sound Blaster, mentre `hdaudio.drv` avviato a mano suonava. Non
+  serviva un driver nuovo: HD Audio e AC'97 sono interfacce standard. Ora la MCP78 e' in tabella, e
+  una scheda che non c'e' si riconosce dalla classe PCI (`audio_per_classe`: 04/03 `hdaudio.drv`,
+  04/01 `ac97.drv`). **Provato sul portatile:** `audio -i` installa `hdaudio.drv` in
+  `/boot/kernel.cfg`, dopo `reboot` il suono e' acceso senza comandi e `audio -c` passa. In QEMU a 32
+  bit con un HD Audio ICH9: lo stesso. Il riconoscimento per classe da solo e' **da provare** su una
+  scheda che non e' in tabella.
+- **`ls` con piu' nomi mostrava solo il primo** e scartava gli altri senza dirlo
+  (`ls -l /exos/lib/libavcodec*` mostrava un file su tre). Dalla 0.003 elenca tutti i nomi in ordine;
+  una directory fra piu' nomi ha il suo nome sopra, l'intestazione si stampa una volta, un nome che
+  non c'e' e' un errore ma gli altri si elencano lo stesso. **Provato** sul portatile (64 bit) e in
+  QEMU (32 bit).
+- **Firefox e VLC sul portatile** (4 novembre): Firefox suona Vorbis, FLAC, MP3, AAC, VP8, VP9, AV1 e
+  H.264 (`gizmo.mp4` fino in fondo, 166 fotogrammi): lo stallo di H.264 della voce 77 e' solo di
+  QEMU. VLC suona `gizmo.mp4` col suono attraverso l'uscita di EX-OS. ! Il **primo** file che Firefox
+  suona dopo l'avvio resta fermo a 0 secondi, qualunque sia; i successivi vanno. Ancora da trovare.
+
+### Il settore di avvio non torna piu' al kernel vecchio dopo un aggiornamento (netupdate 0.043, voce 75)
+
+- **Causa trovata** sul portatile, che per due volte dopo `netupdate` (2 e 4 novembre) e' ripartito
+  col kernel di prima e il disco in sola lettura. A partizione smontata (`system -unload`, da
+  `/rdboot`) `tools/prove/mappa.c` ha letto il settore di avvio: c'era la mappa del 2 novembre, mentre
+  netupdate aveva stampato quella nuova. Su ext4 con blocchi da 4 KB il blocco 0 contiene sia il
+  settore di avvio sia il superblocco; l'`ext4.mod` caricato in memoria era quello di prima
+  dell'aggiornamento (il nuovo era solo in `/dev`), che fino al 2 novembre scriveva il blocco 0 intero
+  al checkpoint del giornale, col settore di avvio com'era prima di bootinstall. Dal kernel 0.307 quel
+  checkpoint arriva fino a 5 secondi dopo. Il modulo e' corretto dalla 0.310 (`al_suo_posto`,
+  `tools/prova_mappa_giornale.sh`).
+- **netupdate 0.043 chiama `sync()` subito prima di riscrivere il settore di avvio**, e un'altra volta
+  dopo: il giornale si svuota prima, cosi' un modulo di prima non puo' piu' rimettere la mappa
+  vecchia.
+- Riparato sul portatile con la ricetta di `help problemi` (`modulo carica /dev/ext4.mod.old`,
+  `netupdate -avvio`): il settore di avvio riletto da fuori aveva la mappa della 0.311, coi settori
+  uguali byte per byte a `/boot/kernel.bin`; dopo `reboot`, la 0.311 col disco scrivibile.
+  **Testata** la riparazione; netupdate 0.043 **testato** sul portatile col kernel 0.312
+  (4 novembre).
+
+### netupdate porta i file nuovi dei pacchetti installati, e VLC trova le sue librerie (netupdate 0.042)
+
+- **Guasto trovato sul portatile:** fino a netupdate 0.041 un file assente dal disco contava come
+  "mai installato" se non era essenziale, anche quando il suo pacchetto era installato. `-check -yes`
+  lasciava fuori le librerie condivise arrivate coi pacchetti gia' presenti (`/lib/libm.so.4`,
+  `libz.so.1`, `libssl.so.4`, `liblzma.so.5` e altre): `xmlwf` veniva aggiornato e poi diceva
+  "libm.so.4: cannot open shared object file". Ora un file mancante di un pacchetto installato fa
+  parte dell'aggiornamento, e le librerie con la versione (`.so.N`) arrivano prima dei programmi.
+  Gli script `.so` dei pacchetti che la macchina non ha non arrivano piu' da soli. **Testato** sul
+  portatile: arrivati 24 file, `xmlwf` parte.
+- **Guasto trovato sul portatile:** il registro caricato per il confronto aveva tetti fissi (2048
+  file, 192 KB). Con 3298 file la 0.041 ne confrontava meta' ("il registro non ci sta in memoria:
+  confronto parziale"): 1418 sconosciuti e 1655 da aggiornare invece di 255. Ora il registro si
+  misura e si alloca grande quanto e'. **Testato** sul portatile.
+- **Catalogo:** `vlc` vuole anche `flac`, `ffmpeg` vuole `zlib`, `flac` vuole `ogg`. Senza,
+  `netupdate -install:vlc` installava VLC a 64 bit e lui diceva "libFLAC.so.14: cannot open shared
+  object file". Tutte le dipendenze del repository a 64 bit sono state controllate contro quel che
+  ogni programma e libreria carica (`readelf -d`).
+- Se dopo un aggiornamento un programma dice "cannot open shared object file": `help problemi`.
+
+### ExPackage, e netupdate legge tutto il catalogo (netupdate 0.041, expackage 0.001)
+
+- **ExPackage** (`/exwin/bin/expackage`, menu Strumenti > ExPackage): le applicazioni del
+  repository in una finestra. `[ ]` non installata, `[x]` installata, `[+]` da installare, `[-]` da
+  togliere, `[d]` serve a una `[+]`; Invio o doppio clic cambiano il segno, e un'applicazione che
+  un'altra usa non si puo' segnare da togliere. **Applica** fa lavorare netupdate in disparte
+  (`-remove:<app> -yes`, poi `-install:<app> -yes`), l'ultima riga che scrive sta in fondo alla
+  finestra e Visualizza > Registro di netupdate la mostra tutta. **Repository > Imposta e
+  verifica**: modalita' (HTTP, FTP, HTTPS, FTPS) e indirizzo, scritti con `netupdate -set:` e
+  controllati: se non c'e' l'elenco delle applicazioni torna il repository di prima. Per cambiare
+  qualcosa serve root.
+- **`netupdate -install:list -p`** una pagina per volta (Invio, q); `-install:list -tab` una riga
+  per pacchetto per i programmi; `-yes` dopo `-install:<app>` o `-remove:<app>`; `-set:<TIPO>
+  <indirizzo>`.
+- **Guasto trovato:** netupdate leggeva solo i primi 32 pacchetti del catalogo e 4 `vuole` l'uno.
+  Con le librerie condivise il catalogo ne ha 34: apache ed exilla non si potevano installare
+  ("piu' di 32 pacchetti: ignoro il resto") e apache perdeva la quinta dipendenza. Ora i vettori
+  sono lunghi quanto il file.
+- `tools/prova_expackage.sh`: 12 su 12 a 32 e 64 bit in QEMU. Sul portatile solo la netupdate nuova
+  da /tmp (`-tab`, `-p`); expackage li' non provato.
+
+### Le librerie di terzi sono condivise, e i programmi le caricano all'avvio
+
+La regola era "tutte le librerie dinamiche" (30 luglio) e le librerie di terzi erano uscite
+tutte come archivi statici. Ora:
+
+- **Partono i programmi collegati a delle .so.** `gcc prog.c -lz` col compilatore incrociato
+  fa un ELF dinamico normale; il kernel ignora PT_INTERP, e prima di `main` la libc dentro il
+  programma carica i suoi DT_NEEDED col caricatore di dlopen (`lib/libc_dl.c`,
+  `__exos_dl_avvio_programma`): rilocazioni COPY, costruttori delle librerie trattenuti finche'
+  il programma non e' collegato, gli stessi percorsi di dlopen. Se manca una libreria il
+  programma si ferma col suo nome e codice 127. Solo nella libc del software portato: i
+  comandi del sistema restano statici. `tools/prova-dl/prova-avvio.sh` **provato a 32 e 64
+  bit** (costruttori, una variabile copiata, malloc da una libreria, `__thread` in due fili,
+  una libreria mancante); `tools/prova-dl/prova-dl.sh` resta a posto.
+- **Il compilatore** (`tools/gcc-exos/specs-condivise.sh`): statico solo con `-static`.
+- **Ogni libreria C e' condivisa** a 32 e 64 bit, col soname di upstream: zlib, bzip2, xz, lz4,
+  zstd, pcre2, expat, OpenSSL (`libcrypto.so.4`), APR, APR-util, Connector/C, Ogg, Vorbis, Opus,
+  FLAC, libvpx, dav1d, FFmpeg (`libavcodec.so.63`...). `comune.sh` compila tutto `-fPIC`, fa la
+  .so, e rifiuta quella che non esporta niente o usa un simbolo che nessuna dipendenza da'.
+  Niente collegamenti simbolici (EX-OS non ne ha): `libz.so` e' uno script `INPUT(libz.so.1)`,
+  come fa glibc. fmt e Connector/C++ restano statiche (C++, la libstdc++ condivisa non c'e').
+- **`/lib/libm.so.4`** (openlibm) nel sistema di base a 32 e 64 bit.
+- **VLC** ora e' collegato a loro: 15 MB invece di 47 a 64 bit.
+- **Firefox** apre l'FFmpeg di sistema con dlopen: **AAC suona**; H.264 si decodifica ma in
+  QEMU la riproduzione si ferma prima di un secondo (Firefox va in BUFFERING), non ancora
+  provato sul ferro.
+- Non ancora: il gcc nativo di EX-OS collega ancora statico; Firefox a 32 bit non ricostruito.
+
+### Audio e video: i codec, VLC, e tre guasti che tenevano muto ogni lettore (ac97.drv 0.003, hdaudio.drv 0.006, sb.drv 0.002, es1371.drv 0.002)
+
+**Provato** in QEMU a 32 e 64 bit (`tools/vlc-exos/prova.sh 32` e `64`): VLC suona Vorbis, FLAC
+e MP3 sulla scheda AC'97, e H.264, VP9 e AV1 in una finestra di ExWin, poi esce da solo. Sul
+portatile (HD Audio, codec 14f1:5051) VLC suona l'audio di un file H.264/AAC con `hdaudio.drv`
+0.006 ed esce; **resta da ascoltare se si sente bene**.
+
+- **I codec come librerie vere**, a 32 e 64 bit, ultime versioni pubbliche, sorgenti sul CD
+  degli strumenti: libogg 1.3.6, libvorbis 1.3.7, Opus 1.6.1, FLAC 1.5.0, libvpx 1.17.0, dav1d
+  1.5.4 e FFmpeg 9.0.2 (`ffmpeg`, `ffprobe` e le librerie libav, versione LGPL), ognuno col suo
+  `tools/<nome>-exos/costruisci.sh`. `tools/prova_codec.sh` decodifica dentro EX-OS i file di
+  prova di Firefox e confronta con FFmpeg su Linux: il video e' identico fotogramma per
+  fotogramma.
+- **VLC 3.0.24** (`tools/vlc-exos/costruisci.sh`, gruppo VLC del CD strumenti). EX-OS non ha
+  dlopen, quindi i suoi 234 moduli stanno in un programma solo. Due uscite sono nuove e nostre:
+  il suono sul servizio `audio` (`aout_exos`) e le immagini in una finestra di ExWin
+  (`vout_exos`). Vedi `help vlc`.
+- **Driver audio.** Riconoscevano il lettore dal filo che aveva aperto il suono: un lettore che
+  apre da un filo e avvia da un altro (VLC, Firefox) si vedeva buttare l'avvio senza una parola,
+  non suonava niente e il lettore aspettava per sempre. Ora conta il programma, non il filo.
+- **AC'97.** La lista dei descrittori aveva 2 voci, il controller ne conta 32: si perdeva la terza
+  meta' di ogni riproduzione, 85 ms, e l'orologio di chi suonava saltava. Trovato con un file in
+  cui ogni campione porta il proprio numero.
+- **Firefox** (`tools/exilla/prova-media.sh`, QEMU, 64 bit): Ogg Vorbis, FLAC, MP3, VP8, VP9 e
+  AV1 arrivano alla fine, col suono sul servizio `audio` e i fotogrammi decodificati. Prima il
+  primo video faceva cadere Firefox: la HAL (i wake lock) non veniva mai avviata, ora la avvia
+  l'AppShell. cubeb ora si adatta alla scheda: mono/stereo e frequenza si convertono quando il
+  driver concede altro da quello chiesto. **Non ancora**: H.264 e AAC (`gizmo.mp4`, `.m4a`
+  dicono "Failed to open media": su Linux Firefox li prende dall'FFmpeg di sistema con dlopen,
+  che EX-OS non ha); Firefox a 32 bit non ricostruito; non provato sul portatile.
+- **libc.** `pthread_exit` ora esegue i gestori di `pthread_cleanup_push`. Prima un filo finito
+  cosi' teneva preso il suo lucchetto, e VLC non usciva mai a fine file. `sync()` non e' piu'
+  dichiarata al codice di terzi fuori da `<unistd.h>`: libaom e libvpx ne hanno una loro.
+
+### I driver finiti non scrivono piu' nei programmi degli altri (kernel 0.309 e 0.310, chkdsk 0.004)
+
+**Provato** sul portatile col kernel 0.310: dopo `system -unload`, 0 byte estranei su 512 MB
+(`memsporca`) e quattro `chkdsk` di fila senza problemi. In QEMU a 32 e 64 bit
+(`tools/prova_dma_morto.sh`, `tools/prova_zona_rossa.sh`); col codice di prima falliscono.
+
+- **0.310.** Dopo `system -unload` il controller USB continuava a scrivere il numero di frame,
+  1000 volte al secondo, nelle pagine liberate da `ohci.drv` ormai finito, e quelle pagine
+  andavano al programma dopo. Per questo `chkdsk` non concordava con se stesso su un disco sano.
+  Le pagine DMA di un driver finito restano fuori uso fino al riavvio; `dmesg` dice quante.
+- **0.309, 64 bit.** Il kernel faceva crescere la pila senza contare i 128 byte della zona
+  rossa, e un programma poteva cadere su codice valido. Era un crash di Firefox dentro NSS.
+- **`chkdsk -dettagli`** nomina i blocchi e gli inode diversi.
+
+Se dopo netupdate gira ancora il kernel vecchio e il disco e' in sola lettura: `help problemi`.
+
+### Un errore del disco e' un errore (kernel 0.308, date 0.004, netupdate 0.040)
+
+**Testato** in QEMU a 32 e 64 bit con settori resi guasti (`tools/prova_lettura_errata.sh`);
+la stessa prova fallisce sul codice di prima. **Da testare** sul portatile.
+
+Un blocco illeggibile faceva rendere a `ext2_read` zero byte, cioe' fine del file; col
+guasto in un blocco indiretto i dati arrivavano pieni di zeri senza nessun errore; una
+pagina di un programma si riempiva di zeri al posto del codice. Ora la lettura fallisce
+e il programma si ferma con una riga `PF:` in `dmesg`.
+
+`date -ntp` si arrende dopo 5 secondi, nome del server compreso. `/bin/sync` nuovo.
+`netupdate` si ferma se il server ha un sistema piu' vecchio di quello che gira e lo
+dice; per tornare indietro apposta si aggiunge `-indietro`. ! Prima di netupdate 0.045 (6/11/2026) questo
+controllo non e' mai scattato: leggeva la versione del kernel in 64 byte, e `osversion()`
+da' un blocco di circa 130 e ne restituisce la lunghezza, non 0. Adesso legge solo il
+numero dopo `Versione:`.
+
+I programmi dei pacchetti con un albero loro (`/exos/apache2/bin`, `/exos/mariadb/bin`,
+`/exos/valkey/bin`, `/exos/php/bin`) arrivavano da netupdate 0644 fino alla 0.044: root li
+esegue lo stesso, un utente no. L'ha trovato la verifica di Apache sul portatile. Dalla
+0.045 ogni `/exos/<pacchetto>/bin` e `sbin` e' una directory di programmi; su una macchina
+gia' installata: `netupdate -check -yes`, poi `netupdate -permessi` (vedi `help problemi`).
+
+Il program manager raccoglie i programmi che lancia (pm 0.027): fino alla 0.026 ogni
+programma partito dal menu o dalla scrivania, chiuso, restava zombie sotto `pm` per tutta la
+sessione (visto sul portatile: `exilla` ed `exvolume`). Adesso `pm` li raccoglie ogni 2 secondi.
+
+A 64 bit uno sfondo JPG o PNG non si leggeva, e nemmeno le immagini di Immagini, Pennello ed
+EXBrowser o i font TrueType: restavano solo il BMP e il carattere di sistema 8x16. Il toolkit
+apre `/exwin/lib/eximg.so` e `/exwin/lib/exfont.so` quando servono, ma a 64 bit quei due file
+non si costruivano, e il caricatore (`lib/exlib/exlib.c`) faceva ancora la chiamata dei 32 bit.
+Adesso sono librerie ELF condivise come `exjs.so`, e il caricatore le apre con `dlopen`.
+Provato in QEMU a 64 bit: uno sfondo JPG da `pm.cfg`, JPG e PNG in Immagini, i font TrueType
+in Prova font. Su una macchina gia' installata: `netupdate -check -yes` porta le due librerie e
+i programmi (vedi `help problemi`).
+
+Cio' che Mesa chiede alla libc (voce 88, la strada verso OpenGL e WebGL), in `lib/libc_gnu.c`,
+solo nella libc statica, quella con cui si collega il software portato su EX-OS:
+`open_memstream`, `getline`, `getdelim`; `pthread_barrier_*`; gli oggetti locale `newlocale`,
+`uselocale`, `duplocale`, `freelocale` con `strtod_l`, `strtof_l`, `strtold_l`; `stpcpy`,
+`stpncpy`, `qsort_r` (l'ordine GNU), `reallocarray`, `secure_getenv`; `sched_getaffinity`,
+`sched_setaffinity`, `sched_getcpu` e le macro di `cpu_set_t`, `pthread_getaffinity_np`,
+`pthread_setaffinity_np`, `pthread_getcpuclockid`; `getpriority`, `setpriority`;
+`fegetexcept`; `program_invocation_short_name`. Dicono com'e' EX-OS: una locale ("C"; ogni altro
+nome fallisce con ENOENT), i programmi sul processore 0 (un insieme che non lo contiene
+fallisce con EINVAL), una priorita' (0; un'altra fallisce con EACCES). Per strada: la libc
+teneva nel suo elenco al massimo 16 flussi aperti, e `exit()` non svuotava dal diciassettesimo
+in poi: un programma che scriveva un file senza `fclose` ne perdeva la fine. Adesso l'elenco
+non ha tetto.
+
+`struct stat` ha `st_rdev` (POSIX; Mesa ci fa l'impronta dei descrittori): per un dispositivo a
+caratteri (`/dev/null`, `/dev/ptmx`, `/dev/pts/N`) e' l'identita' del dispositivo, uguale a
+`st_ino`; 0 per ogni altro file. Il campo sta in fondo, e la struttura e' cresciuta: il codice
+compilato prima (libstdc++, openssl, ffmpeg e le altre librerie gia' nei sysroot) passa la
+struttura vecchia, piu' corta. Percio', come fa la glibc, `stat`, `lstat`, `fstat` e le loro
+`*64` hanno due simboli: gli header mandano il codice nuovo a `__exos_stat2` e alle altre, che
+riempiono tutta la struttura; i nomi vecchi restano e riempiono solo fino a `st_ctime`. Non c'e'
+niente da ricostruire, e una libreria ricostruita dopo passa da sola ai nomi nuovi.
+`tools/abi-bersaglio.c` ha il campo nuovo. `tools/prova-gnu/prova-gnu.sh` (18 controlli, gli
+ultimi due su `st_rdev` e sul simbolo vecchio) passa a 32 e 64 bit in QEMU.
+
+Mesa 26.2.6 per EX-OS (voce 88): `tools/mesa-exos/costruisci.sh [32|64]` costruisce
+`libEGL.so.1` e `libGLESv2.so.2` col driver softpipe, dall'archivio firmato piu'
+`tools/mesa-exos/exos-26.2.6.patch`, la piattaforma "exos": system `exos` in meson, un driver
+EGL con le superfici in memoria (pbuffer e surfaceless) e nelle finestre ExWin, un
+winsys per loro, il frontend hgl di Haiku reso portabile. `tools/mesa-exos/prova-egl.sh [32|64]`
+collega un programma alle due librerie, lo porta in EX-OS sotto QEMU con le .so che chiede il
+suo DT_NEEDED, e disegna un triangolo con shader GLSL ES: 8/8 a 32 e 64 bit, "softpipe | OpenGL
+ES 3.1 Mesa 26.2.6".
+
+Sul CD degli strumenti e in netupdate come gruppo `mesa` (`netupdate -install:mesa`, porta anche
+zlib): `/exos/lib/libEGL.so.1`, `/exos/lib/libGLESv2.so.2`, gli header (`EGL`, `GLES2`, `GLES3`,
+`KHR`), i sorgenti, e `/exos/bin/provaegl`, che disegna il triangolo e dice quale dei suoi otto
+controlli fallisce. La verifica di netupdate `tools/netinst/verifiche/mesa.sh` cerca le librerie
+che servono a Mesa (libz in /exos/lib; libstdc++, libgcc_s e libm in /lib) e poi lancia
+`provaegl`: "a posto" vuol dire che OpenGL funziona su quella macchina, non solo che i file sono
+arrivati. Un programma: `gcc prog.c -lEGL -lGLESv2`. `tools/mesa-exos/prova-netupdate.sh` lo fa
+come lo farebbe un utente, in QEMU, su un disco installato dal CD (vedi `help problemi`, MESA).
+
+OpenGL ES in una finestra ExWin: `EGL_DEFAULT_DISPLAY` e' la piattaforma `exos`
+(`_EGL_PLATFORM_EXOS` di Mesa, nella patch), ed `eglCreateWindowSurface` prende una
+`struct exos_egl_finestra` (`#include <exos/egl_exwin.h>`, da `drivers/wserver/egl_exwin.h`):
+una versione e due funzioni date dal proprietario della finestra. `misura` dice quanto e' grande
+l'area di disegno; `mostra` riceve ogni fotogramma finito a `eglSwapBuffers` (0xAARRGGBB, prima
+la riga in alto), e il proprietario lo copia nella zona della finestra e lo dice al server. Col
+server parla il proprietario e non libEGL perche' le notizie del server (un ridimensionamento,
+gli eventi) arrivano alla casella del processo, che legge il ciclo del programma; una libreria
+che la leggesse gliele ruberebbe. E' la forma di `wl_egl_window` di Wayland. Una finestra
+ridimensionata fra due fotogrammi da' al fotogramma dopo la misura nuova.
+`tools/mesa-exos/prova-finestra.sh [32]` apre una finestra col protocollo (come il widget di
+Firefox), disegna 60 fotogrammi, cambia misura e fotografa lo schermo con ExWin acceso: 8/8 e
+il triangolo nella finestra.
+
+Due guasti dei cross trovati per strada, tutti e due in `tools/gcc-exos/specs-condivise.sh`
+(da rilanciare su un cross costruito prima del 7 novembre 2026): ld cercava il DT_NEEDED di una
+.so nel suo SEARCH_DIR, che e' la directory dove il cross e' stato costruito (su un'altra
+macchina): "libz.so.1 ... not found" e tutti i suoi simboli indefiniti. E a 32 bit, senza
+sysroot, ld prendeva `/lib32/libstdc++.so.6` dell'host (quella della glibc) attraverso
+`/etc/ld.so.conf` dell'host: "undefined reference to `_Unwind_Resume@GCC_3.0`". Adesso le specs
+danno a ld `-rpath-link` e `--sysroot` sulla directory del bersaglio del cross stesso. E in
+`tools/librerie-exos/comune.sh` la `__stack_chk_fail_local` a 32 bit per le .so e' weak: meson la
+passa a ogni collegamento, anche degli eseguibili, dove libc.a ce l'ha gia'.
+
+### Meno FLUSH: il giornale non chiude a ogni operazione (kernel 0.307)
+
+ext3 ed ext4 chiudono la transazione a `fsync`, `sync` e smontaggio, a giornale
+pieno a meta', dopo 5 secondi, e subito solo se l'operazione ha liberato blocchi.
+Prima ogni operazione costava tre FLUSH: Firefox al primo avvio sul portatile
+passa da 6605 a 1866 FLUSH. Un'interruzione brutale perde fino a 5 secondi di
+operazioni senza `fsync`, come su Linux; il volume resta coerente. Prova:
+`tools/prova_giornale_tempo.sh`. `/proc/interrupts` dice quante volte ogni linea ha
+raggiunto il suo driver.
+
+### La cache di lettura dei dischi (kernel 0.304)
+
+Tiene in RAM pagine da 4 KB dei
+file e dei metadati, fino a `cachedisco` MB in `kernel.cfg` (di serie 1/8 della
+RAM, 0 la spegne). Scrive sempre anche sul disco, quindi uno spegnimento brutale
+non perde niente in piu'. Sotto 1/8 di RAM libera smette di crescere, e chi resta
+senza pagine se le riprende prima di toccare lo swap. Prova: `tools/prova_cache.sh`.
+
+### I contatori dei dischi (kernel 0.303, disk 0.003, /proc/disco)
+
+`disk -stat` dice cosa ha fatto ogni disco dall'avvio: comandi, KB, tempi, FLUSH, quanto e' arrivato dalla memoria e quanto si e' aspettato il lucchetto del disco. `disk -stat 5` lo ripete ogni 5 secondi, per differenza, con la percentuale di occupazione. Servono a misurare la cache prima di farla.
+
+### reboot, halt e poweroff smontano le unita' (kernel 0.302) — provato in QEMU a 32 e 64 bit
+
+Fino alla 0.301 i tre comandi sincronizzavano e mettevano il segno "pulito", ma non smontavano: su ext3 ed ext4 il giornale restava aperto e all'avvio dopo compariva `not unmounted cleanly and its journal is not replayed`. Ora ogni volume si smonta davvero, `/` per ultimo, e lo schermo dice `Smonto / (hd0p1)... ok`. Un volume che non si puo' smontare si chiude comunque: giornale chiuso, nessuna scrittura dopo, e a schermo `ancora in uso`. Dopo i 30 secondi di SIGTERM chi non si e' chiuso riceve SIGKILL. `sleep` si interrompe: prima `kill -9` su un programma addormentato non aveva effetto fino al risveglio. Prova: `tools/prova_smonta.sh`.
+
+### Un modulo vecchio non blocca piu' il disco; netupdate ritenta (kernel 0.293, netupdate 0.038, install 0.011, hwconfig 0.009, nv50.drv 0.009) — provato in QEMU, da provare sul ferro
+
+Un portatile installato da un CD piu' vecchio e aggiornato con netupdate si e' ritrovato con **tutto il disco in sola lettura**: `mount` lo diceva, anche per root. Non erano i permessi. La scrittura di ext2/3/4 sta in `/dev/ext4.mod`, il kernel lo carica solo se e' costruito per quello stesso kernel, e netupdate aveva sostituito tutto tranne quel file: il vecchio e il nuovo pesavano entrambi 40920 byte, e il registro veniva scritto fidandosi della dimensione. Corretto:
+
+- **ISO a 64 bit su un processore senza 64 bit: ora lo dice a schermo.** Prima lo schermo restava nero e il messaggio usciva solo sulla seriale: succede in VirtualBox con una macchina di tipo a 32 bit. Rimedio: tipo Other/Unknown (64-bit) con VT-x/AMD-V attivo.
+- **`install` non copia piu' quello che trova, segue un catalogo (install 0.012).** Le directory del sistema, con i loro attributi, sono un elenco dentro `install`: /rdboot, /proc, /cdrom e qualunque altra unita' non vengono mai copiate, da nessun supporto. Niente del supporto arriva sul disco se non il contenuto dei file: alla fine `install` imposta proprietario e permessi di tutto il sistema, e /tmp nasce 1777. Il modulo `/dev/ext4.mod` si scrive per ultimo e si prende da /rdboot, quindi e' sempre quello del kernel che si sta installando: e' la sua mancata corrispondenza che manda il disco in sola lettura. Una directory nuova del sistema va aggiunta al catalogo.
+- **Il kernel** prende `/rdboot/dev/ext4.mod` quando quello del disco e' rifiutato, non solo quando manca.
+- **netupdate** scrive un'impronta nel registro solo dopo aver letto il file, e i file essenziali li controlla sempre sul disco: un registro bugiardo si ripara da solo. Il primo `-check` senza registro rilegge ogni file e puo' durare minuti.
+- **netupdate** tiene in coda i file non arrivati, alla fine li elenca e chiede se riprovare (con `-yes`, un giro da solo).
+- **install** non copia piu' `/rdboot` e `/proc`: esistono solo in memoria.
+- **`nv50.drv -i`** risponde a `hwconfig -d`, che prima non lo copiava mai, e **hwconfig** ne scrive il blocco in `/boot/avvio.sh`.
+
+**Se il tuo disco e' in sola lettura**, da root:
+
+```
+dmesg | grep MODULO                      # il motivo
+modulo carica /rdboot/dev/ext4.mod       # di nuovo scrivibile, subito
+cp /rdboot/dev/ext4.mod /dev/ext4.mod    # rimette a posto quello del disco
+netupdate -check -yes                    # allinea il resto
+```
+
+Dalla 0.293 basta l'ultima riga. Se netupdate dice che non c'e' niente da fare e un file e' vecchio: `delete /boot/netupdate.reg`, poi `netupdate -check -yes`. Tutto questo sta in `help problemi`, sulla macchina stessa.
+
+### ext3 ed ext4 anche negli strumenti (kernel 0.292, mkfs 0.002, chkdsk 0.003) — provato in QEMU, da provare sul ferro
+
+Il kernel leggeva e scriveva gia' ext3 ed ext4; gli strumenti no. Ora:
+
+- `mkfs -t ext3` e `mkfs -t ext4`. Blocchi da 4 KB da 512 MB in su, inode da 256 byte,
+  giornale jbd2; ext4 ha extent e metadata_csum. `-L ext4` senza `-t` e' un'etichetta e non un
+  filesystem: `mkfs` adesso lo dice prima di chiedere conferma.
+- `chkdsk` controlla e ripara tutti e tre: con `-r` applica il giornale, percorre gli extent,
+  legge descrittori di ogni misura, flex_bg, gruppi non inizializzati e i file di quota e
+  degli orfani, verifica e riscrive le somme. Sola lettura, con il motivo stampato: inline
+  data, meta_bg, attributi negli inode, giornale esterno, file degli orfani non vuoto.
+  bigalloc viene rifiutato. Un blocco difettoso dentro un extent si segnala, non si sposta.
+- Tre bug vecchi di `chkdsk`, anche su ext2: una directory si fermava al dodicesimo blocco,
+  quindi con `-r` i blocchi dei file oltre potevano essere dichiarati liberi; i link
+  simbolici corti e i dispositivi venivano letti come puntatori a blocchi; i blocchi degli
+  attributi estesi non venivano contati.
+- `disk`, `mount`, `hwconfig`, `toolinst` e `/proc/mounts` nominano ext2, ext3 ed ext4;
+  `toolinst` li accetta, `fdisk` li suggerisce, `cdinstall` chiede quale usare (ext2 resta
+  la scelta predefinita).
+- Un disco di sistema ext4 ora viene segnato «in uso» come ext2 ed ext3, riscrivendo la somma
+  del superblocco: prima, dopo un crash, non veniva mai controllato.
+
+`tools/prova_extfs.sh` (formattare, scrivere, controllare, rovinare e riparare, con `e2fsck` di
+Linux come giudice) e `tools/prova_sistema.sh` con `EXOS_FS=ext3` ed `ext4` passano a 32 e 64 bit.
+
+### Lucchetti veri sui file (kernel 0.291) — provato in QEMU, Firefox ancora da ricollegare
+
+Finora i lucchetti di `fcntl` e `flock` non escludevano nessuno: `F_GETLK` diceva sempre
+«libero» e `F_SETLK` sempre «preso». Ora `F_GETLK`, `F_SETLK` e `F_SETLKW` sono veri: per
+processo e per intervallo di byte, consultivi come in POSIX, e vanno via quando il processo
+chiude un qualsiasi descrittore del file o esce. `flock` sta sopra di loro, su tutto il file
+e per processo. `EDEADLK` non c'e': due programmi che si aspettano a vicenda restano fermi
+finche' non arriva un segnale. I programmi statici ricevono i lucchetti solo ricollegandoli
+alla `libc.a` nuova. `tools/prova_lucchetti.sh` passa a 32 e 64 bit, anche con
+`_FILE_OFFSET_BITS=64`. Prima di questa modifica la stessa prova mostrava un secondo
+processo che prendeva un lucchetto gia' tenuto.
+
+### L'ora arriva dalla rete a ogni accensione (date 0.003) — provato in QEMU
+
+Una macchina con la pila dell'orologio scarica riparte dalla data del suo BIOS: sul
+portatile 2007-09-01, quindi file datati 2007 e «Warning: Security Risk» in Firefox
+finche' qualcuno non rimetteva l'ora. Ora `/boot/avvio.sh` esegue `date -auto &` dopo
+`dhcp`: fa come `date -ntp`, in silenzio e in sottofondo, cosi' senza rete l'avvio non
+si ferma. hwconfig scrive la riga nelle installazioni nuove; su un sistema gia'
+installato `date -install` la aggiunge e `date -remove` la toglie. Il fuso sta in
+`/boot/fuso.cfg` (`date -fuso:`, di serie +1 con l'ora legale europea).
+
+### Cancellare una cartella non si ferma piu' al primo errore (filemgr 0.015) — provato in QEMU
+
+Il file manager si fermava alla prima cosa che non riusciva a togliere e lasciava tutte
+le voci dopo, con un avviso nella sola riga di stato. E' cosi' che un profilo di Firefox
+cancellato con Firefox acceso restava a meta'. Ora toglie tutto quello che puo' e una
+finestra dice quante voci ha cancellato, quante restano e la prima rimasta, con
+l'indicazione che forse un programma la sta usando. Un file cancellato mentre e' aperto
+resta nella sua cartella come `~EXV0001.DEL` finche' non viene chiuso, e non si conta
+tra quelli cancellati. Spostare una cartella su un altro disco si ferma allo stesso modo
+se l'origine non si toglie per intero. `tools/prova_filemgr.sh` ha il caso nuovo a 32 e
+64 bit.
+
+### /proc nel sistema di base (kernel 0.290, /bin/readlink) — testato in QEMU
+
+`/proc` si monta da solo all'avvio e non si può smontare. Non è una cartella sul disco:
+è un filesystem di sola lettura i cui file si scrivono a ogni lettura, dalle tabelle del
+kernel, nel formato di Linux, perché i programmi che li leggono analizzano quel testo.
+Nessun buffer e nessun limite: si copia solo il pezzo chiesto.
+
+`/proc/meminfo`, `cpuinfo`, `stat`, `uptime`, `mounts`, `version`, `/proc/self` e
+`/proc/<pid>/` con `stat` (i 52 campi), `status`, `cmdline`, `exe`, `cwd`, `limits`,
+`fd/N` e `task/<tid>/stat`, il contatore di CPU di ogni filo. L'elenco viene da quello
+che i programmi portati chiedono davvero: Firefox `self/exe`, `status`, `fd/N`, MariaDB
+`self/limits`, `self/cwd`, gcc `self/exe`. I dati di un processo li leggono solo il suo
+utente e root; l'ambiente apposta non c'è.
+
+EX-OS non ha collegamenti simbolici, quindi `exe`, `cwd` e `fd/N` sono piccoli file che
+contengono la destinazione e `readlink()` li legge. Mancano ancora la memoria per
+processo (`vsize` e `rss` valgono 0), la divisione fra tempo utente e di sistema (tutto
+in `utime`) e il file dietro a `fd/N`.
+
+`tools/prova_proc.sh`: tutto a 32 e 64 bit. **Da testare** sul portatile: `task/` con i
+fili di Firefox.
+
+### grep (/bin/grep) — testato
+
+`grep [-EFGivcnlLoqsHhrwxa] [-e MODELLO]... [MODELLO] [FILE...]`, da un file, da una
+cartella con `-r` o da una pipe. La libc non ha le espressioni regolari, quindi stanno
+nel programma: di base ed estese, classi, `{m,n}`, eseguite come insieme di stati, così
+un modello non può esplodere su una riga lunga. Nessun limite alla lunghezza di una riga.
+Stesso risultato del GNU grep in 1463 casi su 1472 su Linux (gli altri 9 sono `-F -E`
+insieme, che GNU rifiuta); conteggi controllati dentro EX-OS a 32 e 64 bit da
+`tools/prova_grep.sh`.
+
+### I sorgenti di terzi confrontati con quelli ufficiali (tools/aggiorna-sorgenti.sh) — testato senza una versione nuova
+
+`tools/aggiorna-sorgenti.sh` confronta le 17 librerie di `tools/sorgenti-terzi.txt`
+con i tag dei loro repository. `-scarica NOME` prende l'archivio ufficiale, non il
+tag, e lo tiene solo se la firma è buona con le chiavi che ha già accanto; `-prova
+NOME` applica le patch di EX-OS a una copia; `-applica NOME` cambia `VER=` solo dopo
+entrambi. Non compila: la prova resta la costruzione a 32 e 64 bit e le prove in
+QEMU. Provato su Apache e APR alla versione attuale, con un archivio alterato
+rifiutato. Firefox, gcc, binutils e Rust non sono coperti.
+
+### I sorgenti di Firefox dall'ultima versione pubblicata (tools/exilla/sorgenti.sh) — testato su Firefox 160.0.1
+
+`tools/exilla/sorgenti.sh` fa per Firefox (e, voce 103, Thunderbird) quello che
+`tools/aggiorna-sorgenti.sh` fa per le librerie: senza argomenti dice la nostra versione e
+quelle di Mozilla (release, ESR, beta, da product-details.mozilla.org); `-scarica` prende
+`firefox-VER.source.tar.xz` da archive.mozilla.org, controlla la firma con la chiave di
+Mozilla e lo sha512 con `SHA512SUMS`; `-prova` mette le patch di Exilla in ordine su una copia
+in `cross_build/aggiorna` e tiene da parte gli originali dei file che toccano, per
+`patch-crea.sh`; `-applica` rifiuta finché resta un `.rej`, sposta l'albero vecchio fuori da
+MEGA (senza cancellarlo) e mette la copia al suo posto.
+- **La chiave è fissata** in `tools/exilla/mozilla-chiave.txt` (Mozilla Software Releases,
+  `14F2 6682 … D98F 0353`, confrontata con quella che Mozilla pubblica; la sua sottochiave
+  d'agosto 2026 è quella dopo la rotazione): una chiave diversa ferma lo scaricamento.
+- **Un `.cargo-checksum.json` non si patcha**, si ricalcola per i crate che tocchiamo: le sue
+  somme sono di una versione del crate.
+- **Trovato facendolo:** tre file nostri di Exilla (`widget/exos/ExosPosta.cpp`, `ExosPosta.h`,
+  `nsWindow.h`) avevano come "originale" una nostra versione precedente, quindi le loro patch
+  avevano solo l'ultima modifica e da un albero pulito non si rifaceva Exilla con
+  `tools/exilla/patch`. Ora sono file interi, come gli altri nuovi.
+- **Provato su 160.0.1** (il nostro albero è la nightly 158.0a1): firma e sha512 buoni, 340
+  patch esatte, 42 spostate, 3 rifiutate e adattate a mano (due perché Mozilla ha cambiato le
+  righe, una non serve più: abseil accende mmap da solo quando c'è `<sys/mman.h>`). La copia è
+  pronta; restano il cambio (`-applica`), la costruzione a 32 e 64 bit e le prove di Exilla.
+
+### Il tasto Stamp salva lo schermo in un PNG (kbd.drv 0.008, wserver 0.015, pm 0.026, /bin/cattura) — testato in QEMU
+
+**Stamp** salva quello che c'è a video in `$HOME/Images/schermata-AAAAMMGG-HHMMSS.png`
+e **Alt+Stamp** solo la finestra col fuoco. Lo stesso lavoro da una shell, telnet
+compreso: `cattura [-f] [file.png]`, che stampa il nome e la misura. Vale per
+qualunque risoluzione e profondità, e il puntatore è nella fotografia. Con una
+console di testo a video la fotografia è la scrivania come è stata lasciata, e
+`cattura` lo dice; senza ExWin dice che la grafica non è attiva.
+
+wserver copia soltanto i pixel in una zona creata dal client (messaggi
+`WIN_MSG_FOTO` e `WIN_MSG_FOTATA`): il PNG lo comprime `cattura`, così nel frattempo
+il mouse e le finestre non si fermano. Il nome della zona viene dal pid di chi
+chiede e non dal messaggio, altrimenti un client potrebbe far scrivere al server
+sopra un'altra finestra. Una pressione mentre la precedente sta ancora lavorando
+viene ignorata; una schermata non salvata apre un avviso, una salvata non dice niente.
+
+Per portare le fotografie fuori dalla macchina, Apache ha `http://indirizzo/schermate/`,
+un alias su `/root/Images` raggiungibile solo da indirizzi privati, perché una
+fotografia della scrivania mostra tutto quello che era aperto. Solo la cartella di
+root: la configurazione arriva a un Apache già installato col prossimo pacchetto.
+
+`tools/prova_cattura.sh` (32 e 64 bit, a 800x600: QEMU non è arrivato a 1366x768,
+quindi la misura del portatile è **da testare** lì): il file di Stamp identico
+pixel per pixel alla fotografia di QEMU, Alt+Stamp e `-f` più piccoli dello schermo,
+dalla console, senza grafica. `tools/png_confronta.py` decodifica un PNG senza ImageMagick.
+
+### Anelli di rete dalla RAM su tutti i driver (e1000.drv 0.005, nforce.drv 0.015, rtl8169.drv 0.004, pcnet.drv 0.004, sis900.drv 0.020, ne2k.drv 0.004, ar5k.drv 0.004) — e1000, pcnet e ne2k testati in QEMU; nforce, rtl8169, sis900 e ar5k **da testare**
+
+Quello che la e1000 aveva dalla 0.287 vale ora per tutti: niente più posti
+fissi negli anelli. L'ordine è `-rx N` / `-tx N` del driver, poi `netrx` e
+`nettx` di `kernel.cfg`, poi la RAM (un descrittore di ricezione per MB e un
+quarto per l'invio), sempre entro quello che la scheda ammette; la tabella è
+in `/boot/kernel.txt`. La coda verso `ip.drv` è una sola per tutti i driver,
+ne2k compresa, parte da 64 posti e cresce fino a quattro anelli.
+
+- **Provato:** `tools/prova_schede_rete.sh` scarica 16 MB su ogni scheda che
+  QEMU emula e controlla lo sha256, a 32 e 64 bit. e1000 5-6 s, pcnet 5-8 s,
+  ne2k circa 225 s (come prima: il limite sono i 16 KB della scheda).
+- **Non provato:** nforce, rtl8169, sis900 e ar5k sono solo compilati, QEMU
+  non ha quelle schede.
+- **Il calo a ~90 richieste al secondo non c'è più:** a 2 GB e 2048 client
+  125-127 richieste al secondo sia con 256 sia con 2040 descrittori, e zero
+  frame persi dalla scheda.
+
+### Tastiera nuova in ExWin: lettere accentate, pressioni e rilasci (kbd.drv 0.007, wserver 0.014, exwin.so 0.021) — testato in QEMU
+
+Fino a ieri le **caselle e le aree di testo prendevano solo l'ASCII**: una «è»
+battuta nell'editor non ci entrava. E i programmi grafici sapevano solo quale
+tasto era stato premuto, mai quando veniva lasciato. Questo è il punto 2 della
+voce 42, il passo prima di SDL e GTK.
+
+- **Le accentate si scrivono**, in caselle e aree, e si salvano in **UTF-8**,
+  la codifica di Linux e del web. Backspace, Canc e frecce si muovono di una
+  lettera intera, anche se è di due byte. I file vecchi con le accentate della
+  console (CP437) si leggono come prima. La console di testo resta in CP437,
+  ed è quello che la VGA sa disegnare.
+- **L'euro e il § si scrivono**: AltGr+E per l'euro (italiana, francese,
+  tedesca, spagnola; AltGr+4 sulla britannica), Shift+ù per il § sulla
+  tastiera italiana. Le disposizioni di tastiera sono in Unicode (erano in
+  CP437, che l'euro non ce l'ha) e il font di sistema ha il glifo dell'euro.
+  Nella console di testo l'euro non si scrive, perché la VGA non sa
+  disegnarlo.
+- **kbd.drv 0.007**: chi lo chiede riceve un evento lungo, con la pressione o
+  il rilascio, la ripetizione, il carattere in Unicode, il tasto fisico e
+  tutti i modificatori (anche AltGr, il tasto Windows, Bloc Maiusc e Bloc
+  Num). Chi chiede come prima riceve i tasti come prima. Il **Ctrl di destra**
+  funziona (prima veniva ignorato); **Bloc Num** accende la spia e fa scrivere
+  le cifre al tastierino; il tasto Pausa non si legge più come un Ctrl; tenere
+  premuto Bloc Maiusc non lo fa più lampeggiare.
+- **wserver 0.014**: pressioni e rilasci vanno solo alle finestre che li
+  chiedono (`WIN_MSG_TASTI`); i tasti che il server tiene per sé
+  (Ctrl+Alt+Canc, il tasto Windows, Alt+F10) non arrivano ai programmi, e
+  nemmeno il loro rilascio.
+- **exwin.so 0.021**: `ex_track_keys`, i messaggi `EXM_KEY_DOWN` ed
+  `EXM_KEY_UP`, e `ex_key_info` per il carattere, il tasto fisico e i
+  modificatori. `EXM_KEY` resta com'era; l'euro arriva come `KBD_K_UNICODE`.
+- La prova è `tools/prova_tasti.sh` (con `finestreprova -t`), sulla tastiera
+  italiana: «aèù€§» nella casella, la freccia che salta la «è» nell'area, i
+  rilasci, lo Shift da solo, il Ctrl destro. Tutto a posto a 32 e 64 bit.
+- Le prove che cliccano sulla scrivania e nel file manager cercano le voci
+  **per nome** nei pixel dello schermo (`tools/trova_testo.py`, il passo
+  `punta:` di `tools/qemu_drive.py`), invece che a posizioni fisse.
+
+### ExWin senza tetti fissi: finestre, elenco, oggetti (kernel 0.289, wserver 0.013, exwin.so 0.020) — testato in QEMU
+
+Fino a ieri ExWin aveva **16 finestre**: la diciassettesima veniva rifiutata, e
+la barra delle applicazioni ne vedeva sedici al massimo. Adesso le finestre,
+l'elenco della barra, i titoli e gli oggetti del toolkit crescono con quello
+che si chiede, fino alla memoria che c'è. Provato con 200 finestre aperte e
+chiuse di fila, a 32 e 64 bit (`tools/prova_finestre.sh <dir> 200`).
+
+- **Kernel 0.289**: le zone di memoria condivisa (una per finestra) non hanno
+  più i tetti di 20 per processo e 24 in tutto; le tabelle raddoppiano quando
+  sono piene, sotto un lucchetto (c'è l'SMP).
+- **wserver 0.013**: la tabella delle finestre e la coda degli eventi di
+  ognuna raddoppiano; i titoli hanno la lunghezza che hanno (prima 48 byte), e
+  sulla barra del titolo si tagliano prima dei pulsanti. L'elenco per la barra
+  va **a pezzi** da 16 (`WIN_MSG_ELENCATA` e poi `WIN_MSG_ELENCO_SEGUE`).
+- **L'elenco lo possono seguire più programmi**: prima solo l'ultimo che lo
+  chiedeva, e un programma che lo seguiva per sé lo toglieva alla barra, che
+  restava ferma. E il server non aspetta più la casella di chi lo segue: con
+  un programma che chiudeva 40 finestre di fila il server restava fermo dieci
+  secondi a pezzo, schermo compreso. Adesso a casella piena riprova al giro
+  dopo, dal pezzo che non era partito.
+- **exwin.so 0.020**: niente più 192 oggetti per programma, né 4 terminali,
+  4 liste, 2 aree di testo, 6 controlli a voci, 2 menu, 16 descrittori
+  guardati: ognuno parte da quei posti e raddoppia. E dentro i controlli:
+  - un'area di testo non si ferma più a 512 righe da 200 colonne (3000 da
+    240 quella del codice): raddoppia le righe quando è piena e le colonne
+    quando una riga non ci sta;
+  - una lista non si ferma più a 65536 righe da 63 caratteri, e disegna solo
+    quello che ci sta nel controllo;
+  - una casella di testo tiene quanto si scrive (prima 1023 caratteri);
+  - i combo e le schede, più di 32 voci; i menu, più di 6 titoli, 16 voci
+    per tendina e 4 tendine laterali; il menu del tasto destro, più di 16
+    voci; i caratteri aperti (96), i file dei caratteri (24), le icone (32).
+- **filemgr 0.014**: una cartella con più di 512 file si vede tutta (prima
+  si vedevano le prime 512, senza avviso), gli appunti dei file non si
+  fermano a 64, e l'ordinamento è uno heapsort, perché con migliaia di file
+  quello di prima (n²) diventava lento.
+- La prova `finestreprova -c` riempie i controlli oltre i tetti di una volta:
+  combo di 100 voci, menu di 10×40 con 8 tendine laterali, 5000 righe da 600,
+  4000 da 300 nel codice, casella di 5000 caratteri, lista di 70000 righe da
+  150. Tutto a posto a 32 e 64 bit.
+- `pm` 0.025 (la barra) e `attesa` 0.006 leggono l'elenco senza un numero
+  fisso; `finestreprova` è il programma di prova.
+
+### PHP 8.5 con PDO dentro Apache, e 2048 client per 10 minuti (kernel 0.286)
+
+PHP 8.5.12 gira in EX-OS, da riga di comando (`/exos/php/bin/php`) e
+**dentro Apache**: `mod_php` è compilato dentro `httpd`, perché i moduli non
+si caricano a programma acceso. È la versione per i fili (ZTS), quella che va
+col MPM worker; i database si aprono con **PDO** (`pdo_mysql`) o con
+`mysqli`, tutti e due su `mysqlnd`, il client scritto dentro PHP.
+
+I sorgenti vengono dal **clone di GitHub** (`php-src`, ramo `exos-8.5.12` dal
+tag della versione), come Apache e MariaDB: così ogni aggiornamento porta con
+sé anche i sorgenti. Il clone è stato confrontato con `php-8.5.12.tar.xz` di
+php.net (firma GPG del release manager): gli stessi file, l'archivio ha in più
+solo i 28 generati. Da un clone servono `bison` e `re2c`; re2c 4.6 è stato
+costruito anch'esso dal suo clone di GitHub.
+
+Cosa ha chiesto, per entrare:
+
+- **la libc**: `creat`, `scandir` e `alphasort`, `getdtablesize`; e `mkstemp`
+  ora restituisce l'errore vero di `open` (diceva sempre EEXIST: opcache
+  scriveva «lock file in /tmp: esiste già» per un `/tmp` che non c'era);
+- **due patch a PHP**: `st_rdev`, che la `struct stat` di EX-OS non ha (nessun
+  file di dispositivo), e lo spegnimento con `httpd -X`. Su Linux la chiusura
+  del figlio e quella del server girano in due processi; su EX-OS, che non ha
+  `fork`, nello stesso, e la seconda usava TSRM già distrutto: `httpd -k stop`
+  moriva in `ts_free_id`;
+- **il kernel 0.286**: FLUSH CACHE aspetta fino a 30 s (come libata di
+  Linux). Con i 5 s di un comando qualsiasi, un flush con molto da scrivere
+  scadeva, `fsync` rispondeva EIO e il bootstrap di MariaDB si fermava;
+- **`/exos/php/tmp`**: EX-OS non ha `/tmp`, e senza quella cartella opcache
+  non parte e Apache con lui.
+
+**La prova** (`tools/stress/stress_httpd.sh`, QEMU a 64 bit con KVM, 1 CPU,
+2 GB): MariaDB e Apache con PHP nello stesso EX-OS, una pagina che con PDO e
+istruzioni preparate legge (GET: una riga per chiave, 20 righe per gruppo) e
+scrive (POST: inserisce o aggiorna, cambia un valore, una transazione di tre
+istruzioni). 2048 client da Linux, ognuno con una connessione nuova a ogni
+richiesta, 60 s di salita e poi 10 minuti:
+
+| | 20 client | 2048 client |
+|---|---|---|
+| richieste buone al secondo | 145 | 150 all'inizio, 95 alla fine (118 in media) |
+| risposta mediana (p50) | 131 ms | 1,8-3 s |
+| p95 | 312 ms | 5-34 s |
+| errori | 0 su 5140 | 16.783 su 102.067 (16.757 senza risposta in 60 s) |
+
+Tutti i 2048 client sono rimasti collegati per tutto il tempo. Nessun fault,
+memoria ferma (480 MB in uso con 310 processi e fili), e alla fine Apache e
+MariaDB si sono spenti puliti, con codice 0. Quello che dice la tabella è che
+**il server serve circa 150 richieste al secondo, con 20 client come con
+2048**: con 2048 ognuno aspetta il suo turno, e quelli rimasti in coda più di
+un minuto il client li conta come errori.
+
+! **La prova ha trovato due colli di bottiglia, e nessuno dei due è PHP.**
+  Il primo è dell'host: la rete «user» di QEMU accetta la porta inoltrata con
+  una coda minuscola, e con una connessione nuova a ogni richiesta è
+  traboccata 128 mila volte. Il secondo è di EX-OS: l'anello di ricezione
+  della scheda e1000 ha **96 posti fissi**, e sotto la raffica dei 2048
+  client il driver non lo svuotava abbastanza in fretta (858 mila frame
+  persi). In coda, voce 39.
+
+### fsync vero, e alla pari con Linux (kernel 0.284-0.285)
+
+`fsync()` non faceva niente: la libc rispondeva 0 subito, perche' i
+filesystem di EX-OS scrivono a ogni `write` e si credeva che non restasse
+niente in sospeso. La scrittura pero' arriva alla cache del disco, non al
+supporto (e sul FAT nemmeno a quella: la cache di `fat.c` aspetta
+`fat_sync`). Un commit di InnoDB confermato al client poteva sparire con
+una mancanza di corrente.
+
+- **kernel 0.284, `SYS_FSYNC` (258):** il volume del file scrive quello che
+  tiene (la cache del FAT, i blocchi riservati e il giornale di ext2/ext3)
+  e il disco riceve FLUSH CACHE. Si svuota tutto il volume e non solo il
+  file: la cache del disco non sa cosa sia un file. C'e' anche
+  `fdatasync`, che fa lo stesso. Con un kernel piu' vecchio la libc fa come
+  prima.
+- **verificato dal di fuori:** con la traccia di QEMU (`ide_bus_exec_cmd`),
+  30 s di MariaDB con 4 client mandano al disco 17 927 FLUSH CACHE EXT;
+  prima nessuno.
+
+Il confronto (voce 34 della coda): 10 minuti, 512 client senza pausa, lo
+stesso generatore, le stesse opzioni di `my.cnf`, la stessa macchina
+virtuale (QEMU a 64 bit con KVM, una CPU, 2 GB, disco IDE, e1000 sulla rete
+user di QEMU), le immagini dei dischi sullo stesso disco dell'host; InnoDB
+scrive sul disco a ogni commit su tutti e due
+(`innodb_flush_log_at_trx_commit = 1`):
+
+| 512 client, 10 minuti | Linux (Debian 13) | EX-OS 0.284 | EX-OS 0.285 |
+|---|---|---|---|
+| istruzioni/s | 1764 | 343 | **1940** |
+| p50 | 220 ms | 1,25-1,48 s | 220 ms |
+| p95 | 440-880 ms | 3-5 s | 440-740 ms |
+| errori | 1 | 35 (deadlock di InnoDB) | 4 |
+| connessioni fallite | 1 | 5 | 5 |
+
+Le connessioni fallite sono handshake scaduti nella salita, quando 512
+client arrivano in 25 secondi; si sono ricollegate tutte.
+
+Restano diversi: ext4 contro ext2, qcow2 contro raw, MariaDB 11.8.6 di
+Debian contro 11.8.9. Nessun pacchetto perso da EX-OS.
+
+! **LE MISURE DELLE SEZIONI QUI SOTTO (2109/s, le 8 ore a 1011/s) SONO SENZA
+  FSYNC**: il disco non veniva mai svuotato.
+
+Col 0.284 EX-OS era cinque volte piu' lento di Linux sullo stesso lavoro, e
+le cause erano due, corrette nel **kernel 0.285**:
+
+- **il flush col lucchetto del VFS preso.** Mentre il disco svuotava la
+  cache, nessun altro filo poteva aprire, leggere o scrivere un file: con
+  MariaDB vuol dire tutti i fili, a ogni commit. Ora `fsync` su ext2 fa
+  sotto il lucchetto solo la parte del filesystem (i blocchi riservati, il
+  giornale) e svuota il disco dopo averlo rilasciato.
+- **il driver del disco girava a vuoto.** Aspetta la fine di un comando
+  leggendo il registro di stato (niente IRQ 14, per le ragioni scritte in
+  `ata.c`), e con una CPU sola quell'attesa era tempo tolto a tutti. Ora,
+  dopo poche letture, cede la CPU agli altri fili e riguarda dopo; il
+  lucchetto del disco resta suo, e le scadenze sono in tick come prima.
+
+Insieme bastano: i commit di molte transazioni ora si raggruppano in un
+flush solo (group commit di InnoDB), perche' gli altri fili lavorano mentre
+il disco svuota. Il disco riceve ancora i suoi FLUSH CACHE (17 660 in 30 s
+con 4 client, come col 0.284): la durata dei commit e' la stessa.
+
+Chi preferisce la velocita' e accetta di perdere al massimo l'ultimo
+secondo di transazioni mette `innodb_flush_log_at_trx_commit = 2` in
+`[mysqld]` (manuale 4.10).
+
+### Nessun tetto fisso, e Apache 2.4 (kernel 0.281-0.283, ip.drv 0.017-0.019)
+
+La regola dell'utente: processi, fili, applicazioni e connessioni hanno
+come limite solo la configurazione del singolo server e l'hardware, mai
+un numero scritto nel codice. Quello che e' cambiato:
+
+- **i descrittori (kernel 0.281):** la tabella di un programma non e' piu'
+  128 posti nel PCB ma blocchi di 128 aggiunti quando servono. Il tetto e'
+  `RLIMIT_NOFILE`: `fdmax` in `kernel.cfg`, oppure uno ogni 2 KB di RAM
+  (262144 con 512 MB), e `setrlimit` lo abbassa per un programma. Socket,
+  insiemi epoll e zone di memoria condivisa prendono i numeri dal kernel
+  come i file; `select` accetta descrittori fino al limite del programma.
+- **i processi e i fili (kernel 0.282):** spariscono `MAX_PROCESSES` (192
+  in tutto il sistema) e `FILO_MAX` (128 fili per programma). I PCB stanno
+  in blocchi che si aggiungono quando servono; le pile dei fili oltre le
+  127 riservate scendono verso lo heap. `procmax` in `kernel.cfg` mette un
+  tetto piu' basso per un server. **Il tetto vero oggi e' la fascia del
+  kernel:** ogni processo e ogni filo hanno 128 KB di pila del kernel nei
+  primi 64 MB, quindi circa 400-450 in tutto il sistema qualunque sia la
+  RAM (voce 35 della coda).
+- **file aperti, pipe, terminali, poll (kernel 0.282):** le tabelle del
+  sistema da 256 file aperti, 16 pipe e 4 pseudo-terminali crescono a
+  richiesta; `poll` del kernel prende piu' di 16 voci.
+- **libc:** le tabelle dei fili (128) e degli `errno` (64) diventano
+  catene di blocchi.
+- **textline 0.003:** il file sta in memoria allocata, riga per riga; erano
+  512 righe da 128 caratteri, e `textline file -v` si fermava alla riga 512
+  senza dire niente (`/boot/kernel.txt` ne ha 527: prova_telnet vedeva
+  mancare l'ultima riga).
+- **ip.drv 0.017:** la tabella TCP cresce fino a `tcpmax` in `kernel.cfg`,
+  o una connessione ogni 32 KB di RAM; `ip.drv -t N` per una sola
+  accensione. **ip.drv 0.018:** `shutdown(SHUT_WR)` (la chiusura a meta':
+  si smette di scrivere e si continua a leggere), e il FIN parte dopo i
+  dati ancora in coda (prima un `close` subito dopo una `write` poteva
+  perdere la coda dei dati).
+
+**Apache httpd 2.4.69** (con APR 1.7.6, APR-util 1.6.5, Expat 2.9.0;
+`tools/httpd-exos/costruisci.sh 32|64`, gruppo `[apache]` della ISO degli
+strumenti e di netinst, in `/exos/apache2`): MPM worker in un processo solo
+con 256 fili (`httpd -X`), tutti i moduli statici, mod_ssl con OpenSSL 4.1,
+i CGI con `spawn_ex` (EX-OS non ha `fork`: la voce 33 della coda).
+`tools/prova_httpd.sh` lo prova in QEMU, a 32 e 64 bit: una pagina, un CGI
+con GET e con POST, un 404, `ab` dentro EX-OS e dall'host. La chiusura a meta' ha portato
+ogni richiesta da 2 s (Apache aspettava che il client chiudesse) a pochi
+millisecondi:
+
+| | prima di ip.drv 0.018 | dopo, 32 bit | dopo, 64 bit |
+|---|---|---|---|
+| `ab` dentro EX-OS, 20 alla volta | 8 richieste/s | 240/s | 216/s |
+| `ab` dall'host, 50 alla volta | 24/s | 245/s | 234/s |
+
+Per far fermare Apache in modo pulito (`httpd -k stop`, codice d'uscita 0 a
+32 e 64 bit) sono servite due patch e tre correzioni fuori da Apache:
+
+- **L'ascoltatore del worker.** Allo spegnimento Apache lo sveglia con
+  `pthread_kill`, ma su EX-OS un segnale non interrompe `accept` ne' `poll`
+  (voce 37 della coda): Apache smetteva di aspettarlo dopo 5 s e usciva con
+  l'ascoltatore ancora vivo, che poi cadeva sullo scoreboard liberato.
+  `patch/worker-ascolto.diff` fa `poll` ogni 100 ms e guarda
+  `listener_may_exit`, come l'ascoltatore di MariaDB;
+  `patch/worker-uscita.diff` distrugge `pruntime` prima di `exit` (i pool
+  riciclati venivano distrutti due volte: glibc lo perdona, la malloc di
+  EX-OS no).
+- **Kernel 0.283, una perdita a ogni CGI.** `spawn` da' al figlio i
+  descrittori 0, 1 e 2 del padre, poi ci applica sopra le redirezioni
+  chieste, e il riferimento ereditato non tornava mai: ogni CGI lasciava un
+  riferimento su `logs/error_log`, e dopo lo spegnimento il disco non si
+  smontava. Ora `umount` dice quale file tiene occupato un disco.
+- **ip.drv 0.019:** il FIN dell'altra parte arrivato prima della conferma
+  del nostro (CLOSING) faceva morire la connessione, e il nostro FIN e i
+  dati in coda non si ritrasmettevano piu'.
+- **Kernel 0.283:** un programma che va in fault stampa gli indirizzi dei
+  suoi segmenti trovati sulla pila (`PF:   sulla pila:`, per `addr2line`);
+  e' cosi' che si e' trovato l'ascoltatore.
+
+La prova dall'host passa per la rete user di QEMU, che accetta la porta
+inoltrata su un socket Linux con una coda d'ascolto minuscola: con 50
+client alla volta la coda dell'host trabocca (`ListenOverflows`, 14-16
+volte a corsa), l'host butta i SYN e il client ritenta dopo 1, 3, 7, 15 s.
+Una cattura sulla e1000 ha mostrato che le richieste da 20 s, o mai finite,
+a EX-OS non erano mai arrivate. `prova_httpd.sh` ora aspetta fino a 120 s e
+stampa i trabocchi accanto al risultato.
+
+Prove nuove: `tools/prova_fd.sh` (2000 connessioni epoll, descrittori fino
+a 4005, `select` oltre 2048), `tools/prova_moltifili.sh` (386 fili vivi
+insieme in un programma a 32 bit, 354 a 64, poi un rifiuto pulito con
+EAGAIN). Manuale
+[4.11, il server web Apache](installazione/04-dopo-installazione.md).
+
+### 1024 connessioni a MariaDB: epoll, un gruppo di fili, una casella giusta (kernel 0.280, ip.drv 0.016)
+
+L'utente ha chiesto uno stress test: 1024 client che scrivono, leggono e
+aggiornano per 8 ore, misurando velocita', carico, tolleranza e perdite
+(uno script locale, fuori dal repository; client da Linux attraverso la rete, EX-OS
+a 64 bit in QEMU). Il primo giro si fermava a una ventina di client; cosa e'
+servito per arrivare a 1024:
+
+- **kernel 0.280, la fila davanti a una casella piena.** Una casella tiene
+  quattro messaggi; chi la trovava piena riprovava ogni 5 ms, e sotto carico
+  i fili piu' svelti entravano sempre mentre gli altri (`ipcfg`) aspettavano
+  10 s e rinunciavano. Ora chi manda fa la fila nel kernel e passa in ordine.
+- **ip.drv 0.016:** 4096 connessioni TCP (erano 24) con una tabella hash; un
+  programma tiene 1024 socket (erano 64); il buffer di ricezione da 63 KB di
+  uno slot riusato andava perso (una perdita); **epoll e poll stanno nello
+  stack**, che sveglia da se' il programma quando una connessione e' pronta.
+- **libc:** `<sys/epoll.h>` (`epoll_create1`, `epoll_ctl`, `epoll_wait`,
+  `epoll_pwait`, solo socket TCP), `poll` in un messaggio solo allo stack,
+  `FD_SETSIZE` 2048, `RLIMIT_NOFILE` 4096, `shutdown(SHUT_RDWR)` lascia la
+  connessione nel suo insieme epoll e ne segnala la fine come Linux,
+  `strerror` conosce tutti gli errori di rete (diceva solo «errore»).
+- **MariaDB col gruppo di fili** (`thread_handling=pool-of-threads`,
+  `patch/server-threadpool-epoll.diff`): un filo per connessione vorrebbe
+  128 KB di pila del kernel ciascuno nella fascia di 64 MB del kernel, e
+  EX-OS aveva 192 posti per processi e fili (fino al kernel 0.281). Ora
+  poche decine di fili servono tutte le connessioni. `mariadb-svc` 0.003 scrive `max_connections = 1024`
+  e il gruppo in `/etc/my.cnf` (manuale 4.10).
+- **e1000:** l'anello di ricezione passa da 32 a 96 descrittori e la coda
+  verso ip.drv da 64 a 256 frame: con mille connessioni l'anello traboccava,
+  e ogni frame perso fermava una connessione fino a 22 s.
+- `ipcfg -tcp` elenca le connessioni TCP; `memlog` (dentro EX-OS) registra
+  memoria, fili, la tabella TCP e dove si perdono i pacchetti.
+
+Misure (QEMU a 64 bit con KVM, istruzioni di ogni tipo, TLS; fino al
+kernel 0.283, quando `fsync` non svuotava il disco: vedi la sezione sul
+kernel 0.284):
+
+| client | pausa | istruzioni/s | p50 | p95 |
+|---|---|---|---|---|
+| 64 | nessuna | 2109 | 23 ms | 93 ms |
+| 1024 | 1 s | 870 | 5,5 ms | 20 ms |
+| 1022, 8 ore | 1 s | 1011 | 5,8 ms | 23 ms |
+
+Senza KVM il tetto e' la CPU emulata (circa 400/s qualunque sia il numero
+di client). 1024 client senza nessuna pausa sono piu' di quanto la
+macchina possa servire: le risposte passano i 30 s, i client si ricollegano
+con un handshake TLS ciascuno e il server resta indietro (e' il limite di
+tolleranza, non un crollo del sistema).
+
+Il giro di 8 ore (1022 client, perche' ogni programma ha 1024 socket e
+l'ascoltatore e il monitor dello stato ne prendono due): 29,1 milioni di
+istruzioni, 5 errori (tutti deadlock di InnoDB fra transazioni concorrenti,
+che il client deve ripetere), nessuna riconnessione, nessuna connessione
+rifiutata o caduta, nessun pacchetto perso dalla scheda o da ip.drv, uno
+spegnimento pulito ("Shutdown complete"). Velocita' e p95 del primo e
+dell'ultimo quarto sono uguali (1012/s e 1013/s, 23 ms). `Memory_used` di
+MariaDB resta a 840 MB per tutto il giro; la memoria libera di EX-OS cala
+di circa 1 MB l'ora mentre le tabelle crescono e torna tutta quando
+mariadbd esce: nessuna perdita nel sistema. Un rallentamento di circa due
+minuti (p95 2,5 s, risposta peggiore 9,8 s, alla quarta ora e mezza) non
+ha lasciato tracce dal lato del server; la causa e' da trovare. Il confronto con
+Linux sullo stesso hardware (voce 34) e' nella sezione sul kernel 0.284:
+con lo stesso lavoro sul disco EX-OS e' piu' lento.
+
+### MariaDB 11.8 LTS gira in EX-OS (0.279)
+
+**provato a 32 e 64 bit in QEMU** (`tools/prova_mariadb.sh`): `mariadbd
+--bootstrap` crea le tabelle di sistema, il server parte e ascolta su
+`127.0.0.1:3306`, il client `mariadb` crea una tabella InnoDB, ci mette tre
+righe, annulla una cancellazione col rollback, e `mariadb-admin shutdown`
+ferma il server pulito; dopo, Linux trova sul disco `ibdata1` e il `.ibd`
+della tabella.
+
+MariaDB **11.8.9**, l'ultima versione del ramo stabile a lungo termine
+(l'archivio ufficiale, firma GPG verificata, in
+`cross_build/terze-parti/mariadb`), costruito da
+`tools/mariadb-exos/costruisci.sh` sulle librerie vere di EX-OS: ncurses,
+zlib, bzip2, xz, lz4, zstd, PCRE2, fmt e OpenSSL 4.1.0. Tutto statico
+(`mariadbd` e' 27 MB senza simboli); il server ascolta solo in TCP, perche'
+EX-OS non ha i socket AF_UNIX. `innodb_buffer_pool_size_max` va dato: per
+difetto InnoDB riserva 8 TB di indirizzi a 64 bit, e un programma di EX-OS ne
+ha 3 GB. Gruppo `[mariadb]` della ISO degli strumenti e di netinst: il server
+in `/exos/mariadb`, i client e `mariadb-svc` in `/exos/bin`, i sorgenti. La
+ISO degli strumenti ora e' un DVD (circa 500 MB per architettura solo per
+MariaDB).
+
+**I connettori, anche da soli:** nel catalogo ci sono due voci.
+`netupdate -install:mariadb` porta il server e i connettori;
+`netupdate -install:mariadb-connector` solo i connettori, per i programmi che
+parlano con un MariaDB o un MySQL: **Connector/C 3.4.11** (`<mysql.h>`,
+`libmariadbclient.a`), **Connector/C++ 1.1.9** (`<conncpp.hpp>`,
+`libmariadbcpp.a`, costruito sopra il Connector/C di sistema), **`mariadb.bi`**
+per FreeBASIC e il crate Rust **`mariadb`** (un file, senza dipendenze, perche'
+dentro EX-OS c'e' `rustc` ma non `cargo`). `tools/prova_mariadb.sh` prova un
+programma per linguaggio contro il server dentro EX-OS (FreeBASIC a 32 bit).
+
+**Il servizio:** `mariadb-svc -install` (da root) crea l'utente `mysql`,
+`/etc/my.cnf`, le tabelle di sistema in `/var/lib/mysql`, il certificato
+TLS del server (una volta sola: MariaDB 11.8 farebbe una chiave RSA da 4096
+bit a ogni avvio, minuti su una CPU lenta) e un blocco in
+`/boot/avvio.sh`: il server parte a ogni avvio, prima del login, e lo
+spegnimento lo chiude (manuale 4.10). I dettagli sono in
+`tools/mariadb-exos/leggimi.md`.
+
+Cosa e' servito in EX-OS:
+
+- **kernel 0.279, i segnali.** `sigwait`, `sigtimedwait`, `sigwaitinfo`
+  (`SYS_SEG_ATTENDI`) e `sigsuspend` (`SYS_SEG_SOSPENDI`). Un segnale con
+  l'azione predefinita mandato a un programma che lo blocca ora resta in
+  attesa, come dice POSIX, invece di terminare il programma: e' cosi' che un
+  server blocca SIGTERM in tutti i fili e lo aspetta in uno
+  (`tools/prova_sigwait.sh`, 32 e 64 bit, anche da un altro processo).
+- **kernel 0.279, `open` di una directory.** `open(dir, O_RDONLY)` da' un
+  descrittore invece di EISDIR: `fstat`, `fsync`, `dup` e `close` funzionano,
+  `read` rende EISDIR, chiedere di scrivere rende EISDIR. Aria e InnoDB
+  aprono la cartella dei dati per rendere durevole un file nuovo. Una
+  directory aperta con `O_TRUNC` veniva troncata prima di essere rifiutata.
+- **libc:** `setgid`, `setreuid`/`setregid`, `setgroups`/`initgroups`,
+  `execl`/`execlp`, `getpwent`, `getlogin`, `IN6_IS_ADDR_*`, `NI_NAMEREQD`,
+  `POLLRDNORM` e compagni, `<netinet/ip.h>`, `<netinet/in_systm.h>`,
+  `<sys/poll.h>`, i tipi BSD (`u_char`, `uint`...); `getrlimit` dice 128
+  descrittori (diceva ancora 32, da prima del kernel 0.232); `fscanf`
+  lasciava `feof` spento alla fine del file, perche' il suo `fseek` indietro
+  lo cancellava.
+- **libc, `_FILE_OFFSET_BITS=64` sul sistema a 32 bit.** Come con glibc, un
+  programma compilato cosi' (MariaDB lo e') ha un `off_t` a 64 bit, e
+  `lseek`, `pread`, `pwrite`, `ftruncate`, `truncate`, `fseeko`/`ftello`,
+  `mmap`, `stat`/`lstat`/`fstat` diventano le loro versioni `*64` di
+  `libc.a`; i programmi compilati senza non cambiano. Il kernel tiene ancora
+  2 GB per file su entrambe le architetture: oltre, la libc rifiuta (EFBIG,
+  EOVERFLOW, fine del file) invece di tagliare la posizione. A 64 bit
+  `lseek`, `pwrite` e `ftruncate` passavano al kernel una posizione di 3 GB
+  tagliata a 32 bit (un `ftruncate` a 3 GB cambiava il file): ora rifiutano
+  anche li' (`tools/prova_lfs.sh`, 32 e 64 bit).
+- **ip.drv 0.014, 127.0.0.1 senza scheda.** Il loopback sta dentro
+  `ip.drv`, che senza scheda di rete usciva: una macchina senza rete non
+  raggiungeva il proprio server. Ora resta acceso con il solo 127.0.0.1; una
+  scheda che arriva dopo la prende come prima.
+- **kernel 0.279, lo spegnimento.** Prima di spegnere o riavviare il kernel
+  manda SIGTERM a ogni programma che non e' un driver e aspetta fino a 30 s,
+  cosi' `mariadbd` chiude InnoDB prima che i dischi si sincronizzino;
+  `setuid` cambia tutti i fili del programma, non solo chi chiama
+  (`mariadbd` scende a `mysql` con i fili gia' partiti). `getpwnam` e
+  compagni della libc leggono `/boot/utenti`.
+
+### OpenSSL 4.1.0 con socket e fili, e 127.0.0.1
+
+**provato a 32 e 64 bit in QEMU** (`tools/prova_openssl.sh`, con la rete di
+QEMU): quattro fili calcolano impronte, cifrano e creano `SSL_CTX` insieme;
+un server e un client TLS nello stesso programma si parlano su `127.0.0.1`
+(`SSL_set_fd` su un socket accettato, come fa MariaDB); TLS 1.3 verso
+`www.example.com:443` su un socket vero, con il certificato verificato; il
+programma `openssl` calcola lo stesso SHA-256 di Linux, fa una chiave Ed25519
+e un certificato che `openssl verify` di Linux accetta, e `openssl s_client`
+si collega e verifica.
+
+Finora EX-OS aveva una copia del ramo di sviluppo di OpenSSL costruita con
+`no-sock no-threads`: TLS solo attraverso due BIO di memoria (`provatls`).
+MariaDB vuole i socket e i lucchetti, e la regola e' l'ultima versione
+pubblica: ora e' OpenSSL **4.1.0** (23 ottobre 2026, firma GPG verificata),
+costruito da `tools/openssl-exos/costruisci.sh` come le altre librerie, con
+i socket, i pthread e il programma `openssl`; sorgenti su entrambi i CD degli
+strumenti, gruppo `[ssl]`, quindi anche nei netinst. `provatls`, `provassl` e
+libgit2 sono ricostruiti sopra (`tools/openssl-exos/prepara-openssl.sh` non
+c'e' piu').
+
+Cosa e' servito altrove:
+
+- **ip.drv 0.013, il loopback.** Un frame per questa macchina (127.x.x.x o il
+  suo indirizzo) andava alla scheda di rete e si perdeva: nessun programma
+  poteva raggiungere un server sulla stessa macchina. Ora aspetta in una coda
+  dentro ip.drv e rientra come se fosse arrivato; niente ARP, l'indirizzo
+  sorgente e' la destinazione stessa, e 127.x.x.x dal filo si scarta.
+- **libc:** `select()` vede i socket e tutti i file (`fd_set` e' passato da
+  una parola di 32 bit a 1088 descrittori; un programma costruito con quello
+  vecchio funziona ancora con la `libc.so` nuova, perche' si toccano solo le
+  parole sotto `nfds`); `getsockname` rende l'indirizzo dato a `bind`;
+  `connect` verso `0.0.0.0` va a `127.0.0.1` come su Linux;
+  `getservbyname`/`getservbyport` (con `mysql` 3306 nella tabella); `setpgid`
+  verso il proprio gruppo.
+
+### Sette librerie come librerie vere di EX-OS: zlib, bzip2, xz, lz4, zstd, PCRE2, {fmt}
+
+**provate a 32 e 64 bit in QEMU** (`tools/prova_librerie.sh`): un programma
+(`tools/prove/libreprova.cpp`) comprime e decomprime 64 KB con ogni
+compressore, cerca con PCRE2 (anche `regcomp`/`regexec` POSIX), formatta con
+fmt; poi `xz`, `zstd`, `bzip2` e `lz4` comprimono dentro EX-OS un file che
+Linux decomprime, e decomprimono archivi fatti da Linux — confrontati byte
+per byte.
+
+Le librerie che servono a MariaDB, portate prima e per conto loro perche'
+serviranno anche ad altro (la regola: ogni dipendenza diventa una libreria
+vera prima del programma che la vuole). Ognuna e' l'ultima versione
+pubblica, con l'archivio verificato (firma GPG, o lo sha256 pubblicato) e
+conservato in `cross_build/terze-parti/`; ognuna ha il suo
+`tools/<nome>-exos/costruisci.sh` (la parte comune in
+`tools/librerie-exos/comune.sh`), si costruisce a 32 e 64 bit, va nei
+sysroot incrociati (`-lz`, `-lbz2`, `-llzma`, `-llz4`, `-lzstd`,
+`-lpcre2-8`, `-lfmt`) e su entrambi i CD degli strumenti con i sorgenti, un
+gruppo del catalogo ciascuna (`[zlib]` `[bzip2]` `[xz]` `[lz4]` `[zstd]`
+`[pcre2]` `[fmt]`), quindi anche nei netinst:
+
+| libreria | versione | programmi |
+|---|---|---|
+| zlib | 1.3.2 | |
+| bzip2 | 1.0.8 | bzip2, bzip2recover |
+| XZ Utils (liblzma) | 5.8.4 | xz, xzdec, lzmadec, lzmainfo |
+| LZ4 | 1.10.0 | lz4 |
+| Zstandard | 1.5.7 | zstd |
+| PCRE2 | 10.49 (8, 16, 32 bit, POSIX) | pcre2grep, pcre2test |
+| {fmt} | 12.2.0 (header e libfmt) | |
+
+- {fmt} 12.2.0 non si costruisce per nessun bersaglio a 32 bit (sue issue
+  #4811, #4886): si applica la correzione accettata a monte (pull request
+  #4813) finche' una versione non la porta;
+- PCRE2 per ora senza JIT (stessi risultati, interpretati);
+- la libc ha avuto `O_NOCTTY`, e `fchown` verso il proprietario che `stat`
+  gia' riporta riesce (xz diceva «Cannot set the file owner»).
+
+**E un difetto del kernel trovato dallo xz a 64 bit:** ogni `pthread_create`
+di un programma a 64 bit senza variabili `__thread` falliva (`EIO`, «non
+riesco a leggere l'immagine TLS per il filo»). Una riga di log nel
+caricatore ELF leggeva il segmento TLS anche quando non c'era; il
+compilatore l'ha presa come prova che il puntatore non fosse NULL e ha tolto
+i controlli piu' sopra, e l'immagine del filo veniva dall'indirizzo 0.
+Corretto in `kernel/loader/elf.c`.
+
+### ncurses 6.6: programmi a schermo intero sulla console e in telnet
+
+**provato a 32 e 64 bit in QEMU** (`tools/prova_curses.sh`): un programma
+curses disegna riquadri, video inverso, colori, cancella una riga, apre una
+finestra, e legge Su, F1, Canc e PagGiu' come `KEY_UP`, `KEY_F(1)`,
+`KEY_DC`, `KEY_NPAGE`; lo schermo si rilegge esatto da QEMU
+(`tools/schermo_testo.py` confronta ogni cella con i glifi della console).
+**E lo stesso programma compilato dentro EX-OS** col `gcc -lncurses` del CD
+degli strumenti fa lo stesso.
+
+La vera libreria curses, la prima delle librerie che servono a MariaDB e
+che servono anche a tutto il resto: `libncurses.a` (anche `-lcurses`),
+`libpanel`, `libmenu`, `libform`, `libncurses++`, gli header, la terminfo, e
+`tic`, `infocmp`, `toe`, `tput`, `tset`, `reset`, `clear`, `tabs`. Costruita
+dalla 6.6 ufficiale (firma verificata) da `tools/ncurses-exos/costruisci.sh`;
+nei sysroot delle toolchain incrociate, e su entrambi i CD degli strumenti
+con i sorgenti (gruppo `[curses]`), quindi anche nei netinst.
+
+- la console e' `TERM=vga`, e ha la sua voce terminfo
+  (`tools/ncurses-exos/exos.ti`): solo cio' che `vga.c` fa davvero. Per
+  questo la console ha imparato le sequenze su cui curses conta: inserire e
+  cancellare caratteri e righe, cancellare caratteri, colonna e riga, una
+  regione di scorrimento, l'indice inverso, salvare il cursore, il video
+  inverso. In modo grezzo la tastiera manda anche F1-F12, Ins, Canc, PagSu
+  e PagGiu';
+- `vga`, `linux`, `xterm`, `xterm-256color`, `vt100`, `vt220`, `ansi`,
+  `screen` e `dumb` sono dentro la libreria: curses funziona anche su un
+  sistema senza terminfo sul disco;
+- la libc ha avuto cio' che ncurses chiedeva: `getopt`, `getopt_long`
+  (`<getopt.h>`), `getpgrp`, `ttyname`, e i numeri `ioctl` del terminale in
+  `<sys/ioctl.h>`.
+
+Non ancora: `ncursesw`, la libreria a caratteri larghi, che aspetta l'UTF-8
+nella libc (oggi il suo `wchar_t` e' Latin-1); e `SIGWINCH`, quindi un
+programma che gira non si accorge di una finestra telnet ridimensionata.
+
+### Un terminale vero: termios sulla console e in telnet (0.279)
+
+**provato a 32 e 64 bit in QEMU** (`tools/prova_termios.sh`: libctest e
+`tools/prove/termiosprova.c` con `tcgetattr`/`tcsetattr`/`cfmakeraw` della
+libc.a, tasti battuti sulla console in modo grezzo; di nuovo `prova_telnet`,
+`prova_ctrlc`, `prova_ssh`).
+
+Finora un terminale aveva due modi, "a righe con eco" e "grezzo", e nessuna
+`struct termios`: `tcsetattr` non faceva niente. Gli editor, `less`, `top` e
+soprattutto **ncurses** (il prossimo porting, che serve al client di MariaDB
+e a molti altri programmi) cosi' non possono funzionare. Ora entrambi i
+terminali hanno una `struct termios` come quella di Linux (stessi valori,
+stessi `ioctl`: `TCGETS`, `TCSETS`, `TCSETSW`, `TCSETSF`, `TCFLSH`,
+`TIOCGWINSZ`, `TIOCSWINSZ`):
+
+- **in una sessione telnet** (pty): `ICANON`, `ECHO`, `ECHOE`, `ECHOK`,
+  `ISIG`, `ICRNL`/`INLCR`/`IGNCR`, `OPOST`+`ONLCR`, `VMIN`/`VTIME`.
+  `isatty()` e' vero, e `TIOCGWINSZ` da' la misura della finestra del client;
+- **sulla console**, una per console virtuale: senza `ICANON` il driver della
+  tastiera consegna i tasti uno per uno invece delle righe, una freccia come
+  `ESC [ A` intero, Invio come CR, `^C` come byte quando `ISIG` e' spento,
+  niente eco quando `ECHO` e' spento; `poll()` sullo stdin si sveglia appena
+  si preme un tasto. `TIOCGWINSZ` da' la misura vera (100x37 in QEMU), non
+  80x25.
+
+Un programma che lascia il terminale grezzo e muore non lascia una shell
+sorda: la shell (0.009) rimette i modi normali prima di ogni prompt.
+
+### Una sessione telnet che non torna, e lo schermo della NVIDIA integrata (0.278)
+
+**provato a 32 e 64 bit in QEMU** (`tools/prova_telnet.sh`, telnetd ucciso e
+rilanciato, un programma dell'altra architettura, una sessione lasciata a metà
+dentro `gfedit`), e i numeri dello schermo **misurati sul CQ60**.
+
+**Sul CQ60 la porta 23 si apriva e non tornava un byte, nemmeno dopo `kill` e
+un `telnetd` nuovo.** Serviva riavviare. Tre difetti in fila:
+
+- un programma a 32 bit sul kernel a 64 è `ENOEXEC`, e la shell (0.008)
+  mandava ogni `ENOEXEC` al programma associato al file: `gfedit`. `gfedit`
+  legge la tastiera della macchina, non la sessione, e la sessione restava
+  lì. Adesso la shell dice **«e' un programma a 32 bit, questo sistema e' a
+  64»** (o il contrario) e va avanti;
+- quando il client se ne va `telnetd` interrompe la shell della sessione; ma
+  `waitpid`, svegliata, **tornava ad aspettare** il figlio, e la shell non
+  arrivava mai all'uscita che il kernel fa sulla via del ritorno dalla
+  chiamata. Adesso `waitpid` e `thread_attendi` rendono `EINTR` a un processo
+  interrotto, come facevano già pipe, IPC e pty. `telnetd` (0.011) raccoglie
+  anche la shell, che restava zombie;
+- l'ascoltatore del `telnetd` ucciso **restava sulla porta 23 in `ip.drv`**:
+  accettava ogni connessione senza nessuno dietro e respingeva il `telnetd`
+  nuovo (`EADDRINUSE`). `ip.drv` (0.012) libera la porta di un programma
+  morto, sia quando qualcuno chiede di ascoltare sia all'arrivo di un SYN.
+
+**La NVIDIA integrata scriveva lo schermo a 47 MB/s.** Sulle MCP77/79 la
+«memoria video» è RAM messa da parte dal BIOS, e attraverso la BAR1 della
+scheda ogni pixel fa CPU -> scheda -> RAM: la scrittura combinata (0.275) non
+cambiava niente. `nv50.drv` 0.008 dà al kernel l'indirizzo di quella RAM, che
+il kernel mappa a scrittura combinata come ogni framebuffer:
+
+```
+                               BAR1     RAM rubata
+CPU riempie lo schermo           47       4167   MB/s
+ombra in RAM -> schermo          47       1475
+CPU legge lo schermo              4         82
+```
+
+Un fotogramma intero della scrivania a 1366x768 passa da circa 90 ms a circa 3.
+
+### Fili che leggono lo stesso file: `pread` vero e i flussi col lucchetto (0.277)
+
+**testato a 32 e 64 bit** con `tools/prova_fili.sh`, che mette insieme sullo
+stesso file e sullo stesso `FILE` i fili di un programma solo:
+
+```
+FILI pread 0 giri 101824      8 fili, pread a caso sullo stesso descrittore, 3 s
+FILI posizione 0 letti 1048576 su 1048576, pezzi storti 0
+FILI pwrite 0                4 fili, pwrite su parole diverse
+FILI stdio 0 righe 12000 rotte 0
+FILI mutex 0                 8 fili, 20000 giri l'uno sotto pthread_mutex
+```
+
+**E la stessa prova con la libc di prima** (`PROVA_CFLAGS=-L<dir con la libc.a vecchia>`)
+sbaglia, che è quel che deve fare: `FILI pread 7 giri 84118` e `FILI stdio 1
+righe 12019 rotte 9`. Una prova che passa anche col guasto non prova niente:
+la prima versione durava meno di un quanto dello scheduler, i fili non si
+incrociavano mai e passava con tutte e due.
+
+**Il guasto l'ha mostrato Firefox sul CQ60: pagine senza testo.** Nel log
+«Unable to load glyph» e «logins.db: file is not a database», con i file dei
+caratteri giusti sul disco (sha256 uguale). La libc faceva `pread` come
+`lseek` + `read` + `lseek`, e **i fili condividono la tabella dei
+descrittori**, quindi anche la posizione: se due fili leggono lo stesso file
+insieme, uno sposta la posizione mentre l'altro legge, e si portano a casa i
+byte del posto sbagliato. Firefox mappa i caratteri leggendoli con `pread` da
+più fili.
+
+**Adesso `pread` e `pwrite` sono chiamate del kernel** (`SYS_PREAD` 8,
+`SYS_PWRITE` 9): leggono e scrivono al punto chiesto senza toccare la posizione
+del descrittore. Una libc nuova su un kernel vecchio riceve `ENOSYS` e torna al
+modo di prima, sotto un lucchetto suo. E **`read`, `write` e `lseek` su un file
+tengono la posizione mentre la spostano** (`posizione_di` nel descrittore):
+prima due `read` insieme potevano leggere lo stesso pezzo, e la posizione
+tornare indietro.
+
+**I flussi della stdio hanno il lucchetto** (`flockfile`, `funlockfile`,
+`ftrylockfile`, e le forme `_unlocked`). Prima non ce l'avevano: due fili che
+scrivono su `stderr` insieme potevano scrivere lo stesso byte del buffer o
+svuotarlo due volte. Ogni funzione lo prende da sola, una volta per chiamata;
+chi vuole una riga intera da più chiamate tiene `flockfile`. È **ricorsivo** e
+il padrone si riconosce dal thread pointer, letto da `%gs`/`%fs` senza
+chiamate di sistema.
+
+> **Che cosa c'era già, e resta com'era:** `pthread_mutex`, le condizioni, i
+> lucchetti lettori/scrittori, `pthread_once` e i semafori stanno sul lucchetto
+> a tre stati che dorme nel kernel (`SYS_ATTESA_DORMI`/`SYS_ATTESA_SVEGLIA`);
+> `malloc`, `errno` (per filo) e la tabella delle mappe avevano il loro.
+> Per le variabili atomiche del programma il GCC di EX-OS ha `<stdatomic.h>` e
+> le `__atomic_*`, che diventano istruzioni `lock`: non serve la libc.
+
+### Lo swap funziona (kernel 0.276) — provato in QEMU, da provare sotto pressione sul ferro
+
+L'area di scambio su partizione c'era da agosto, ma sotto pressione non
+reggeva: a 32 bit il kernel si fermava al primo sfratto (leggeva una voce da
+4 MB della directory come se fosse una tabella), a 64 bit la memoria dei
+programmi si rovinava (la pagina si scriveva sul disco mentre il padrone
+poteva ancora scriverci, un buffer solo era conteso da sfratti e rientri
+senza lucchetto, il padrone poteva morire nel frattempo) e un processo
+veniva ucciso quando l'altro processore teneva le pagine. Dal 0.276 è
+corretto, e le pagine usate da un dispositivo (DMA, MMIO, schermo) non si
+sfrattano mai. `mem` mostra l'area: dimensione, quanto c'è sopra, pagine
+andate e tornate dall'avvio. `tools/prova_swapmem.sh` (32 e 64 bit, rifatta
+col kernel 0.279) riempie la RAM con `swaptest`, uno da solo e due insieme,
+e ogni pagina torna identica. Sul CQ60 l'area da 4 GB si accende ma la RAM
+è sempre bastata. Come prepararla e come controllarla: manuale,
+[4, l'area di scambio](installazione/04-dopo-installazione.md).
+
+### Le chiavette sono `/USB/USB0`, `/USB/USB1`... — provato in QEMU
+
+Una chiavetta finisce sempre in `/USB/USB<n>`, un numero per ogni chiavetta
+infilata, il primo libero: prima era `/USB/DRIVE0` senza tabella delle
+partizioni e `/USB/HDD0p1` con la tabella (quasi tutte quelle formattate da
+Windows). Una seconda partizione della stessa e' `/USB/USB0p2`. E due
+chiavette su due controller diversi (OHCI ed EHCI) adesso compaiono tutte e
+due: ogni driver chiedeva il nome `usb0` e il secondo veniva rifiutato; il
+codice comune dei dischi USB (`drivers/usb/usb_massa.c`) ora prende il primo
+`usb<n>` libero. Provato in QEMU: una chiavetta partizionata e una intera
+insieme, `/USB/USB0` e `/USB/USB1` con i loro file, `eject` di una, la voce
+`USB` della barra. Resta una chiavetta per controller: due chiavette nelle
+porte dello stesso controller danno un disco solo.
+
+### La barra di stato: `extaskbar` (kernel 0.255) — provata in QEMU
+
+Quello che i servizi in sottofondo scrivono (WiFi, USB, rete, automount...)
+non deve piu' coprire la riga di comando. `extaskbar` mette una barra di
+testo sull'ultima riga dello schermo, 80 colonne, con voci a larghezza fissa:
+`USB0 Connected` / `USB none`, `WIFI Connected`, `RX 00000000`,
+`TX 00000000`, `FAIL 000000`, `LOST 000000`; disponibili anche `ETH`, l'ora,
+`BAT`, `TELNET`.
+
+- `extaskbar -show` la avvia, `-hide` nasconde la barra (i log si raccolgono
+  lo stesso e la console resta pulita), `-stop` la ferma e tutto torna sulla
+  console come prima.
+- `extaskbar -menu`: quali voci mostrare, con le caselle `[x]` e il conto
+  delle colonne libere - una voce che non ci sta viene rifiutata; le
+  modifiche valgono subito. E la memoria tenuta per ogni log (64 KB di base).
+- `extaskbar -details`: i servizi a sinistra, il log di quello scelto a
+  destra, in tempo reale, ogni riga con la sua ora; `f` lo tiene anche in
+  `/boot/<servizio>/log.txt`, mai oltre 1024 KB (le righe piu' vecchie se ne
+  vanno).
+- La configurazione sta in `$HOME/.config/extaskbar.cfg`. `extaskbar -boot:on`
+  (root, o la casella in `-menu`) la fa partire a ogni avvio: `extaskbar -auto`
+  e' la prima riga di `/boot/avvio.sh` e non fa niente finche' non e' accesa.
+- Come: quello che scrive un processo lanciato con `&` (e i suoi figli) va,
+  mentre `extaskbar` gira, in un anello del kernel invece che a video; i
+  comandi in primo piano scrivono come sempre, e una sessione aperta da
+  `telnetd` non e' un lavoro in sottofondo. I servizi mandano le loro voci con
+  `lib/include/extaskbar.h` (lo fanno il driver WiFi, `wifisim` e
+  `automount`). `-menu` e `-details` disegnano sullo schermo alternativo del
+  terminale (`ESC[?1049h`, nuovo nella console), quindi chiudendoli la console
+  mostra quello che c'era prima; funzionano anche via telnet.
+
+Provato in QEMU a 32 e a 64 bit: la barra, `ping &` raccolto e non a video,
+`-details`, `-menu` (una voce rifiutata quando non ci sta, una tolta e
+un'altra messa, applicato subito), `-hide`, `-stop` con l'uscita di nuovo a
+video, le voci WiFi della scheda simulata. Non ancora su una macchina vera; il
+salvataggio in `/boot/<servizio>/log.txt` non ancora provato (il CD e' in sola
+lettura).
+
+### WiFi: la prima scheda vera, Atheros AR2425 (`ar5k.drv`) — provato
+
+Sul portatile HP dell'utente (NVIDIA MCP77, Atheros AR2425, 168c:001c) EX-OS
+64 si collega alla rete di casa in WPA2 e prende l'indirizzo dal DHCP:
+telnet, ping al router e a Internet, DNS e uno scaricamento passano tutti
+dalla radio. `drivers/ar5k` usa il codice hardware di ath5k di Linux (licenza
+ISC) per il chip; associazione, scambio delle chiavi WPA/WPA2 (`lib/exwifi`)
+e CCMP/TKIP sono fatti in software. Reti aperte, WPA e WPA2 con password;
+WEP, Enterprise e WPA3 sono rifiutate dicendo perche'. La radio si accende
+dal controller del portatile. `tools/prova-ar5k/prova.sh` controlla il codice
+del collegamento sull'host contro un access point finto (23 su 23). Ancora
+lento (circa 50 KB/s: il driver guarda la scheda ogni 10 ms invece di usare
+il suo interrupt), e il driver va avviato a mano.
+
+### Librerie: un caricatore dinamico vero, OpenSSL a 64 bit, iconv
+
+- **`dlopen` carica le librerie condivise ELF normali** (`lib/libc_dl.c`,
+  libc statica), a 32 e a 64 bit: le librerie che servono (DT_NEEDED, cercate
+  in `LD_LIBRARY_PATH`, DT_RUNPATH con `$ORIGIN`, `/lib`, `/exos/lib`...),
+  tutte le rilocazioni di una libreria PIC, costruttori e distruttori,
+  variabili `__thread` (un blocco per filo), `dlclose` che smappa, `dladdr`.
+  I programmi di EX-OS sono statici e non tengono una tabella dei simboli,
+  quindi la libc ne porta una sua: `lib/libc_esportati.h`, scritta da
+  `tools/libc-esportati.py`, da' a una libreria ogni funzione della libc del
+  programma che l'ha aperta; resta fuori dai programmi che non chiamano
+  `dlopen`. I compilatori incrociati ora accettano `gcc -fPIC -shared`
+  (`tools/gcc-exos/specs-condivise.sh`). `tools/prova-dl/prova-dl.sh`: 14 su
+  14 dentro EX-OS, a 64 e a 32 bit. Non gestiti: il modello TLS initial-exec
+  in una libreria (rifiutato con un messaggio) e il collegamento pigro (tutto
+  si collega al caricamento). E' il primo pezzo che serve a un `rustc` nativo
+  (le macro procedurali sono librerie condivise).
+- **QuickJS a 64 bit**, grazie a questo: come a 32 bit i due motori
+  JavaScript sono librerie, `/exwin/lib/exjs.so` e `/exwin/lib/quickjs.so`,
+  ora oggetti ELF normali che lo stub di ExJs apre con `dlopen`
+  (`tools/costruisci-utente64.sh`, passo 6). `tools/prova-dl/prova-js.sh`
+  esegue lo stesso script con i due dentro EX-OS 64 e ottiene la stessa
+  risposta. Non ancora provato nel navigatore a 64 bit.
+- **OpenSSL a 64 bit**: `tools/openssl-exos/costruisci.sh 64` (dalla 0.279
+  OpenSSL 4.1.0 con socket e fili, vedi sopra).
+  Dentro EX-OS 64 `provatls www.example.com` fa una stretta di mano TLS 1.3
+  sulla rete di EX-OS, verifica il certificato e legge la pagina. libcrypto,
+  libssl, gli header e il magazzino delle CA sono su `dist/exos64-tools.iso` e
+  in `netinst_64`.
+- **`iconv`** nella libc statica: UTF-8/16/32, ASCII, Latin-1, Latin-9,
+  Windows-1252, CP437, con `//TRANSLIT` e `//IGNORE`.
+
+### WiFi: il comando `wifi` e l'icona accanto all'orologio (kernel 0.250)
+
+Il gestore della connessione e le sue due facce, a 32 e a 64 bit:
+
+- **`wifid`** (`bin/wifid`) e' l'unico processo che decide a quale rete si
+  aggancia la radio. Tiene le reti salvate, si collega all'avvio e di nuovo
+  dopo una caduta (la rete salvata piu' forte, o quella segnata come
+  predefinita), da' l'indirizzo a `ip.drv` (DHCP o statico, rete per rete) e,
+  quando la radio cade, riporta l'uscita sulla scheda Ethernet. Le password
+  non si conservano: tiene la chiave che ne deriva (PBKDF2), cifrata con
+  AES-256-GCM, un file di chiave per utente (`/cfg/wifi/root.*` per root,
+  `~/.exwin/config/wifi.*` per un utente).
+- **`wifi`** (`bin/wifi`): senza argomenti mostra lo stato, il segnale e la
+  velocita'; `wifi -config` apre un menu (reti che si sentono, rete nascosta
+  con tutti i campi, reti salvate, disconnetti, collegamento all'avvio);
+  `-showlist`, `-connect:SSID [-save] [-default]`, `-disconnect`,
+  `-forget:SSID`, `-default:SSID`, `-boot:on|off` fanno lo stesso da uno script.
+- **La scrivania**: un'icona accanto al volume, grigia con una X quando non
+  e' collegata, verde con le barre del segnale quando lo e'; un clic apre il
+  pannello (`exwin/bin/exwifi`) con l'elenco, il modulo (SSID, nascosta,
+  sicurezza, password, salva, predefinita, IP DHCP o statico) e
+  Disconnetti / Predefinita / Dimentica. Ogni cambiamento mostra un avviso
+  accanto all'icona che se ne va da solo.
+- **Chi cambia che cosa**: root puo' collegarsi all'avvio, prima di qualunque
+  login (`wifi -boot:on`); ogni utente usa poi quella connessione, e la
+  cambia solo root. Se root non l'ha accesa, ogni utente avvia e gestisce la
+  propria. Per sapere chi chiede, il kernel 0.250 aggiunge `proc_uid()`,
+  l'uid di un altro processo (un messaggio IPC non lo porta).
+- `ip.drv` 0.011 passa a un'altra scheda mentre gira (`IP_MSG_LINK`), e
+  `dhcp` 0.003 restituisce la sua porta all'uscita (un secondo `dhcp`
+  falliva). La shell tiene 16 lavori in background invece di 8: uno script
+  d'avvio con rete, USB, telnetd e `wifid` ne lancia nove.
+
+**La prima scheda vera e' l'Atheros AR2425 (vedi sopra).** Tutto quanto sopra e' stato
+provato in QEMU, a 32 e a 64 bit, con `wifisim.drv`, una scheda simulata con
+cinque reti (WPA2, aperta, WEP, nascosta) che porta i pacchetti sulla scheda
+Ethernet: elenco, password sbagliata rifiutata, WPA2 con DHCP e con indirizzo
+statico, rete nascosta, una caduta e il ricollegamento, predefinita e
+dimentica, collegamento all'avvio prima del login, un utente rifiutato quando
+cambia la rete di root, l'icona e il pannello. La sicurezza che tutti i driver
+useranno e' in `lib/exwifi`: le chiavi WPA/WPA2, lo scambio a quattro vie e
+quello della chiave di gruppo (lato client), CCMP, TKIP con Michael e WEP;
+`tools/prova_exwifi.sh` la controlla sull'host con i vettori di prova di IEEE
+802.11 e delle RFC (41 su 41); la usa `ar5k.drv`. Da fare: altri chip, WPA3 e
+WPA2 Enterprise.
+
+### ExWin: ogni controllo si nasconde e si spegne
+
+**testato in QEMU** (`tools/prova_exwin_stato.sh`: il progetto si compila
+dentro EX-OS e si prova con la tastiera) — chiesto in correzioni.txt.
+`ex_set_visible(c, 0)` nasconde un controllo senza distruggerlo;
+`ex_set_enabled(c, 0)` lo lascia al suo posto, velato, con dentro quel che il
+programma ci mette, ma chi usa il programma non lo preme e non ci scrive.
+Valgono per ogni tipo di controllo; `ex_is_visible` ed `ex_is_enabled` dicono
+come sta. Prima un controllo spento si riconosceva solo se era un pulsante,
+una spunta o un radio. In exide sono due proprieta', `visibile` e `attivo`, e
+sulla maschera si distinguono a colpo d'occhio. Il manuale di EX-IDE le spiega
+in italiano e in inglese.
+
+**Sul mouse** (`tools/prova_exwin_sulmouse.sh`): con la proprieta' `sulmouse`
+un controllo ha un handler in piu', `<nome>_MouseOver()`, chiamato quando il
+puntatore gli arriva sopra; `ex_show_popup_pointer("testo", "0", "0", "0")`
+mostra un riquadro accanto al puntatore, coi colori di sfondo, scritta e bordo
+scritti come `"255,255,255"` o `"0"` per quelli predefiniti. Provandolo e'
+venuto fuori che nei programmi fatti con exide gli handler `_Changed` ed
+`_Enter` delle caselle di testo non venivano mai chiamati: ora si' (exwin.so
+0.015, exide 0.024; basta riaprire il progetto e salvarlo).
+
+### Installare senza lettore CD: `make installa`, e la guida (kernel 0.240)
+
+**provato in QEMU; sul ferro e' in corso** — per un PC senza floppy ne' CD.
+`make installa` fa `dist/installa.img`: 1,44 MB che si caricano tutti in RAM
+(quindi partono da una chiavetta), con gli attrezzi del disco, la rete e
+`netupdate`. Si installa sul disco il sistema piccolo che sta girando, e da
+li' il resto arriva dalla rete. La guida passo passo e' in italiano e in
+inglese, pagina e testo: `exwin/doc/installa-usb.html`,
+`exwin/doc/installa-usb.en.html`, `INSTALLA-USB.txt`, `INSTALLA-USB.en.txt`
+(le genera `tools/doc-installa-usb.py`, da una sorgente sola).
+
+Dalla prima prova sul PC vero: il disco SATA in modo nativo si riconosce, ma
+in DMA restava bloccato («timeout BSY»). Dalla 0.240 quei canali lavorano in
+PIO e un disco rimasto occupato viene resettato.
+
+**0.246**: i processori in piu' eseguono programmi (tappa 3 dell'SMP). Un
+lucchetto unico sul kernel, preso entrando (interrupt, eccezioni, chiamate di
+sistema) e lasciato tornando in ring 3: nel kernel c'e' un processore per
+volta, i programmi girano su tutti. GDT e TSS per processore, il processo
+corrente per processore; il lucchetto e' a numeri (chi arriva prima passa
+prima). Due programmi diversi usano due processori; i fili di uno stesso
+programma no, finche' non c'e' l'invalidazione del TLB fra processori (tappa
+4). **Resta spento di serie**: `smpprova -accendi` lo accende fino al
+riavvio, `smp = 2` in `kernel.cfg` a ogni avvio. `smpprova` misura il lavoro
+fatto: in QEMU con KVM, 4284 giri un programma su un processore, 4296 da
+solo su due (nessuna perdita), 8152 due insieme su due processori, 12638
+quattro insieme su quattro. Con un processore solo niente si accende.
+**Sul PC vero** (Core 2 Quad, NVIDIA MCP73, 10 ottobre): dopo `smpprova
+-accendi` due programmi insieme fanno 2,04 volte il lavoro di uno, quattro
+3,32; rete, DNS e `netupdate` funzionano coi processori al lavoro. Una
+sessione breve da telnet: l'uso lungo e ExWin sono da provare.
+
+**0.247**: scrivere su ext2 costa molti meno comandi di disco. Per ogni
+kilobyte aggiunto a un file il driver ne faceva nove (bitmap, descrittore,
+blocco azzerato, puntatori, dato): ora i blocchi si prendono a gruppi fino a
+64 con una sola scrittura della bitmap, un blocco di dati nuovo non si azzera
+sul disco se sta per essere scritto, e il blocco dei puntatori si scrive una
+volta per chiamata. Quando `write()` torna il disco e' coerente come prima.
+`netupdate` 0.028 scrive a pezzi da 64 KB invece che a ogni pacchetto.
+Provato in QEMU: Exilla (290 MB) si installa in 5 minuti invece di 9, il disco
+passa `e2fsck` di Linux e i file hanno le impronte giuste. Su un disco in PIO
+il guadagno dovrebbe essere maggiore: da misurare sul PC. Cancellare resta
+lento (un blocco per volta).
+
+**0.248**: cancellare un file su ext2 non costa piu' cinque comandi di disco
+per kilobyte. La bitmap del gruppo resta in memoria mentre si liberano i
+blocchi di un file e si scrive una volta, col descrittore. In QEMU `rm` di 50
+MB passa da piu' di venti secondi a circa sei, e il disco passa `e2fsck`.
+
+**0.249**: i volumi ext3 ed ext4 si **leggono**: alberi di extent,
+descrittori di gruppo a 64 bit, `flex_bg`, inode grandi, directory indicizzate
+(lette in modo lineare). Un volume cosi' si monta in **sola lettura** e il
+registro dice perche'; ext2 si scrive come prima. La scrittura di ext3/ext4 e'
+prevista in un modulo caricato dopo l'avvio. Non gestiti: `meta_bg`,
+cifratura, compressione, e i file con i dati dentro l'inode (`inline_data`),
+rifiutati con un messaggio. Provato in QEMU a 32 e a 64 bit su volumi fatti
+dal `mke2fs` di Linux (ext4 con blocchi da 1 KB e da 4 KB, ext3, ext2): un
+file da 5 MB, uno sparso e uno piccolo hanno lo stesso SHA-256 che sull'host,
+una directory di 400 file si elenca intera, e la scrittura viene rifiutata.
+Nuovo comando `sha256sum`.
+
+**0.250**: `proc_uid()`, l'uid di un altro processo, per il gestore del WiFi
+(vedi «WiFi» sopra). Il kernel a 32 bit e' cambiato solo nella tabella delle
+chiamate di sistema.
+
+**0.251**: un disco che mostra BSY insieme a un errore rimasto dal comando di
+prima (il portatile NVIDIA MCP77 dell'utente, dopo che rifiuta READ NATIVE
+MAX) non perde piu' le sue partizioni all'avvio: i bit di errore si leggono
+solo a BSY spento, come dice lo standard ATA, e una tabella delle partizioni
+che non si legge viene riprovata e scritta nel registro. Prima il sistema si
+installava e poi non trovava la radice. E per le chiavette USB (`make usb`,
+`make usb64`): quando il BIOS avvia la chiavetta come disco rigido, i
+caricatori la leggono per LBA e la copiano in RAM lo stesso - provato sul
+portatile, il cui BIOS fa proprio cosi'.
+
+**0.252**: `shutdown` spegne un PC vero. Finora si spegnevano solo gli
+emulatori (le loro porte fisse) e una macchina vera si fermava su «e' ora
+sicuro spegnere». `kernel/arch/x86/acpi.c` legge all'avvio le tabelle ACPI
+(RSDP, RSDT/XSDT, FADT e i valori di `_S5_` dalla DSDT) e scrive nel registro
+cio' che ha trovato - `dmesg` dice che cosa fara' lo spegnimento su quella
+macchina - e lo spegnimento scrive lo stato S5 sulle porte di gestione
+dell'energia, passando prima il chipset in modo ACPI se serve. `reboot` prova,
+in ordine, il registro di reset dell'ACPI, il controller della tastiera, la
+porta 0xCF9 del chipset e un triple fault. Provato in QEMU (lo spegnimento
+passa dall'ACPI); sul portatile dell'utente non ancora.
+
+**date 0.002**: **l'ora dalla rete**. `date -ntp` (anche `-npt`) chiede l'ora
+a `pool.ntp.org`, o a `-ntp:SERVER[:PORTA]`, e rimette l'orologio allo scatto
+del secondo, con il ritardo della rete diviso a meta' (SNTP). NTP da' l'ora
+UTC e l'orologio della macchina e' in ora locale: la conversione la fa il
+fuso di `/boot/fuso.cfg` (`date -fuso:+1,ue`, ore da UTC anche con i minuti,
+`ue` per l'ora legale europea, calcolata sull'istante UTC), e senza il file
+vale l'Italia e il comando lo dice. Una risposta che non e' la nostra, un
+«Kiss-o'-Death» o un server muto non toccano l'orologio; senza essere root si
+vede di quanto e' avanti o indietro. Passa dallo stack per IPC come `host`
+(i socket BSD non sono nella libc condivisa), quindi resta sul dischetto
+(28 KB liberi). `tools/prova_ntp.sh`: estate, inverno, i due cambi dell'ora,
+Kiss-o'-Death, server muto e `pool.ntp.org` vero, a 32 e 64 bit.
+
+**netupdate 0.032**: **i sorgenti dal repository**. Accanto a
+`.../netinst` e `.../netinst_64` c'e' `.../netinst_src` (`make netinst-src`):
+un archivio solo, per 32 e 64 bit, con i file che git traccia - quello che va
+su GitHub. `netupdate -install:sourcecode` lo scarica (a pezzi da 16 MB
+quando serve, con la ripresa), controlla l'impronta e lo apre in
+`/src/exos-<versione>`; una versione nuova va in una cartella nuova, e i
+sorgenti non entrano nel registro (`-check` non li tocca). `tar` (0.004) e
+Archivi rimettono il bit di esecuzione scritto nell'archivio: gli script
+arrivavano 0644. `tools/prova_sorgenti.sh` (QEMU, disco installato dal CD).
+
+**0.265, ext4.mod 0.004**: **ext4 si scrive** - i volumi che fa oggi
+`mke2fs -t ext4`, con metadata_csum, 64bit, flex_bg, orphan_file e gruppi
+lasciati da inizializzare. Si scrive l'albero degli extent
+(`kernel/moduli/ext4/estesi.c`: un extent si allunga, uno nuovo si
+inserisce, un nodo pieno si divide, una radice piena passa in un blocco suo;
+il troncamento taglia l'albero), e ogni metadato porta il suo checksum
+calcolato come lo calcola Linux (`somme.c`: crc32c di superblocco,
+descrittori, bitmap, inode, blocchi degli extent, la coda da 12 byte di ogni
+blocco di cartella, blocchi di attributi; descrittori in crc16 per
+uninit_bg). Un gruppo mai inizializzato riceve la sua bitmap alla prima
+allocazione, come fa Linux; un inode nuovo si scrive intero, con lo spazio
+esteso e la data di nascita; una cartella con indice su metadata_csum riceve
+la coda col checksum in ogni blocco prima di perdere l'indice. Anche il
+giornale scrive e riapplica i checksum di Linux (CSUM_V3). I due limiti noti
+di ext3 non ci sono piu': una `write()` lunga si fa a pezzi da 256 KB,
+ognuno dentro una transazione sua, e il superblocco passa dal giornale.
+`tools/prova_ext4.sh` (QEMU, con `tools/prove/estesi.c`): quattro ext4 fatti
+da Linux - blocchi da 4 KB con una cartella indicizzata, blocchi da 1 KB
+senza flex_bg dove EX-OS riempie gruppi mai inizializzati e fa crescere un
+albero di extent di due livelli, un giornale con checksum lasciato da
+debugfs con una revoca, uninit_bg senza 64bit - scritti, tagliati e
+ricresciuti, ogni file identico byte per byte, `e2fsck` pulito, la
+transazione di EX-OS con i checksum riapplicata da `e2fsck`, un crash
+rimesso a posto. Restano in sola lettura: inline data, bigalloc, quote,
+cifratura, casefold, un volume con file orfani da sistemare.
+
+**0.265**: **ext3 si scrive**, con il suo giornale (`/dev/ext4.mod` 0.003,
+`kernel/moduli/ext4/giornale.c`). Ogni modifica ai metadati - bitmap,
+descrittori, inode, blocchi di puntatori, cartelle - va prima nel giornale
+come transazione intera e solo dopo al suo posto; i dati dei file vanno
+sul disco prima del commit (modo "ordered", quello di serie di ext3). Il
+formato del giornale e' quello di Linux (jbd2): un volume che EX-OS stava
+scrivendo quando e' mancata la corrente lo rimette a posto Linux, il suo
+`e2fsck` o EX-OS stesso. Al montaggio EX-OS riapplica un giornale lasciato
+da Linux (scansione, revoche, riapplicazione, come jbd2). `mount -r` non
+scrive niente, nemmeno per riapplicare il giornale. Una transazione si
+chiude alla fine di ogni operazione, alla chiusura di un file, a `sync`,
+allo smontaggio e dopo 5 secondi. Il kernel ha tre agganci nuovi
+nell'interfaccia di ext2 (ABI 4). Trovato provando: il CD a 64 bit non
+aveva `umount`. `tools/prova_ext3.sh` (QEMU, 32 e 64 bit, 27 su 27): un
+giornale scritto da debugfs con una revoca riapplicato come fa Linux,
+`mount -r` che lascia la partizione identica byte per byte, ext3 con
+blocchi da 4 KB e da 1 KB scritti (file identici, `e2fsck` pulito,
+needs_recovery spento), l'ultima transazione di EX-OS riapplicata da
+`e2fsck`, e un QEMU fermato senza `umount` che `e2fsck` rimette a posto
+senza perdere quel che era stato scritto. Prossimo passo: la scrittura di
+ext4 (extent, checksum dei metadati) - fatta, vedi sopra.
+
+**0.264**: il disco piu' veloce, senza perdere sicurezza. **Un lucchetto
+per il disco**: il controller, il suo buffer DMA e la cache dei settori non
+ne avevano, e lo swap e le chiamate sui settori grezzi passano fuori dal
+lucchetto del VFS, quindi due comandi potevano incrociarsi sullo stesso
+canale o la cache riprendersi dati vecchi; ora passa uno alla volta, CD
+compreso, e una scrittura fallita toglie dalla cache i settori toccati.
+**Lettura anticipata** da 128 KB, solo quando la lettura prosegue da dove
+era finita e mai oltre la partizione; ogni scrittura la butta via. Copie a
+parole invece che byte per byte. Nel modulo (ext4.mod 0.002) chi scrive in
+coda a un file si tiene da parte 128 KB di blocchi fra una write() e
+l'altra e i contatori del superblocco si scrivono alla chiusura; i blocchi
+avanzati tornano liberi alla chiusura, al sync, allo smontaggio e prima di
+ogni altra operazione. In QEMU, ext2 con blocchi da 4 KB, 32 bit: scrittura
+a pezzi da 4 KB da 5,5 a 14,4 MB/s, da 64 KB da 19,7 a 30,9; lettura a
+pezzi da 4 KB da 20,6 a 63,0, da 1 MB da 72,8 a 172,5 (a 64 bit fino a 218).
+`tools/prova_disco_veloce.sh` controlla ogni byte riletto, anche dopo una
+riscrittura sul posto, e `e2fsck` alla fine.
+
+**0.263**: i **moduli del kernel**, e il primo e' la scrittura di ext2. La
+lettura di ext2/ext3/ext4 resta nel kernel; il codice che scrive e' uscito
+dal kernel ed e' `/dev/ext4.mod`, che il kernel carica all'avvio subito
+dopo aver montato la radice (`kernel/loader/modulo.c`, lo stesso caricatore
+a 32 e a 64 bit: un oggetto ELF condiviso con sole rilocazioni RELATIVE).
+La costruzione aggiunge in coda al modulo la versione del kernel per cui e'
+fatto, l'architettura e lo SHA-256; se non tornano il modulo **non** si
+carica, lo schermo e il registro dicono che cosa ci si aspettava, e i
+volumi ext2 restano in **sola lettura** (ext3/ext4 lo sono comunque, per
+ora). `modulo` elenca i moduli caricati; `modulo carica -forza FILE` ne
+carica uno lo stesso, dopo l'avviso e un `SI` scritto - mai in automatico.
+Una radice ext2 parte in sola lettura e diventa scrivibile quando il modulo
+si registra. `install` copia il modulo insieme al kernel, e il dischetto, i
+CD e netinst lo portano. ext2 accetta quattro montaggi invece di due.
+`tools/prova_modulo.sh` (QEMU, 32 e 64 bit): EX-OS formatta e scrive un
+ext2 (mkdir, cp, mv, rm, rmdir, cartelle con indice; file identici, `e2fsck`
+pulito), un modulo danneggiato o fatto per un'altra versione e' rifiutato,
+un ext4 fatto da Linux si legge e non si scrive. `tools/prova_modulo_disco.sh`:
+un disco installato dal dischetto parte, la radice diventa scrivibile e ci
+si scrive. **netupdate 0.031: i componenti di sistema.** Una riga di
+`elenco.txt` puo' finire con la colonna `essenziale`; `tools/mknetinst.sh`
+la scrive per i file che corrispondono a `tools/netinst/essenziali.txt`
+(kernel, secondo stadio, ogni `dev/*.mod`, libc, sh, login, mount, install,
+netupdate). A una macchina che non ne ha uno arriva insieme ai file
+cambiati, anche con `-check -yes`, invece di essere un file "mai
+installato" facoltativo. I netupdate piu' vecchi ignorano la colonna:
+**per l'aggiornamento alla 0.263 rispondete "si" a "Installo anche
+quelli?" oppure usate `-yesall`**, altrimenti il kernel nuovo arriva senza
+il suo modulo e il disco parte in sola lettura (il kernel lo dice a
+schermo, con il rimedio). Prossimi passi: il giornale di ext3, poi la
+scrittura di ext4 (extent, checksum dei metadati) dentro il modulo.
+
+**0.260**: `rename()` sposta file e cartelle fra cartelle diverse su ext2
+(finora rinominava solo sul posto, e altrimenti rispondeva ENOSYS). Una
+cartella spostata riceve il suo `..` riscritto e il collegamento passa dal
+vecchio padre al nuovo; spostare una cartella dentro se stessa e' rifiutato.
+L'ha scoperto **libgit2 su EX-OS a 64 bit**: scrive ogni oggetto in un file
+temporaneo e lo sposta in `.git/objects/xx/`. libgit2 1.9.6 (con HTTPS via
+OpenSSL) ora si costruisce per EX-OS (`tools/libgit2-exos/costruisci.sh`) e,
+in QEMU, un programma di prova fa init, commit, status, log, branch, diff e
+un clone locale (16 su 16); il repository che scrive passa il `git fsck` vero.
+Nuovi anche: la libreria FTP/FTPS condivisa e `/bin/ftp` come shell ftp
+completa con FTPS (vedi il manuale della rete), e un riquadro «caricamento in
+corso, attendere» con la clessidra per ogni programma grosso. Su FAT si
+rinomina ancora solo sul posto.
+
+**0.259**: lo stat non dice piu' "sola lettura" per ogni file su ext2 e FAT,
+un residuo di quando quei filesystem non si scrivevano: i programmi vedevano
+file senza permessi di scrittura. Ora decidono il volume, i permessi
+dell'inode o l'attributo FAT. L'ha scoperto la notizia del giorno: **il
+compilatore Rust gira su EX-OS a 64 bit**. `rustc` e' costruito per l'host
+`x86_64-unknown-exos` (un solo programma statico da 131 MB, con LLVM 23
+dentro) e, in QEMU, `rustc -O ciao.rs` compila un programma e lo collega col
+gcc nativo, e il programma gira (collezioni, fili, un panic preso, un
+processo figlio). Non ancora: cargo, il CD degli strumenti, una macchina vera.
+
+**0.258**: `/dev/null` esiste. Su EX-OS `/dev` e' la cartella dei driver sul
+disco, quindi un programma che apriva `/dev/null` riceveva un errore - in
+sola lettura, da un CD. Ora e' un dispositivo del kernel: in lettura da' fine
+file, in scrittura prende tutto e non tiene niente, a 32 e a 64 bit; anche
+`cmd > /dev/null` funziona come redirezione. Il software portato lo apre di
+continuo: `std::process` di Rust lo fa per ogni flusso da ignorare. Ed e'
+l'altra novita', per il Rust nativo in arrivo a 64 bit: `std::process::Command`
+funziona su EX-OS (sopra `spawn_ex`: ricerca nel PATH, pipe, ambiente,
+cartella di lavoro, codici d'uscita - 7 su 7 in QEMU), e cosi' `panic=unwind`
+(`catch_unwind`, `Drop` durante lo svolgimento, fili - 8 su 8). Inoltre
+`abort()` ora chiude subito il programma (`_exit`): eseguiva i gestori di
+uscita, e uno in attesa di un lucchetto tenuto da chi abortiva lo bloccava per
+sempre.
+
+**0.257** (solo 64 bit): si usa la RAM oltre i 4 GB. Finora il kernel a 64
+bit usava solo la RAM sotto i 4 GB: su una macchina con 8 GB meta' restava
+ferma, e anche una da 4 GB ne ha una parte sopra, spostata li' dal BIOS per
+far posto alle periferiche. Ora e' una seconda riserva del gestore della
+memoria fisica, data alle pagine dei programmi (heap, pila, mmap) quando le
+toccano; tabelle delle pagine, pile del kernel e buffer DMA restano nella RAM
+sotto i 4 GB, che le periferiche a 32 bit raggiungono. `mem` la conta. Provato
+in QEMU con 6 GB: un processo prende 3,5 GB, scrive e rilegge ogni pagina
+senza errori, tre volte di fila, e la memoria in uso dopo e' quella di prima;
+con 2 GB non cambia niente. Il kernel a 32 bit e' identico.
+
+**0.256** (solo 64 bit): un processo ha quasi 4 GB di spazio di indirizzi
+invece di 3. Il framebuffer, l'unica cosa del kernel che stava fra 3 e 4 GB di
+ogni processo, il kernel lo vede da sopra i 4 GB, attraverso un alias che
+tutti gli spazi condividono; lo spazio utente finisce appena sotto i 4 GB e il
+tetto dello heap passa da circa 2681 a 3705 MB. La memoria si prende sempre
+solo quando la si tocca. Provato in QEMU: Exilla nella sua finestra,
+l'autoverifica della libc, i fili C++. Il kernel a 32 bit e' identico,
+istruzione per istruzione. Prossimo passo: processi oltre i 4 GB e RAM oltre
+i 4 GB.
+
+**Strumenti a 64 bit, 16 ottobre 2026**: **FreeBASIC** 1.10.1 gira su EX-OS a
+64 bit. A 64 bit FreeBASIC non ha un generatore di assembly suo, quindi passa
+dal C (`-gen gcc`): `tools/freebasic-exos/prepara-fb64.sh` costruisce la
+runtime (libfb) con `x86_64-exos-gcc` e il `fbc` nativo, e `make tools64` li
+mette su `dist/exos64-tools.iso` (gruppo fb). In QEMU il `fbc` nativo compila
+un programma dentro EX-OS a 64 bit con gcc, as e ld nativi, e il programma
+gira (`tools/freebasic-exos/prova-fb64-nativo.sh`). **Exilla (Firefox) gira
+a 64 bit**: costruita per `x86_64-unknown-exos`
+(`EXOS_ARCH=x86_64 tools/exilla/gecko-costruisci.sh`), apre la sua finestra in
+ExWin dentro EX-OS a 64 bit, disegna la pagina di prova e ne apre una seconda
+scritta nella barra degli indirizzi (`EXOS_ARCH=x86_64
+tools/exilla/prova-finestra.sh`, QEMU con 2 GB); `make netinst64` ora porta il
+pacchetto `exilla` (306 MB). Strada facendo: libstdc++ con i fili per la
+toolchain a 64 bit, le macro di formato a 64 bit di `<inttypes.h>`, le sei
+funzioni di `<fenv.h>` che openlibm per amd64 non esporta, e la riserva del
+JIT di SpiderMonkey ridotta a 140 MB: un processo a 64 bit su EX-OS ha ancora
+lo spazio di indirizzi del 32 bit (circa 2,6 GB), da allargare. gcc e g++
+sono stati provati anche sul portatile vero. Non ancora provati su una
+macchina vera: Exilla e FreeBASIC.
+
+**0.255**: la barra di stato (`extaskbar`, sopra): l'ultima riga dello
+schermo puo' essere sua, le console hanno lo schermo alternativo
+(`ESC[?1049h/l`), e quello che scrivono i processi in sottofondo va in un
+anello che `extaskbar` raccoglie (`SYS_EXTASKBAR`), solo mentre gira. La shell
+segna i lavori con `&` (`SPAWN_F_SOTTOFONDO`) e ora azzera sempre i flag della
+spawn, che prima lasciava come li trovava sullo stack.
+
+**0.254**: sul portatile `reboot` si fermava poi per sempre dentro il passo
+del controller della tastiera. Ora la porta di reset del chipset 0xCF9 si
+prova prima (una scrittura su una porta che nessuno decodifica non fa
+niente), e ciascuno dei dieci tentativi sull'8042 stampa la sua riga. Non
+ancora provato sul portatile.
+
+**0.253**: sul portatile `reboot` si fermava subito dopo «Sincronizzazione
+filesystem... ok». Il suo firmware non dichiara un registro di reset ACPI, e
+le attese fra gli altri metodi erano cicli contati che sulla sua CPU duravano
+meno di un millisecondo. Ora ogni metodo aspetta circa mezzo secondo, misurato
+sulla porta di I/O 0x80 come fa Linux; il controller della tastiera riceve il
+comando di reset dieci volte; e ogni metodo stampa la propria riga sullo
+schermo («Riavvio: controller della tastiera (8042)», «Riavvio: porta 0xCF9»,
+«Riavvio: triple fault»), cosi' l'ultima riga mostrata dice quale la macchina
+non ha accettato. Non ancora provato sul portatile.
+
+**0.245**: i dischi SATA dietro un controller AHCI (`kernel/block/ahci.c`).
+I controller che si dichiarano AHCI si usano sempre, e i loro dischi prendono
+un posto fra `hd0`..`hd3` come gli altri: in QEMU il sistema si installa, legge,
+scrive e si avvia da un disco AHCI. Per i controller che offrono lo stesso
+disco due volte (i registri IDE e l'AHCI, come l'NVIDIA MCP73 del PC di prova,
+dove dai registri IDE funziona solo il PIO) il sistema parte come sempre e
+passa all'AHCI dopo: con `ahci = 1` in `/boot/kernel.cfg` a ogni avvio, o col
+comando `ahci` per la sola sessione in corso, che e' il modo di provarlo senza
+rischio. `ahci -t` e' lo stesso passaggio col reset del controller, come fa
+Linux sull'MCP77: legge dei campioni dai registri IDE, passa, li rilegge in
+AHCI e, se qualcosa non torna, riavvia dopo 60 secondi senza scrivere sul
+disco; toglie anche il lettore DVD fino al prossimo avvio. Dopo di lui
+`ahci -s` scrive `ahci = 2`, lo stesso passaggio a ogni avvio. Sul portatile
+MCP77 la lettura e' passata da 5,3 a 76 MB/s, ma sotto carico il disco una
+volta ha smesso di rispondere (`in_lavorazione.txt`, voce 58): non e' ancora
+provato sicuro.
+
+Dal kernel 0.299 `guardia SECONDI` riavvia la macchina se nessuno la richiama
+in tempo, e `guardia 0` la spegne: serve alle prove a distanza su un PC vero,
+quando un guasto lo lascerebbe fermo. Il conto sta nel kernel, quindi scatta
+anche a disco fermo o a rete caduta; il riavvio e' senza sync. Dal PC lo tiene
+vivo `tools/guardia-pc.py`, una chiamata ogni 30 secondi su 120 di margine.
+A meta' e a tre quarti del tempo il kernel scrive nel log chi tiene i lucchetti.
+`dmesg -segui` mostra avvisi ed errori man mano che arrivano e
+`tools/prova_carico_pc.py` prova il disco sotto carico a distanza, in una
+sessione sola perche' telnetd ne serve una per volta. Dal 0.300 i timeout
+dell'AHCI durano davvero quanto dichiarato: prima scadevano dopo circa 2 secondi
+ed erano falsi se il filo si fermava. netupdate 0.039 riscrive un kernel
+frammentato e non dice piu' di riavviare se la mappa di avvio non e' aggiornata.
+
+**Dal kernel 0.319 tutti i processori lavorano per difetto** (voce 92).
+`smp = 2` e' il predefinito in `/boot/kernel.cfg`; e' un modo, non un numero:
+2 vuol dire che tutti i processori elencati dalla MADT dell'ACPI o dalla
+tabella MP eseguono programmi (1 parcheggia quelli in piu', 0 li conta
+soltanto, per una scheda che con loro non si avvia). Non c'e' piu' il tetto di
+16: l'elenco dei processori e ogni tabella per processore (GDT, TSS, processo
+corrente e ozio, lucchetto del kernel, CR0.WP, frequenza) sono lunghi quanto
+la macchina; resta il limite della numerazione a 8 bit dell'xAPIC (l'x2APIC
+non e' ancora pilotato). `sysconf(_SC_NPROCESSORS_ONLN)` dice il numero vero
+(diceva 1), quindi Firefox, FFmpeg e Mesa dimensionano i fili su quello;
+`/proc/stat` ha il tempo vero di ogni processore (divideva il totale in parti
+uguali) e `/proc/PID/status` la riga `Cpus_allowed_list`. **Affinita' e
+processori riservati**: `sched_setaffinity`, `pthread_setaffinity_np` e
+`sched_getcpu` sono veri (`SYS_CPU_AFFINITA` 265), e il comando nuovo `cpu`
+elenca i processori, manda i fili di un processo su quelli dati (`cpu -p PID
+1,3-5`), lancia un comando gia' fissato (`cpu -x 2-3 COMANDO`) e riserva un
+processore a un processo (`cpu -r PID 2`, `cpu -R 2 COMANDO`): i suoi fili ci
+vanno e nessun altro ci gira, finche' non finisce o `cpu -l 2`. Il processore 0
+non si riserva. **Un guasto dello scheduler trovato per strada**: un processo
+che lavorava da solo cedeva il processore all'ozio per un tick alla fine di
+ogni quanto (1 su 5, il 20% di qualunque programma che calcola); trovato perche'
+due programmi su un processore facevano 1,25 volte il lavoro di uno solo.
+Provato in QEMU a 32 e 64 bit: `tools/prova_tutti_core.sh` (1, 2, 4
+processori con KVM: 2,00 e 3,8 volte il lavoro di uno; 20 processori trovati
+e al lavoro, emulati) 22/22, `tools/prova_affinita.sh` 9/9 (due programmi
+fissati su un processore 1,00, su due 2,00, tre accanto a uno riservato 2,93).
+**Kernel 0.320**: spegnimento, riavvio e arresto passano prima al processore
+0; chiesti da un programma sul processore 1 la 0.319 si fermava a
+"Spegnimento fra 3..." (il conto aspettava l'orologio, che sale sul
+processore 0, tenendo il lucchetto del kernel); le attese sull'orologio dei
+lettori CD e del floppy lasciano passare il lucchetto. **Kernel 0.321: i fili
+di un programma girano su piu' processori insieme** (voce 92 b, tappa 4
+dell'SMP; fino alla 0.320 si davano il turno su un processore, e Firefox coi
+suoi 60-70 fili usava un core per volta). Quando il kernel toglie una pagina
+a un programma (munmap, lo scambio), la rende di sola lettura (mprotect, la
+copia su scrittura della fork) o la sposta (copia su scrittura), ogni altro
+processore che esegue quel programma riceve l'ordine di buttare il suo TLB, e
+il kernel aspetta che l'abbiano fatto tutti (TLB shootdown: un messaggio sul
+vettore 0xF2 che non prende il lucchetto del kernel). munmap, sbrk e la pila
+di un filo mandano un messaggio per chiamata, non uno per pagina. Un fault su
+una pagina che un altro filo ha appena portato torna subito indietro invece
+di uccidere il filo; `exec` da un filo fa finire i fratelli e libera la
+memoria vecchia quando l'ultimo l'ha lasciata. I programmi C compilati col
+gcc incrociato vogliono la libc delle sysroot dell'8 novembre o piu' nuova per
+vedere il numero vero dei processori (`sysconf` in quella vecchia diceva 1): i
+programmi collegati staticamente prima, Firefox compreso, vanno ricollegati.
+`smpprova -fili N` misura N fili di un programma solo. Provato in QEMU:
+`tools/prova-fili-core/prova-fili-core.sh` 8/8 a 32 e 64 bit (2 fili 1,97
+volte il lavoro di uno, 4 su 4 processori 3,16; l'altro filo si ferma sul suo
+fault appena munmap o mprotect tornano; un figlio nato con fork mentre un filo
+scrive vede la pagina com'era) - e con un kernel costruito senza lo shootdown
+la stessa prova dice NO tre volte.
+
+Dal kernel 0.297 anche il sistema a 64 bit sveglia i processori in piu', come
+quello a 32: `smpprova -accendi` li mette al lavoro fino al riavvio, `smp = 2`
+in `/boot/kernel.cfg` a ogni avvio. I programmi girano su tutti; nel kernel
+ce n'e' uno per volta; dalla 0.321 anche i fili di uno stesso programma girano
+insieme. `ahci -m FILE`
+misura a quanti KB/s si legge un file. Confermato sul
+PC vero il 9 ottobre, al terzo tentativo: il disco passa all'AHCI e i 35 MB
+di `cc1` si leggono a 59 MB/s, contro i circa 3,4 MB/s del PIO. Su quel
+controller la porta non era mai stata usata in AHCI: accendendo il modo AHCI
+il link cade, e va ristabilito prima di poter leggere la firma del disco.
+`install` (0.006) riconosce da se' una macchina cosi': passa il disco all'AHCI
+prima di copiare e, solo se riesce, scrive `ahci = 1` nel `kernel.cfg`
+installato; su un sistema gia' installato lo fa `ahci -s`.
+
+**0.244**: uscendo dalla grafica la console di testo era piena di righe che
+sembravano guasti e non lo erano. Il diario dei programmi grafici (`SYS_LOG`:
+ogni foglio di stile caricato dal navigatore, ogni errore di uno script di una
+pagina) veniva scritto anche sulla console; ora va sulla seriale e nel
+registro che legge `dmesg`, e basta. Il navigatore usa quel diario al posto di
+`printf`. E «ENTROPIA: jitter...», che compare alla prima connessione cifrata
+su una macchina senza RDRAND, non e' piu' scritto come `[ERROR]`: e' la
+notizia che i bit casuali sono stati raccolti.
+
+**0.243**: la console in grafica era lenta sul PC vero. Misurato li' con
+`fbprova` (1024x768 a 32 bit, video integrato NVIDIA): leggere dalla memoria
+video va a 28 MB/s contro i 10.000 della RAM, e lo scorrimento copiava lo
+schermo su se stesso, cioe' lo rileggeva tutto a ogni riga: un decimo di
+secondo per riga. Ora lo scorrimento non legge mai dallo schermo: le celle
+stanno in RAM, e si ridisegnano solo quelle che dopo lo scorrimento mostrano
+un carattere diverso. In piu' `mtrr.c`, scritto a settembre e mai collegato
+per mancanza di una macchina su cui provarlo, adesso viene chiamato: dichiara
+la memoria video combinabile in scrittura, e rinuncia dicendolo (`dmesg MTRR`)
+se qualcosa non torna. In QEMU la console scorre giusta. Misurato sul PC dopo
+l'aggiornamento: `MTRR: framebuffer 0xd0000000, 4096 KB combinabili in
+scrittura`, e scrivere sullo schermo passa da 160-345 a 1335 MB/s.
+
+**0.242**: il kernel tiene un registro dei propri messaggi, e il nuovo comando
+`dmesg` lo legge: l'avvio (i primi 32 KB, mai sovrascritti) e gli ultimi
+messaggi, anche quelli che il livello di log nasconde a schermo.
+`dmesg PAROLA` mostra solo le righe che la contengono. Nasce dalle prove sul
+PC vero guidato via telnet: senza cavo seriale non c'era modo di sapere che
+cosa il kernel avesse detto all'accensione. Dalle stesse prove: la shell esce
+quando il suo ingresso finisce (ogni sessione telnet caduta lasciava una shell
+viva col suo pseudo-terminale, e alla quinta nessuno entrava piu');
+`nforce.drv` 0.006 trasmette (l'anello di trasmissione di 8 descrittori era
+troppo piccolo per la scheda: riceveva e non mandava niente; a 64 va, provato
+sul PC con `nforce.drv -p`); `audio -i` riconosce l'audio della MCP73 (codec
+ALC888); `netupdate -check -yes` e `-yesall` aggiornano senza chiedere.
+
+**0.241**: il sistema si installava, ma riavviando dal disco il kernel non
+trovava la sua radice. La cercava solo su `hd0`, e un disco SATA su un canale
+nativo sta nel primo posto libero, che puo' essere un altro. Ora guarda tutti
+i dischi: prima la partizione attiva di ognuno, poi la prima ext2 che trova.
+Per aggiornare un disco gia' installato: avvio dalla chiavetta nuova,
+`mount hdNp1 /disk`, `install -a /disk`.
+
+### Una scheda madre vera: disco SATA e rete NVIDIA (kernel 0.239)
+
+**da testare sul ferro: QEMU non emula ne' l'uno ne' l'altra** — dal referto
+di un PC con chipset NVIDIA MCP73 e Core 2 Quad (`sonda/mb_oem_000`):
+- **Il disco SATA.** Il controller si presenta come IDE in *modo nativo*: i
+  registri non stanno a 0x1F0 e 0x170 ma dove dicono i suoi BAR. Il kernel
+  guardava solo i due posti di sempre e il disco non lo vedeva. Ora cerca sul
+  PCI i controller IDE, RAID e SATA che non sono in AHCI e ne aggiunge i
+  canali; i dischi trovati prendono i posti liberi fra `hd0` e `hd3`, cosi'
+  `disk`, `fdisk` e l'installatore non cambiano. I dischi di sempre restano
+  dov'erano (questo si' provato in QEMU).
+- **La rete.** `/dev/nforce.drv`, per l'Ethernet integrata nei chipset NVIDIA
+  nForce (MCP67, 73, 77, 79): registri in memoria, senza interrupt, col PHY
+  letto com'e'. `netdetect` la riconosce e lo avvia. Con `-d` stampa i
+  registri, il PHY e i conteggi del driver in servizio, con `-v` racconta
+  l'accensione. Confermato sulla scheda vera (MCP73) con la 0.008, l'8 ottobre:
+  all'avvio `dhcp` prende l'indirizzo e il gateway risponde al ping in 20 ms, a
+  1000 Mbit. I guasti erano tre: l'anello di trasmissione di 8 descrittori,
+  troppo piccolo per la scheda (non trasmetteva); il filtro per indirizzo, che
+  lasciava passare solo i broadcast (l'offerta DHCP veniva scartata); e le
+  attese brevi fatte con `usleep`, che allungavano l'accensione oltre i dieci
+  secondi. `-p` la prova da sola.
+- **MP3.** `audio brano.mp3` suona un MP3 e `audio -w brano.mp3 brano.wav` lo
+  converte in WAV. Il decodificatore e' `minimp3`, di dominio pubblico (CC0),
+  copiato cosi' com'e' in `lib/terze/minimp3` e compilato senza SIMD per il
+  Pentium MMX. Provato in QEMU convertendo l'intro di `exwin/sound`: i
+  campioni prodotti dentro EX-OS differiscono al piu' di 1 su 32768 da quelli
+  dello stesso decodificatore sul PC di sviluppo, e somigliano al WAV
+  originale per il 99,97%. L'ascolto sul PC vero e' da fare.
+- **HD Audio sui ponti nVidia** (`hdaudio.drv` 0.003). Sul PC di prova il
+  codec rispondeva, il collaudo passava e non si sentiva niente. Due cose: i
+  controller nVidia leggono la memoria del flusso senza guardare le cache del
+  processore finche' non si accendono tre bit nella loro configurazione PCI
+  (0x4C, 0x4D, 0x4E), e il driver ora lo fa; e il volume regolava solo il
+  canale sinistro, lasciando il destro com'era nato (muto, su un ALC888).
+  `hdaudio.drv -d 1` stampa tutto il codec - collegamenti, amplificatori,
+  prese, flussi - senza scrivere niente, anche col driver acceso; `-c 0`
+  lascia stare i bit nVidia, `-k N` sceglie il codec. Sul PC vero ora si
+  sente (10 ottobre). Restavano buchi e pezzi distorti a caso: all'interrupt
+  di fine meta' il contatore della posizione puo' essere ancora un pelo prima
+  del confine, e si riempiva la meta' sbagliata. La 0.004 sposta il confine di
+  un quarto di meta' e scrive i conti di ogni riproduzione nel registro
+  (`dmesg hdaudio`). Da riascoltare.
+- **Le fondamenta per i 64 bit.** EX-OS avra' una versione a 64 bit accanto
+  a quella a 32, dallo stesso sorgente: `make ARCH=x86_64` (di serie `i386`,
+  e senza dirlo non cambia niente). Due repository, `netinst` e `netinst_64`:
+  `netupdate` 0.029 sa per quale macchina e' compilato, `versione.txt` dice
+  `arch`, e un repository dell'architettura sbagliata si rifiuta. Il piano a
+  tappe e' in `in_lavorazione.txt` (`@EXOS-64`). La prima tappa e' fatta: il
+  kernel arriva in modo a 64 bit in QEMU (`tools/prova_kernel64.sh`), col
+  caricatore di sempre; su un Pentium dice che i 64 bit non ci sono. Non e'
+  ancora un sistema. Seconda tappa a meta': tutto il kernel comune COMPILA a
+  64 bit (restano da riscrivere i sei file del processore), e a ogni passo il
+  kernel a 32 bit e' risultato identico istruzione per istruzione.
+  Terza tappa fatta: il kernel COMUNE gira a 64 bit. `make ARCH=x86_64
+  kernel64` compila gli stessi sorgenti del kernel a 32 bit, meno i tre file
+  del processore e piu' quelli di `kernel/arch/x86_64` (ingresso, segmenti,
+  interrupt, cambio di contesto, tabelle a quattro livelli), e in QEMU
+  arriva in fondo all'avvio - memoria, scheduler, chiamate di sistema, il
+  CD - e avvia in ring 3 un programma ELF64 che fa chiamate di
+  sistema, dorme e torna. Il kernel a 32 bit e' rimasto identico a ogni
+  passo. Non e' ancora un sistema: mancano la libc e i programmi (tappa 4),
+  e a 64 bit segnali, librerie condivise e driver non ci sono.
+  La versione a 64 bit non ha dischetti: `make iso64` fa il CD
+  (`dist/exos64.iso`), `make netinst64` il repository (`dist/netinst_64`),
+  `sudo make usb64 DISPOSITIVO=/dev/sdX` la chiavetta, `make tools64` dira'
+  il CD degli strumenti quando ci saranno.
+- **La chiavetta USB a 64 bit parte con la radice in RAM (`make usb64`, e `make usb` a 32 bit).**
+  Una chiavetta fatta come un disco installato si avviava e restava senza
+  shell: il kernel legge i dischi ATA, non l'USB, e i driver USB stanno sul
+  disco che non riesce a leggere. Ora la chiavetta comincia con un dischetto
+  da 1,44 MB (la forma di `make installa`): il BIOS lo avvia come un floppy,
+  il caricatore lo copia in RAM e il kernel ci monta la radice; da li'
+  partono i driver USB, e `fetta.drv` monta in `/sistema` il resto della
+  chiavetta, dove sta il sistema completo. La radice in RAM si perde allo
+  spegnimento. Provata in QEMU, non ancora su una macchina vera.
+- **EX-OS a 64 bit: un sistema a riga di comando.** Quarta tappa fatta. La
+  libc, la shell, 78 comandi di `/bin` e 20 driver sono gli STESSI sorgenti
+  della versione a 32 bit compilati a 64 (`make utente64`), con la libc
+  collegata dentro ogni programma. Il CD `dist/exos64.iso` si avvia fino alla
+  shell con tastiera, mouse, PCI e rete (e1000, DHCP, ping), si installa su
+  disco con `install` e riparte dal disco. Segnali, fili e variabili
+  `__thread` funzionano a 64 bit. Provato in QEMU, non ancora su una
+  macchina vera. C'e' anche la scrivania ExWin (19 programmi e il server
+  grafico, collegati staticamente) e il repository `netinst_64`. Mancano
+  ancora l'audio, FreeBASIC, OpenSSL ed Exilla. Dalla 0.249 ci sono i
+  **compilatori**: `tools/gcc-exos/cross64.sh` costruisce il compilatore
+  incrociato `x86_64-exos` (GCC 17, binutils 2.44, C e C++ con libstdc++) e
+  i gcc, g++, binutils, GNU make e NASM nativi che girano su EX-OS; `make
+  tools64` li mette su `dist/exos64-tools.iso`, `toolinst` li installa e
+  `make netinst64` li pubblica. In QEMU un programma C e uno C++ (con le
+  eccezioni) si compilano e girano dentro EX-OS a 64 bit. La versione a 32
+  bit e' rimasta identica, istruzione per
+  istruzione, nel kernel e in tutti i 181 sorgenti di libc, librerie e
+  comandi.
+- **Scrivania: memoria e avvio (pm 0.020).** Una voce di menu puo' dire
+  quanta memoria vuole (`ram=2048`) e il menu avvisa prima di avviarla su una
+  macchina che ne ha meno. Dal pannello Impostazioni si accendono e spengono
+  l'orologio e l'icona del volume nella barra.
+- **Exilla: la barra di scorrimento si vede.** Era quella di Android, un
+  pollice sottile bianco su bianco: ora e' quella classica con le frecce e i
+  grigi di ExWin. Serve ripubblicare il pacchetto `exilla`.
+- **La rete non e' piu' frenata dalla finestra di TCP (`ip.drv` 0.009).** La
+  finestra di ricezione era di 4 KB: verso un server a 50 ms voleva dire al
+  massimo 80 KB/s, qualunque fosse la linea. Ora e' di 63 KB, presa solo dalle
+  connessioni che la usano, e i pacchetti arrivati in disordine si tengono da
+  parte invece di farseli rimandare. `ip.drv -w KB` la riduce. In QEMU un
+  megabyte passa da 3,6 a 0,3 secondi; il guadagno su una linea vera va
+  misurato sul PC con `scarica -i`.
+- **ExEditor scrive documenti (0.008).** Nei documenti RTF: barra degli
+  strumenti a icone, righello in centimetri con rientri e tabulazioni da
+  trascinare, Formato > Paragrafo e Pagina, interlinea, vista pagina con i
+  salti di pagina; il menu Visualizza accende e spegne barra, righello e
+  pagina. La libreria `exrtf` ha ora rientri, tabulazioni, spazi e formato
+  della carta, letti e scritti in RTF. I `.doc` di **Word 6 e 95** si aprono
+  (`lib/exrtf/doc95.c`) e si salvano come RTF; Word 97 e successivi no. Il
+  lettore dei .doc e' provato su file scritti a mano e confrontato con
+  LibreOffice, non su file di un Word vero. Tolta la seconda barra di
+  scorrimento in modalita' testo.
+- **Due ritocchi dalla coda.** Lo sfondo della scrivania accetta una
+  fotografia: il toolkit (0.017) leggeva solo i primi 256 KB del file, ora lo
+  legge tutto. Nel file manager (0.013) il separatore fra albero ed elenco si
+  trascina, e la larghezza resta in `$HOME/.exwin/config/filemgr.cfg`.
+- **Exilla e' un pacchetto del repository (tappa 8 del porting di Firefox).**
+  `netupdate -install:exilla` la scarica in `/exwin/app/exilla` (navigatore,
+  lanciatore, icone: 290 MB) e scrive la voce nel menu della scrivania, nella
+  nuova categoria **Internet** dove e' passato anche EXBrowser;
+  `netupdate -remove:exilla` toglie file e voce. `netupdate` 0.027: un
+  pacchetto puo' avere l'elenco dei file suo (`pacchetti/exilla.txt`, cosi'
+  `-check -yesall` non porta Exilla su chi non l'ha chiesta), i file sopra i
+  16 MB si pubblicano e si scaricano a pezzi (`firefox.p000`...) con ripresa
+  dal pezzo mancato, e la chiave `menu` del catalogo diventa una riga di
+  `applicazioni.txt`. Il program manager (0.019) tiene 48 voci invece di 16:
+  il sistema di base le riempiva gia' tutte. `firefox` e' pubblicato senza simboli: 192 MB invece di
+  274. `make netinst` la mette nel repository da solo; `exagonx/pubblica.sh` e
+  `verifica.sh` conoscono liste e pezzi. Provata in QEMU contro il repository
+  costruito qui (non contro quello pubblicato); su una macchina vera e' da
+  provare.
+- **EXBrowser: i risultati di Yahoo al loro posto, e quelli di Bing si
+  aprono.** Su Yahoo la colonna dei risultati finiva a destra delle linguette
+  e oltre il bordo: un blocco che non ci sta accanto a un galleggiante ora
+  scende sotto, e un `min-width` piu' largo della finestra non fa piu'
+  uscire il blocco dalla pagina (lo scorrimento orizzontale non c'e': quel
+  che esce non si vede). Su Bing ogni risultato portava a una pagina bianca:
+  la pagina di passaggio reindirizza da `<body onload="...">`, e l'evento
+  `load` partiva dalla radice del documento senza mai incontrare il body.
+- **EXBrowser: le immagini di sfondo dei CSS.** Loghi e icone di gran parte
+  dei siti sono lo SFONDO di un elemento vuoto: `background-image` (anche
+  dentro `background`), con `background-repeat`, `-position`, `-size`, e
+  `height` / `min-height` che danno una misura al riquadro. L'indirizzo e'
+  relativo al foglio in cui sta scritto, non alla pagina. Su Yahoo compare il
+  logo. Due difetti trovati e corretti: un `;` dentro `url(data:...;base64,...)`
+  chiudeva la dichiarazione a meta' (il foglio di Yahoo passa da 2652 a 2856
+  regole lette), e una pagina con un temporizzatore perdeva TUTTO lo stile se
+  il ricalcolo scattava mentre si scaricava un'immagine. Non ancora: le
+  immagini `data:`, lo sfondo sugli elementi in linea.
+- **EXBrowser: le anteprime «in ritardo».** Le pagine piene di figure non
+  mettono piu' l'indirizzo in `src`: lo tengono in `data-src` e uno script lo
+  sposta quando la figura entra nello schermo. Quello script qui non gira, e
+  wallpapers.com e pixels.com restavano senza anteprime. Ora `<img>` prende
+  l'indirizzo da `data-src` (o `srcset`) quando `src` manca o e' un
+  segnaposto. Un pulsante fatto di una sola figura prende il nome dal suo
+  `alt`. Restano: gli sfondi CSS (il logo di Yahoo), il formato WebP, e
+  l'impaginazione di quelle pagine.
+- **Il pulsante «a tutto schermo».** Nella barra del titolo, fra «riduci a
+  icona» e «chiudi», un terzo pulsante porta la finestra a riempire lo
+  schermo fino alla barra della scrivania, e premuto di nuovo la rimette
+  dov'era; lo stesso fa Alt+F10. Lo fa il server a finestre (`wserver`
+  0.011) per ogni finestra ridimensionabile, quindi nessun programma e' stato
+  toccato. Provandolo si e' visto che il file manager, a ogni
+  ridimensionamento, faceva salire le due liste sopra le intestazioni:
+  corretto.
+- **Gli strumenti scaricati si trovano da soli.** `netupdate -check -yesall`
+  installa tutto il sistema, compilatori compresi, in `/exos`; ma il `PATH`
+  di `/boot/kernel.cfg` non lo toccava, e `gcc` dava «comando non trovato» su
+  una macchina che lo aveva sul disco. Ora a fine `-check`, se gli strumenti
+  ci sono e il PATH non li nomina, lo scrive `toolinst -c` (nuovo: solo la
+  configurazione, con la copia in `kernel.cfg.bak`); vale dal riavvio. E
+  exide (0.025) sceglie da solo la radice del compilatore: `/exos` se c'e',
+  altrimenti il CD - prima era fissa a `/cdrom/exos`.
+- **Il pannello dei volumi.** Nella barra, accanto all'orologio, c'e'
+  un'icona con l'altoparlante: un clic apre `exvolume`, con una riga per ogni
+  uscita e per ogni ingresso della scheda e due cursori per riga, canale
+  sinistro e destro (una spunta li lega). Le voci le dichiara il driver:
+  `hdaudio.drv` 0.005 da' a ogni presa d'uscita un convertitore suo, cosi' i
+  volumi sono davvero uno per presa, ed elenca come ingressi il microfono, la
+  linea e il CD che il codec sa mescolare nelle uscite (nascono a zero). Le
+  schede col solo volume generale hanno una voce, «Volume». Le scelte stanno
+  in `$HOME/.exwin/config/volume.cfg` e la scrivania le rimette a ogni avvio
+  (`exvolume -applica`); da console, `audio -mix`. In QEMU: una uscita,
+  sinistra a 0 e destra a 78, e nella registrazione il canale sinistro e'
+  muto. Le cinque uscite e gli ingressi dell'ALC888 sono da provare sul PC.
+- **Il lettore audio e la libreria del suono.** `explayer` (Avvio > Lettore
+  audio, o un doppio clic su un `.wav` o un `.mp3` nel file manager) suona un
+  elenco di brani: precedente, suona, pausa, ferma, successivo; una barra che
+  mostra dove si e' e che si trascina per andare a un punto qualunque; tre
+  contatori, il tempo trascorso, quello che resta e il totale dell'elenco. Il
+  suono non e' dentro il lettore: lo fa `exsuono.so` (`lib/exsuono`), che ogni
+  programma puo' aprire. Per chi vuole solo un suono dopo un'azione basta
+  `exsuono_avvia_file("/exwin/sound/x.wav")`, che torna subito; il program
+  manager la usa per l'intro all'accensione della scrivania; si spegne con
+  la spunta «Suono all'avvio della scrivania» in Avvio > Impostazioni. Trovati facendolo: `audio` non tornava al
+  prompt a fine brano (aspettava che la scheda consumasse gli ultimi byte,
+  meno di un blocco, che una scheda non prende mai) e teneva la scheda
+  occupata; e nel toolkit un pulsante col fuoco non si poteva premere dalla
+  tastiera in nessun programma: ora lo fa la barra spaziatrice (exwin.so
+  0.016). Provato in QEMU con l'HD Audio emulato, dalla tastiera. Sul PC
+  vero e' da ascoltare.
+- **Il menu di avvio dalla tastiera.** Il tasto Windows o Ctrl+Esc lo aprono
+  da qualunque finestra; frecce su e giu' per scegliere, destra (o Invio, o
+  spazio) per entrare in una categoria, sinistra o Esc per uscirne, Invio o
+  spazio per avviare, Esc per chiudere. Il tasto Windows e' un tasto nuovo
+  anche per il driver della tastiera (`KBD_K_WIN`). Provato in QEMU.
+- **Mouse e tastiera USB sui controller OHCI.** `ohci.drv` (0.003) sapeva solo
+  di chiavette, e un mouse USB e' a bassa velocita': su una scheda madre il cui
+  controller lento e' un OHCI (NVIDIA, SiS, ALi) non esisteva, e il sistema
+  cercava un mouse PS/2. Ora un HID «boot» viene riconosciuto e servito col
+  servizio `mouse` (o consegnando i tasti a `kbd`), come gia' faceva
+  `uhci.drv`. Provato in QEMU con un mouse USB su OHCI: `mouse -n 6` legge i
+  movimenti e il bottone; la tastiera USB e il PC vero sono da provare.
+- **Due schede di rete, un cavo.** `netdetect -c` sceglie la scheda che ha il
+  cavo: lo chiede ai driver con la nuova opzione `-l` (`nforce.drv`,
+  `rtl8169.drv`). Prima vinceva «quella aggiunta», anche senza cavo.
+- **Una seconda scheda di rete e il supporto.** `/dev/rtl8169.drv` (0.001) per
+  le Gigabit PCI Realtek RTL8169/8169S/8110S/8169SB/8169SC, scritto per la
+  scheda messa nel PC di prova; QEMU non la emula. Confermato sulla macchina
+  (RTL8169SC): `dhcp` prende l'indirizzo e `ping 8.8.8.8` risponde in 60 ms. `make support` crea `dist/support` e `dist/support.iso`:
+  driver e programmi da aggiungere a un sistema installato, da chiavetta o da
+  CD, col programma `aggiungi` che li copia senza chiedere e accende chiavette
+  e rete in `/boot/autoexec.sh`. Con due schede `netdetect -c` sceglie quella
+  aggiunta; `netdetect -c <parola>` sceglie a mano. Provato in QEMU dal disco
+  installato: dopo `aggiungi` e un riavvio la rete parte da sola (e1000).
+- **Le chiavette USB** su quel PC non venivano riconosciute: i driver EHCI
+  leggevano male i controller a 64 bit, e ora dicono per esteso che cosa
+  fallisce. Con la correzione il referto e' arrivato su chiavetta.
+- **Il dischetto della sonda** (`make sonda`) si costruiva piu': e' tornato a
+  fare solo la lettura dell'hardware, con 470 KB liberi per i referti.
+
+### Piu' processori, tappe 1 e 2 (kernel 0.237 e 0.238)
+
+**testato sul ferro** (Core 2 Quad Q9650, chipset NVIDIA MCP73: quattro
+processori trovati dall'ACPI, i tre in piu' col timer che cammina e i messaggi
+che arrivano) **e in QEMU** (`tools/prova_smp.sh`: 1, 2 e 4
+processori, con ACPI e con la sola tabella MP, anche sotto KVM; Pentium e
+Pentium II emulati a due zoccoli) — all'avvio il kernel cerca i processori
+nelle tabelle ACPI (MADT) e, dove non ci sono, nella tabella MultiProcessor
+delle schede a due processori degli anni Novanta (doppio Pentium, doppio
+Pentium Pro). Quelli in piu' li sveglia uno alla volta e li porta in modo
+protetto con le tabelle del kernel (**0.237**). Ognuno accende il proprio APIC
+locale, ha un timer suo a 100 battiti al secondo e riceve i messaggi degli
+altri processori; l'APIC sta in una pagina che ogni processo vede, quindi
+anche una chiamata di sistema puo' mandarne uno (**0.238**).
+
+`hwinfo` ha la sezione PROCESSORI: quanti, da quale tabella, e per ognuno se
+e' in uso, in attesa o muto; per quelli in attesa misura in mezzo secondo se
+il timer cammina e se i messaggi arrivano.
+
+! **EX-OS lavora ancora con un processore solo.** Gli altri sono pronti ma
+non eseguono processi: e' la tappa 3, un lucchetto unico sul kernel, ed e' li'
+che arriva il guadagno. Poi i lucchetti piu' fini. Le periferiche restano sul
+PIC verso il processore d'avvio: l'I/O APIC serve a distribuirle, e si fara'
+dopo. Su una macchina con un processore — e su tutto cio' che non ha un APIC
+locale — non cambia niente: il kernel legge qualche byte del BIOS e prosegue.
+
+Se l'avvio si fermasse su una scheda con piu' processori: `smp = 0` in
+`/boot/kernel.cfg` li fa contare senza svegliarli.
+
+### exide: miniature, puntatore, codice non modale; e tiscali.it si apre
+
+**da testare sul ferro, provato in QEMU** — in exide il pannello degli
+strumenti mostra la miniatura di ogni controllo e una frase che lo descrive;
+posato un controllo il mouse torna puntatore; il doppio clic porta il cursore
+dentro la funzione; la finestra del sorgente non e' piu' modale. `make netinst`
+ora pubblica gli header di sviluppo aggiornati (dopo `netupdate` exide
+generava codice che non compilava). EXBrowser apre i siti che in TLS 1.2
+hanno solo RSA con AES-CBC, come www.tiscali.it.
+
+### Quattro giochi: EXKlondike, EXSpider, EXMajong, EXGO
+
+**da testare sul ferro, provato in QEMU** — nel menu Avvio > Giochi: il
+solitario classico, lo Spider a uno, due o quattro semi, il solitario con le
+tessere del mahjong (ogni partita si puo' vincere) e il go su 9x9, 13x13 o
+19x19 contro il computer o in due. Carte, tessere e pietre sono disegnate dal
+programma, ciascuno ha la sua icona, e le scelte e le partite vinte si
+ricordano nel profilo.
+
+### L'API di ExWin e' in inglese, ed exide e' coerente
+
+**da testare sul ferro, provato in QEMU** — funzioni, messaggi, stili e tipi
+di ExWin hanno nomi inglesi (`ex_create`, `ex_set_text`, `EXM_CLOSE`,
+`ExWindow`...); i nomi italiani restano come alias, e i programmi gia'
+compilati funzionano. In exide il nome di un controllo e' la variabile da
+usare nel codice (`Button1`, non piu' `h_Button1`), gli eventi sono
+`Button1_Click()` e simili, e i progetti vecchi si aprono e si compilano
+ancora. Tabella dei nomi in `tools/exwin-inglese/mappa.txt`.
+
+### Firefox in una finestra di ExWin
+
+**testato in QEMU** (`tools/exilla/prova-finestra.sh`) — la settima tappa di
+Exilla: Firefox si apre in una finestra vera del server grafico, con le schede,
+la barra degli indirizzi e la pagina, e riceve mouse e tastiera. Per arrivarci
+EX-OS ha avuto una `malloc` nuova (liste dei blocchi liberi per taglia: la
+vecchia scorreva tutto lo heap a ogni chiamata), la pila allineata per il
+codice SSE, e wserver 0.009 che accetta i pixel da ogni filo del programma.
+Immagine in `tools/exilla/tappa7-finestra.png`.
+
+### Firefox disegna la sua prima pagina dentro EX-OS
+
+**testato in QEMU** (`tools/exilla/prova-gecko.sh`) — la sesta tappa di
+Exilla, il porting di Firefox: `firefox --headless --screenshot` apre una
+pagina locale e salva cio' che ha disegnato (testo, grassetto, corsivo,
+riquadri colorati, una riga scritta dal JavaScript). Diario e immagine in
+`tools/exilla/leggimi.md`. La settima tappa — la finestra vera in ExWin — e'
+in corso.
+
+### Kernel 0.228–0.236: quello che Firefox ha trovato
+
+**testato in QEMU** — correzioni che valgono per ogni programma con piu' fili:
+- **0.236**: la memoria anonima (`mmap`, `sbrk`) si da' al primo accesso e non
+  alla richiesta: Firefox scende da 405 a 300 MB. Due corse fra i fili di uno
+  stesso programma, che a Firefox facevano sparire uno stack una volta ogni
+  qualche avvio: la tabella delle pagine nuova si installa a interrupt spenti,
+  e due fili creati nello stesso momento non ricevono piu' lo stesso posto.
+  Nella libc `time()` e `clock_gettime()` leggono l'orologio CMOS una volta e
+  poi contano dal timer (Firefox chiede l'ora 1,7 milioni di volte in un
+  quarto d'ora: erano 209 secondi di accessi alle porte).
+  **I tempi veri di Firefox**, misurati dal suo avvio e non dall'accensione
+  della macchina (QEMU con KVM, 2 GB): finestra dopo 4 secondi, pagina
+  iniziale dopo 8, una pagina locale 0,1 secondi dopo Invio. I «65 secondi»
+  scritti qui sotto contavano anche l'avvio di EX-OS.
+- **0.235**: ext2 legge e scrive i blocchi contigui di un file in un comando
+  solo, e la cache dei settori (da 64 KB a 1 MB) tiene i metadati invece dei
+  dati: la finestra di Firefox arriva 10 secondi prima (a 65 secondi
+  dall'accensione invece di 75, in QEMU).
+- **0.234**: `mmap` con `MAP_FIXED` sopra pagine gia' mappate le libera
+  prima (restavano perse): serve al JIT di JavaScript di Firefox.
+- **0.233**: `ftruncate` su un file aperto e 256 file aperti nel sistema
+  (erano 64): i database SQLite di Firefox (anche in modalita' WAL).
+- **0.232**: 128 file aperti per processo (erano 32): Firefox ne apre di piu'
+  e non trovava i caratteri.
+- **0.231**: 128 fili per processo (erano 64) e 192 processi nel sistema:
+  Firefox con una finestra vera ne usa piu' di 63.
+- **0.230**: i fili di un processo avevano ciascuno una *copia* del confine
+  dello heap, e `sbrk`/`mmap` di fili diversi si davano gli stessi indirizzi.
+  Ora lo spazio degli indirizzi e' del processo. Una tabella delle pagine nata
+  da una mappatura `PROT_NONE` non resta piu' del kernel, e `PROT_NONE` riserva
+  lo spazio senza occupare RAM finche' `mprotect` non lo apre.
+- **0.229**: la pila del filo principale si riserva per 8 MB.
+- **0.228**: `fstat` dice l'identita' vera del file (SQLite ne ha bisogno).
+- Nella `libc.a`: `malloc` con lucchetto e allineata a 16, `arc4random`
+  (ChaCha20), `shm_open` piu' completa (anche `SHM_ANON`), `mmap` di un file,
+  `getpid` uguale in tutti i fili.
+
+### Il floppy ha di nuovo spazio
+
+**testato in QEMU** — `help` e `kbprova` (e `/boot/help.txt`) stanno ora solo
+sul CD: il floppy era sceso a 512 byte liberi e ne ha 64 KB. Dal floppy `help`
+mostra l'aiuto di riserva della shell; col CD montato c'e' `/cdrom/bin/help`.
+I floppy di diagnostica si portano dentro `kbprova` da soli.
+
+### Selezionare e copiare il testo in EXBrowser
+
+**testato in QEMU** (`tools/prova_selezione.sh`) — si trascina col mouse sul
+testo della pagina, la scelta si colora di blu, Ctrl+C la copia e in ExEditor
+o in exide Ctrl+V la incolla. Ctrl+A sceglie tutta la pagina. Per farlo le
+coordinate del mouse fuori dalla finestra (a sinistra o in alto) arrivano
+negative anche alle applicazioni: prima diventavano numeri enormi.
+
+### Il puntatore sopra i collegamenti
+
+**testato in QEMU** (`tools/prova_passaggio.sh`) — passando sopra un
+collegamento la barra di stato mostra dove porta, e la pagina riceve
+`onmouseover` e `onmouseout`. Il server grafico manda il movimento senza tasti
+solo alle finestre che lo chiedono (`ex_mouse_passaggio`), come la maschera
+degli eventi di X. I gestori scritti negli attributi (`onclick="..."`) sono
+funzioni vere: `this` è l'elemento e `return false` annulla il seguito.
+
+### EXBrowser e Wikipedia
+
+**testato in QEMU** (`tools/prova_wiki.sh`) — su una voce lunga i collegamenti
+dopo il 2048esimo si disegnavano ma non si aprivano: ora sono 8192. Le
+immagini si scaricano quando stanno per entrare nella finestra, non tutte
+all'inizio (una voce di Wikipedia: da 49 a 7 secondi di rete). Restano da
+fare `display:grid`, `:has()`, il contenuto generato (`::before`) e i tempi di
+script e impaginazione.
+
+### JPEG progressivi
+
+**testato sull'host** (`tools/prova_jpg.sh`, contro ImageMagick) — gli sfondi e
+le foto del web salvati in JPEG progressivo ora si aprono, nel navigatore,
+nel visualizzatore di immagini e come sfondo della scrivania.
+
+### ExEditor, menu a comparsa, schede
+
+**testato in QEMU** (`tools/prova_menu_chiudi.sh`) — l'editor si chiama
+ExEditor (`/exwin/bin/exeditor`). Il menu del tasto destro si chiude con Esc o
+con un clic fuori, e la scrivania non diventa più grigia mentre è aperto. La
+X delle schede è un pulsante rosso.
+
+### ExEditor scrive in RTF
+
+**testato in QEMU** (`tools/prova_rtf.sh`) e sull'host (`rtfprova`,
+`rtfvistaprova`, e con LibreOffice) — un file `.rtf` si apre in ExEditor con
+i suoi stili, e File > «Nuovo documento RTF» ne crea uno vuoto. Sopra il
+testo c'è una barra di formato: grassetto, corsivo e sottolineato (che
+mostrano lo stile sotto il cursore), carattere, corpo, colore e i quattro
+allineamenti; ci sono anche il menu Formato e Ctrl+B, Ctrl+I, Ctrl+U. Si
+salva in RTF, e WordPad o LibreOffice lo aprono. Non ci sono ancora
+l'annullamento e la ricerca nei documenti RTF.
+
+### exide
+
+**testato in QEMU** (`tools/prova_exide_autoaggiorna.sh`) — barre di
+scorrimento nel sorgente, tutte le finestre ridimensionabili, e la voce
+«Autoaggiorna Proprieta» (Strumenti), salvata nella configurazione: uscire
+da una casella applica la proprietà senza premere Applica. Il clic nella
+casella ora mette il cursore dove si clicca (prima exide le toglieva il
+fuoco), e un modulo più largo della tela non copre più le proprietà.
+
+### Le cartelle del profilo
+
+**testato in QEMU** (`tools/prova_desktop.sh`) — alla prima accensione della
+scrivania il profilo ha le cartelle Documents, Images e Media, ciascuna con
+un collegamento sulla scrivania; cancellarlo toglie solo il collegamento, e
+lo dice.
+
+### toolinst
+
+**da testare** — `toolinst` rende eseguibili i programmi che installa: prima
+solo root poteva lanciare `gcc` o `fbc`.
+
+### `dlopen` e `dlsym`
+
+**testato in QEMU** (`tools/prova_dl.sh`, 11 su 11) — un programma collegato
+con la `libc.a` puo' aprire a richiesta una libreria di EX-OS per nome
+(`dlopen("exzip.so", ...)`), trovarne le funzioni con `dlsym` e chiamarle; se
+la libreria non c'e', `dlerror` dice perche'. Un `.so` ELF qualunque invece
+non si carica: le librerie di EX-OS hanno una tabella loro, e Firefox si
+collega statico. Con questo la prima tappa di Exilla (il sistema) e' fatta.
+
+### La memoria condivisa di POSIX
+
+**testato in QEMU** (`tools/prova_shm.sh`, 16 su 16) — nella `libc.a` ci
+sono `shm_open`, `ftruncate` e `mmap` su quel descrittore, sopra le zone di
+memoria condivisa di EX-OS: due programmi aprono lo stesso nome e vedono le
+stesse pagine, anche con i nomi lunghi che usa Mozilla. Una zona non cresce
+dopo la nascita e `O_EXCL` non fa niente. Serve a Firefox (Exilla).
+
+### La grafica non sfarfalla piu'
+
+**testato in QEMU, da giudicare sul ferro** — lo sfarfallio si vedeva «in
+base al carico», peggio nei programmi grossi come EXBrowser. Le cause erano
+tre. Il server leggeva una finestra mentre il programma ci stava ancora
+disegnando: ora ogni finestra disegna in un buffer suo e al server arriva
+solo il rettangolo finito (il doppio buffer di Windows, il *commit* di
+Wayland). Il puntatore lampeggiava: il server compone in una copia dello
+schermo in RAM e poi la copia sullo schermo in un colpo (`exwin -noombra`
+per tornare indietro). E ogni messaggio gestito ridisegnava la finestra
+intera: la scrivania si ridipingeva ogni due secondi, EXBrowser rifaceva la
+pagina a ogni scatto della sveglia e a ogni movimento del mouse. Un
+programma ora puo' dire «non e' cambiato niente» (`EX_NON_RIDISEGNARE`).
+A scrivania ferma il server compone un fotogramma al minuto, prima due o
+tre al secondo; `exwin -conta` dice anche chi chiede gli aggiornamenti.
+
+### I segnali arrivano davvero, e c'e' `mprotect`
+
+**testato in QEMU** (`tools/prova_segnali.sh`, 23 su 23) — dal kernel 0.227
+un programma collegato con la `libc.a` puo' installare un gestore con
+`sigaction`: un puntatore sbagliato, un'istruzione non valida o una
+divisione per zero chiamano il gestore invece di chiudere il programma, con
+l'indirizzo e i registri, anche su una pila alternativa (`sigaltstack`); il
+gestore puo' cambiare i registri e il programma riparte da li'. `raise`,
+`kill` e `pthread_kill` arrivano al filo giusto, e ci sono `sigprocmask`,
+`sigsetjmp` e `siglongjmp`. `mprotect` rende una pagina di sola lettura o
+intoccabile. Serve a Firefox (Exilla). Nella `libc.so` del floppy non c'e'
+posto: li' `signal` e `raise` restano quelli di prima.
+
+### I socket BSD
+
+**testato in QEMU** (in C 23 su 23, in Rust 9 su 9) — nella `libc.a` ci sono
+`socket`, `connect`, `bind`, `listen`, `accept`, `send`, `recv`, `poll` sui
+socket e `getaddrinfo` con il DNS, sopra lo stack IP di EX-OS (kernel 0.226).
+Solo IPv4. Servono al software portato: Rust (`std::net`) e Firefox.
+
+### La `std` di Rust gira dentro EX-OS
+
+**testato in QEMU** (`tools/rust-exos/prova-std.sh`, 29 su 29) — un
+programma Rust con la libreria standard vera, compilato da Linux, usa file,
+cartelle, tempo, fili, `Mutex`, `Condvar` e canali dentro EX-OS (kernel
+0.225). E' la seconda tappa di Exilla, il porting di Firefox.
+
+**Anche a 64 bit** (14 ottobre 2026): `EXOS_ARCH=x86_64 tools/rust-exos/prova-std.sh`
+costruisce lo stesso programma per il nuovo bersaglio `x86_64-unknown-exos`
+(`tools/rust-exos/x86_64-unknown-exos.json`, collegato con `x86_64-exos-gcc`) e
+lo esegue nel sistema a 64 bit: 29 su 29. Le strutture C che Rust ripete
+(`stat`, `pthread_*`, `sigaction`...) ora si controllano a ogni compilazione
+contro i compilatori C delle due architetture (`tools/rust-exos/std/verifica-abi.py`
+scrive i controlli; una misura o una posizione diversa ferma la compilazione).
+Ne ha trovate due: `pthread_attr_t` a 64 bit e' grande il doppio, e a
+`struct lconv` mancavano gli ultimi sei campi, anche a 32 bit. E' Rust come
+compilatore incrociato da Linux: un `rustc` che giri dentro EX-OS non c'e'
+ancora, ne' a 32 ne' a 64 bit.
+
+### Il navigatore parte anche a 32 MB
+
+**testato in QEMU** — a 32 MB EXBrowser ogni tanto non partiva («LIB:
+pagina non allocata»). Non era la memoria: due programmi che chiedevano
+insieme la stessa libreria condivisa si rubavano il posto nel caricatore
+del kernel, mentre il primo aspettava il disco. Il kernel 0.224 prenota il
+posto prima di leggere, e chi arriva dopo aspetta.
+
+### ExJs ha le espressioni regolari
+
+**testato in QEMU e sull'host** — il motore ExJs legge `/.../flag` e ha
+`RegExp`: classi, gruppi (anche con nome), alternanza, quantificatori avidi
+e pigri, riferimenti all'indietro, `(?=` e `(?!`, i flag g i m s y; e con
+loro `exec`, `test`, `replace` e `replaceAll` (con `$1`, `$<nome>` o una
+funzione), `split`, `match`, `matchAll`, `search`. Un'espressione che
+girerebbe per sempre si ferma con un errore invece di bloccare la pagina.
+Con le regexp il preludio del navigatore gira anche con ExJs. Manca il
+guardare indietro (`make prova-exjs`, 492 prove).
+
+### Le schede: nell'editor, in exide e nel navigatore
+
+**testato in QEMU** — l'editor apre più file, uno per scheda (`edit a.txt
+b.txt`, Ctrl+N, Ctrl+O); Ctrl+Tab gira fra le schede, Ctrl+W chiude quella
+scelta e chiede se è modificata. In exide la finestra dei file del
+progetto tiene più sorgenti in schede. EXBrowser apre i collegamenti in una
+scheda nuova (`target="_blank"`, Ctrl+clic, Ctrl+T) o in una finestra nuova
+(Shift+clic, Ctrl+N, il tasto destro su un collegamento); le schede in
+sottofondo tengono l'indirizzo e si ricaricano quando si torna. La barra
+delle schede è un controllo del toolkit, a disposizione di ogni programma
+(`tools/prova_edit_schede.sh`, `prova_exide_schede.sh`,
+`prova_nav_schede.sh`, `prova_nav_finestra.sh`).
+
+### ExJs legge il JavaScript di oggi
+
+**testato in QEMU e sull'host** — il motore ExJs (QuickJS resta il
+predefinito) legge `let` e `const`, le frecce, le classi con `extends` e
+`super`, i modelli `` `${}` ``, la destrutturazione, lo spread, `?.`, `??`,
+`**`, `for..of` e le etichette, e ha `Object`, `Array`, `Map`, `Set`,
+`call`/`apply`/`bind`, i metodi nuovi di vettori e stringhe, `toFixed` e
+le funzioni di `Math`. I numeri si scrivono come in ogni altro motore
+(`0.1 + 0.2` è `0.30000000000000004`, `1e21` è `1e+21`) e `for..in` dà le
+chiavi nell'ordine in cui sono nate. Mancano ancora le espressioni regolari
+e le Promise, e gli oggetti non si recuperano (`make prova-exjs`, 448 prove;
+`tools/prova_es2015.sh`).
+
+### ExJs: `throw`, `try`, `switch` e i prototipi
+
+**testato sull'host** — il motore ExJs (QuickJS resta il predefinito) ha
+`throw`, `try`/`catch`/`finally` e `switch`; `new F()` eredita i metodi di
+`F.prototype`, e c'è `instanceof`. Ci sono `Error`, `TypeError`,
+`RangeError` e gli altri, e gli errori del motore stesso si prendono con un
+`catch`. Uno script fermato perché gira da troppo invece no. Leggere una
+proprietà di `undefined` rende ancora `undefined` invece di lanciare
+(`make prova-exjs`, 342 prove).
+
+### Il tasto destro, il trascinare e le associazioni
+
+**testato in QEMU** — il tasto destro apre un menu. Sulla scrivania: Nuova
+cartella, Nuovo file, Incolla, e su un'icona anche Apri, Rinomina, Copia,
+Taglia, Cancella. Nel file manager le stesse voci; lì si possono anche
+scegliere più righe (Ctrl+clic, Shift+clic) e trascinarle su una cartella a
+sinistra: una finestra chiede se copiarle, spostarle o lasciar perdere. Un
+file che non è un programma si apre col programma che gli spetta
+(`/exwin/lib/tipi.txt`): dal file manager, dalla scrivania e dalla shell, dove
+`nota.txt` apre l'editor (`tools/prova_tasto_destro.sh`; Ctrl e Shift col
+mouse in QEMU non si possono provare).
+
+### Pennello scrive
+
+**testato in QEMU** — Pennello ha lo strumento Testo (tasto T): un clic dove
+comincia la scritta, la si batte, ed entra nell'immagine col colore scelto; lo
+spessore ne decide la grandezza (12, 16, 24 o 36 pixel). Si annulla come ogni
+altro tratto (`tools/prova_pennello_testo.sh`).
+
+### Pennello, il programma di disegno
+
+**testato in QEMU** — `/exwin/bin/pennello [file]`, nel menu Avvio: matita,
+pennello, gomma, spruzzo, riempimento, contagocce, linea, rettangolo ed
+ellisse (vuoti o pieni), quattro spessori, zoom da 1x a 8x, specchio,
+rotazione, inversione dei colori, cambio di dimensioni, **annulla e ripeti**.
+**Apre** BMP, PNG, JPG, GIF e ICO; **salva** in PNG e BMP — un JPG aperto e
+salvato lo dice prima e propone lo stesso nome in `.png`. Salva prima in una
+copia accanto e poi rinomina: un salvataggio fallito lascia il file vecchio.
+
+L'annullamento non fotografa l'immagine a ogni tratto: ogni operazione lascia
+in un deposito preso all'avvio (un quarto della memoria libera) solo il **rettangolo** che ha toccato, e annullare lo
+**scambia** con l'immagine — così lo stesso record è anche il «ripeti».
+I codificatori PNG e BMP sono nuovi (`lib/eximg/scrivi.c`), e eximg legge
+anche il BMP in tutte le sue forme (`lib/eximg/bmp.c`). Provato sull'host
+contro ImageMagick (`tools/prova_scrivi.sh`) e in QEMU disegnando col mouse
+(`tools/prova_pennello.sh`). L'icona è provvisoria.
+
+### EXBrowser dispone la pagina
+
+**testato in QEMU** — EXBrowser capisce il CSS che dispone la pagina e non la
+mette più tutta in colonna: `width`, `max-width` e `min-width` (anche in
+percentuale), `margin: auto` per centrare, `float` con il testo che scorre
+accanto, `display: inline-block` e `display: flex` in riga (con `flex-grow`,
+`flex-wrap`, `gap`, `justify-content` e `align-items`), `clear`,
+`position: relative`, e i testi nascosti fuori schermo che non si vedono più. Su
+Wikipedia il riquadro informativo sta a destra col testo accanto, e le voci
+lunghe non si fermano più a 1 MB: la pagina principale ne tiene 3. Corretto
+anche un difetto vecchio: il testo bianco usciva nero
+(`make prova-excss`, `tools/prova_disposizione.sh`).
+
+### La ricerca di Wikipedia
+
+**testato in QEMU** — la casella di ricerca di Wikipedia si vede e si usa:
+«roma» + Invio apre la voce, «canale grande» + il pulsante Ricerca apre la
+pagina dei risultati. Il difetto era nel trasporto: gli indirizzi con un
+percorso oltre i 512 caratteri venivano troncati, e il foglio di stile di
+Wikipedia arrivava sbagliato. Adesso il tetto è 1024, e un indirizzo più lungo
+dà errore invece di chiedere un'altra cosa.
+
+### Calctor da ufficio
+
+**testato in QEMU** — con la casella Cronologia accesa Calctor diventa una
+calcolatrice da ufficio: il tasto = sparisce, + e - diventano due tasti alti e
+ognuno somma (o sottrae) al totale mostrandolo subito. `12 * 3 +` chiude il
+prodotto e somma 36; `+` di nuovo scrive il subtotale sul nastro.
+
+### La rotella del mouse
+
+**testato in QEMU** — la rotella scorre la pagina in EXBrowser e, in ogni
+programma di ExWin, le liste, le aree di testo e le barre di scorrimento che
+stanno sotto il puntatore: tre righe per scatto. Scorre quello che si guarda,
+non la finestra che ha il fuoco. Per ora vale per il mouse PS/2 (anche
+quello emulato da QEMU e da molti portatili); i mouse USB e seriali la
+rotella non la mandano ancora (`tools/prova_rotella.sh`).
+
+### Il mouse veloce non ferma più la scrivania
+
+**testato in QEMU** — muovere il mouse in fretta mentre si disegnava in
+Pennello bloccava tutto ExWin. Erano due difetti: in Pennello il tracciatore
+di linee non arrivava mai in fondo su certi segmenti, e il server grafico,
+per consegnare un movimento a un programma che non legge, aspettava fino a
+dieci secondi. Adesso i movimenti del mouse si consegnano **senza aspettare**
+(kernel 0.223, `IPC_SENZA_ATTESA`): un programma appeso rallenta solo se
+stesso. Clic e tasti continuano ad arrivare tutti
+(`tools/prova_pennello_veloce.sh`, `tools/prova_linea.sh`).
+
+### gfedit: F5 e l'INPUT del BASIC
+
+**testato in QEMU** — un programma BASIC lanciato con F5 da gfedit ora mostra
+il prompt di `INPUT` e legge la tastiera: gfedit gli cede la console mentre
+gira, e Ctrl+C lo ferma (`tools/prova_runbas.sh`).
+
+### ExJs: `Date` e `valueOf`
+
+**testato in QEMU** — col motore ExJs c'è `Date`: `new Date()`, `Date.now()`,
+`Date.UTC`, `Date.parse`, i `get`/`set`, `toISOString`, `toString`,
+`toLocaleString` e `JSON.stringify` di una data. L'ora la dà il navigatore, e
+dal 16 novembre 2026 anche il fuso (`exjs_fuso_metti`, dal `localtime` della
+libc: kernel 0.340); prima era tutta in UTC. Gli oggetti nei conti passano
+da `valueOf`: la differenza fra due date è un numero, come misurano i tempi le
+pagine. Provato sull'host (`make prova-exjs`, 307 prove) e in EXBrowser coi
+due motori (`tools/prova_date.sh`).
+
+### ExJs: `toString` implicito e `join` senza tetto
+
+**testato sull'host** — col motore ExJs (QuickJS resta il predefinito)
+`String(oggetto)`, `'x' + oggetto` e `join` chiamano il `toString`
+dell'oggetto: `String(location)` è l'indirizzo. `join` non si ferma più a 511
+caratteri, e le prove scritte prima hanno trovato e fatto correggere tre
+difetti in più (vettori annidati, separatori lunghi, un vettore che contiene
+se stesso) (`make prova-exjs`, `make prova-exdom`).
+
+### I moduli verso pagine locali, e il pulsante immagine
+
+**testato in QEMU** — un indirizzo `file:` con una domanda (`pagina.html?x=1`)
+apre il file giusto invece di cercarne uno col punto interrogativo nel nome:
+un modulo GET verso una pagina locale adesso arriva, e la pagina legge
+`location.search`. E `<input type="image">` manda il punto cliccato invece di
+zero (`tools/prova_modulo_immagine.sh`).
+
+### Gli `onclick=` girano anche senza `<script>`
+
+**testato in QEMU** — correzione di un difetto: il motore JavaScript si apriva
+solo davanti a uno `<script>`, quindi una pagina con i soli gestori negli
+attributi (`onclick=`, `onchange=`, `onload=`) non ne eseguiva nessuno
+(`tools/prova_onclick.sh`).
+
+### Le GIF animate si muovono
+
+**testato in QEMU** — in EXBrowser e nel visualizzatore Immagini. eximg compone
+i fotogrammi — posizione, trasparenza, smaltimento, il giro che ricomincia — e
+dice quanto deve restare ognuno; l'orologio resta di chi mostra l'immagine.
+Provato contro ImageMagick fotogramma per fotogramma (`tools/prova_gif.sh`) e
+fotografato mentre cambia (`tools/prova_gif_anima.sh`). La sveglia di ExWin fa
+al più cinque giri al secondo: una GIF molto veloce va più piano.
+
+### Il clic nelle caselle delle pagine mette il cursore lì
+
+**testato in QEMU** — prima un clic dentro una casella o un'area di una pagina
+le dava il fuoco e lasciava il cursore in fondo; adesso lo mette fra le due
+lettere più vicine al punto cliccato (`tools/prova_cursore.sh`).
+
+### EXBrowser capisce em, rem e %
+
+**testato in QEMU** — `font-size: 1.5em`, `margin: 2em`, `padding: 0.5rem`,
+`font-size: 120%`, e le parole `small`, `large`, `larger`: prima le misure
+erano solo in pixel e tutto il resto si buttava. Una misura relativa si
+risolve alla fine della cascata — il corpo sul padre, il resto sul corpo
+dell'elemento — e la prova la misura in pixel sullo schermo
+(`tools/prova_bordi.sh`, `make prova-excss`). La % dei margini si prende
+ancora sulla larghezza della finestra.
+
+### EXBrowser disegna i bordi del CSS, e il padding
+
+**testato in QEMU** — `border`, `border-top` e gli altri lati, `border-width`,
+`border-style`, `border-color`, `padding` e la scorciatoia `margin` con da uno
+a quattro valori: i blocchi si disegnano col loro riquadro e il contenuto
+rientra. Prima i bordi c'erano solo per le tabelle con `border=`, e nessuna
+scorciatoia del CSS si leggeva — nemmeno `margin: 0 auto`. Restano i bordi
+degli elementi in linea e quelli CSS delle tabelle (`tools/prova_bordi.sh`,
+`make prova-excss`).
+
+### Immagini, il visualizzatore, e le PNG di ogni tipo
+
+**testato in QEMU** — `/exwin/bin/immagini [file]`, nel menu Avvio: adatta
+alla finestra le immagini grandi, «1» per il 100%, + e - dal 10% all'800%, e
+Pag giù / Pag su per passare alle altre immagini della cartella. Dal file
+manager ci si arriva col doppio clic: la regola sta in `/exwin/lib/tipi.txt`,
+**«queste estensioni si aprono con quel programma»**, un file del sistema e
+non del programma. Strada facendo il lettore PNG di eximg ha imparato **tutte
+le profondità (1, 2, 4, 16 bit) e l'interlacciamento Adam7**: prima leggeva
+solo gli 8 bit, e una PNG di un colore solo non si apriva. Provato contro
+ImageMagick su 92 file (`tools/prova_png.sh`) e in QEMU
+(`tools/prova_immagini.sh`).
+
+### Ctrl+C sulla console di testo chiede, e poi ferma
+
+**testato in QEMU** — in modo riga, Ctrl+C chiede `[Ctrl+C] Fermo "textline"
+(PID 20)? s/n` e ferma il programma solo con «s». Al prompt svuota la riga e
+il prompt torna; un programma in modo crudo (gfedit) lo riceve come tasto.
+Chi fermare lo diceva già la shell: il kernel (0.221) adesso lo tiene per
+ogni console, e il driver della tastiera lo legge con `SYS_CONSOLE_CTRLC`
+(216). Con Ctrl+Alt+Canc, è il compito dei «tasti che fermano le cose»
+(`tools/prova_ctrlc.sh`, `tools/prova_tasti_sistema.sh`).
+
+### La ricerca su Wikipedia, e le regole @media
+
+**testato in QEMU, sulla rete vera** — «Cerca non fa niente» non era la
+ricerca: era la tabella TCP di `ip.drv`, piena dopo una pagina di Wikipedia,
+con posti morti che non tornavano liberi. Adesso si liberano. EXBrowser valuta
+le regole `@media`, `@supports` e `@layer` invece di saltarle (erano 578 su
+964 nel foglio di Wikipedia), e con loro `visibility`, `:checked` e le
+`<label>`. La pagina resta in colonna: mancano `width`, `float`, `padding` e
+`flex`.
+
+### Calctor, la calcolatrice
+
+**testato in QEMU** — `/exwin/bin/calctor`: normale, scientifica e
+programmatore (32 bit in base 2, 8, 10 e 16), un display di quattro righe e
+la cronologia in una finestra sua, da salvare come testo. Si scrive
+un'espressione, con le precedenze: `2 + 3 * 4` fa 14. Strada facendo il
+toolkit ha preso le tendine laterali, `ex_abilita()` ed `ex_dlg_testo()`, e
+il tetto dei controlli per programma è passato da 64 — che faceva fallire
+`ex_crea` in silenzio — a 192 (`tools/prova_calctor.sh`).
+
+### La scrivania: la cartella del profilo, le unità, il registro
+
+**testato in QEMU** — a sinistra le icone di `$HOME/desktop` (un
+collegamento è un `.lnk` di testo), a destra ogni unità montata: pm se ne
+accorge da solo, anche di un `mount` fatto a mano. Lo sfondo si dispone
+(angolo, centro, allarga, ripeti). Il **Registro di sistema** non è più una
+schermata ma un anello di 32 KB nel kernel, con l'ora e il PID su ogni riga
+(`tools/prova_desktop.sh`, `tools/prova_registro.sh`).
+
+### L'editor cerca e sostituisce
+
+**testato in QEMU** — Cerca (Ctrl+F), F3 e Shift+F3 per il successivo e il
+precedente, Sostituisci una o tutte. Nel toolkit **Shift+Tab** adesso torna
+indietro davvero, e il pulsante che ha il fuoco si vede (`tools/prova_edit_cerca.sh`).
+
+### Archivi apre i tar, e il file manager rinomina
+
+**testato in QEMU** — Archivi apre e crea `.tar` e `.tar.gz`, con lo stesso
+codice di `/bin/tar` (`lib/extar`, compilato dentro tutti e due). Nel file
+manager, **Rinomina** con F2 (`tools/prova_tar.sh`, `tools/prova_filemgr.sh`).
+
+### `runbas`: i programmi QBASIC girano da soli
+
+**testato in QEMU** — `runbas mioprog.bas` esegue un programma con
+l'interprete di `gfbasic/`, e gfedit lo lancia con **F5**. Le funzioni
+matematiche che la libc non ha (SIN, EXP, ^...) sono quelle dell'x87
+(`tools/prova_runbas.sh`).
+
+### I percorsi dei programmi in un file
+
+**da testare su un sistema installato** — `/boot/percorsi.txt`: la shell
+aggiunge in coda al PATH le directory che ci trova, e netupdate ci scrive le
+sue quando installa un pacchetto in un posto nuovo.
+
+### HTTPS: da 23 a 28 siti su 30 — AES-GCM, P-256 e TLS 1.2
+
+**testato in QEMU, sulla rete vera** — dei sette siti su trenta che non si
+aprivano, uno era la catena dei certificati (corretta stamattina) e gli altri
+erano il TLS. Il client adesso ha:
+
+- **AES-128-GCM** accanto a ChaCha20 (`lib/excrypt/gcm.c`, sopra l'AES del Wi-Fi);
+- lo scambio di chiavi su **P-256**, **a tempo costante** (`lib/excrypt/p256.c`,
+  e non `excurva`, che è per i soli numeri pubblici), chiesto dal server con
+  una **HelloRetryRequest** — che prima era un errore;
+- **TLS 1.2**, la metà moderna: ECDHE con AES-GCM o ChaCha20, firme RSA-PSS,
+  PKCS#1 v1.5 ed ECDSA, Extended Master Secret, e il controllo «DOWNGRD».
+
+Poste, Corriere, Gazzetta e Istat si aprono. I due che restano (Stack Overflow
+ed eBay) aprono il TLS e poi rispondono 403: un blocco dei robot, loro.
+Provato sull'host (`tools/prova_gcm.sh`, `tools/prova_p256.sh`: migliaia di
+casi contro `cryptography` di Python) e contro `openssl s_server`
+(`make prova-cliente-tls`, 20 casi).
+
+### La finestra Download, nel toolkit
+
+**testato in QEMU** — gli scaricamenti di EXBrowser girano in un processo
+proprio (`scarica -avanza`), e il navigatore resta libero di navigare. La
+finestra **Download** si apre da sola, mostra percentuale, misura, velocità
+media e tempo che manca, si chiude senza fermare niente e torna da
+**Strumenti > Download**; **Ferma** cancella il file a metà. Sta nel toolkit
+(`lib/exdlg/scarichi.c`, con `ex_guarda_fd` in exwin), quindi la usa qualunque
+programma fatto con exide: vedi il manuale di exide, «Scaricare file»
+(`tools/prova_download.sh`).
+
+### EXBrowser chiede «apri o scarica», e Archivi prende le cartelle
+
+**testato in QEMU** — un collegamento a un file che non è una pagina (uno ZIP,
+un programma, un'immagine) non viene più impaginato come spazzatura: EXBrowser
+chiede **Apri con Archivi** (o con l'editor), **Scarica** o **Annulla**. Se ne
+accorge dal nome, prima di scaricare, oppure dal `Content-Type` del server
+quando il nome non dice niente. Lo scaricamento va sul disco mentre arriva,
+senza il tetto di 1 MB delle pagine (`tools/prova_apri_scarica.sh`).
+
+In **Archivi** c'è **Comandi > Aggiungi cartella...**, e anche `zip archivio.zip
+cartella` prende l'albero intero: ogni cartella ha la sua voce `nome/`, così
+anche quelle vuote tornano fuori all'estrazione (`tools/prova_zip.sh`, passo 6).
+
+### Certificati: la catena si ferma alla prima radice, e se ne aggiungono
+
+**testato in QEMU, sulla rete vera** — prima di cambiare qualcosa si è
+misurato (`tools/prova_certificati.sh`): su trenta siti comuni EX-OS ne apriva
+23, e **uno solo** era un problema di certificato. www.amazon.it manda in coda
+una copia *incrociata* della radice DigiCert, firmata da una vecchia VeriSign
+ritirata; `excert` pretendeva che l'ultimo anello mandato fosse firmato da una
+radice nostra, e la rifiutava. Adesso la catena si ferma alla prima radice del
+magazzino, come nei navigatori grandi: Amazon si apre.
+
+Gli altri sei non erano certificati: tre server parlano solo TLS 1.2 (il
+nostro client solo 1.3), due non accettano ChaCha20 o x25519, uno blocca i
+robot. Sono scritti in `@EXBROWSER-CERT`.
+
+E si possono **aggiungere CA**: **File > Aggiungi un certificato...** in
+EXBrowser, da un indirizzo o da un file; si vede chi è e la sua impronta
+SHA-256 prima di dire «Mi fido». Finiscono in `$HOME/.app/exhttp/certi.pem` e
+valgono per ogni programma che apre `https`, `scarica` compreso — provato da
+`tools/prova_certi_aggiunti.sh`.
+
+### Il navigatore si chiama EXBrowser
+
+**da testare** — `/exwin/bin/browser` diventa `/exwin/bin/exbrowser`, alla
+versione 0.003: il nome l'ha scelto chi lo usa, e cambia dappertutto dove è
+un nome e non una parola — il titolo della finestra, «Informazioni su», la
+voce del menu Avvio, l'icona (`exbrowser_64.ico`), il manuale
+(`/exwin/doc/exbrowser.html`) e i dati in `$HOME/.app/exbrowser/`.
+
+! **I DATI VECCHI SI SPOSTANO DA SOLI**: al primo avvio `$HOME/.app/browser/`
+diventa `$HOME/.app/exbrowser/`, con impostazioni, biscotti e cache. Se non si
+può — una casa su FAT, dove «exbrowser» non entra in 8.3 — si continua a usare
+quella vecchia e lo si dice: meglio un nome vecchio che ritrovarsi fuori da
+ogni sito.
+
+### Le icone: un'API del toolkit, e il menu della scrivania che la usa
+
+**testato in QEMU** — `ex_icona_apri` / `ex_icona_disegna` / `ex_icona_metti`
+stanno in `exwin.so`, cioè in ciò che ogni programma grafico collega già: le
+icone sono di tutti, non di un programma solo. Il peso vero — la decodifica di
+PNG, JPG e ICO — resta in `eximg.so`, che si apre solo davanti alla prima
+icona che non sia un BMP.
+
+! **Un'icona non è un'immagine disegnata una volta**, ed è per questo che ha
+funzioni sue: un menu si ridisegna a ogni apertura, e con `ex_immagine()`
+sarebbero dieci letture di file e dieci decodifiche ogni volta. Si apre una
+volta, si tiene, e l'ultima resa (misura + sfondo) resta pronta.
+
+! **Il riduttore serviva davvero.** Le icone nascono a 64 e 128 pixel, una voce
+di menu è alta 24. Fa la **media** dei pixel che collassano in uno: prendere
+quello in mezzo, su un rimpicciolimento di quattro volte, butta quindici pixel
+su sedici e i bordi sottili spariscono a chiazze.
+
+! **E `eximg` buttava l'alfa.** Nel codice c'era scritto: *«la maschera a 1 bit
+si salta... il giorno che [il server] saprà fondere, è lì che si andrà a
+prenderla»*. Quel giorno era questo — a fondere non è il server ma il toolkit —
+e senza alfa le icone uscivano come quadrati di puro sfondo: invisibili, cioè
+«non si caricano» mentre si stavano disegnando benissimo.
+
+Nel menu **Avvio**: icona prima del nome, e **categorie** che si aprono di
+fianco. Una barra nel nome basta a farne una — `Strumenti/Editor` — e non si
+dichiarano da nessun'altra parte.
+
+### Gli archivi ZIP: una libreria, un comando e una finestra
+
+**testato in QEMU, e da un lettore estraneo** — `lib/exzip` sa di ZIP e non sa
+di finestre; `/bin/zip` e `/exwin/bin/archivi` chiamano le stesse nove
+funzioni.
+
+```
+zip a.zip uno.txt due.txt        crea
+zip -l a.zip                     elenca
+zip -x a.zip /disk/fuori         estrae
+```
+
+Scrive in «store» e legge anche **deflate**, perché il pezzo difficile c'era
+già: `lib/eximg/inflate.c` decodifica DEFLATE da mesi per PNG, GIF e i font.
+
+! **La prova che conta è quella di chi non ha scritto il formato**: l'archivio
+fatto da EX-OS lo apre `unzip -t` di Info-ZIP. Un archiviatore che rilegge i
+propri archivi prova soltanto di essere coerente con sé stesso.
+
+### Archivi: una tabella vera, e l'archivio che si costruisce da sé
+
+**testato in QEMU** — colonne **Nome** e **Percorso** separate, un clic
+sull'intestazione ordina (un altro rovescia), il bordo fra le intestazioni si
+trascina, la barra di scorrimento. Ogni file o cartella aggiunti rendono
+l'archivio subito completo: `lib/exzip` sa riaprire un archivio finito e
+aggiungerci (`ex_zip_riapri`). **Opzioni**: compressione (nessuna, veloce,
+normale, avanzata) ed estensione predefinita, in `/exwin/config/archivi.cfg`.
+
+### Ridurre a icona, e la barra dei programmi aperti
+
+**testato in QEMU** — ogni finestra ha il pulsante **«_»** accanto alla
+crocetta, e la barra in basso mostra i programmi aperti con la loro icona. Un
+clic su una voce riapre la finestra ridotta, esattamente dov'era e grande
+com'era, o porta davanti quella nascosta dietro le altre. L'elenco lo tiene il
+server a finestre e lo manda da sé alla barra; i programmi non hanno dovuto
+cambiare una riga. `tools/prova_riduci.sh` lo misura nei pixel.
+
+### tar, gzip e gunzip
+
+**testato in QEMU, e da lettori estranei** — un programma solo, `bin/tar/tar.c`,
+che risponde a tre nomi. È statico: il DEFLATE di `lib/exzip` e l'inflate di
+`lib/eximg` ci sono compilati dentro.
+
+```
+tar czf a.tgz cartella           crea (z = gzip)
+tar tf a.tgz                     elenca
+tar xf a.tgz -C /disk/fuori      estrae (il gzip lo riconosce da sé)
+gzip file / gunzip file.gz
+```
+
+Legge gli archivi di GNU tar anche con i nomi lunghi, nei formati GNU e pax.
+`tools/prova_tar.sh` fa aprire i suoi archivi a GNU tar, `gzip -t` e Python,
+e fa aprire a EX-OS quelli di GNU tar.
+
+### La pagina d'accesso non si fa più coprire dai messaggi dell'avvio
+
+**testato in QEMU su un disco installato** — `login` aspetta che la console
+taccia (fino a 1500 ms, misurati) prima di stampare la richiesta del nome, e
+intanto ascolta la tastiera: chi sta già battendo non aspetta niente.
+
+! **La `waitpid` c'era, e aspettava la cosa sbagliata**: metà di
+`/boot/avvio.sh` sono righe che finiscono con `&`, e quei processi sono
+**nipoti** — figli della shell dello script. Quando `waitpid` torna sono vivi,
+hanno la console e non hanno ancora parlato.
+
+### Il progetto nuovo di EX-IDE sceglie dove, e se lo ricorda
+
+**testato in QEMU, su due avvii** — Ctrl+N apre il dialogo dei file con
+l'albero e il pulsante **«Nuova cartella (Ctrl+N)»**; la casa si chiede a
+`HOME` e l'ultima directory usata sta in `$HOME/.app/exide/`.
+
+! **Il pulsante sta nel dialogo, non nel programma**: `ex_dlg_salva` ce l'ha
+per tutti, e l'archiviatore ZIP — scritto poche ore dopo — se l'è trovato
+pronto senza fare niente.
+
+### `wserver` usa il motore 2D dove c'è, e disegna da sé dove non c'è
+
+**testato in QEMU per il ramo software, sul ferro per il protocollo** — il
+server a finestre chiede i riempimenti grandi alla scheda quando c'è un motore
+2D, e li fa con MMX quando non c'è.
+
+! **E non chiede privilegi: chiede un rettangolo.** Il motore si pilota con
+`mmio_map` e `ioport_bind`, che sono da driver. `wserver` quei privilegi li ha
+persi **apposta** il 19 agosto 2026: si chiamava `/dev/wserver.drv` solo per
+ottenere `mmio_map`, e quel nome teneva la grafica fuori dalla multiutenza —
+`/dev` è di root, quindi un utente normale non poteva eseguire il server.
+Rimetterlo fra i driver per andare più forte sarebbe tornare indietro di un
+mese, e per di più dando la capacità *larga* al posto di quella stretta.
+
+Quindi un **servizio**, non una libreria:
+
+```
+drivers/accel/accel_proto.h   il contratto, e non è di nessuno dei due
+sis.drv -2dservizio           registra 'accel2d': RIEMPI, COPIA, INFO
+sis.drv -2dchiedi             lo prova DA FUORI, come lo usa wserver
+```
+
+Lo accende `/boot/avvio.sh` (lo scrive `hwconfig`), perché è il sistema a poter
+eseguire `/dev`. Su una macchina che non sia una SiS il comando **esce in
+silenzio**: niente scheda, niente servizio, nessuna riga.
+
+! **Il ramo software è il ramo NORMALE, non un ripiego.** Su VESA, sul
+framebuffer generico e dentro QEMU nessuno registra il servizio, `ipc_lookup`
+non trova niente e si riempie con MMX a 377 MB/s — cioè al limite del bus per
+la scrittura. In QEMU la riga d'avvio dice esattamente questo:
+
+```
+wserver: nessun motore 2D, riempio da me con MMX
+```
+
+! **Il protocollo passa operazioni, non pixel**, ed è ciò che lo rende
+sostenibile: un giro di IPC misurato sull'Acer — sfondo intero, 480000 pixel —
+sta **sotto il millisecondo**, e riempire lo schermo costa millisecondi.
+
+! **E c'è una soglia, perché il motore risparmia metà del tempo, non tutto.**
+Il messaggio va pagato con *metà* del costo del rettangolo. A 4096 pixel il
+risparmio è 21 µs, meno del messaggio: sarebbe una perdita netta, ed era la
+soglia della prima stesura. A 32768 il risparmio è 165 µs, e lo sfondo intero
+ne vale 2500.
+
+! **L'attesa della risposta usa `ipc_scegli`, non `ipc_recv_timeout`**, ed è la
+riga più importante del lavoro. La regola di quel server è scritta sopra
+`mouse_chiedi()`: «la mailbox la legge un posto solo». Una `recv` che prende
+qualunque messaggio si mangia le richieste dei client — è già successo, e il
+sintomo era «il server non risponde» una volta su tre. `ipc_scegli` filtra, e
+**mentre aspetta svuota** la coda del kernel sullo scaffale invece di lasciarla
+riempire: la mailbox è profonda quattro messaggi, e quando è piena ogni
+`ipc_send` verso il server fallisce — compresa la consegna di un tasto.
+
+! **Quel che resta è una misura sola:** provare che `wserver` lo usa davvero
+sulla macchina vera. Il contatore `servite` in `AccInfo` esiste per questo.
+E il guadagno da aspettarsi è quello del **riempimento (1,9x)**, non quello
+della copia: nel compositore non c'è nessuna copia schermo→schermo, perché le
+zone dei client stanno in RAM di sistema. Il 14x si prende solo cambiando
+strategia di composizione.
+
+### Il motore 2D della SiS disegna: 14x sulla copia schermo→schermo
+
+**testato sulla macchina vera, da freddo** — l'acceleratore 2D della SiS 6330
+dell'Acer Aspire 3000 funziona. Dopo un riavvio pulito, senza nessun comando di
+accensione prima:
+
+```
+sis2d: motore acceso - 65536 KB di memoria video, coda a 0x03f80000
+  il riempimento e' giusto, bordi compresi.
+  la copia e' identica all'originale.
+  la sovrapposizione e' gestita dal motore.
+
+operazione                   CPU     motore   guadagno
+riempire                     377 MB/s    734 MB/s   1.9x
+copiare schermo->schermo      25 MB/s    356 MB/s  14.2x
+```
+
+! **La riga che conta è la seconda.** Riempire lo schermo la CPU lo fa già al
+limite del bus (vedi `fbprova` più sotto); copiare schermo su schermo le costa
+una **lettura** dal framebuffer, che su questa scheda va quattro volte e mezzo
+più piano di una scrittura. Il motore la fa dentro la scheda, senza far
+attraversare il bus ai pixel nemmeno una volta. È esattamente quel che fa il
+compositore quando sposta una finestra o fa scorrere un terminale.
+
+**Erano due bit, e la diagnosi li stampava dal primo giorno:**
+
+| registro | bit | nome in sisfb | cosa accende |
+|---|---|---|---|
+| SR20 | 0x01 | `SIS_MEM_MAP_IO_ENABLE` | la finestra dei registri |
+| SR1E | 0x40 | `SIS_ENABLE_2D` | il motore |
+
+Il passo 4 di `-2ddiagnosi` mostrava «SR1E = 0x20, SR20 = 0xa0» da quando quel
+codice esiste, e quei numeri erano finiti nei referti fra i dati «stabiliti
+sulla macchina vera». Erano due **misure**, e nessuno le ha lette come due
+**mancanze** — mentre cinque spiegazioni venivano provate e chiuse.
+
+! **E l'ordine non è negoziabile**, perché il passo che mancava in mezzo è
+quello che bloccava la macchina:
+
+```
+1. SR20 bit 0            apre la finestra
+2. Q_BASE_ADDR = base    DA DOVE il motore legge i comandi
+3. SR27 0x1F, SR26 0x01  soglia e RESET della coda
+4. WRITEPORT <- READPORT coda vuota
+5. SR1E bit 6            IL MOTORE, per ultimo
+6. SR26 = 0x22           coda in modo MMIO
+```
+
+Appena aperta la finestra `Q_BASE_ADDR` vale **zero**: accendere il motore lì
+vuol dire farlo partire a prendere comandi dall'indirizzo zero della memoria
+video e a scrivere dove quei comandi gli dicono — un bus master che va per
+conto suo. La macchina si ferma e non risponde più nemmeno al ping. È successo,
+una volta, ed è il motivo per cui il passo 2 adesso c'è.
+
+! **La base si calcola, non si sceglie**: `CR79` bit 7-4 danno i mega di memoria
+condivisa (64 sull'Acer) e la coda va negli ultimi 512 KB. Se quella misura non
+si riconosce, `sis2d_apri()` **rinuncia** e lascia il motore spento.
+
+! **L'accensione la fa `sis2d_apri()`, e solo se serve** — cioè se `Q_STATUS`
+legge tutti uno. Se la finestra risponde già, qualcun altro l'ha accesa: rifare
+la sequenza vorrebbe dire resettare una coda che magari sta lavorando.
+
+! **`wserver` non lo usa ancora.** Il guadagno c'è e il compositore non lo
+prende: è il prossimo passo, e vive insieme al restringere le regioni sporche.
+
+### L'orologio si può rimettere: kernel 0.218 e `/bin/date`
+
+**testato sulla macchina vera** — da quando esiste, agosto 2026, l'orologio CMOS
+di EX-OS si **leggeva e basta**: c'era `SYS_TIME` e non c'era il suo gemello.
+Non era un buco teorico. L'Acer Aspire 3000 di prova segnava il **2005**, e ogni
+file che caricava su un server FTP arrivava datato «Feb 9 2005»: l'unico modo di
+rimetterlo era entrare nel BIOS.
+
+    date                        mercoledi' 16 settembre 2026, 16:09:20
+    date -d                     2026-09-16
+    date -t                     16:09:30
+    date -set-date:2026/09/16   la data  (serve root)
+    date -set-time:17:52:30     l'ora    (i secondi si possono omettere)
+    date -ntp[:SERVER[:PORTA]]  l'ora dalla rete, NTP (serve root; anche -npt)
+    date -fuso[:+1,ue]          il fuso con cui l'ora UTC di NTP diventa locale
+
+`SYS_TIME_SET` (213) chiama `rtc_write()`, ed è **di root come `mount`**: chi
+sposta l'ora cambia la data di ogni file che chiunque altro scriverà, e con essa
+il giudizio di `netupdate -check` su che cosa è più recente.
+
+! **La scrittura ha una trappola in più delle tre della lettura**: non si scrive
+mentre il chip conta. Se l'aggiornamento cade in mezzo ai sei registri, il chip
+riscrive sopra a metà di quel che si è appena messo. Il bit `SET` del registro B
+ferma il conteggio per la durata della scrittura.
+
+! **Non c'è un comando `time`, ed è voluto**: su qualunque Unix `time comando`
+*misura* quanto ci mette un comando a girare. Spendere quel nome per stampare
+l'ora vorrebbe dire non averlo più il giorno in cui servirà. I dettagli — il
+formato che si conserva, il registro del secolo, il limite del 2099 — stanno
+in **[`date`](comandi.it.md#date--che-ore-sono-e-rimetterle)**.
+
+Sul ferro: l'Acer è passato da giovedì 10 febbraio 2005 a mercoledì 16 settembre
+2026, scritto e riletto, e la data ha retto un ciclo di alimentazione.
+
+### `ls` nudo dice anche quando e che cosa
+
+**testato in QEMU** — `ls` stampava due cose, il nome e la dimensione. La data
+c'era già, ma solo sotto `-d`, `-md` o `-l`, cioè solo per chi sapeva che
+esistevano; e il tipo si deduceva dalla barra finale del nome. Le due domande
+più comuni davanti a un elenco di file sono «di quando è?» e «è una cartella?».
+
+```
+ex-os:/> ls
+data        ora    tipo    dimensione  nome
+2026-09-16  18:10  <DIR>            -  BOOT
+2026-09-16  18:10  <FILE>      270376  KERNEL.BIN
+```
+
+! **E costa una `stat()` per voce**, che il modo nudo prima non faceva: su un
+floppy si sente. Per questo il vecchio comportamento non è sparito ma sta sotto
+**`-s`**, ed è il modo da usare su un disco lento o su una directory grande.
+
+! **La data di creazione non c'è**, e non è una scelta: la voce di directory che
+FAT, ext2 e ISO 9660 consegnano al VFS tiene **una** coppia data/ora, e `struct
+stat` infatti pone `st_ctime` e `st_atime` uguali a `st_mtime`.
+
+### Le chiavette USB si tolgono, non si strappano: `eject`
+
+**testato in QEMU, col giro intero** — `automount` le montava gia' da solo in
+`/USB/DRIVE0`; mancava il verso opposto. Il driver che serve un disco sta fermo
+dentro `blk_attendi()` e **non guarda piu' le porte**: sfilare la chiavetta
+lasciava un punto di montaggio che risponde errore, e rimetterla non produceva
+niente perche' nessuno stava guardando.
+
+    eject                  che cosa si puo' togliere
+    eject /USB/DRIVE0      smonta e ritira
+
+Smonta quel che ci sta sopra e poi **ritira** il dispositivo (syscall
+`SYS_BLK_ESPELLI`): l'attesa del driver rende `-ENODEV`, lui torna al ciclo
+delle porte, e la stessa chiavetta rimessa viene ripresa da capo. L'ordine non
+e' invertibile: un dispositivo ritirato mentre e' montato non sparisce, resta
+GUASTO — e infatti la syscall rifiuta con `-EBUSY`.
+
+! **E ha scoperto un difetto vecchio che non si poteva vedere prima**: la QH di
+controllo di `ehci` restava puntata sull'indirizzo della chiavetta precedente, e
+un dispositivo appena infilato risponde solo allo zero. Con una chiavetta sola
+per tutta la vita del processo non si notava; da quando il driver torna a
+guardare le porte, la seconda chiavetta e' la prima a pagarlo.
+
+### Una sessione remota che non diventa sorda ne' muta: `telnetd` 0.008
+
+**testato sulla macchina vera** — due difetti diversi, tutti e due scoperti su
+un portatile dall'altra parte di una rete vera, nessuno dei due riproducibile in
+emulazione al primo colpo.
+
+*La sordita'*: mentre `tcp_scrivi()` aspettava il proprio esito, `attendi()`
+**buttava** i messaggi che non stava cercando — compresi i tasti battuti
+dall'altra parte. E lo stack consegna a chi ha prenotato **consumando la
+prenotazione**: buttata la consegna, la sessione non ne faceva mai piu' una. Il
+sintomo: l'invito compare e da li' in poi non risponde piu' niente.
+
+*La muta*: `ipc_recv_timeout(..., 0)` non vuol dire «non aspettare», vuol dire
+**aspetta per sempre** — e la casella puo' essere vuota anche se la `poll` ha
+detto di si', perche' fra le due cose c'e' chi pesca. Il ciclo si fermava li',
+e siccome `telnetd` serve una sessione per volta, da quel momento la porta 23
+accettava le connessioni senza mandare un byte.
+
+### Un aggiornamento a meta' non deve lasciare una macchina morta
+
+**il guasto e' successo per davvero; la protezione e' scritta e da provare sul
+campo** — i programmi chiamano la libc **per nome**, e questo produce
+un'asimmetria che decide tutto:
+
+| | |
+|---|---|
+| binario VECCHIO + libc NUOVA | funziona: i nomi vecchi ci sono ancora |
+| binario NUOVO + libc VECCHIA | **non parte niente**: ne manca uno |
+
+Un aggiornamento interrotto fra i due lascia la macchina nel secondo caso: si
+accende, ha la rete a posto, e non ha un solo comando con cui rimediare —
+`scarica`, `dhcp`, `ipcfg`, `netupdate` rispondono tutti «la libreria condivisa
+non ha la funzione ...». Da qui tre cose:
+
+- **`netupdate` 0.021**: due passate sull'elenco, prima le librerie condivise e
+  poi tutto il resto; e se una libreria **non arriva**, non si tocca piu' niente
+  e lo si dice. La macchina resta vecchia e viva.
+- **`/bin/soccorso`**: statico, con la libc compilata dentro come i driver,
+  quindi parte anche quando non parte nient'altro. Riporta a posto
+  `/lib/libc.so` prendendola dal server e verificando dimensione e impronta
+  mentre arriva.
+- **`dist/fixsys.img`** (`make fixsys`): un dischetto di soccorso avviabile con
+  `sh`, `install`, `mount`, `disk`, `cp`, la libc e i driver della tastiera. Si
+  costruisce con `RAMDISCO=1` perche' parte da un lettore USB, dove il BIOS sa
+  leggere e il kernel no.
+
+### File grandi su linee che cadono: la ripresa
+
+**testato sulla macchina vera** — `cc1plus` fa trentasette megabyte, e a
+quaranta kilobyte al secondo sono un quarto d'ora di connessione aperta: cade
+piu' spesso di quanto non cada. Due misure sullo stesso file, 33.306.298 byte e
+poi 37.550.104: numeri diversi, quindi non un tetto ma una caduta.
+
+Adesso `exhttp` dichiara un corpo piu' corto di quello promesso invece di
+renderlo come successo, e sa chiedere `Range: bytes=N-`; `netupdate` riprende il
+`.new` rimasto a meta' invece di ributtarlo, rimasticando l'impronta dei byte
+gia' scritti. E chi chiede un pezzo **controlla di riceverne uno**: un server
+che ignora `Range` risponde 200 con tutto il file, e accodarlo in fondo a mezzo
+file sarebbe peggio del guasto.
+
+### `ftpswap`: una directory e un server FTP, allineati
+
+**provato su ferro vero il 16 settembre 2026** — `ftpswap /miadir` tiene allineata una
+directory con un server FTP: quel che nasce da una parte compare dall'altra,
+quel che muore da una parte muore dall'altra, e in caso di conflitto vince il
+piu' recente mentre il perdente si mette da parte come `<nome>.prima`.
+
+Cinque prove sull'Acer, contro un server FTP vero: il `.cfg` chiesto e scritto
+a 0600 al primo giro, la struttura replicata nei due versi, un file cambiato
+sul server e riletto sulla macchina, un binario da 3000 byte andato e tornato
+**identico byte per byte**, la cancellazione che passa nei due sensi, e un
+conflitto vero col perdente ritrovato nel suo `.prima`.
+
+Il pezzo che decide tutto e' il **diario**: senza memoria, un file che c'e' da
+una parte sola e' sempre un file nuovo da copiare, e cancellare diventa
+impossibile. E il diario tiene le date di **tutt'e due** le parti, perche' su
+EX-OS `utime()` non cambia niente: un file appena scaricato ha la data di
+adesso, e confrontare i due orologi lo rimanderebbe su e giu' per sempre.
+
+Il client FTP e' finito in `lib/exftp` — MLSD, MDTM, MFMT, PASV e PORT — col
+precedente di `lib/exuser`: due programmi che parlano FTP sono due copie che
+divergono.
+
+### NASM sul CD degli strumenti, e l'altra sintassi
+
+**testato dentro EX-OS** — sul CD c'erano `as` e `ld`, cioè la catena che il
+compilatore usa senza che nessuno la guardi. Adesso c'è anche **NASM**, e non è
+un doppione: sono **due lingue**.
+
+| | `as` (GNU) | `nasm` |
+|---|---|---|
+| sintassi | AT&T | Intel |
+| fatta per | ricevere l'uscita di `gcc` | essere scritta da una persona |
+| | `movl $4, %eax` | `mov eax, 4` |
+| | `.ascii "..."` | `db "..."` |
+
+! **E soprattutto: questo è un sistema operativo.** Chi impara a scriverne uno
+comincia da sedici bit e da un settore di avvio, e quella roba è scritta in
+NASM nel novantanove per cento dei casi — compreso `boot/stage1.asm`, il
+settore di avvio di EX-OS stesso. Un sistema che sa compilarsi il C ma non sa
+assemblare un `org 0x7c00` è monco proprio nel punto in cui dovrebbe essere più
+forte.
+
+**È il porting più piccolo fatto finora — due righe — e il motivo si capisce
+guardando ciò che NASM *non* ha: un bersaglio.** I formati d'uscita (`elf32`,
+`bin`, `coff`, `macho`) li produce tutti sempre, e la scelta la fa chi lo usa
+con `-f`: non c'è niente da insegnargli su EX-OS, perché `nasm -f elf32` fa già
+esattamente ciò che il nostro `ld` sa collegare. Mancava solo che **girasse
+qui**:
+
+```
+autoconf/helpers/config.sub   'exos' fra i sistemi ammessi
+nasmlib/path.c                __exos__ fra quelli coi percorsi di Unix
+```
+
+> La seconda si è presentata come un errore onesto e per fortuna rumoroso —
+> `path.c:204: 'separators' undeclared`. NASM sceglie lo stile dei percorsi dai
+> macro del compilatore, e per un sistema che non riconosce prende
+> `PATH_UNKNOWN`, dove `separators` non è definito affatto. **La riga giusta non
+> era far dire al nostro GCC di essere Unix** — non lo è — ma dire lì che EX-OS
+> ha i percorsi fatti come quelli di Unix: la barra come unico separatore,
+> nessun concetto di volume. È vero, e sta in una riga.
+
+**Le prove sono due perché dimostrano due cose diverse.** `prova-nasm.asm` è la
+gemella di `prova.s` (che è per `as`): la stessa identica cosa detta nelle due
+sintassi, che è il modo più corto di imparare la differenza.
+
+```
+nasm -f elf32 /cdrom/prova-nasm.asm -o /prova-nasm.o
+ld -o /prova-nasm /prova-nasm.o
+/prova-nasm
+Assemblato con NASM dentro EX-OS.
+```
+
+`prova-nasm16.asm` è quella che dimostra **perché** NASM sta sul CD: sedici
+bit, `org 0x7c00`, nessun linker e nessun sistema operativo sotto. Con
+`ndisasm` il giro torna indietro esatto:
+
+```
+nasm -f bin /cdrom/prova-nasm16.asm -o /avvio.bin
+ndisasm -b 16 -o 0x7c00 /avvio.bin
+00007C0B  BE207C            mov si,0x7c20
+```
+
+`0x7c20` e non `0x0020`: è `org` che ha fatto il suo mestiere, ed è la cosa che
+`ld` non può fare al posto tuo — lì non c'è nessun collegatore che metta le
+etichette al posto giusto. **`ndisasm` viene con lui** e vale il megabyte che
+occupa: dentro un sistema operativo serve la prima volta che si guarda un
+settore di avvio o il dump di un fault senza avere il sorgente sotto mano.
+
+> **E un guasto trovato per strada: il CD non si costruiva più.** `make iso` si
+> ferma collegando `/bin/provassl` con `libcrypto.a(o_str.o): undefined
+> reference to 'errno'`, perché da oggi `errno` non è più un simbolo globale ma
+> una macro che chiama `__errno_dove()` — e `libcrypto.a` è stata costruita
+> prima. Lo diceva già `tools/ricostruisci-bersaglio.sh --verifica` a ogni
+> `make iso` («la libc è CAMBIATA dopo l'ultima ricostruzione»), ma come
+> *avviso*: quel controllo guarda le forme dei tipi, non i simboli. **libcrypto
+> è stata rifatta e il CD si costruisce di nuovo**; il resto del bersaglio —
+> cc1, as, ld, fbc, le librerie di calcolo — è ancora quello di prima, e sta in
+> `in_lavorazione.txt` come `@ABI-BERSAGLIO`.
+
+### La pila di un filo cresce su richiesta
+
+**testato** — un filo nasceva con 64 KB di RAM vera in mano: sedici pagine
+allocate e azzerate una per una, anche per un filo che di pila ne usa duecento
+byte. Non era una svista, era un prezzo pagato apposta, e il perché stava
+scritto nel codice: `page_fault_handler` sapeva far crescere **uno** stack —
+quello del PCB corrente — e davanti a una pagina mancante dentro la banda dei
+fili non sapeva **di chi** fosse.
+
+Adesso lo sa dire. Della piazzola si impegnano il blocco TLS e le prime otto
+pagine; il resto arriva quando il filo scende davvero, e si ferma sulla pagina
+di guardia sotto la piazzola. **Sette fili costano 980 KB invece di 1344**,
+cioè 140 a testa invece di 192 — e di quei 140, centoventotto sono lo stack di
+*kernel* del task, che con questo lavoro non c'entra: la pila utente è passata
+da 64 KB a 12.
+
+**La domanda vera non era «quanto», era «di chi».** I fili condividono la
+memoria, quindi a faultare dentro la pila di un filo può essere **qualcun
+altro**: un filo dichiara `char buf[16384]`, ne tocca solo la cima e ne passa
+il fondo a un compagno — o a una `read()`. Il fondo non è impegnato, il
+compagno ci scrive, e il fault arriva mentre gira lui; il suo ESP non dice
+niente su quell'indirizzo, perché sta in un'altra piazzola. Finché i 64 KB
+c'erano tutti il caso non esisteva. Per questo `pf_cresci_stack` è diventata
+due domande invece di una: **se** la crescita è legittima e **di chi** è la
+pila, poi `pf_cresci_pagine` impegna.
+
+> **La condizione «vicino a ESP» lì non si applica, e non è una rinuncia:**
+> sarebbe un paragone fra due piazzole diverse, cioè un numero senza
+> significato. Al suo posto c'è un confine altrettanto stretto — l'indirizzo
+> deve cadere nella riserva di un filo **vivo** dello stesso gruppo — e fra una
+> piazzola e l'altra resta la guardia, che nessuna crescita può scavalcare.
+
+**Due difetti trovati leggendo quel che si stava per toccare**, tutt'e due in
+`proc_reap_zombie`:
+
+- **sedici pagine perse a ogni filo che finisce.** Le piazzole si riusano, ma
+  le pagine di un filo morto restavano mappate fino alla fine del *processo*:
+  il filo dopo prendeva lo stesso posto e ci si mappava sopra pagine nuove —
+  `paging_map_page` sovrascrive la voce senza dire niente — con i dati di
+  quello di prima sotto i piedi. Adesso la piazzola si smonta, e nella prova si
+  legge «riassorbiti tornano 980 KB su 980»;
+- **una page directory distrutta più di una volta.** Si libera «quando non
+  resta nessuno», e nessuno si contava con `proc_gruppo_vivi()`, che gli zombie
+  non li conta; ma quando il capogruppo esce i fili diventano zombie *tutti
+  insieme*, e ognuno veniva raccolto con lo stesso puntatore in mano. Il primo
+  distruggeva la directory, i successivi la ripercorrevano da liberata. **Non è
+  provato** che fosse la causa dei due difetti rari già aperti — il panic dentro
+  `kfree`, il driver che parte con lo stack a zero — ma la forma è quella: un
+  conto che arriva altrove e molto dopo.
+
+**Le prove sono due modi nuovi di `/bin/filiprova`,** e ognuna delle tre parti
+di `pila` fallisce da sola: quanto costa un filo (la riga di giudizio è a 160 KB
+— 128 di stack kernel più *o* 64 di piazzola tutta *o* 12 impegnati a poco a
+poco: un numero in mezzo non esiste), che poi cresca (quaranta chiamate da un
+kilobyte, cinque volte quel che gli è stato dato), e che cresca **per mano di un
+altro**. `sfonda` scende senza fine e pretende che a morire sia il filo, sulla
+guardia, con codice -11, mentre il processo resta vivo.
+
+> **Nella terza parte il filo che aspetta non può chiamare niente.** Una `call`
+> scrive l'indirizzo di ritorno *sotto* l'ESP, e il fault che ne segue fa
+> impegnare tutto quel che sta fra lì e la parte già viva — cioè proprio il
+> pezzo che la prova vuole lasciare vuoto. Aspetta girando su una variabile
+> `volatile`. È anche la ragione per cui il caso è raro nella vita vera: i dati
+> vivi di un filo stanno sempre sopra il suo ESP, e sopra l'ESP è già tutto
+> impegnato.
+
+Restano dichiarati, e sono difetti veri usciti scrivendo la prova: **un filo che
+muore di page fault non porta via il processo** (muore lui, e il programma
+prosegue magari con un lucchetto preso da chi non c'è più), e **lo zombie di un
+filo che nessuno aspetta lo raccoglie la shell**, che torna al prompt con il
+programma ancora vivo.
+
+### La casella «Cerca», e due caselle nella stessa barra
+
+**testato, in rete, dentro EX-OS** — cercare si poteva già: `html.duckduckgo.com`
+risponde in HTML semplice e il navigatore lo mostra. Mancava la *comodità* — si
+scriveva l'indirizzo del motore a mano — e adesso c'è una casella **Cerca** a
+destra nella barra: parole, Invio, risultati.
+
+I motori sono tre, e si scelgono in **File > Impostazioni**: **duckduckgo**
+(predefinito), **wikipedia**, **marginalia**. **Sono tre perché tre
+rispondono:** `google.com` manda novantamila byte, tre script e *zero*
+collegamenti di risultato dentro l'HTML — i risultati li costruisce il
+JavaScript, quindi non c'è browser senza JS che possa vederli — e Mojeek manda
+un Captcha. Metterli in elenco vorrebbe dire una voce che promette una ricerca
+e rende una pagina vuota.
+
+**Invio fa due cose diverse, e la differenza è il fuoco.** In una casella del
+toolkit Invio arriva all'applicazione come `EXM_TASTO` — la casella lo lascia
+passare apposta — ma il messaggio **non dice da quale casella arrivi**, e il
+fuoco lo sa solo il toolkit. Per questo è nata `ex_fuoco_chi()`, otto righe:
+l'alternativa era indovinarlo guardando quale testo è cambiato, cioè sbagliarlo
+il giorno che qualcuno cerca due volte la stessa cosa.
+
+> **E un difetto del toolkit che non mordeva finché le caselle erano larghe.**
+> Con la seconda casella l'indirizzo si è ristretto da 636 a 436 pixel, e alla
+> prima pagina lunga il difetto era in fotografia: l'indirizzo **scriveva sopra
+> l'etichetta «Cerca»**. `ex_scrivi` non taglia niente e `CL_TESTO` non lo
+> chiedeva a nessuno — non è un difetto nato oggi, è nato oggi il primo posto in
+> cui due controlli sono così vicini. Adesso si mostra la **coda** e non la
+> testa, perché in quella casella il cursore sta sempre in fondo: chi scrive
+> deve vedere quel che sta scrivendo, non l'inizio di un indirizzo che ha già
+> finito di battere.
+
+### La directory è di tutti e due (e l'ambiente lo era già)
+
+**testato** — un `chdir` dentro un filo adesso lo vedono gli altri, ed è una
+riga: `filo->cwdt = capo->cwdt;` invece di copiare il percorso. **È lo stesso
+mestiere che fa `fdt` per i descrittori**, con lo stesso idioma: nel PCB c'è il
+campo `cwd` e c'è il puntatore `cwdt`, che per un processo punta al proprio
+campo e per un filo a quello del capogruppo. Tutto il kernel usa `cwdt` — sono
+cinque posti in croce — e **fra processi non cambia niente**: la directory
+resta una per ciascuno, ereditata dal padre a `spawn` come prima.
+
+**Il motivo è lo stesso di quando la directory diventò una per processo, letto
+all'incontrario.** Allora il difetto era che `cd` dentro un programma spostava
+tutti gli altri; qui è che due fili **sono un programma solo**, e una funzione
+che entra in una directory, apre un file relativo e torna indietro fa la cosa
+giusta o quella sbagliata a seconda di quale filo la esegue — senza errore,
+aprendo un file nel posto sbagliato.
+
+**E l'ambiente non passa dal kernel: quello era da controllare, non da fare.**
+L'elenco diceva «cwd ed env sono copiati», e per `env` non era vero: `environ`
+sta nei dati di `libc.so`, che i fili condividono perché condividono la
+memoria, e il campo `env[]` del PCB non lo usa nessuno. Non c'era niente da
+aggiustare; c'era da *guardare*, che è un'altra cosa dal darlo per buono.
+
+> **La prova guarda nei due versi, e uno solo non basterebbe.** Con la
+> directory copiata alla creazione, il verso «il principale si sposta e il filo
+> se ne accorge» passerebbe lo stesso ogni volta che il filo nasce *dopo* il
+> cambio: è il filo che si sposta e il principale che deve vederlo a dire
+> «condivisa» invece di «copiata al momento giusto». Rimessa la copia di prima
+> per un giro, falliscono tutt'e due i versi — e l'ambiente passa in tutt'e due
+> i casi, che è la conferma che quella metà non è mai stata un problema del
+> kernel.
+
+### Fermare un filo è chiederglielo
+
+**testato** — uccidere un filo si poteva già (il tid è un pid, e `kill`
+funziona), ma **non si deve**: un filo ucciso dove capita lascia i lucchetti
+presi, i file aperti a metà e le strutture come stavano, e dentro un processo
+solo quelle non sono le sue — sono **di tutti**. Adesso c'è il modo ordinato:
+
+```c
+while (!thread_devo_fermarmi()) { ...un pezzo di lavoro... }
+...lascia i lucchetti, chiudi quel che hai aperto...
+thread_esci(0);
+```
+
+`thread_ferma(tid)` lascia un messaggio, `thread_devo_fermarmi()` lo legge dove
+il filo decide. **Il kernel fa solo le due cose che da fuori non si possono
+fare**: mettere il messaggio dove il filo lo troverà, e *scrollare* chi dorme —
+perché un filo addormentato non guarda niente.
+
+**Due parole nel PCB, e fanno due mestieri diversi.** `ferma` è il messaggio e
+resta: una richiesta letta una volta vale anche la seconda. `scuoti` è la
+scrollata e **si consuma**, e serve a chiudere l'unica finestra che questa cosa
+ha: fra il momento in cui il filo guarda e quello in cui si addormenta. Se la
+richiesta arriva lì in mezzo il filo dorme *dopo* aver guardato — la stessa
+corsa del risveglio perso, e la stessa cura: chi chiede lascia scritto che la
+prossima attesa non deve dormire, e `sys_attesa_dormi` lo trova dentro lo
+stesso `cli` che protegge il valore atteso. Una scrollata sola, non un «non
+dormire mai più»: un filo che sta uscendo ha ancora una pulizia da fare, e con
+ogni attesa che torna subito quella girerebbe a vuoto.
+
+> **E la prova passava anche senza la cosa che doveva provare** — il difetto più
+> istruttivo della giornata, e stava *nella prova*. Tolta la scrollata dal
+> kernel per una riga, il caso che doveva colpire quella finestra passava lo
+> stesso: con un processore solo, creando un filo e fermandolo subito si finisce
+> sempre in uno dei due casi facili — o la richiesta arriva prima che il filo
+> abbia guardato, o a filo già addormentato. Il caso di mezzo dura poche
+> istruzioni e **a caso non ci si casca**. La cura è allargare la finestra a
+> comando invece di sperare: il filo, fra l'occhiata e il sonno, cede la CPU e
+> alza una bandierina, e chi comanda aspetta quella. Adesso venti corse costano
+> **60-180 ms** con la scrollata e **20200 senza** — venti scadenze da un
+> secondo, una per corsa — e la prova fallisce. Prima la differenza era di zero.
+
+**Quel che non fa, ed è scritto:** il filo si accorge solo dove guarda. Un
+`semaforo_prendi` senza scadenza non è un punto di controllo, e nemmeno una
+lettura da tastiera o da rete; chi vuole potersi fermare lì usa le varianti con
+scadenza. E la lettura del messaggio costa una chiamata di sistema: toglierla
+vorrebbe dire una parola di ABI dentro il blocco TLS, che è una decisione a
+senso unico e nessuno l'ha ancora misurata.
+
+### Le condizioni e i semafori, sopra l'attesa che dorme
+
+**testato** — l'attesa che dorme era il mattone; adesso ci sono le due cose che
+ci si costruiscono sopra, e sono **otto funzioni di libc, nessuna riga di
+kernel**: `condizione_aspetta` (con la variante a scadenza), `condizione_segnala`,
+`condizione_segnala_tutti`, `semaforo_prendi` (idem), `semaforo_prova`,
+`semaforo_lascia`. Tutt'e due i tipi sono **un intero**, come il lucchetto:
+`Condizione c = CONDIZIONE_ZERO;`, `Semaforo posti = 1;` — nessuna funzione di
+inizializzazione, che è l'unica forma che non si può dimenticare di chiamare.
+
+**Una condizione è un contatore di segnali, e basta.** Non tiene la lista di
+chi aspetta: quella è già nel kernel, ed è la coda di chi dorme su
+quell'indirizzo. Aspettare è tre righe — leggi il contatore, lascia il
+lucchetto, dormi su quel valore, riprendi il lucchetto — e **la prima è l'unica
+che conta**: fra il «lascia» e il «dormi» c'è una finestra in cui chi segnala
+può passare, e quel segnale arriverebbe prima che ci sia qualcuno da svegliare.
+Avendo letto il contatore *prima*, se qualcuno segnala lì in mezzo il valore
+non è più quello e non si dorme affatto. La finestra non si chiude: si rende
+innocua.
+
+> **Perciò si aspetta dentro un `while`, mai dentro un `if`.** Il risveglio
+> dice «guarda di nuovo», non «adesso c'è»: può arrivare per un segnale, per
+> la scadenza, o perché un segnale era già passato. Chi controlla una volta
+> sola prima o poi prosegue con la condizione falsa, ed è il difetto che non si
+> riproduce.
+
+**Un semaforo non ha un padrone**, e non è una licenza: chi lascia può non
+essere chi ha preso, ed è esattamente ciò che serve fra un produttore e un
+consumatore, dove il posto libero lo consuma uno e lo restituisce l'altro. Una
+spesa è rimasta lì, scritta accanto al codice: chi lascia chiama la sveglia
+*sempre*, anche quando non dorme nessuno — il lucchetto quella spesa la evita
+col terzo stato, ma lì il numero *è* lo stato del lucchetto, mentre qui il
+contatore conta posti e non ha dove metterlo. La via c'è (un secondo campo
+«dormienti») e vuole un tipo nuovo nell'ABI: **non si paga un tipo nuovo per
+un'ottimizzazione che nessuno ha ancora misurato.**
+
+> **La prova è una coda di UN posto, e può fallire in tre modi diversi.** Mille
+> elementi fra un produttore e un consumatore: con dieci posti i due si
+> incrociano poco e la prova diventa quasi sequenziale, con uno solo ognuno dei
+> mille costringe l'altro ad aspettare. Si guarda la **somma** (perderne uno e
+> leggerne un altro due volte darebbe lo stesso numero di giri), i **giri a
+> vuoto** — e devono essere *zero*, non «pochi»: con un consumatore solo, chi si
+> sveglia trova sempre la roba — e il **cronometro**, che è il testimone dei
+> giri a vuoto. Dentro l'attesa c'è una scadenza di mezzo secondo che è una
+> *rete*, non un modo di funzionare: senza, un segnale perso sarebbe una
+> macchina ferma per sempre e la prova non fallirebbe, resterebbe lì. Mille
+> passaggi ne costano fra **20 e 60 ms** misurati, una sola scadenza ne
+> costerebbe 500: la riga di giudizio sta a 400, comoda sopra la misura e
+> ancora capace di distinguere.
+
+### I fili: più flussi dentro lo stesso programma
+
+**testato** — e la prova non è che il conto torni, è che **senza lucchetto non
+torna**:
+
+```
+filiprova: 4 fili, 20000 giri l'uno
+  col lucchetto   80000   atteso  80000   esatto
+  senza           20000   atteso  80000   perso per strada
+  scambi di mano  80000   i fili si alternano davvero
+```
+
+Sessantamila incrementi persi sono quattro flussi che si pestano i piedi sulla
+stessa memoria. Se i fili fossero finti — se `thread_crea` eseguisse la
+funzione dentro chi chiama — quel numero sarebbe 80000 come l'altro, e la prova
+sarebbe passata senza provare niente.
+
+**La differenza fra un processo e un filo è una riga: la page directory.**
+`proc_create` ne alloca una nuova, `proc_thread_crea` copia quella del
+capogruppo. Non c'è una riga dello scheduler che sia stata toccata: stessa run
+queue, stesso quanto, stesso `context_switch` — che riceveva già il CR3 come
+parametro. E `tgid` (il pid del primo del gruppo) vale `pid` per un processo
+normale, così tutto il kernel che non sa niente di fili continua a funzionare
+senza un solo `if`.
+
+**I descrittori si condividono per puntatore, non per copia**: due fili che
+aprono e chiudono file devono vedere la stessa tabella. Nel PCB è comparso
+`fdt`, e le 153 occorrenze di `->fds[` nel kernel sono diventate `->fdt[` con
+una sostituzione meccanica — per un processo normale `fdt == fds` e non cambia
+niente.
+
+**Lo stack no**: 64 KB per filo, in una banda riservata *a tutti* i processi
+all'avvio — anche a chi un filo non lo farà mai. Sono indirizzi, non pagine.
+L'alternativa (riservarla quando nasce il primo filo) vorrebbe dire abbassare
+il tetto dello heap sotto memoria che lo heap potrebbe già avere preso: o si
+rifiuta il filo, o gli si mette lo stack sopra la roba di qualcun altro.
+
+> **Chi esce porta via il gruppo**, come `exit_group` su Linux e per la stessa
+> ragione: gli altri fili vivono nella memoria di questo processo, e lasciarli
+> correre mentre lo spazio di indirizzamento se ne va vuol dire codice che gira
+> sopra pagine liberate. Provato apposta: un programma che crea tre fili
+> infiniti ed esce senza aspettarli lascia la macchina sana e il prompt torna.
+
+**Quel che non è per filo, ed è scritto invece che scoperto:** le variabili
+`__thread` e `errno` sono per *processo* — il blocco TLS è in comune. Darne uno
+per filo vuol dire copiarci l'immagine iniziale che sta nell'ELF; azzerarlo e
+basta farebbe partire a zero una variabile inizializzata a cinque, in silenzio.
+Fra un limite scritto e un valore sbagliato non c'è partita. E il lucchetto
+gira cedendo la CPU: va bene per una sezione critica corta, non per aspettare —
+un futex è il passo dopo.
+
+
+**E poi il blocco TLS per filo.** Nella prima ora i fili condividevano quello
+del processo; nella seconda è stato tolto anche quel limite: **ogni filo ha il
+suo**, in cima al proprio stack — dove quelle pagine sono già mappate e nessun
+altro può arrivarci, che è anche dove lo mette glibc. L'immagine iniziale si
+**rilegge dal file**, non si copia da quella del capogruppo: copiare la sua
+vorrebbe dire far partire il filo con i valori *di adesso* di un altro flusso —
+un contatore a metà, un puntatore a un oggetto in uso. Nel PCB sono comparse le
+tre coordinate del `PT_TLS`, e l'eseguibile è già aperto per il caricamento su
+richiesta.
+
+> **La prova parte da sette, non da zero**, ed è l'unico modo di distinguere
+> «blocco copiato» da «blocco azzerato»: un blocco azzerato passa qualunque
+> prova che parta da zero. Ogni filo controlla di trovarci 7, ci scrive il suo
+> numero, cede la CPU due volte e ricontrolla; il filo principale, alla fine,
+> ritrova il suo 42 intatto. Resta fuori `errno`, che vive dentro `libc.so`
+> dove `__thread` non funziona — e adesso ha una strada scritta per smettere di
+> esserlo.
+
+
+**E anche `errno` è per filo.** Dentro `libc.so` non si può scrivere
+`__thread` — manca il TLS dinamico — ma il thread pointer si può *leggere*:
+`%gs:0` contiene un numero diverso per ogni filo, buono come chiave in una
+tabellina di sedici posti, dove il posto si prende con `xchg` e non con «se è
+libero allora scrivilo». Per questo il blocco TLS ora si fa a *tutti* i
+processi, anche a quelli senza una sola variabile `__thread`: ridotto al solo
+TCB, otto byte in una pagina — senza, la base di quel descrittore vale zero e
+`movl %gs:0` non dà un valore sbagliato, dà un page fault all'indirizzo 0.
+
+> **Il difetto uscito da lì vale più della funzione.** Messa la tabella,
+> `close(999)` ha cominciato a rispondere `errno 0` su una chiamata che
+> fallisce di sicuro: **dentro `libc.c` la parola `errno` non è la macro**,
+> perché quel file non include `libc.h` — sta scritto in testa che si compila
+> senza `-I lib/include`. `err_posix` scriveva la variabile globale mentre il
+> programma leggeva il posto del suo filo. E la prova che l'ha trovato era
+> stata rifatta apposta: la prima versione faceva sbagliare il filo principale
+> con una chiamata che rispondeva zero, e zero non cambia mai — sarebbe passata
+> per sempre senza provare niente.
+
+**E il difetto più istruttivo: un task a metà che viene eseguito.** Aggiunto il
+TLS per filo, il programma di prova moriva *una volta su tre* con un page fault
+all'ingresso della funzione del filo. La diagnosi è arrivata in un giro solo
+facendo stampare i numeri: il filo andava in fault **prima che la sua riga di
+creazione fosse stampata**, col contesto che `proc_create` gli aveva costruito —
+ESP a zero. In mezzo c'era una `vfs_read`, cioè una chiamata **che può
+bloccare**: mentre il capogruppo aspettava il disco, lo scheduler metteva in
+esecuzione un filo non finito di costruire. La regola che ne esce vale per
+qualunque kernel: **fra la creazione di un task e il momento in cui è pronto
+non ci deve stare niente che possa bloccare.**
+
+
+**E l'attesa che dorme davvero.** `attesa_dormi`/`attesa_sveglia`: un filo esce
+dalla coda dello scheduler e ci rientra quando qualcuno lo chiama — per
+l'**indirizzo** su cui si è fermato, non per il pid, ed è ciò che permette a un
+lucchetto di essere un intero e basta, senza doversi ricordare chi c'è in fila.
+
+**Il valore atteso chiude la corsa**, ed è la ragione per cui la chiamata ha tre
+argomenti invece di due: fra il momento in cui chi aspetta guarda il lucchetto e
+quello in cui si addormenta c'è una finestra, e una sveglia arrivata lì in mezzo
+si perderebbe — il filo dormirebbe per sempre. Il confronto lo fa il *kernel*, a
+interruzioni spente. E la pagina si tocca *prima* di spegnerle: leggere memoria
+utente può far scattare un page fault che vuole il disco, e un disco che si
+aspetta a interruzioni spente è una macchina ferma.
+
+**Il lucchetto ha tre stati** — libero, preso, preso-con-gente-che-dorme — e il
+terzo esiste per chi *lascia*: senza, dovrebbe chiamare la sveglia a ogni
+sblocco per il dubbio che qualcuno dorma. Con il 2, chi lasciando si ritrova in
+mano un 1 sa che non c'è nessuno: **senza contesa il lucchetto non costa nemmeno
+una chiamata di sistema.**
+
+> **La prova è un cronometro, perché nient'altro distingue.** Un'attesa che gira
+> a vuoto e una che dorme, viste da fuori, fanno la stessa cosa. Servono due
+> misure con esiti opposti: senza nessuno che svegli, con scadenza 300 ms, è
+> tornata dopo **310 ms** — ha dormito; svegliata da un filo dopo 100 ms con la
+> scadenza a 2000, è tornata dopo **100 ms** — l'ha svegliata lui, non
+> l'orologio.
+
+### Le scorciatoie degli editor, e una cosa che avevo scritto sbagliata
+
+**testato** — scritta una riga nell'editor e premuto solo Ctrl+S: la riga di
+stato dice «salvato», e il file riletto dalla shell la contiene. Era l'ultima
+voce dell'elenco di EX-IDE: il menu della finestra «Sorgente» prometteva
+Ctrl+S, Ctrl+C, Ctrl+V, Ctrl+X e Ctrl+F dal primo giorno, e non le aveva
+collegate nessuno.
+
+**Il toolkit non le mangia, apposta.** In `exwin.c`, nel giro dei tasti: «per
+ogni altro controllo un Ctrl+lettera è una scorciatoia dell'applicazione e non
+deve essere mangiata» — l'unica eccezione è il terminale, dove Ctrl+C è il byte
+3 e deve arrivare al pty. I Ctrl arrivavano già; mancava che qualcuno li
+guardasse.
+
+> **E quel che avevo scritto nel manuale era sbagliato.** Sotto «Area testo»
+> c'era «con cursore, selezione e appunti (Ctrl+C, Ctrl+V, Ctrl+X)», come se i
+> tasti li facesse il toolkit. Il toolkit dà le *funzioni* —
+> `ex_area_copia/taglia/incolla` — e lascia i tasti a chi scrive il programma.
+> La riga adesso lo dice, e dice anche come si fa: è esattamente ciò che serve a
+> chi con EX-IDE scrive un editor suo.
+
+**Il disegno si rifà a mano, da tastiera.** È la trappola di questo lavoro:
+premendo «Taglia» nel menu il toolkit ridisegna la finestra chiudendo la
+tendina, quindi il testo cambiato si vede; da tastiera non si chiude niente, e
+senza un `EXM_DISEGNA` esplicito il testo cambia e lo schermo resta com'era. Le
+due strade passano dalle stesse funzioni e non hanno lo stesso contorno.
+
+### Taglia e incolla: un controllo si sposta fra le maschere
+
+**testato** — copiato e incollato nella stessa maschera, e poi tagliato,
+cambiata maschera e incollato: il file del disegno mostra il controllo passato
+sotto l'altra finestra, stessa posizione e stesso nome. Era l'ultima voce grossa
+di EX-IDE, e la sua ragione vera non era copiare: era che un controllo messo
+sulla maschera sbagliata si poteva solo cancellare e rifare a mano di là.
+
+**Gli appunti del disegno non sono quelli di sistema.** Dentro c'è un
+*controllo*, non del testo: quelli di ExWin portano caratteri e li usano già gli
+editor per passarsi pezzi di sorgente. Infilarci un controllo vorrebbe dire
+inventare un formato testuale per un rettangolo e farlo rileggere anche a chi ci
+scrive dentro nel frattempo. Nella finestra principale Ctrl+C parla del disegno,
+che è quel che quella finestra è.
+
+**Il nome e l'id non si copiano, si rifanno**: sono unici in tutto il progetto
+perché diventano `ID_...`, `h_...` e un nome di funzione dentro `finestra.h`,
+che è un file solo. Con una conseguenza gradevole che non era cercata —
+tagliando, il nome torna disponibile e il controllo se lo riprende: **uno
+spostamento non rinomina niente**.
+
+**E il codice non si copia affatto.** L'handler dell'originale resta
+dell'originale; la copia avrà il suo, vuoto, al primo doppio clic. Copiare anche
+il corpo vorrebbe dire che exide scrive dentro `finestra.c` cose che non ha
+scritto nessuno — l'unica regola che questo programma non rompe mai.
+
+> **Nella stessa maschera l'incollato si scosta di otto pixel, in un'altra no.**
+> Metterlo esattamente sopra l'originale lo nasconderebbe: si vedrebbe un
+> controllo e ce ne sarebbero due, e il clic prenderebbe sempre quello di sopra.
+> In un'altra maschera invece quel posto è libero, ed è esattamente dove lo si
+> vuole.
+
+### Rifai: la stessa funzione con le due pile scambiate
+
+**testato** — annullato, rifatto, e verificato il caso che conta di più: dopo un
+Annulla, una modifica nuova butta il ramo rifatto.
+
+**Quel che si annulla non si butta, si mette dall'altra parte.** Due pile invece
+di una, e *una funzione sola che le scambia*: `passo(da, verso)` prende il
+presente, lo mette nella pila `verso`, e rimette il disegno che stava in cima a
+`da`. Annulla è `passo(indietro, avanti)`, Rifai è `passo(avanti, indietro)` —
+due righe l'uno, e il giorno che si aggiunge un campo al disegno il posto in cui
+ricordarsene è uno. Per la stessa ragione la cattura e il ripristino sono
+diventati due funzioni invece delle tre `memcpy` copiate nei tre posti che le
+usano.
+
+**Una modifica nuova butta il ramo rifatto**, ed è l'unica regola che questa
+cosa deve avere: se dopo tre passi indietro si disegna qualcosa, quell'«avanti»
+è un futuro nato da un passato che non c'è più, e tenerlo vorrebbe dire un Rifai
+che riporta a un disegno mai esistito. Lo fanno tutti i programmi così, e la
+ragione è questa — non l'abitudine.
+
+> **La pila scorre quando è piena**, invece di rifiutare l'istante nuovo: il
+> passo più vecchio è quello che serve meno, e perdere il più *recente* vorrebbe
+> dire un Annulla che non annulla l'ultima cosa fatta. Costo misurato con
+> `size`: la BSS di exide passa da 140.384 a 261.888 byte — centoventuno
+> kilobyte, cioè la seconda pila di sedici istanti, memoria azzerata e non byte
+> nel binario.
+
+### Si cerca davvero, e non serviva portare un browser
+
+**testato** — dal vivo, in HTTPS: `html.duckduckgo.com/html/?q=exos` si apre
+nel navigatore di EX-OS e mostra i risultati, con titoli, indirizzi e testi di
+anteprima.
+
+La domanda era se portare Firefox, o NetSurf, per poter cercare. La risposta è
+venuta da cinque richieste HTTP, non da un preventivo — una per motore, con
+l'User-Agent vero di EX-OS:
+
+| motore | cosa risponde |
+|---|---|
+| google.com/search | 200, 91.980 byte, **tre script e zero link di risultato**: i risultati li costruisce il JavaScript |
+| mojeek.com/search | 200, `<title>Captcha</title>` |
+| html.duckduckgo.com | 200, 33.784 byte, **dieci risultati in HTML semplice** |
+| marginalia, wikipedia | HTML semplice |
+
+**Quindi NetSurf non risolve Google, e non è colpa sua**: NetSurf non esegue
+JavaScript, e Google i risultati in HTML non li manda a nessuno. Portare un
+motore di terze parti — mesi per NetSurf, un secondo sistema operativo per
+Firefox, che senza thread e senza Rust non parte nemmeno — non avrebbe spostato
+di un millimetro il problema che si voleva risolvere.
+
+**Poi il difetto vero.** La pagina di DuckDuckGo arrivava (TLS a posto, `200,
+31671 byte, 738 nodi`) e lo schermo restava bianco. La riga di stato diceva
+anche «stile troncato», ed era lì la risposta: la stessa pagina salvata in
+locale *senza* foglio di stile si disegnava subito. **Il foglio di DuckDuckGo è
+105.607 byte e il tetto era 24.576**: il navigatore ne leggeva un quarto e si
+fermava a metà di una regola, e con mezzo foglio applicato la pagina spariva.
+
+I tre numeri che servivano davvero — 1652 selettori, 2207 dichiarazioni, 105 KB
+— contro tetti di 600, 2000 e 24 KB. Alzati a 2400, 5000 e 160 KB: costano
+**284 kilobyte di BSS** su un programma che ne aveva già 5,2 MB, misurati con
+`size` e non stimati.
+
+> **Si cerca dal proprio navigatore senza fingersi nessuno.** Non serviva
+> un'impronta identica a Chrome, né il jitter umano, né un motore di terze
+> parti: serviva un motore che risponde in HTML e un tetto alzato. E il terzo
+> risultato che DuckDuckGo ha restituito era `github.com/exagonx/EX_OS` — cioè
+> questo progetto.
+
+### L'impaginato esce da browser.c, e la prova è che non si vede
+
+**testato** — la stessa pagina fotografata prima e dopo: dieci righe di pixel
+diverse su seicento, dalla 582 alla 591, e sono **l'orologio** della barra in
+basso. Sopra, niente. Primo dei due passi verso una libreria di testo
+formattato: si spezza il file prima di spezzare la libreria.
+
+```
+browser.c            6749 -> 4824 righe
+browser_impagina.c        1836 righe   (l'impaginato, uscito da lì)
+browser_priv.h             222 righe   (la giuntura, che prima non c'era)
+```
+
+**Il taglio se l'è fatto dire dalla macchina.** Prima di spostare una riga ho
+fatto costruire la mappa del file — centotrentotto definizioni, chi chiama chi,
+chi tocca quali variabili globali — e il gruppo dell'impaginazione è venuto
+fuori da solo: ventotto funzioni, 1588 righe, *contigue*. A occhio, su seimila
+righe, non si vedeva.
+
+E soprattutto è venuta fuori la misura del taglio, che era la domanda vera: 21
+variabili condivise, 11 funzioni chieste al navigatore e **3 sole offerte a
+lui**. Verso l'esterno l'impaginato è quasi chiuso; quel che lo tiene legato
+non sono le chiamate, sono le variabili — esattamente il genere di legame che
+non si vede finché tutto sta in un file solo.
+
+> **Tre errori dello script, tutti dello stesso tipo.** Per una funzione
+> scritta su una riga sola la firma veniva tagliata all'*ultima* parentesi, che
+> sta dentro il corpo: nell'intestazione finiva una graffa aperta. Una
+> dichiarazione che finisce con un commento invece che col punto e virgola
+> faceva inghiottire la riga dopo. E i globali dichiarati più d'uno per riga non
+> venivano visti affatto. Ogni volta: rimetti il file com'era, correggi lo
+> *script*, rifai il taglio da capo — correggere il risultato invece dello
+> script avrebbe voluto dire un taglio che non si sa più rifare, e questo taglio
+> va rifatto il giorno del passo 2.
+
+### Il manuale di EX-IDE diventa una pagina, con l'indice
+
+**testato** — Aiuto > Manuale apre il navigatore su
+`/exwin/doc/exide.html`, e un clic sull'indice porta esattamente sul
+paragrafo. Ventimila byte, ventinove `id`, cinquantasei rimandi interni.
+
+**Non si riscrive un visualizzatore**, è la stessa decisione con cui
+«Directory» non riscrive un file manager ma lancia `filemgr`: il navigatore
+c'è, impagina, colora, segue i link e lo fa già per le altre nove pagine della
+guida. Il manuale di EX-IDE è diventato la decima pagina di quell'insieme —
+stessa barra di navigazione, stesso foglio di stile, una riga nell'indice della
+documentazione — e le barre delle altre pagine ora lo nominano.
+
+**Gli esempi sono condivisi, ed è il motivo per cui serviva l'indice.** Lo
+scambio fra due caselle è un esempio di *Casella* tanto quanto di *Pulsante*;
+l'uscita con la conferma vale per *Spunta*, per *Pulsante* e per «come si
+esce». Ripeterlo sotto ognuno vorrebbe dire tre copie da tenere d'accordo;
+metterlo sotto uno solo vorrebbe dire che chi cerca l'altro non lo trova.
+Perciò gli esempi stanno tutti in fondo, con un `id` per uno, e **ogni
+strumento ci rimanda** — e ogni esempio dice per quali strumenti vale. È
+l'unica struttura in cui la stessa cosa è scritta una volta sola e si raggiunge
+da tutti i posti da cui la si cerca; senza il salto all'ancora sarebbe stata un
+elenco di titoli e «scorri finché non lo trovi».
+
+> **Il manuale dentro il programma è rimasto**, ed è la ragione per cui era
+> stato scritto: un manuale che sta in un file è un manuale che un giorno non
+> c'è — il componente `/exwin` non installato, un CD montato a metà, il solo
+> binario copiato. Adesso è la seconda scelta invece che l'unica, e la sua
+> prima riga dice dov'è quello buono. Ma sono due copie dello stesso testo e
+> prima o poi divergeranno: la strada, scritta fra le cose da fare, è
+> accorciare quella interna a un promemoria e lasciare alla pagina il testo
+> lungo.
+
+**E il manuale interno è diventato un promemoria**, da 289 righe a 61: come si
+comincia, i quattro file, le finestre e la tavola degli strumenti coi loro
+eventi. Gli esempi, le proprietà una per una e il menu stanno solo nella
+pagina — sono la parte lunga, cioè quella che diverge per prima. Il binario di
+exide cala di undici kilobyte, e la prima riga del promemoria dice che se lo
+stai leggendo vuol dire che la pagina non c'era.
+
+### Le ancore: un link che porta a un punto della pagina
+
+**testato** — quattro casi dentro EX-OS: un'ancora della stessa pagina, una che
+non esiste, un indirizzo con la coda scritto nella barra, e un link che cambia
+pagina *e* atterra sul paragrafo. Serviva alla documentazione: un manuale lungo
+con l'indice in cima, dove si preme una voce e ci si trova sulla spiegazione.
+
+Il navigatore non ci andava, e lo diceva da mesi in un commento: «questo browser
+non sa ancora saltare a un punto dentro un documento; finché il salto non c'è,
+non fare niente è la risposta più onesta». Adesso il salto c'è.
+
+**Il pezzo da cui ripartire si trova dal nodo, non dal testo.** Ogni pezzo
+impaginato sa già da quale nodo del documento viene — un campo aggiunto a suo
+tempo per dire a uno script *dove* si è cliccato — quindi il salto è un giro
+sull'albero (l'elemento con quell'`id`, o un vecchio `<a name>`) e uno
+sull'impaginato, senza impaginare una seconda volta. Un'ancora della pagina
+corrente non ricarica niente: ricaricare per poi saltare vorrebbe dire un giro
+di rete, l'albero rifatto e i moduli riempiti a mano azzerati, tutto per
+muovere una barra di scorrimento.
+
+> **Il difetto ha richiesto una misura, non un'ipotesi.** Al primo giro il
+> salto atterrava due righe sotto il titolo: sembrava un margine sbagliato, o
+> la linea di base del carattere, o l'arrotondamento della riga — tre ipotesi
+> plausibili e tutte sbagliate. Invece di provarle ho fatto stampare i numeri
+> sulla riga di stato: `nodo 86, pezzo 152, y 870, scorri 0`. Il pezzo trovato
+> era giusto, era il titolo. **Le `y` dei pezzi sono già in coordinate della
+> finestra**, non del documento: l'impaginazione comincia sotto la barra
+> dell'indirizzo, quindi scorrendo alla `y` del pezzo quel pezzo finisce
+> *dietro* la barra e si vede la riga dopo. Con i numeri in mano ci sono voluti
+> due minuti.
+
+### Annulla: si fotografa tutto, non si registra cosa
+
+**testato** — tre modifiche di tre tipi diversi, ognuna annullata, e alla fine
+il file del disegno riletto dalla shell **identico a quello di partenza**.
+Sedici passi indietro, con Ctrl+Z o Modifica > Annulla.
+
+**Si fotografa il disegno intero prima di ogni modifica**, invece di registrare
+cosa è cambiato. L'alternativa vuol dire scrivere l'operazione inversa di
+ognuna — mettere un controllo, cancellarlo, spostarlo, ridimensionarlo,
+cambiargli una delle otto proprietà, cambiare una delle quattro della maschera,
+aggiungere una maschera, toglierne una che si porta via i suoi controlli: nove
+inverse, ognuna sbagliabile in un modo suo, e quelle sbagliate si scoprono un
+mese dopo. «Rimetti tutto com'era» non può sbagliare, è una copia. E il disegno
+è piccolo abbastanza perché sia sensato: sedici istanti stanno in un centinaio
+di kilobyte di memoria azzerata, che non finiscono nel binario.
+
+**Una fotografia per trascinamento, e solo se qualcosa cambia davvero.** Un
+trascinamento manda decine di eventi: fotografando a ognuno, i sedici passi se
+li mangia un movimento solo e si torna indietro mezzo pixel per volta.
+Fotografando invece all'inizio del trascinamento, un clic che sceglie e basta
+lascerebbe un passo che non fa niente — e un Annulla che non fa niente è peggio
+di non averlo, perché chi lo preme crede che sia rotto. Si fotografa al primo
+cambiamento vero.
+
+**E la storia non attraversa i progetti**: aprirne un altro e premere Annulla
+rimetterebbe sulla maschera i controlli di quello di prima, con i loro nomi e i
+loro id — un disegno mai esistito, pronto per essere salvato sopra quello vero.
+
+> **Le scorciatoie erano etichette.** I menu promettevano Ctrl+N, Ctrl+O,
+> Ctrl+S e Ctrl+Q dal primo giorno e premerli non faceva niente: nessuno le
+> aveva mai collegate. Per Annulla la scorciatoia conta più che per gli altri —
+> si annulla subito dopo aver sbagliato, con la mano ancora sulla tastiera, non
+> aprendo un menu — e allora sono state collegate tutte insieme. Restano
+> etichette quelle della finestra «Sorgente», e adesso è scritto dove si tiene
+> quel che manca.
+
+### Le maniglie si tirano, e il manuale spiega davvero
+
+**testato** — dentro EX-OS, tirando ogni tipo di maniglia e leggendo i numeri
+che finiscono nel file del disegno. I controlli si ridimensionano col mouse:
+le otto maniglie si disegnavano dal primo giorno e non servivano a niente.
+
+**Il problema non era tirarle, era prenderle.** Metà di ogni maniglia cade
+*dentro* il controllo, e il clic cercava prima il controllo — l'ordine
+naturale: così un clic sull'angolo cominciava uno spostamento e la maniglia non
+si prendeva mai. Ora le maniglie si guardano per prime. E il quadratino che si
+vede è 5 pixel — di più coprirebbe il controllo — mentre il bersaglio del mouse
+è 11: si mira al quadratino e si prende comunque.
+
+**Si tira un bordo, non una misura.** Tirando la maniglia di sinistra cambiano
+`x` **e** larghezza insieme, perché il bordo destro non si deve muovere:
+cambiando la sola larghezza il controllo scivolerebbe a destra mentre lo si
+tira a sinistra. Lo stesso vale per i limiti — la misura minima ferma il bordo
+che si sta tirando, non accorcia dall'altra parte, o il controllo scapperebbe
+appena arrivato al minimo.
+
+**Il manuale dentro il programma è diventato un manuale.** Per ogni strumento
+dice a cosa serve, quali eventi ha e **con quali funzioni si comanda** da
+`finestra.c`: `ex_acceso`/`ex_accendi` per Spunta e Radio, i sei `ex_lista_*`,
+i sei `ex_voce_*` che Elenco e Linguette condividono, `ex_scorri_*`; più le
+proprietà una per una — cosa diventa ognuna nel codice generato — e due esempi
+completi. Uno c'era: due caselle che si scambiano il testo, ora con scritto
+perché la copia d'appoggio serve davvero (`ex_testo_prendi` rende un
+*puntatore* al testo del controllo, non una copia). L'altro mancava: **un
+pulsante che chiude la finestra**, che nella principale è `ex_esci(0)` e in una
+secondaria no — lì si chiama la procedura generata con `EXM_CHIUDI`, che
+distrugge la finestra *e* azzera gli handle dei suoi controlli.
+
+> **Un difetto vecchio, trovato scrivendone uno nuovo.** Aggiungendo il
+> ridisegno al ridimensionamento è saltato fuori che lo *spostamento* non ne
+> aveva mai avuto uno: trascinando un controllo cambiavano `x` e `y` e nessuno
+> ridisegnava la tela, così il controllo si vedeva saltare nel posto nuovo solo
+> quando qualcos'altro faceva ridisegnare la finestra. Adesso tutti e due i
+> trascinamenti finiscono con un ridisegno.
+
+### Più di una finestra: il disegnatore impara a contare
+
+**testato** — dal disegno al programma che gira: due finestre disegnate,
+generate, compilate con GCC vero dentro EX-OS, e la seconda che si apre
+premendo un pulsante della prima. Un progetto di exide poteva disegnare **una
+finestra sola**; adesso ne disegna otto.
+
+**Il formato del disegno non è cambiato per fare posto.** Aveva già la forma
+giusta — una riga per la maschera, poi le righe dei suoi controlli — e bastava
+che le maschere potessero essere più d'una:
+
+```
+F principale 400 260 prg6
+c etichetta Etichetta1 1001 76 52 90 16 0 Etichetta1
+F finestra2 400 260 Finestra 2
+c spunta Spunta1 1003 76 124 140 20 0 Spunta1
+```
+
+La riga vecchia si chiamava `f` e **si continua a leggerla**: non aveva il nome
+— non serviva, la maschera era una — e infilarne uno in mezzo avrebbe fatto
+leggere la prima parola del *titolo* come nome. Perciò la riga nuova ha una
+lettera sua. I progetti fatti prima si aprono senza accorgersi di niente.
+
+**La finestra principale tiene i nomi di sempre**, e le altre no: `g_form`,
+`finestra_crea()`, `finestra_proc()` contro `g_form_opzioni`, `opzioni_crea()`,
+`opzioni_proc()`. Sarebbe più simmetrico chiamarle tutte allo stesso modo, e
+**ogni progetto fatto prima di oggi smetterebbe di compilare**: il suo
+`finestra.c` — quello che l'IDE non riscrive mai — chiama `finestra_crea()` dal
+main. Le secondarie le apre il tuo codice, di solito dall'handler di un
+pulsante.
+
+Tre dettagli che il generatore scrive e che chi scrive a mano dimentica:
+chiamare `<nome>_crea()` due volte **non apre due finestre** (un pulsante si
+preme più di una volta); chiudere una secondaria **non fa uscire dal
+programma**, esce solo la principale; e alla chiusura i puntatori ai suoi
+controlli **tornano a zero**, perché `ex_distruggi` porta via anche i figli e
+quei nomi punterebbero al vuoto.
+
+> **Una maschera per volta, e non un contenitore MDI — contro quel che avevo
+> scritto io stesso nell'elenco delle cose da fare.** L'MDI c'è nel toolkit
+> dal giorno prima ed era la strada segnata; a decidere sono stati i numeri: il
+> ripiano del disegnatore è 436x396 e una maschera nasce 400x260. Due finestre
+> di quella misura lì dentro si coprono quasi per intero — si passerebbe il
+> tempo a spostarle per vedere quella sotto, per guadagnare di vedere insieme
+> due cose su cui si lavora comunque una per volta. Resta la strada giusta il
+> giorno che la tela diventa grande, o che si vorrà trascinare un controllo da
+> una finestra all'altra.
+
+### Salva con nome, Sostituisci, e un nome che restava indietro
+
+**testato** — dentro EX-OS, con il file riletto dalla shell prima e dopo,
+nello stesso giro di macchina. Le due voci che erano in cima all'elenco delle
+cose da fare di exide.
+
+**«Salva con nome» copia l'albero, non rigenera il disegno.** Poteva voler
+dire due cose: rifare `finestra.dis`, `finestra.h` e `finestra_gen.c` dentro
+una directory nuova, oppure copiare tutto e continuare a lavorare sulla copia.
+La prima è più facile da scrivere e **butta via `finestra.c`**, che è l'unico
+dei quattro file che l'IDE non possiede: è quello dell'utente, quello in cui
+l'IDE aggiunge gli handler mancanti e non riscrive mai niente. Un «salva con
+nome» che perde il corpo delle funzioni non è un salvataggio. Si copia
+l'albero intero — `src/`, `inc/`, `lib/`, `bin/`, `obj/`, `progetto.txt`,
+`compila.sh` — dopo aver salvato gli editor aperti, e **l'originale resta
+intatto**: è una copia, non uno spostamento.
+
+**«Sostituisci» cambia una occorrenza per volta, come Cerca.** In un sorgente
+la stessa sequenza di caratteri sta dentro le stringhe, dentro i commenti e
+dentro i nomi: `msg` sta anche in `messaggio`. Un «sostituisci tutto» le
+cambia in silenzio tutte e tre, e chi lo lancia se ne accorge alla
+compilazione o dopo. C'è in tutt'e due gli editor — quello del sorgente e il
+file-editor — e nel toolkit è nato `ex_area_riga_metti()`, che riscrive una
+riga in mezzo al documento: sedici righe che passano da `area_tocca()`, così
+la catena del coloritore si invalida da lì in giù. Una primitiva del genere
+va nel toolkit proprio per questo: un'applicazione che riscrivesse la riga da
+fuori lascerebbe il colore vecchio, e solo qualche volta.
+
+**E poi la rilettura ha trovato quel che la prova felice non tocca.** Tre
+difetti, tutti nello stesso punto cieco — i percorsi in cui qualcosa va
+storto. Il più grave: **copiare un file su se stesso lo cancella, e la copia
+dice «riuscito»**. Non è un sospetto, sta in `kernel/fs/vfs.c`: l'apertura con
+`O_TRUNC` azzera il file senza guardare chi altro lo tiene aperto, quindi la
+lettura che segue trova zero byte, il ciclo non gira e la funzione riporta
+successo. Chi riscriveva nel campo del dialogo il percorso del progetto
+corrente si ritrovava ogni file a zero e la riga di stato che diceva
+«progetto copiato». Adesso il controllo c'è in due posti, e una directory dove
+c'è già un progetto non si sovrascrive in silenzio. Insieme a quello: nessun
+ritorno di `mkdir` o della copia veniva guardato — col disco in sola lettura
+exide si spostava comunque sulla directory nuova, che non esisteva. Ora c'è la
+stessa prova di scrittura di «Nuovo progetto», la copia conta i file che non
+sono arrivati, e **se ne manca uno solo l'IDE non si sposta**: mezza copia più
+un IDE che ci punta dentro vuol dire che il prossimo Salva la trasforma
+nell'originale.
+
+> **Un difetto trovato dalla prova, non dalla rilettura del codice.**
+> `progetto.txt` viene copiato com'era, riga `nome = ...` compresa, e la
+> scheda del progetto la leggeva da lì: la directory era `prg6-copia` e la
+> scheda diceva ancora `prg6`, mentre il titolo della finestra — che il nome
+> lo ricava dalla directory — diceva quello giusto. Due posti che rispondono
+> alla stessa domanda in modo diverso; lo stesso sarebbe successo rinominando
+> la directory da fuori. La cura non è sincronizzarli: è toglierne uno. Adesso
+> il nome viene **sempre** dalla directory, e il file continua a scriverlo, così
+> il primo Salva lo rimette a posto da sé.
+
+### Files e Directory: una finestra nuova, e una che non serviva scrivere
+
+**testato** — elenco, apertura, modifica, salvataggio, richiusura e verifica
+dal file vero, dentro EX-OS. Le ultime due voci del menu Strumenti che
+dicevano ancora «in arrivo»: con questo giro il menu è completo.
+
+**«Files» non è la finestra di «Sorgente»**, ed è una scelta e non una
+scorciatoia. «Sorgente» conosce esattamente tre nomi — `finestra.c`,
+`finestra_gen.c`, `finestra.h` — e mezzo programma è scritto sapendo che sono
+quelli; infilarci un quarto nome qualunque avrebbe voluto dire portare quella
+certezza dappertutto. Una finestra a parte, con Salva/Cerca/Chiudi e niente
+altro, costa meno e non rischia di rompere quella che già funziona.
+
+**È scoperta solo su `<progetto>/src`**, non su tutto l'albero: è l'unica
+lettura di «files» compatibile con «un doppio clic apre come sorgente» — un
+doppio clic su un `.o` dentro `obj/` non aprirebbe niente di leggibile. Il
+coloritore si decide dal nome (`.c`/`.h` prendono `ex_colora_c`, il resto
+niente) e **si spegne esplicitamente a ogni apertura**: la stessa area resta
+in vita da un file all'altro, e senza azzerarlo un `.txt` letto dopo un `.c`
+si vedrebbe colorato come se fosse C.
+
+**«Directory» non riscrive un secondo file manager.** exide sa disegnare
+rettangoli e liste; non sa copiare, spostare o cancellare file in sicurezza —
+`filemgr` lo sa già fare, con la stessa struttura ad albero più elenco che
+questa voce promette fin dalla richiesta originale. Dodici righe cercano
+`filemgr` (prima in `/exwin/bin`, poi in `/cdrom/exwin/bin`) e lo lanciano con
+la directory del progetto come argomento — lo stesso che accetta già dal menu
+Applicazioni.
+
+> **E la ricerca non si è riscritta una seconda volta.** Il file-editor voleva
+> anche lui un «Cerca», identico a quello già provato nella finestra
+> «Sorgente» — cambiava solo *quale* area e *quale* riga di stato usare.
+> `ed_cerca()` è diventata `area_cerca(area, stato)`, e l'originale resta un
+> involucro di una riga: due copie dello stesso ciclo sarebbero state due
+> copie da tenere d'accordo per lo stesso identico algoritmo.
+
+### La scheda del progetto, e una riscrittura che non doveva esserci
+
+**testato** — scritta, chiusa, riaperta: tutto tornava. E un difetto vero
+trovato provando esattamente questo.
+
+**Rilegge lo stesso `progetto.txt` che il progetto già scrive alla nascita.**
+Non un secondo formato: cinque chiavi `chiave = valore` — nome, autore,
+versione, creato, descrizione — e in coda un marcatore `[nota]` dopo il quale
+tutto, righe vuote comprese, è il testo libero della nota.
+
+**Il nome e la data di creazione non si editano**, e non è una dimenticanza:
+il nome viene dalla directory — riscriverlo qui non rinominerebbe niente — e
+la data di creazione, per definizione, non è correggibile senza smettere di
+essere vera. Sono etichette, non caselle. **Chiudere la finestra salva da
+solo**, come l'editor: è una scheda a basso rischio, e chiedere conferma per
+un'informazione a basso rischio è una domanda che si impara a schiacciare
+senza leggerla.
+
+> **«Nuovo progetto» su una directory già esistente cancellava la scheda.**
+> Il disegno (`finestra.dis`) si apriva senza troncare — un file già presente
+> restava quello che era — ma `progetto.txt` si troncava sempre: la stessa
+> azione trattava due file dello stesso progetto in due modi diversi. Trovato
+> riavviando per provare la *riapertura* di un progetto, non solo il
+> salvataggio: il file sul disco era già corretto, verificato con `cat` prima
+> di riavviare — era il passo dopo, non il salvataggio, a riscriverlo sopra.
+> La cura: si controlla prima se il file c'è già, e si scrive solo se manca.
+
+### La finestra del compilatore: GCC vero, dentro EX-OS, da un disegno
+
+**testato** — un progetto vero, disegnato in exide, compilato con GCC del CD
+degli strumenti *dentro EX-OS*, collegato e **avviato nella scrivania**.
+
+**La riga di compilazione finisce in un file, e il file è il prodotto.**
+`compila.sh` sta nella directory del progetto, si legge, si corregge a mano e
+si lancia come qualunque altro script: il pulsante «Compila» non fa niente che
+non si potrebbe fare digitando. **L'uscita va in un file** (`obj/compila.log`),
+non in una pipe — che si rilegge con calma, ed è quel che serve a chi vuole
+rivedere l'errore.
+
+**Una libreria condivisa si collega con il suo stub**, non con un archivio: in
+EX-OS una `.so` non si linka, si compila dentro il programma un file di poche
+righe che risolve i nomi alla prima chiamata. La finestra Librerie sceglie
+quali stub entrano nella riga — `exwin` sempre, il resto a spunta.
+
+**E si aspetta senza morire**: cc1 pesa quaranta megabyte, e una finestra
+ferma per un minuto sembra piantata. Si guarda se il figlio è finito con
+`WNOHANG`, si smista un pugno di messaggi, si dorme un istante — la stessa
+forma dell'attesa di rete del navigatore — con un tetto di cinque minuti oltre
+il quale si smette di aspettare un compilatore impiccato.
+
+> **Due difetti trovati girando il compilatore vero, e nessuno si vedeva
+> leggendo il codice.** Le opzioni finivano tagliate a metà — la casella è un
+> controllo "testo" che tiene 63 caratteri, non i 160 del campo C che la
+> leggeva — e il taglio produceva un errore che non gli somigliava affatto:
+> `-fno-pie` mozzato a un trattino solitario, e per gcc un `-` da solo vuol
+> dire «leggi da stdin». La cura non è stata allargare la casella: è stata
+> **togliere** dalla casella quel che non doveva starci — i flag obbligatori
+> (`-ffreestanding -fno-builtin -nostdlib -fno-pic -fno-pie`) sono adesso
+> fissi nel programma, non modificabili per sbaglio. Il secondo: il figlio
+> compilava nella directory sbagliata — quella da cui era partito exide, in
+> sola lettura — perché `spawn_ex` eredita il *cwd* del padre e nessuno lo
+> cambiava prima di lanciarlo.
+
+### Tre difetti visti usandolo, e nessuno stava dove sembrava
+
+**testato** — sul navigatore, su exide dal CD, e su un disco installato da zero.
+
+**La tendina del menu spariva muovendo il mouse.** Non era il server: era
+l'ordine del disegno. La procedura di base disegna i controlli e *poi* la
+tendina, ma un'applicazione che disegna anche del proprio — il navigatore con la
+pagina, exide con la maschera — lo fa **dopo** aver chiamato la base, e ci passa
+sopra. Col mouse fermo non si notava: è il movimento che fa arrivare
+`EXM_MOUSE_MOSSO` e quindi un ridisegno. Ora la tendina si disegna dentro
+`ex_aggiorna()`, la riga con cui *chiunque* dice «ho finito, mostralo»: qualunque
+cosa si sia disegnata, la tendina viene dopo.
+
+**exide apriva l'editor vuoto.** «`mkdir` è fallito» non vuol dire «c'era già», e
+il programma ha creduto di sì dal primo giorno: avviando dal CD non si scrive da
+nessuna parte, la creazione del progetto falliva a ogni passo *in silenzio*, e
+l'editor si apriva su un file mai scritto. La prova che conta è **scrivere, non
+chiedere**: ora si prova, e se non riesce lo dice e si ferma — spiegando che
+serve un disco montato in lettura e scrittura.
+
+**L'installatore chiedeva la lingua e lasciava la tastiera americana.** Il
+sistema installato parlava italiano e scriveva americano: le lettere al posto
+giusto e la punteggiatura no. Ora la tavola delle lingue ha una colonna per la
+disposizione — **la tastiera non è la lingua**, l'inglese si scrive su una `us` e
+domani qualcuno vorrà l'inglese su una `uk` — e `keymap` si *sovrascrive*, al
+contrario di ogni altra voce: quel valore non era la scelta di nessuno, era
+quello del supporto d'installazione copiato un momento prima.
+
+> **E la prova migliore è un errore di battitura.** Dal disco appena installato i
+> comandi del pilota escono storti: `keymap -p` diventa `keymap 'p`. Lo strumento
+> manda scancode americani — se la punteggiatura esce spostata, dentro c'è una
+> tastiera italiana.
+
+### EX-IDE: si disegna una finestra, esce del C che gira
+
+**testato** — dal CD in QEMU con un disco ext2 montato, e la prova che conta non
+è una fotografia della maschera: è un binario da 18 KB, **generato dal disegno**,
+che si apre dentro EX-OS con i controlli dove li avevo messi col mouse.
+
+```
+disegno -> finestra.dis -> finestra.h + finestra_gen.c -> gcc -> ld -> gira
+```
+
+**Tre aree, come in Visual Basic**: a sinistra i quattordici strumenti del
+toolkit, in mezzo la maschera su cui si dispongono, a destra le proprietà di
+quello scelto. Doppio clic su un controllo e si apre l'editor **dentro la
+funzione che il suo evento chiamerà**.
+
+**Quattro file, e uno solo è tuo.**
+
+| file | chi lo scrive |
+|---|---|
+| `finestra.dis` | solo exide: il disegno |
+| `finestra.h` | solo exide: gli id, i puntatori, i prototipi |
+| `finestra_gen.c` | solo exide: crea i controlli e smista gli eventi |
+| `finestra.c` | **solo tu**: exide ci *aggiunge* gli handler che mancano e non riscrive mai quel che c'è |
+
+È il punto in cui VB6 si rompeva — un file solo, scritto a metà dal generatore e
+a metà a mano, e ogni rigenerazione era una scommessa. Qui il generato e lo
+scritto non si toccano mai.
+
+**La giuntura è l'id, e c'era già.** `ex_crea(..., padre, ID, 0)` dà a ogni
+controllo un numero e l'evento torna come `EXM_COMANDO` con quel numero dentro:
+nel disegno il pulsante *è* `ID_PULSANTE1`, nel sorgente c'è `case
+ID_PULSANTE1:`. exide è fattibile qui più che altrove perché ExWin era già fatto
+a forma di VB6.
+
+**E un difetto del toolkit, trovato perché serviva a lui.** Le liste e le aree
+non liberavano il loro posto alla distruzione: una finestra con dentro una lista,
+aperta e chiusa quattro volte, esauriva i quattro posti e alla quinta la lista
+non si apriva più — nessun errore, un elenco vuoto. Era lì da mesi e non l'aveva
+trovato nessuno, perché nessun programma apriva e chiudeva la stessa finestra
+abbastanza volte. Il primo è stato exide, il giorno in cui è nato.
+
+> **Il linker script è nato vuoto, e il collegamento è riuscito lo stesso.**
+> `open(f,'w').write(open(f).read()...)` tronca il file prima di leggerlo; `ld -T`
+> con uno script vuoto non protesta, butta via tutto e produce un ELF di 256 byte
+> senza segmenti. Il sintomo era «ELF load fallito» a runtime — che non somiglia
+> affatto alla sua causa.
+
+### Finestre dentro una finestra: il contenitore MDI
+
+**testato** — dal CD, in QEMU, con `winprova -m`: tre finestre in un contenitore,
+ognuna con la sua procedura, e ogni comando sulla seriale con il **nome della
+procedura** che l'ha ricevuto.
+
+**Una finestra figlia non è una finestra del server**, ed è la decisione da cui
+discende tutto il resto. Dargliene una vera vorrebbe dire una zona di memoria
+condivisa per ognuna, un giro di richieste a ogni apertura e — soprattutto —
+finestre che possono uscire dal contenitore, perché il server non sa che
+dovrebbero starci dentro. Qui la figlia è un *controllo*: pixel dentro la zona
+del padre, disegnati dalla libreria. Il prezzo è dichiarato — trascinandola si
+ferma al bordo — ed è esattamente quel che un MDI deve fare.
+
+**Il ritaglio, che in quattro mesi di toolkit non era mai servito.** Il disegno
+si ritagliava su una cosa sola: la zona di pixel della finestra di primo livello.
+Bastava, perché un controllo sta dove lo si è messo e non si muove. Una finestra
+MDI *si muove*, e un controllo più grande del suo client si disegnerebbe sopra il
+telaio — un difetto che si vede solo trascinando, cioè tardi. Ora ogni figlia si
+disegna due volte ritagliata: il telaio dentro il contenitore, il contenuto
+dentro la propria area del client. Costa un confronto per pixel quando è acceso,
+e **zero quando è spento** — cioè in ogni finestra che non usa l'MDI.
+
+**Attivare e poi fare è un gesto solo.** Cliccando un pulsante di una finestra
+dietro, quel pulsante si preme: la finestra viene davanti *e* il clic arriva dove
+è caduto.
+
+**I comandi vanno alla procedura della figlia**, non a quella dell'applicazione:
+è cio che rende l'MDI utile invece che decorativo. E se la figlia non ha una
+procedura vanno all'applicazione come sempre.
+
+**Chiudere una figlia non chiude il programma** — la distinzione sta dove finisce
+chi non gestisce la chiusura, altrimenti quel pulsante spegnerebbe l'applicazione
+intera al primo clic. E **Tab gira dentro la finestra attiva**: altrimenti si
+vedrebbe un cursore lampeggiare in una finestra che non si sta guardando.
+
+> **Per la seconda volta in un giorno l'occhio ha sbagliato.** Dopo F6 sembravano
+> attive due finestre; misurati i pixel, `(30,77,125)` e `(128,128,128)` — attiva
+> e inattiva, esatte. La regola, adesso che è costata due volte: una fotografia si
+> guarda per capire *dove* guardare, e poi si contano i pixel.
+
+### Il testo colorato, e una seconda area di testo che non è nata
+
+**testato** — dal CD, in QEMU, con `winprova -c`: un pezzo di C scelto per
+toccare ogni ruolo, e i colori verificati leggendo i **pixel** della fotografia,
+non guardandola.
+
+**La cosa più importante è quella che non si è scritta.** La strada ovvia era un
+controllo nuovo con dentro il suo cursore, la sua selezione, i suoi appunti, il
+suo clic che posiziona: mille righe già scritte una volta per l'area di testo, e
+la seconda copia sarebbe stata una copia da tenere d'accordo per sempre.
+`areacodice` **non è un controllo nuovo: è la stessa area con altri due numeri** —
+3000 righe da 240 colonne invece di 512 da 200, più un coloritore. La classe è la
+stessa, e da `ex_crea` in poi non c'è nessuna differenza: stesso disegno, stessi
+tasti, stesse `ex_area_*`.
+
+**Il coloritore sta in chi sa la lingua, non nel toolkit.** Il controllo sa
+*disegnare* del testo colorato; quali parole siano chiavi e dove finisca un
+commento lo sa chi scrive l'editor. Il gancio riceve una riga e riempie **un
+ruolo per carattere** — chiave, tipo, stringa, numero, commento, preprocessore,
+funzione — e i ruoli sono ruoli, non colori: la tavolozza è una tabella sola,
+quindi due editor non colorano le chiavi di due blu diversi.
+
+**E un commento a blocco attraversa le righe.** Il coloritore rende anche *come
+finisce* la riga, e il controllo tiene quello stato: un byte per riga. Si
+ricalcola solo da dove il testo è cambiato in giù — da capo a ogni ridisegno
+sarebbero tremila chiamate per ogni tasto premuto. Scrivendo `/*` a metà
+documento, le righe sotto diventano verdi mentre si batte.
+
+**Il cursore adesso si porta**, e prima si poteva solo leggere: `ex_area_vai` è
+quel che serve a una colonna che elenca le funzioni di un sorgente — cliccarci
+sopra e finire su quella riga, a metà altezza, con il contesto intorno.
+
+> **Un'ora persa a leggere una fotografia.** Le sonde dicevano «commento» e lo
+> schermo sembrava dire di no; il difetto è stato cercato in tre posti prima di
+> misurare i pixel del PPM e trovarci `(0,128,0)` — il verde della tavolozza. Le
+> righe erano verdi da sempre: a 800x600 rimpicciolito, il verde di un commento e
+> il blu di una parola chiave si somigliano. Una fotografia si guarda; i suoi
+> numeri si contano.
+
+### Il toolkit impara cinque controlli, e il posto dove si aggiungono
+
+**testato** — dal CD, in QEMU, con `winprova -n`: ogni comando finisce sulla
+seriale con l'id e il valore, che è un numero da confrontare e non un'impressione.
+
+**Mancavano, e la mancanza era già scritta nel codice.** Accanto alla finestra
+delle impostazioni del navigatore c'era: «nel toolkit una casella di spunta non
+c'è, e disegnarne una a mano qui dentro vorrebbe dire un controllo che vive in un
+programma solo». Per questo gli interruttori delle impostazioni sono pulsanti che
+cambiano scritta. Adesso ci sono: **`spunta`, `radio`, `scorrimento`, `combo` e
+`tab`**, e sono il primo passo verso `exide`, l'ambiente di sviluppo visuale.
+
+**L'orientamento della barra lo dice la forma**, non un bit di stile: più larga
+che alta è orizzontale, più alta che larga è verticale. Un bit in più si potrebbe
+mettere in disaccordo con la misura, e allora bisognerebbe decidere chi ha
+ragione.
+
+**Il gruppo di un radio sono i fratelli** — i controlli con lo stesso padre. Non
+c'è nessun gruppo da dichiarare: due gruppi di scelte si mettono dentro due
+`riquadro`, che è come si disegnano da sempre. La cornice che si vede *è* il
+gruppo che vale, quindi la regola visiva e quella logica non possono andare in
+disaccordo.
+
+**La spunta si arma premendo e scatta alzando il dito**, come un pulsante:
+scivolare via prima di alzarlo annulla. **La barra invece agisce subito** — una
+freccia tenuta premuta deve scorrere — e il suo trascinamento sveglia
+l'applicazione a ogni pixel, dove una lista trascinata dice «ho scelto» una volta
+sola: una barra trascinata *è* il documento che scorre.
+
+**E i sette posti da toccare per aggiungerne un altro** stanno scritti in un
+punto solo, sopra i numeri delle classi: il modo di sbagliare non è scrivere male
+un controllo, è dimenticarne uno — e accorgersene dal fatto che il controllo si
+vede ma non si clicca, o si clicca ma Tab non ci arriva.
+
+### La finestra resta viva mentre scarica, e la posta ha un padrone
+
+**testato** — dal CD, in QEMU: `https://www.google.com/` (200, 83 KB, 108 nodi),
+una pagina locale con sei immagini ritardate di venti secondi l'una, e le prove
+sul banco (256 + 244 + 244 + 51, zero sbagliate).
+
+**Mentre si scaricava, la finestra era morta.** Chi legge dorme dentro la
+lettura, e mentre dorme il puntatore non si muove, la finestra non si ridisegna
+e nessun tasto arriva: su una pagina grande sono decine di secondi di schermo
+fermo. Adesso il trasporto sa fare una domanda che prima non sapeva fare —
+*quanti byte ci sono adesso?* — e quando la risposta è zero cede il turno a chi
+ospita. La risposta viene dallo stack (`IP_MSG_TCP_STATO`, che non prenota
+niente e non aspetta) e non da un tentativo di lettura con una scadenza corta:
+quello non distingue il timeout dall'errore e lascia una prenotazione pendente
+per ogni tentativo.
+
+**E così si può fermare.** `Esc` interrompe lo scaricamento e la pagina di prima
+resta dov'era; quel che era arrivato non si tiene, perché una pagina tagliata
+mostrata come intera è peggio di una pagina che non c'è. Prima non si poteva
+nemmeno offrirlo: mentre si scaricava, nessun tasto arrivava.
+
+**La stretta di mano cifrata dice a che punto è.** Sette passi — la chiave, il
+ServerHello, il segreto, i certificati, la firma, la catena, la fine — scritti
+nella riga di stato mentre passano. E misurata: la stretta costa **490 ms** in
+tutto (magazzino delle 150 CA 60 ms, DNS e connessione TCP 320 ms). I «venti
+secondi su un 386 emulato» stavano scritti in tre posti e non erano mai stati
+misurati.
+
+**La cassetta postale ha un padrone.** Un'applicazione grafica riceve nella
+stessa mailbox gli eventi del server a finestre *e* le risposte dello stack IP,
+e mentre si scarica ci sono due che aspettano: chi legge la rete e il ciclo dei
+messaggi. Ognuno scorreva la coda cercando il proprio e teneva in mano quel che
+era dell'altro per rimetterlo alla fine — e chi tiene in mano può lasciar
+cadere: lo scaffale dove si rimetteva aveva quattro posti, e nessuno guardava il
+`-1` di quando era pieno. Adesso c'è `ipc_scegli`: si passa un filtro che di
+ogni messaggio dice **è mio / è di un altro / non è di nessuno**, e quel che è di
+un altro **resta dov'è**. Non passa mai per le mani di chi non lo vuole, quindi
+non lo può perdere.
+
+> Lo scaffale conta i byte e non i messaggi, ed è la stessa memoria di prima —
+> sei kilobyte. Un clic del mouse sono venti byte: prima ne occupava uno dei
+> quattro posti, adesso ce ne stanno ventiquattro. E un messaggio «di un altro»
+> si **salta** invece di rimetterlo, il che toglie di mezzo la trappola che
+> teneva ferma la pompa dei messaggi ogni volta che lo stack aveva una risposta
+> da parte.
+
+**E la finestra di TCP non si riapriva.** Chi legge a scatti — invece di
+prenotare e dormire — lascia che il buffer di ricezione si riempia fra uno
+scatto e l'altro, e quattro kilobyte un mittente veloce li riempie in un
+istante. Lo stack annunciava lo spazio libero **solo dentro un ACK**, cioè solo
+all'arrivo di un segmento: quando poi il buffer si svuotava non aveva più modo
+di dirlo, e il server restava fermo ad aspettare noi. Il sintomo era una pagina
+`https` che non finiva mai di arrivare, e per un giorno è sembrato un difetto
+della cassetta postale. Adesso chi si libera lo dice: un ACK vuoto di venti
+byte, e la finestra riparte.
+
+### Il navigatore esegue JavaScript, e i motori sono due
+
+**testato** — 256 prove sul linguaggio, 244 sul ponte con ExJs e 244 con
+QuickJS, più quindici riquadri provati dentro EX-OS (al 29 settembre 2026
+sono 448 sul linguaggio e 264 sul ponte con ciascuno dei due motori).
+
+**Due motori, la stessa interfaccia.** `exjs.so` è scritto qui dentro;
+`quickjs.so` è QuickJS compilato per EX-OS. Si sceglie quale caricare, e il
+ponte con la pagina — `exdom.so` — è lo stesso per tutt'e due: le 244 prove
+girano identiche sull'uno e sull'altro, che è il modo di dire che
+l'interfaccia è davvero una.
+
+**Il DOM che serve a una pagina vera**: `document`, gli elementi, gli attributi,
+le classi, `innerHTML`, gli eventi con `addEventListener` e `preventDefault`, i
+moduli e il pulsante che li manda.
+
+**`XMLHttpRequest` e `fetch`**, sincroni e asincroni — e l'asincrono è vero: la
+richiesta parte, il resto dello script prosegue, e la risposta arriva quando il
+ciclo dei messaggi la consegna. L'**ordine** in cui le cose accadono è una delle
+quindici prove, perché è la parte che si sbaglia in silenzio.
+
+**Un difetto che non somigliava alla sua causa.** Due stub nello stesso processo
+possono scegliere due librerie diverse: il navigatore apriva un motore ed
+`exdom.so` l'altro, e nello stesso processo giravano due motori che non si
+vedevano. Il sintomo era un page fault dentro il primo con in mano un contesto
+costruito dal secondo. La risposta ring 3 non può darsela — non c'è modo di
+sapere quali pagine ti sono mappate senza provare a leggerle — e infatti la dà
+il caricatore, con `SYS_LIB_TROVA` (0.208): la tavola delle pagine del processo
+*è* l'elenco.
+
+### I biscotti, tutt'e due le metà
+
+**testato** — 51 prove sulla dispensa, più il giro completo contro un server di
+prova.
+
+Un cookie non è una stringa da rispedire: è una regola su **quale dominio** e
+**quale percorso**, con una scadenza. La dispensa tiene le regole, decide quali
+biscotti valgono per l'indirizzo che si sta aprendo, e li attacca alla richiesta
+— comprese quelle che partono dentro una redirezione, che è dove metà dei siti
+mette l'accesso. Si prova da sola, senza schermo e senza rete, perché le regole
+di corrispondenza si sbagliano in silenzio.
+
+> **La persistenza non è ancora provata dentro EX-OS**, solo sul banco: da CD non
+> si scrive, e il giro completo vuole un sistema installato.
+
+### Il suono: quattro schede e il MIDI
+
+**testato** — in QEMU, ascoltando il file che QEMU registra e non i contatori del
+driver.
+
+Quattro driver — SB16, AC'97, ES1370/ES1371 e HD Audio — dietro un protocollo
+solo, così un programma che suona non sa quale scheda c'è. Il MIDI sulle schede
+PCI si sente ed è intonato: è una tavola d'onde a otto seni, cioè un timbro solo
+— il cambio di strumento si ignora e la percussione non c'è. È dichiarato, ed è
+il punto da cui si riprende.
+
+> **Quel che non è mai girato è segnato dove comincia.** QEMU emula l'ES1370, non
+> l'ES1371: il convertitore di frequenza e il codec AC'97 dentro il driver
+> dell'ES1371 sono scritti sulla sequenza documentata e non sono mai stati
+> eseguiti, né su silicio né in emulazione. E la **registrazione non c'è**: tutti
+> e quattro sanno solo suonare.
+
+### Google non è un bersaglio del navigatore, e adesso si sa perché
+
+**testato** — misurato, e la strada è chiusa.
+
+`google.com` si apre e si vede. La pagina dei **risultati** no, e non è colpa del
+nostro JavaScript: con lo User-Agent di Lynx, di w3m o di MSIE 6 Google risponde
+«Aggiorna il browser», e con quello di un Firefox recente manda il suo controllo
+anti-robot offuscato. Non c'è una terza porta. Sta scritto qui perché una strada
+provata e chiusa vale quanto una funzione aggiunta: chi la riprova ci perde lo
+stesso tempo due volte.
+
+### La scrivania ha una console sua, si spegne, e parla la tua lingua
+
+**testato** — dal CD e su un disco ext2 installato da zero, in QEMU.
+
+**Le console diventano cinque.** Il server grafico se ne prendeva una delle
+quattro e chi lavorava in testo ne aveva tre senza averlo chiesto. Ora Alt+F1–F4
+restano di chi scrive e la grafica sta in fondo: digitando `exwin` lo schermo ci
+passa da solo, e quando la grafica si spegne torna alla console di partenza.
+
+**E la console della grafica esiste solo mentre la grafica c'è.** Finché il
+server non gira, Alt+F5 non fa niente — lì ci sarebbe uno schermo nero con una
+shell che nessuno guarda, e chi ci finisce non sa come tornare. Lo stato sta nel
+*kernel* e non nel server, così un server ucciso libera la console da solo.
+
+**`Esci` dal menu spegne la scrivania**, non solo il program manager. Alle
+applicazioni si *chiede*, non le si uccide: a ognuna arriva la stessa chiusura
+della crocetta, così chi ha da salvare fa in tempo; poi torna il modo testo.
+
+**L'installazione chiede la lingua** e la scrive in `kernel.cfg`. Il kernel non
+la usa per niente — tradurre è lavoro dei programmi — ma la conserva e la
+riconsegna come fa con `keymap`, così non ci sono due elenchi che divergono.
+
+**E in fondo propone `hwconfig`**, puntato al disco appena installato: il
+`kernel.cfg` copiato è quello del supporto d'installazione, e il primo avvio da
+disco è il momento peggiore per scoprire che manca il driver del controller.
+
+**La risoluzione si sceglie da Avvio > Impostazioni...** — il meccanismo c'era
+già tutto (`/dev/svga.drv` scrive la voce in `kernel.cfg` e un byte dentro Stage
+2); mancava la finestra. Si applica al riavvio, perché il modo video lo sceglie
+l'avvio col BIOS.
+
+**Copia e incolla dentro i campi di una pagina**, con tutt'e due gli standard:
+`Ctrl+C/X/V` e `Ctrl+Ins` / `Shift+Ins` / `Shift+Canc`. Gli appunti sono quelli
+di tutta la scrivania — la stessa memoria condivisa di `ex_area` — quindi si
+copia da un modulo e si incolla in un editor.
+
+### Il browser regge una pagina vera: impaginazione, immagini, caratteri, moduli
+
+**testato** — dal CD, in QEMU, sulla voce «Operating system» di Wikipedia (676
+KB) e su pagine costruite apposta.
+
+**La lentezza non era più la rete, era l'impaginazione.** A ogni immagine che
+arrivava si rifaceva l'impaginazione dell'intero documento. Quando l'`<img>`
+dichiara `width` e `height` la misura finale si sa prima di scaricare un byte:
+il posto si tiene subito, e quando l'immagine arriva ci entra senza spostare
+niente. Da 7,0 s a 3,3 s per dodici immagini; e la prova che il testo non si
+muove è pixel per pixel — **zero** pixel cambiati fuori dalla banda delle
+immagini.
+
+**L'arena non era piena di testo: era piena di attributi.** Misurata su quella
+voce: il testo dei nodi 71 KB (15%), i nomi dei tag 20 KB (4%), gli attributi
+386 KB (81%). Si troncava una pagina di 70 KB di parole perché non c'era posto
+per gli attributi. Alzata a 1 MB (e `ATTR_MAX` a 16000, perché quella voce ha
+~13.600 attributi), la pagina **non si tronca più**.
+
+**Quante immagini tenere lo decide la macchina**, non una costante: un
+sedicesimo della memoria libera letta con `meminfo()`. Un tetto fisso era avaro
+su un PC grande e causava `OUT OF MEMORY` su uno da 32 MB. E il posto si
+controlla *prima* di scaricare, così l'immagine che non ci sta non costa né
+rete né CPU.
+
+**`font-family` adesso si legge.** Prima ogni pagina usciva in serif e il
+monospazio arrivava solo dal tag `<pre>`. L'elenco si scorre e ci si ferma al
+primo nome riconosciuto — i nomi veri contano quanto le generiche, perché metà
+del web scrive `font-family: Courier New` e basta.
+
+**I caratteri che mancavano.** Liberation copre 2327 codici, DejaVu 5918: si
+ripiega **carattere per carattere** su DejaVu invece di sostituire il font, così
+il testo resta com'è e si riempiono solo i buchi. Greco, cirillico, ebraico e
+arabo si leggono. E le entità sopra il Latin-1 — `&#8212;`, le virgolette
+curve, i puntini — non diventano più `?`.
+
+**`colspan` e `rowspan`**, senza i quali ogni tabella con un'intestazione che
+scavalca due colonne mandava fuori posto tutte le celle dopo di lei.
+
+**E i moduli non ricevevano i tasti.** Non mancava il cursore: mancavano i
+tasti. Il fuoco restava alla barra dell'indirizzo — un controllo del toolkit —
+mentre i campi di una pagina sono rettangoli disegnati, che il fuoco non
+possono averlo. Si scriveva nella barra credendo di scrivere nel modulo. Ora il
+cursore si muove con frecce, Home, Fine e cancellazioni, e si inserisce in
+mezzo al testo.
+
+> **Un difetto del toolkit, non del browser:** quando una casella consumava un
+> tasto, `exwin` rifaceva sfondo e controlli *senza avvisare l'applicazione*,
+> per non svegliarla a ogni lettera. Giusto per una finestra di soli controlli;
+> per una che disegna anche del suo, quel disegno spariva a ogni tasto battuto.
+> Riguarda ogni programma che mescoli controlli e disegno proprio.
+
+### Utenti veri: due conti, `sudo`, e un recovery quando l'accesso è rotto
+
+**testato** — installazione da zero su ext2, i due conti chiesti e creati, poi
+avvio dal disco: `uid=1000(graziano)`, casa `/home/graziano` di sua proprietà.
+`sudo id` rende `uid=0(root)`, e dopo `exit` da `sudo -s` si torna a
+`uid=1000`.
+
+Prima i conti li creava `login` al primo avvio, e ne creava **uno solo**: root.
+Da lì in poi si lavorava sempre da amministratore, che è il modo in cui un
+errore qualunque diventa un danno qualunque. Adesso li chiede l'installatore —
+root per riparare, il tuo per lavorare — e chiede anche se il tuo deve poter
+fare le cose da root con la propria password.
+
+| | |
+|---|---|
+| `/boot/utenti` | `nome:uid:gid`, 0644 |
+| `/boot/ombra` | `nome:sale:impronta`, 0600 — SHA-256 di `sale:password` |
+| `/boot/amministratori` | un nome per riga, 0644 |
+| `lib/exuser` | leggere una password senza eco, verificarla, aggiungere un conto |
+| `bin/sudo` | il comando |
+| `SYS_SU` (254) | la capacità stretta: «diventa root SE sai la password» |
+
+    sudo <comando> [argomenti]   esegue quel comando come root
+    sudo -s                      apre una shell di root
+    sudo                         non fa niente e stampa l'uso
+
+! **ESEGUIRE UN COMANDO E APRIRE UNA SHELL NON SONO LA STESSA COSA DETTA IN DUE
+MODI.** Con `sudo comando` i poteri durano quanto il comando e finiscono da
+soli; con una shell durano finché qualcuno si ricorda di uscire. La seconda si
+ottiene — `-s` — ma bisogna **chiederla**: aprirla a chi ha battuto `sudo` e
+invio vorrebbe dire dare la più pericolosa delle due a chi non l'ha domandata.
+
+! **IL PROGRAMMA `sudo` NON HA NESSUN POTERE**, ed è la parte che regge tutto
+il resto. Non è setuid — il bit setuid sui file in EX-OS non esiste, di
+proposito, perché renderebbe pericoloso ogni eseguibile che lo porta e non c'è
+modo di controllarli tutti — e non decide niente. Legge una password, la passa
+al kernel, e **decide il kernel**. Un `sudo` sostituito con un programma
+qualunque resta un programma qualunque.
+
+! **LA VERIFICA STA NEL KERNEL PERCHÉ NON POTEVA STARE ALTROVE.**
+`/boot/ombra` è 0600 di root e deve restarlo: se fosse leggibile, chiunque si
+porterebbe via le impronte e le proverebbe con comodo su un'altra macchina.
+Quindi il confronto lo deve fare qualcuno che quel file lo può aprire. È lo
+stesso motivo per cui su Unix `su` è setuid root, e costa uno SHA-256 dentro il
+kernel.
+
+! **E IL KERNEL NON RIUSCIVA AD APRIRLO.** `SYS_SU` gira nel processo di chi
+chiama, uid 1000, e il VFS guardava le credenziali del **processo** invece di
+quelle di chi stava davvero leggendo. La riparazione è `vfs_open_autorita()`:
+non un bit dentro `flags` — arriverebbe da `sys_open`, cioè da un numero
+scelto dall'utente, e basterebbe indovinarlo per leggersi le password — e non
+uno stato globale, che varrebbe per **tutti** i processi finché è acceso,
+mentre il VFS qui dentro riscadenza. Il permesso viaggia come argomento e
+finisce con la chiamata.
+
+! **E UNA CONSOLE CHE NON APRE `login` NON STA PROTEGGENDO NIENTE**: è una
+console il cui sistema di autenticazione è **corrotto**. Lasciarla chiusa non
+difende — chi ha la macchina davanti avvia da CD e monta il disco in trenta
+secondi — e toglie l'unico modo di ripararla da dentro. Si apre una shell di
+root, e lo dice a chiare lettere prima di aprirsi: «questa shell gira come root
+e NESSUNO ha fatto l'accesso». Non è un accesso: è una macchina rotta che si
+apre per essere riparata.
+
+### `ls -l`: i permessi e i proprietari si vedono
+
+**testato** — e ha trovato due difetti, uno dei quali nel kernel.
+
+! **UNA CHIAMATA IN PIÙ, NON UN CAMPO IN PIÙ A `Stat`.** Cambiare una struttura
+che i programmi si passano già vuol dire ricostruire tutto ciò che la usa, e
+`Stat` la usa chiunque apra un file. `st_uid` e `st_gid` restano a zero e
+continuano a dichiararlo; la verità la chiede chi la vuole, con `statperm()`
+(`SYS_STATPERM`, 253).
+
+! **I DATI C'ERANO GIÀ E NON USCIVANO**: `VfsStat` porta modo, uid e gid da
+quando ext2 ha imparato i proprietari, ma `sys_stat` non li copiava. Mancava il
+trasporto, non l'informazione.
+
+! **E `VfsStat` NON ERA INIZIALIZZATA.** Su un CD `ls -l` mostrava permessi
+diversi per ogni file e proprietari a cinque cifre: `stat_interno()` lasciava
+modo, uid e gid a quello che c'era nello stack: li scriveva solo il ramo ext2,
+mentre ISO 9660, il FAT12 del floppy e la radice non li toccavano affatto. E
+non era estetica: **`vfs_permesso()` decide con `st->modo`**, dove zero vuol
+dire «questo volume non ha proprietari, passa».
+
+Su un volume senza proprietari `ls -l` scrive `?????????` e `-`, che è la
+verità: su FAT e su ISO 9660 il proprietario non esiste.
+
+### Lo schermo si ricompone solo dove è cambiato
+
+**testato** — misurato con una spia nel ciclo del compositore, non stimato:
+
+    ricomposizioni durante il movimento del puntatore
+        29 da   260 pixel
+        17 da   240
+         2 da   117
+        39 da 480.000   (avvio, finestre nuove, pressioni di bottone)
+
+cioè **260 pixel invece di 480.000** — circa 1850 volte meno — per il caso che
+si ripete a ogni movimento della mano.
+
+! **IL RITAGLIO STA NELLE DUE PRIMITIVE, NON NEI CHIAMANTI.** `px()` e
+`riempi()` sono le sole due strade per arrivare al framebuffer, quindi tutto
+ciò che disegna — cornici, prese, contorni, il puntatore — eredita il ritaglio
+senza sapere che esiste. Metterlo nei chiamanti vorrebbe dire ricordarselo a
+ogni funzione nuova, e prima o poi qualcuno non se lo ricorda.
+
+! **LA COPIA DELLA ZONA DEL CLIENT È L'ECCEZIONE**, e ce l'ha per forza: non
+passa dalle primitive apposta, perché va per righe intere con MMX ed è quello
+che la rende veloce. Lì il ritaglio si applica a mano.
+
+! **IL PREDEFINITO È «TUTTO», E VA TENUTO COSÌ.** Una regione sporca sbagliata
+per difetto lascia pixel vecchi sullo schermo: un difetto che non si vede dove
+è stato fatto e che si manifesta come «ogni tanto resta un pezzo di finestra».
+Oggi si stringe **un caso solo**, il movimento del puntatore; gli altri undici
+dichiarano ancora tutto lo schermo, ed è dichiarato.
+
+### Il browser: tabelle, elenchi, `<pre>` e i fogli di stile fino in fondo
+
+**testato** — bordi destri identici su tutte le righe (232, 469, 753),
+distacchi di 8 px, somma 744 = la larghezza dell'area.
+
+! **LA LARGHEZZA DI UNA COLONNA NON SI SA FINCHÉ NON SI È GUARDATO OGNI
+CONTENUTO DI QUELLA COLONNA**, ed è l'unico posto del browser che vuole **due**
+passate: il resto della pagina si impagina in avanti, una parola dopo l'altra,
+senza tornare indietro.
+
+! **E MENTRE SI MISURA NON SI ALLINEA.** È il difetto che hanno trovato i
+pixel: il foglio predefinito centra i `<th>`, quindi la passata di misura
+spingeva i pezzi in mezzo alla riga e la larghezza tornava «metà pagina»
+invece che «quanto la parola». L'allineamento decide **dove** mettere una riga,
+la misura chiede **quanto** occupa. Niente `colspan`/`rowspan`, niente bordi:
+dichiarato.
+
+`<hr>` era solo un po' d'aria: adesso è una riga, disegnata come uno sfondo
+alto due pixel perché è esattamente ciò che è. `<ul>` e `<ol>` hanno il loro
+segno, e per `<ol>` il numero si conta **fra i fratelli** — due liste annidate
+si darebbero i numeri a vicenda.
+
+! **DENTRO `<pre>` GLI SPAZI E GLI A CAPO SONO IL CONTENUTO**, ed è tutta la
+ragione per cui quel tag esiste. La correzione andava in `exhtml.so`, non nel
+browser: chi analizza riduce a uno spazio qualunque sequenza di bianchi — che è
+la regola dell'HTML e va bene per tutto il resto — e ridurli lì vuol dire che
+nessun utilizzatore, per quanto attento, può più rimetterli. L'informazione è
+persa prima di arrivargli.
+
+Dei fogli di stile si applicano adesso anche **allineamento, i quattro margini
+e il colore di sfondo**, che `excss.so` calcolava e il browser buttava via —
+tre proprietà su otto promesse dalla libreria e scartate da chi la usa, il tipo
+di divario che non dà nessun errore.
+
+! **L'ALLINEAMENTO NON SI PUÒ APPLICARE MENTRE SI SCRIVE**: per centrare
+bisogna sapere quanto è larga la riga, e lo si sa solo quando è finita. Si
+segna il primo pezzo, e al momento di andare a capo si spostano tutti quelli
+della riga.
+
+! **UNO SFONDO NON È UN PEZZO, È CIÒ CHE STA SOTTO I PEZZI.** Vive in un elenco
+suo e si disegna prima di tutto il testo: metterlo fra i pezzi vorrebbe dire
+dipingere sopra le parole già scritte, perché l'ordine dei pezzi è quello del
+documento e non ha niente a che fare con la profondità.
+
+### «Informazioni su», e l'orologio che non spariva
+
+**testato** — e la prima diagnosi era sbagliata, smentita da un A/B.
+
+Ogni programma della scrivania — browser, file manager, editor — dice adesso
+nome, che cosa fa, l'autore e **la memoria che sta usando**: immagine
+(`_start`→`_bss_end`), heap (`sbrk(0)`) e pila. Dalla shell lo dice `ver`. Sta
+in `lib/exinfo`, perché quattro copie dello stesso riquadro divergono alla
+prima riga aggiunta.
+
+! **L'OROLOGIO NON SPARIVA AL PRIMO CLIC: ANDAVA SOTTO.** Avevo dato la colpa
+al ridisegno della finestra su qualunque messaggio non gestito, e l'A/B l'ha
+smentito — due esecuzioni identiche al pixel, con l'unica differenza nella
+cifra dell'ora. La causa vera era `in_cima()`, che rialzava una finestra già in
+cima: la barra è `WIN_ST_SOPRA`, e rialzarla la rimetteva **sotto** le altre
+dello stesso strato.
+
+### Un browser: dalla rete allo schermo
+
+**testato** — `http://www.google.com` rende 200 e 82550 byte; `http://example.com`
+si vede impaginato in `/exwin/bin/browser`, con il titolo in Liberation Sans
+Bold a 22 e il corpo in Serif a 15. E le **immagini della pagina si vedono**:
+una prova con tre PNG generati a mano dà 3000 pixel esatti per ciascuno dei tre
+colori attesi — cioè la misura naturale e quella dichiarata con `width`/`height`
+sono tutt'e due giuste al pixel.
+
+| | |
+|---|---|
+| `lib/exhttp/http.c` | HTTP/1.1 senza rete: URL, richiesta, intestazioni, corpo «a pezzi» |
+| `lib/exhttp/exhttp.c` | il trasporto TCP, le redirezioni |
+| `lib/exhtml/html.c` | da testo ad albero — **`/exwin/lib/exhtml.so`**, a disposizione di ogni programma |
+| `bin/scarica` | prende una pagina e la stampa o la salva |
+| `exwin/bin/browser` | barra dell'indirizzo, collegamenti, scorrimento, immagini |
+| `lib/eximg/eximg.c` | PNG, JPG e ICO — aperta a richiesta, non collegata |
+
+! **IL TRASPORTO È UN PARAMETRO, NON UNA COSA SAPUTA.** Oggi sotto l'HTTP c'è
+il TCP; domani, per `https://`, ci sarà il TLS. Se il codice aprisse la
+connessione da sé, quel giorno andrebbe riscritto — e sarebbe la seconda volta
+che si scrive «leggi le intestazioni, poi il corpo».
+
+! **`chunked` NON È UN OPZIONALE.** Un server che non sa in anticipo quanto
+sarà lunga la risposta — cioè qualunque pagina generata al momento — non manda
+`Content-Length`: manda i pezzi. Senza saperli srotolare si vedrebbero i numeri
+esadecimali della lunghezza in mezzo al testo.
+
+! **L'HTML NON È XML**, ed è tutta la difficoltà: i tag restano aperti, si
+chiudono nell'ordine sbagliato, ne mancano metà. `<ul><li>uno<li>due` sono due
+fratelli e non una scala; `<b><i>x</b>` chiude fino alla `<b>`; dentro
+`<script>` e `<style>` **non c'è markup**, o dal primo `a < b` del JavaScript in
+poi l'albero è spazzatura.
+
+! **`https://` FUNZIONA, E VERIFICA DAVVERO.** TLS 1.3 scritto qui dentro:
+X25519 per lo scambio di chiavi, ChaCha20-Poly1305 per i dati, la catena dei
+certificati controllata contro un magazzino di CA vere e il nome del sito
+confrontato col `subjectAltName`. Le firme si verificano in RSA-PSS **e in
+ECDSA su P-256 e P-384**, che e' cio' che serve per aprire i siti veri:
+wikipedia.org, news.ycombinator.com e github.com hanno solo certificati
+ellittici. Senza magazzino di CA non si apre niente: cifrare con chiunque
+risponda vuol dire cifrare con chi sta in mezzo, e la barra scriverebbe
+`https://` lo stesso.
+
+! **I MODULI SI VEDONO, SI COMPILANO E SI MANDANO**: caselle di testo,
+password, spunte, scelte con l'elenco a tendina, pulsanti e aree di testo si
+disegnano come i controlli del sistema, prendono i tasti, e il pulsante manda
+davvero — **in GET e in POST**, con la codifica percento.
+
+! **E LA CONNESSIONE SI RIUSA.** Su `https` la stretta di mano e' tutto il
+costo — chiave effimera, catena di certificati, firma — e una pagina con dieci
+immagini la pagava dieci volte. Adesso si riusa la connessione quando si sa
+dove finisce il corpo, si rispetta il `Connection: close` del server, e si
+riprova una volta se l'altra parte l'ha chiusa senza dirlo.
+
+! **E I COLORI SCRITTI NEGLI ATTRIBUTI CONTANO**: `bgcolor`, `text`, `align`.
+Mezzo web li usa ancora — la barra arancione di Hacker News e' un `bgcolor` su
+una `<table>` — e stanno al gradino piu' basso della cascata, sotto ogni regola
+di stile.
+
+! **E LE IMMAGINI SONO TRE FORMATI**: PNG, JPEG e GIF (primo fotogramma,
+trasparenza compresa).
+
+! **LE IMMAGINI ARRIVANO DOPO IL TESTO.** La pagina si impagina e si disegna con
+le sole parole; solo allora si scarica un'immagine per volta, e a ognuna che
+arriva si reimpagina. Prenderle prima vorrebbe dire una finestra vuota finché
+l'ultima non risponde, e una che non risponde costa otto secondi da sé. Quella
+che non arriva lascia il posto al suo `alt`, che è il motivo per cui
+quell'attributo esiste.
+
+! **E I PIXEL SONO DEL BROWSER, NON DEL DECODIFICATORE**: si decodifica, si
+copia nella misura con cui si disegnerà, e il bitmap naturale si restituisce
+subito. Tenerlo vorrebbe dire lasciar scegliere alla pagina quanta memoria
+prendere — 128 KB di PNG possono essere 4000×3000 pixel, cioè 48 MB su una
+macchina che ne ha 32. I tetti sono dichiarati: dodici immagini, 128 KB per
+file, 512 K pixel in tutto.
+
+! **I FOGLI DI STILE CI SONO, in `/exwin/lib/excss.so`**: `<style>`, `<link
+rel=stylesheet>` e l'attributo `style=`, con la cascata vera (origine,
+specificità, ordine). Selettori per tipo, classe, id, discendenza ed elenco;
+colori, corpi, grassetto, corsivo, `display:none`, allineamento e margini.
+
+! **E QUELLO CHE NON SI SA LEGGERE SI SCARTA, NON SI INDOVINA**: `div > p` non
+diventa `div p`, un selettore troppo lungo si butta invece di essere accorciato
+— accorciarlo lo renderebbe più **largo** dell'originale — e `2em` si rifiuta
+invece di valere due pixel. Meno stile, mai stile sbagliato.
+
+! **E I TAG DI ASPETTO SONO DIVENTATI REGOLE**: `h1`, `<b>`, `<i>`, `<strong>`,
+`<em>` e il colore dei collegamenti stanno in un foglio predefinito con
+l'origine più bassa della cascata, quindi una pagina può sovrascriverli. Prima
+erano `if` nel motore, e `<b>` e `<i>` non c'erano affatto.
+
+Quello che **non** c'è, dichiarato: JavaScript, `@media`, le unità relative,
+`colspan`/`rowspan`.
+
+
+### I font: TrueType, misurato contro FreeType
+
+**testato** — sei facce Liberation a sei corpi dentro EX-OS, e il
+rasterizzatore confrontato pixel per pixel con FreeType su 1460 glifi:
+**riquadro identico 1460 su 1460**, differenza media 0,94 livelli su 255.
+
+| | |
+|---|---|
+| `lib/exfont/exfont.c` | il formato bitmap EXFN, dentro `exwin.so` |
+| `lib/exfont/ttf.c` | il contenitore TrueType |
+| `lib/exfont/raster.c` | contorni → copertura, in interi 26.6 |
+| `exfont.so` | istanza, cache dei glifi, aperta a richiesta |
+
+! **`strlen(s) * 8` È IL CONTO DA TOGLIERE PRIMA CHE QUALCUNO NE SCRIVA UN
+ALTRO SOPRA.** È vero solo col font di sistema: un motore d'impaginazione nato
+su quel presupposto andrebbe riscritto il giorno che arriva un font
+proporzionale. Per questo i font sono arrivati **prima** del browser.
+
+! **L'ARITMETICA È INTERA.** Sul Pentium 133 dichiarato la virgola mobile è più
+lenta, ma soprattutto ogni processo che tocca l'FPU paga un salvataggio dello
+stato a ogni cambio — e disegnare testo è ciò che si fa di continuo.
+
+! **NON ESISTE LA DIVISIONE A 64 BIT** in una libreria di EX-OS: si collega
+senza libgcc, quindi `__divdi3` non c'è e il collegamento fallisce.
+
+! **IL CONFRONTO CON FreeType HA TROVATO UN DIFETTO CHE NESSUNA IPOTESI AVREBBE
+TROVATO.** Alla prima passata i riquadri identici erano il 95,4%, e i mancanti
+avevano una forma: a 16 pixel quasi ogni maiuscola veniva alta un pixel meno.
+La scala troncava invece di arrotondare — mezzo sessantaquattresimo perso che
+diventa un pixel intero.
+
+Cosa manca, dichiarato: hinting (per questo l'interfaccia usa ancora l'8x16),
+crenatura, legature, solo il piano base, CFF rifiutato apposta.
+
+
+### `rename` sostituisce la destinazione, come POSIX
+
+**testato** su ext2, FAT12 e FAT16.
+
+Fino alla 0.184 `rename()` rendeva `EEXIST` se la destinazione esisteva. Era una
+scelta dichiarata, e non reggeva:
+
+! **«CANCELLA PRIMA» NON È EQUIVALENTE.** Lo schema con cui si salva un file
+senza rischiare di perderlo è uno solo: scrivi accanto, poi **scambia**. Se lo
+scambio non sostituisce bisogna cancellare prima — e fra la cancellazione e lo
+scambio **il file non esiste**.
+
+! **E QUELLA FINESTRA SI CHIUDE SOLO NEL KERNEL.** `vfs_rename` tiene il
+lucchetto del filesystem per tutta l'operazione: nessun altro processo vede lo
+stato intermedio. In spazio utente quella garanzia non si può avere.
+
+! **LA SOSTITUZIONE STA NEL VFS, PRIMA DELLO SMISTAMENTO**, quindi vale per
+ext2, FAT12 e FAT16/32 senza che nessun driver la reimplementi. Regole POSIX sui
+tipi: directory solo su directory vuota, file solo su file. E
+`rename("x","x")` non fa niente — senza quel controllo la sostituzione
+**distruggerebbe x**.
+
+
+### La barra: l'ora, e le applicazioni che si aggiungono da sole
+
+**testato** — l'orologio avanza da solo (06:52 → 06:53 in 75 secondi); il menu
+«Applicazioni...» aggiunge, toglie e salva su ext2.
+
+! **I THREAD IN EX-OS NON ESISTONO**, e l'orologio è un **processo** a parte. E
+anche se ci fossero, qui un processo è meglio: un thread dentro il program
+manager ne condividerebbe la coda dei messaggi, quindi un program manager
+occupato sarebbe un orologio fermo.
+
+! **`ex_sveglia()` ED `EXM_TEMPO`**: senza, un'applicazione non può fare niente
+da sé — il ciclo dei messaggi dorme finché non arriva un evento. Non costa un
+giro in più: il `poll` ha già una scadenza di 200 ms.
+
+! **L'AVVIO AUTOMATICO È UNA DIRETTIVA, NON UN SEGNO SULLA VOCE.** Si può volere
+un programma che parte da solo e **non** compare nel menu — un pannello, un
+orologio — oppure una voce che non parte da sola.
+
+! **`ipc_rimetti()`**: la mailbox è una sola e i consumatori sono più d'uno. Chi
+aspetta una risposta dello stack IP scorre i messaggi e prima li **buttava** —
+in un browser sono i clic dell'utente. Ora si rimettono a posto, e **alla
+fine**: lo scaffale si serve prima della coda del kernel, quindi rimettere e
+rileggere subito renderebbe lo stesso messaggio all'infinito.
+
+
+### L'interfaccia grafica: un server a finestre in ring 3
+
+| | |
+|---|---|
+| `/exwin/bin/wserver` compone le finestre e muove il puntatore, **in ring 3 e senza privilegi** | testato |
+| Toolkit **ExWin** in stile Win32, con header per **C, C++ e FreeBASIC** | testato |
+| Controlli: finestra, pulsante, etichetta, casella di testo, riquadro, separatore, intestazione, terminale | testato |
+| `exwin` accende la grafica sulla **console 5**: con Alt+F5 ci si va, con Alt+F1 si torna alla shell | testato |
+| Una **shell dentro una finestra**, su due pipe | testato |
+| Sfondo da immagine: oggi BMP, e la tabella dei lettori è già quella giusta per JPG, PNG e ICO | testato |
+
+! **GIRA IN RING 3, ED È IL PUNTO.** Quando il server muore, muore lui: kernel,
+scheduler, console seriale e tastiera restano vivi, e lo schermo si rimette con
+`/bin/testo` — che si digita alla cieca ed è la rete di sicurezza costruita
+apposta *prima* di scrivere il server.
+
+! **NON DISEGNA IL CONTENUTO DELLE FINESTRE, LO COMPONE.** Ogni finestra è una
+zona di memoria condivisa che il client riempie di pixel; il server ci mette
+bordo e barra del titolo, le impila e le copia nel framebuffer. Un client che
+sbaglia a disegnare rovina la propria finestra, non lo schermo. Ed è anche
+perché i decodificatori di immagini stanno nella libreria del client: un
+lettore JPG dentro il server sarebbe un difetto di **tutte** le applicazioni
+insieme.
+
+! **I CLIENT DISEGNANO SEMPRE IN ARGB A 32 BIT** e non sanno com'è fatto lo
+schermo. La conversione a 16, 24 o 32 bit sta in un posto solo. Un toolkit che
+dovesse conoscere il formato dello schermo avrebbe sei strade da provare invece
+di una.
+
+### La scrivania: `/exwin`, barra delle applicazioni e menu di avvio
+
+| | |
+|---|---|
+| `pm` — scrivania, barra in basso, pulsante **Avvio**, menu con le applicazioni; tasto destro per creare, rinominare, copiare e cancellare | testato |
+| Voci **Esci** (torna alla shell) e **Spegni** nel menu | testato |
+| `/exwin/bin`, `/exwin/lib`, `/exwin/dev` — le applicazioni grafiche **non stanno in `/bin`** | testato |
+| L'elenco delle applicazioni è un **file di testo**, `/exwin/lib/applicazioni.txt` | testato |
+| `filemgr` — file manager: elenco che scorre, directory in cima, tasto destro, trascinare, apre ogni file col suo programma | testato |
+| `edit` — editor di testo: più file in schede, cerca e sostituisci, annulla, appunti, Ctrl+S, Ctrl+Q | testato |
+
+! **LE APPLICAZIONI GRAFICHE NON STANNO IN `/bin`, ED È UNA DECISIONE.** I
+programmi di `/bin` si lanciano da una shell e parlano con un terminale; questi
+vogliono il server a finestre, e lanciati senza non fanno niente. Mescolarli
+vorrebbe dire un `ls /bin` in cui metà dei nomi non si può usare lì dove si sta
+guardando. Stessa ragione per cui i driver stanno in `/dev`.
+
+! **L'ELENCO È UN FILE, NON UNA TABELLA COMPILATA.** Aggiungere
+un'applicazione è una riga. Un elenco dentro il binario vorrebbe dire rifare il
+program manager per ogni applicazione nuova, e **chi installa un programma non
+ha i sorgenti**.
+
+! **UN FILE PIÙ GRANDE DEI LIMITI L'EDITOR LO CARICA IN PARTE E BLOCCA IL
+SALVATAGGIO.** Salvare quello che si è letto vorrebbe dire cancellare il resto
+del file senza averlo mai mostrato: è il modo più silenzioso che un editor
+abbia di distruggere dei dati. Il limite — 512 righe, 200 colonne — è una
+conseguenza dell'allocatore a bump, dove `free()` non restituisce niente.
+
+### Le librerie condivise: `exwin.so`, `exdlg.so`, `libc.so`
+
+> **Storia.** Cosi' funzionavano le librerie fino al kernel 0.350. Dalla 0.351 la libc e'
+> `/lib/ld-exos.so` e le librerie di EX-OS sono oggetti condivisi ELF: vedi
+> [Scrivere una libreria condivisa](sviluppo.it.md#scrivere-una-libreria-condivisa). `SYS_LIB_APRI`, `libc.so`,
+> i ponti e gli indirizzi fissi qui sotto non ci sono piu'.
+
+| | |
+|---|---|
+| `SYS_LIB_APRI` (248): il kernel mappa una libreria **una volta** e la aggancia a chi la chiede | testato |
+| `.text`/`.rodata` **condivise** fra i processi; `.data`/`.bss` copia privata | testato |
+| Risoluzione **per nome**, non per posizione: si aggiorna la libreria senza ricompilare le applicazioni | testato |
+| `/lib/libc.so` — **322 funzioni**, usata da 39 programmi | testato |
+| `/exwin/lib/exwin.so` — il toolkit; `/exwin/lib/exdlg.so` — i dialoghi Apri/Salva | testato |
+| Gli header non cambiano di una riga, e nemmeno il sorgente delle applicazioni | testato |
+
+```
+    0x04000000 - 0x08000000   le librerie, una fetta da 1 MB a testa (64 in tutto)
+    0x08000000               i programmi
+```
+
+La mappa di chi occupa cosa **non e' scritta da nessuna parte**: la si legge
+dai file, perche' scritta a mano ha sbagliato tre volte.
+
+```
+    python3 tools/fette.py            la mappa vera, e dice se qualcosa si tocca
+    python3 tools/fette.py --libera   il prossimo indirizzo libero
+```
+
+Il risparmio, misurato:
+
+| | prima | dopo |
+|---|---|---|
+| `/bin` in tutto | 850.132 | **608.468** |
+| ISO di EX-OS | 4728 KB | **4252 KB** |
+| `libctest` (testo) | 64.861 | **33.312** |
+| applicazioni grafiche | ~37.000 | **~15.000** |
+
+! **NON È COLLEGAMENTO DINAMICO VERO, ED È DELIBERATO.** Un `.so` con `ld.so`,
+codice PIC, GOT e PLT è la strada standard, ed è mesi di lavoro: caricatore ELF
+da riscrivere, un linker dinamico da scrivere, la libc ricompilata PIC. E ogni
+difetto lì dentro sarebbe un difetto di **tutte** le applicazioni insieme.
+
+Qui la libreria è un ELF normalissimo — `ET_EXEC`, non PIC — collegato a un
+indirizzo **riservato**: sta sempre lì, quindi non c'è niente da rilocare e non
+serve nessuna GOT. Ciò che serviva davvero — aggiornare la libreria senza
+ricompilare le applicazioni — si ottiene con la risoluzione per nome.
+
+! **L'ORDINE DELLA TABELLA NON È PARTE DELL'ABI.** Con una tabella posizionale,
+riordinare le voci romperebbe ogni applicazione già compilata e nessun errore
+lo direbbe: si chiamerebbe semplicemente la funzione sbagliata. Coi nomi si può
+aggiungere, riordinare e riscrivere il corpo di qualunque funzione. Solo
+**togliere** un nome rompe — ed è esattamente il patto di una DLL.
+
+! **LE FUNZIONI SI PASSANO SENZA CONOSCERNE LA FIRMA.** Sono 322: scriverne i
+ponti in C vorrebbe dire copiare 322 firme, ognuna sbagliabile in silenzio. Un
+ponte in assembly è un `jmp` indiretto, che non tocca né gli argomenti né il
+valore di ritorno — `printf: ff 25 c4 25 00 08  jmp *0x80025c4`. È lo stesso
+mestiere di una PLT, e li genera `tools/genlibc.py` leggendo i simboli veri con
+`nm`.
+
+! **LE CINQUE VARIABILI GLOBALI NO.** `errno`, `stdin`, `stdout`, `stderr`,
+`environ`: un programma che scrive `errno = 0` scriverebbe nella **propria**
+copia mentre la libc legge la sua — due variabili con lo stesso nome, e nessun
+errore da nessuna parte. Si esporta l'indirizzo e l'header lo trasforma in una
+lettura: `#define errno (*__errno_dove())`. Il sorgente di chi le usa non
+cambia.
+
+! **E L'AVVIO NON SI PUÒ CONDIVIDERE.** `_libc_start` tocca `main`,
+`__init_array_*` e `__fini_array_*`, che appartengono al binario in cui si
+trovano. Dentro la libreria `main` non esisterebbe nemmeno, e i vettori
+sarebbero quelli della libreria — vuoti: i costruttori globali del programma
+non girerebbero mai, **e nessuno lo direbbe**.
+
+! **`login` E `install` RESTANO STATICI**, ed è una decisione: sono i due
+programmi con cui si entra e con cui si ripara. Se `libc.so` mancasse o fosse
+rotta, un login collegato a lei renderebbe il sistema inaccessibile e non ci
+sarebbe modo di rimediare dall'interno.
+
+### L'installazione a componenti
+
+| | |
+|---|---|
+| `install` mostra i componenti trovati sul supporto e li chiede **uno per uno** | testato |
+| `install -m` sistema minimale, `install -t` tutto: nessuna domanda | testato |
+| `copia_albero()` segue le sottodirectory: un componente non è fatto di un livello solo | testato |
+
+! **IL SISTEMA MINIMALE È UN ELENCO CHIUSO; TUTTO IL RESTO È OPZIONALE.**
+`bin`, `boot`, `lib`, `dev`, `drivers` sono ciò senza cui EX-OS non parte.
+Qualunque **altra** directory nella radice del supporto è un componente, e
+l'installatore la trova da solo.
+
+È il contrario di un elenco scritto dentro l'installatore: aggiungere un
+pacchetto — oggi `/exwin`, domani quello che sarà — vuol dire **metterne la
+directory sul supporto, e basta**. Chi prepara un pacchetto non ha i sorgenti
+dell'installatore.
+
+! **LA SCELTA SI FA PRIMA DI SCRIVERE.** Chiedere «installo anche /exwin?» dopo
+aver già sostituito il kernel vorrebbe dire che rispondere «annulla» non
+annulla più niente.
+
+### Quattro difetti vecchi, e cosa hanno in comune
+
+| | |
+|---|---|
+| Il fuoco della tastiera non era il fuoco: la barra si prendeva ogni tasto | corretto |
+| La shell aveva perso redirezioni e ambiente per tre giorni, in silenzio | corretto |
+| `wserver.drv` non conosceva `-i`: la sonda lo **avviava** e l'installazione dal CD si fermava | corretto |
+| `cat` senza argomenti non leggeva `stdin`, quindi in una pipe non serviva a niente | corretto |
+
+! **IL FUOCO NON ERA IL FUOCO.** Il server mandava il tasto alla finestra
+disegnata per ultima. Vero finché l'ordine di disegno dipendeva solo da chi si
+era portato davanti; falso da quando esiste `WIN_ST_SOPRA`, che tiene la barra
+delle applicazioni sempre in cima. Da quel giorno **nessuna finestra poteva
+ricevere un tasto** col program manager acceso. Il difetto non era nell'editor
+che sembrava sordo, né in `WIN_ST_SOPRA`: era in una funzione che decideva
+**due** cose mentre il suo nome ne prometteva una.
+
+! **UNA MAGIA PROTEGGE DAL DANNO, NON DALLO SFASAMENTO.** Di `SpawnExtra` — la
+struttura che attraversa la syscall `spawn` — c'erano **quattro copie**. Tre
+sono state aggiornate, la quarta (quella della shell) no. Il kernel ha fatto
+esattamente ciò per cui la magia esiste: non ha riconosciuto il blocco e l'ha
+**ignorato** invece di leggerlo storto. Ma «ignorato» vuol dire che per tre
+giorni `hello > file` stampava a video e lasciava il file a zero byte, **senza
+un messaggio**. Un silenzio non si nota.
+
+La correzione non è aggiornare la quarta copia: è **non averne quattro**.
+`lib/include/spawn_abi.h` è la definizione unica, e in fondo ha
+`typedef char spawn_abi_misura_invariata[(sizeof(SpawnExtra) == 596) ? 1 : -1];`
+— un campo aggiunto senza cambiare la magia adesso ferma la **compilazione**.
+
+! **E SEI VOLTE «UN'USCITA CHE NON SA DI ESSERE SCADUTA».** Dipendenze finte
+del bersaglio floppy, `uhci.drv` mancante fra quelle dell'ISO, la risoluzione
+SVGA non prerequisito di Stage 2, le immagini che non dipendevano dal
+`Makefile`, e due volte una variabile del `Makefile` usata come prerequisito
+**prima** di essere definita — dove `make` la espande a stringa vuota. La
+seconda ha fatto credere che 294 prove girassero sulla libc condivisa mentre
+giravano su quella statica. **Un prerequisito scritto con una variabile vuota
+non è un prerequisito debole: non esiste, e nessuno lo dice.**
+
+### Driver: li sceglie la macchina, non li copia in blocco
+
+| | |
+|---|---|
+| Convenzione `-i` comune a tutti i driver: sonda, riferisce, esce 0 se serve qui | testato |
+| `-i` **non tocca la periferica**: legge dal bus PCI e basta | testato |
+| Catalogo `/drivers` sul CD di EX-OS, separato dal `/dev` che serve ad avviarlo | testato |
+| `hwconfig -d <punto>`: sonda il catalogo e installa in `<punto>/dev` solo chi risponde | testato |
+| `install` chiama la selezione invece di riversare `/dev` sul disco | testato |
+| Prova incrociata su NE2000 e su AMD PCnet: ognuna installa solo il proprio driver | testato |
+
+Un disco installato si ritrova in `/dev` i driver che su **quella** macchina
+funzionano. Prima ci finiva tutto ciò che stava sul CD: il driver della scheda
+di rete che la macchina non ha, e `floppy.drv` — che è un modulo ET_DYN e che
+`spawn()` rifiuta, cioè un file che nessuno poteva caricare, installato a ogni
+installazione.
+
+Non esiste un elenco di driver da nessuna parte, ed è deliberato: un elenco
+sarebbe una seconda verità accanto al contenuto della directory, e le due
+divergono al primo driver aggiunto o tolto. La domanda si fa al driver, che è
+l'unico a sapersi rispondere.
+
+! Il punto in cui è più facile sbagliare, e su cui la prima versione ha
+sbagliato: `-i` girava su un sistema **acceso**, dove l'autoexec ha già avviato
+il driver giusto. Inizializzando la scheda per sondarla la si resettava sotto a
+chi la stava guidando, e il reset di una scheda occupata risponde con uno stato
+inatteso — così un driver dichiarava di non servire sulla macchina la cui
+scheda stava guidando in quel momento. Da qui la regola: si guarda, non si
+tocca.
+
+### Una shell più grande: modalità grafica VESA e `svga.drv`
+
+| | |
+|---|---|
+| 640×480 → **80×30**, 800×600 → **100×37**, 1024×768 → **128×48** caratteri | testato |
+| `/dev/svga.drv <modo>` sceglie la risoluzione, come `keymap` la disposizione | testato |
+| È un driver a tutti gli effetti: `hwconfig -d` lo installa da solo sul disco | testato |
+| Dice **forte** che serve un riavvio: la modalità la imposta Stage 2 | testato |
+| Predefinito: console di testo 80×25, sistema identico a prima | testato |
+| Ogni fallimento del sondaggio VBE ripiega sul testo, mai su uno schermo nero | testato |
+| Il kernel segnala se `kernel.cfg` e il bootloader non dicono la stessa cosa | testato |
+
+! **Non è un driver, e non può esserlo.** Una modalità VESA si imposta con
+INT 10h — cioè con il BIOS, cioè in **modo reale**. Quando il kernel comincia
+a girare quella porta è già chiusa, e in ring3 non lo è mai stata. L'unico che
+può farlo è **Stage 2**, prima del passaggio a modo protetto, ed è lì che il
+sondaggio VBE vive: `bootloader/stage2/loader.asm`.
+
+Il kernel riceve indirizzo, pitch, dimensioni e profondità in `BootInfo` e
+disegna la console nel framebuffer con il font 8×16 di
+`kernel/arch/x86/font8x16.c`. Il resto del file `vga.c` non se n'è accorto:
+tutta la console — scorrimento, parser ANSI, cinque console virtuali,
+cancellazioni — lavora sul proprio array di celle, e sono `riversa_cella()`,
+`riversa_tutto()` e il cursore a sapere dove finiscono davvero.
+
+**Come arriva la scelta fino al bootloader.** Stage 2 non ha un filesystem:
+riceve da Stage 1 una mappa di settori già pronta per il kernel, e da disco
+rigido nemmeno quella. Non può leggere `kernel.cfg`. Quindi `svga.drv` scrive in
+due posti — la voce in `kernel.cfg`, che è la configurazione, e un byte
+marcato dalla firma `SVGAMODE` dentro l'immagine di Stage 2, che il bootloader
+legge da sé stesso. Non sono due verità: il secondo lo scrive solo `svga.drv`, e
+il kernel li **confronta a ogni avvio** dicendolo se divergono. È lo stesso
+patto della mappa di settori che `install` scrive nel settore di avvio.
+
+Tre difetti veri incontrati costruendolo, tutti e tre silenziosi:
+
+- **Stage 2 non ci stava.** Il limite era 1280 byte — la GDT stava a `0x0A00` —
+  e ne usava già 1095. La GDT è stata spostata a `0xE400`: la conosce solo
+  quel file, che la scrive e la carica, ed era il rimedio che il commento sul
+  limite indicava già.
+- **Page fault a `0xfd00c000`.** Il framebuffer era mappato nella sola page
+  directory del kernel, ma la console scrive anche mentre gira un processo, e
+  in quel momento `CR3` è la sua.
+- **`PMM: pagina fuori range` a ogni processo che finiva.**
+  `paging_destroy_directory` trattava le entry del framebuffer come pagine
+  utente e le restituiva al PMM — che non sono RAM. Peggio: liberava la page
+  table condivisa, quindi il primo processo a morire avrebbe lasciato senza
+  schermo tutti gli altri.
+
+E uno di prestazioni: la prima versione ridisegnava 3700 celle a ogni
+scorrimento — mezzo milione di scritture in memoria video, che non passa dalla
+cache — e il sistema arrivava al prompt in decine di secondi. Ora fa scorrere
+il framebuffer con una copia sola e ridipinge la sola ultima riga.
+
+**Tre difetti chiusi mentre lo si provava sul disco installato**, che è il
+posto dove `svga.drv` serve davvero — dal CD non si può scrivere comunque:
+
+- `svga.drv` cercava `/boot/stage2`, ma `install` scrive **`/boot/stage2.bin`**:
+  rispondeva «non trovo l'immagine di Stage 2» esattamente sulla macchina in
+  cui doveva funzionare.
+- Il salvataggio si chiamava `kernel.cfg.bak` — due punti, nome 8.3 non
+  valido — quindi su FAT falliva con un errore che parla di nomi mentre
+  l'utente stava cambiando la risoluzione. Ora sostituisce l'estensione:
+  `kernel.bak`.
+- `hwconfig` riconosceva i driver confrontando `.drv` **distinguendo le
+  maiuscole**: su ISO 9660 con Joliet i nomi sono minuscoli, su FAT sono
+  `KBD.DRV`. Tutte le prove precedenti erano sul CD, quindi non si vedeva.
+
+E una regressione introdotta dalla sonda dei driver stessa: **installando dal
+floppy non veniva installato più nessun driver**, `kbd.drv` compreso, perché
+senza CD non esiste un catalogo — e il sistema installato ripiegava
+sull'handler IRQ1 dentro il kernel senza che niente lo spiegasse. Ora `/dev`
+del supporto in esecuzione è l'ultima voce del catalogo: è un catalogo
+legittimo, e i suoi driver vengono sondati come tutti gli altri.
+
+### Due immagini, e niente resta fuori
+
+| | |
+|---|---|
+| `make iso-tutte`: costruisce `dist/exos.iso` e `dist/exos-tools.iso` | testato |
+| Ogni programma dichiara la propria destinazione in `PROGRAMMI_FLOPPY` o `PROGRAMMI_CD` | testato |
+| `make verifica-programmi`: si ferma se un sorgente di `bin/` o `drivers/` resta fuori | testato |
+| Il cross `i386-exos` se lo mette nel PATH il Makefile, non chi lancia `make` | testato |
+| `bin/xcp` e `pcnet.drv`, che erano rimasti fuori, ora ci sono | testato |
+
+Le due immagini rispondono a due domande diverse:
+
+- **`dist/exos.iso`** — il **sistema**: kernel, comandi di base, rete (`ping`,
+  `ftp`, `telnet`, `dhcp`, `host`, `netdetect`…) e tutti i driver. È
+  avviabile, ed è un **superinsieme del floppy**, non un'altra cosa.
+- **`dist/exos-tools.iso`** — i **linguaggi**: `gcc`, `g++`, `cpp`, `cc1`,
+  `fbc`, `as`, `ld`, `nasm`, `ndisasm`, `make`, libstdc++, OpenSSL. 150 MB che
+  si installano a parte con `toolinst`.
+- **`dist/floppy.img`** — solo il **sistema di base**: avviarsi, preparare un
+  disco, installarsi, leggere e scrivere file. Quello che sta in 1.44 MB.
+
+! **Un sorgente che non è in nessuna lista non viene compilato e non finisce
+su nessuna immagine, e nessuno se ne accorge.** È successo per mesi con
+`bin/xcp/`: il sorgente c'era, la regola no, e il comando semplicemente non
+esisteva sulla macchina. `pcnet.drv` aveva il problema opposto e altrettanto
+silenzioso — una regola c'era, ma nessuna lista la nominava: si costruiva solo
+di rimbalzo, perché la ricetta della ISO lo citava fra le proprie prerequisite,
+e `make all` non lo faceva.
+
+`make verifica-programmi` chiude entrambi i casi, e lo fa **guardando il
+risultato invece di leggere il Makefile**: per ogni `bin/<nome>/` ci dev'essere
+un `build/bin/<nome>` o un `build/bin-cd/<nome>`, per ogni `drivers/<nome>/` un
+`.drv` — salvo le due eccezioni dichiarate (`net`, che sono solo header di
+protocollo, e `tty`, che è compilato dentro il kernel). Le due ISO lo eseguono
+da sole prima di costruirsi, come prerequisito d'ordine: se manca qualcosa la
+costruzione si ferma e dice quale nome aggiungere e a quale lista.
+
+### Gli strumenti si installano da soli: `toolinst`
+
+| | |
+|---|---|
+| `toolinst [radice]`: copia l'albero `/exos` del CD tools sul disco | testato |
+| Sceglie per linguaggio: C obbligatorio, C++, FreeBASIC e OpenSSL a richiesta | testato |
+| Aggiunge `/exos/bin` alla voce `PATH` di `[env]` in `kernel.cfg` del bersaglio | testato |
+| `-n` conta file e byte senza scrivere niente; `-p` cambia il prefisso | testato |
+| Si ferma se il volume è in sola lettura o non è ext2 | testato |
+
+! **Copiare i binari in `/bin` e aggiungere una voce al PATH non funziona**, e
+questa è la cosa da sapere prima di ogni altra. Sia il driver di GCC sia `fbc`
+calcolano dove stanno le proprie cose da **dove sta il loro binario** —
+`<la mia directory>/..` — non dal PATH. Si legge nella traccia di `fbc -v`:
+
+```
+assembling: /cdrom/exos/bin/../bin/as --32 ...
+            /cdrom/exos/bin/../lib/gcc/i386-exos/17.0.0/libgcc.a
+```
+
+Da cui:
+
+```
+/cdrom/bin/gcc -c prova.c        ->  cannot execute 'cc1'
+/cdrom/exos/bin/gcc -c prova.c   ->  compila
+```
+
+Stesso binario, stesso PATH, stessa riga di comando: cambia solo da dove è
+lanciato. Da `/bin/gcc` il prefisso diventa `/` e si cercano `/libexec/gcc/…`,
+`/lib/gcc/…`, `/include/freebasic`, che non esistono — e il messaggio che ne
+esce parla di header mancanti mentre il difetto è nel percorso. Perciò
+`toolinst` copia **l'albero intero conservandone la forma** e mette nel PATH la
+sua `bin`.
+
+! **Il disco bersaglio dev'essere ext2.** Su FAT la scrittura dei nomi lunghi
+non c'è ancora, e l'albero è pieno di nomi che l'8.3 non regge
+(`bits/stdc++.h`, `libstdc++.a`): la copia riuscirebbe e il compilatore non
+troverebbe più i propri header, che sul disco ci sono con un altro nome.
+`toolinst` guarda il filesystem del montaggio e lo dice prima di cominciare,
+invece di lasciarlo scoprire a 50 MB di distanza.
+
+I gruppi opzionali sono definiti dai percorsi da **saltare**, non da quelli da
+copiare: un file nuovo sul CD finisce sul disco insieme al resto, e l'unico
+modo di perderlo è averlo scritto nell'elenco delle esclusioni.
+
+### Percorsi e messaggi: se ne dice uno solo, e vero
+
+| | |
+|---|---|
+| Un comando inesistente stampa **un** messaggio, non uno per voce del `PATH` | testato |
+| `./mioprog` e `sotto/mioprog` si eseguono: il `PATH` vale solo per i nomi nudi | testato |
+| Un file che c'è e non è un ELF lo dice, invece di farsi passare per assente | testato |
+| FAT12 rifiuta i percorsi più profondi di un livello invece di appiattirli | testato |
+| `cp`: `-y`, conferma per file, `t` = tutti, avanzamento durante `-r` | testato |
+
+Erano quattro modi diversi di dare una risposta sbagliata con l'aria di darne
+una giusta.
+
+**Sei righe rosse per un comando battuto male.** La shell sondava il `PATH`
+chiamando `spawn()` su ogni voce e usando il fallimento come risposta; il
+kernel segnalava «file non trovato» come `LOG_ERROR`, che si stampa sempre
+qualunque sia `loglevel`. Ora la shell chiede *«c'è?»* con una `open` — come
+faceva già `spawn_cerca_path()` nella libc — e nel kernel un file assente non è
+più un errore: è la risposta a una domanda, e chi l'ha posta la riferisce.
+
+**`./mioprog` non partiva.** La scelta fra `PATH` e percorso diretto si faceva
+su `prog[0] != '/'`. La regola giusta è quella di `execvp`: si cerca nel `PATH`
+solo un nome **senza barre**. Con il controllo sul primo carattere `./mioprog`
+diventava `/bin/./mioprog` — e quando in `/bin` c'era un omonimo partiva
+**quell'altro**, senza che niente lo segnalasse.
+
+**`cat /bin/prove/t.txt` leggeva `/prove/t.txt`.** FAT12 costruiva la parte
+directory del percorso e poi ne teneva solo l'ultima componente, cercandola
+nella radice: qualunque prefisso inventato funzionava purché finisse col nome
+di una directory vera. Lo stesso vizio, in una variante diversa, faceva
+rispondere a `stat("/bin/hello")` con il `/hello` della radice — un altro file,
+di un'altra dimensione. Il driver resta a un livello solo, come prima; la
+differenza è che ora un percorso che non sa rappresentare dà «non trovato»
+invece di un file diverso da quello chiesto.
+
+**`cp` non sovrascriveva.** Un file già presente faceva fallire la copia, e su
+un albero ricorsivo bastava un file in comune per costringere a rifare tutto a
+mano. Ora chiede — `s`, `n`, oppure `t` per tutti i prossimi — e `-y` risponde
+di sì a tutte in anticipo. Un file saltato non conta fra gli errori: la copia
+ha fatto quello che le è stato detto. Con `-r` ogni file viene stampato mentre
+lo si copia, perché su un floppy un albero di qualche decina di file sono
+minuti in cui prima non compariva niente, e un programma muto e un programma
+bloccato si somigliano troppo.
+
+### Rete — dal bus PCI a un client FTP
+
+| | |
+|---|---|
+| Enumerazione PCI in userspace (`/dev/pci.drv`, `netdetect`) | testato |
+| Driver NE2000 in ring3 (`/dev/ne2k.drv`, `nettest`) | testato |
+| ARP, IPv4, ICMP — `ping` | testato |
+| UDP | testato |
+| Client DHCP (`dhcp`) | testato |
+| Risolutore DNS in libc, record A (`host`) | testato |
+| TCP: apertura attiva, invio, ricezione, chiusura (`tcptest`) | testato |
+| Client FTP passivo, `get`/`put`/`ls`/`cd` (`ftp`) | testato |
+| Client Telnet interattivo con negoziazione delle opzioni (`telnet`) | testato |
+| Configurazione a mano e tabella ARP (`ipcfg`, `ipcfg -r`) | testato |
+| Gestore WiFi `wifid`, `wifi`, icona della scrivania (solo scheda simulata) | testato |
+| Sicurezza WPA/WPA2/WEP, `lib/exwifi` (vettori di prova sull'host) | testato |
+| Driver WiFi per chip veri | da fare |
+| Rinnovo della concessione DHCP | da fare |
+| Riordino dei segmenti TCP fuori sequenza | da fare |
+| Driver PCnet (Am79C970/C973), bus master con DMA vero | testato |
+| `SYS_DMA_ALLOC`: memoria contigua per un bus master | testato |
+
+Ogni comando di rete, quando qualcosa manca, stampa **la catena completa** e
+**il prossimo comando da dare** invece del solo messaggio d'errore.
+
+### CPU — SSE, SSE2, SSE3, MMX
+
+| | |
+|---|---|
+| Rilevamento capacità via CPUID, con la prova del bit ID in EFLAGS | testato |
+| Salvataggio dello stato: FXSAVE dove c'è, FNSAVE sulle CPU vecchie | testato |
+| Attivazione di CR4.OSFXSR / OSXMMEXCPT quando SSE è presente | testato |
+| MMX: nessun lavoro necessario, MM0-MM7 sono alias di ST0-ST7 | testato |
+| Esecuzione su 486 e Pentium MMX veri | da testare |
+
+Il percorso FNSAVE è quello che permette al kernel di girare su CPU senza
+SSE; è stato provato forzando la via lenta in QEMU, non su un 486 fisico.
+
+### Filesystem
+
+| | |
+|---|---|
+| Avvio da CD: FAT12 non viene più sondata sul CD-ROM | testato |
+| Nomi lunghi VFAT in **lettura** su FAT16 e FAT32 | testato |
+| Data e ora reali dei file su FAT, ext2 e ISO 9660 | testato |
+| Timbratura di data e ora sui file creati su floppy | testato |
+| `mkfs` sceglie da solo FAT16 sotto i 2 GB, FAT32 sopra | testato |
+| Nomi lunghi VFAT in **scrittura** | da fare |
+
+### Shell e comandi
+
+| | |
+|---|---|
+| Cronologia comandi con le frecce su/giù | testato |
+| `/boot/autoexec.sh` eseguito da `/bin/sh` all'avvio | testato |
+| `ls`: `-h`, `-a`, `-d`, `-mc`, `-md`, `-p` | testato |
+| `install -a`: elenca i file cambiati e propone l'aggiornamento | testato |
+| `hwconfig`: analizza la macchina e scrive kernel.cfg e autoexec.sh | testato |
+| Disposizioni di tastiera: `us it fr de es uk`, con AltGr | `us`/`it` testate |
+| Argomenti con spazi fra virgolette (`cp "il mio file.txt"`) | testato |
+| `help helpconfig`: come si accendono i driver, con lo stato attuale | testato |
+| Backspace che non cancella più il prompt né lascia caratteri invisibili | testato |
+| `!silenced` negli script: nasconde i comandi, non il loro risultato | testato |
+| `source file.sh`, e i `.sh` eseguibili per nome | testato |
+
+### libc
+
+| | |
+|---|---|
+| `printf` con `%f`, `%e`, `%g`: 18 cifre significative, arrotondamento pari | testato |
+| Costruttori globali `.init_array` e distruttori `.fini_array` | testato |
+| `realloc` che ingrandisce sul posto — prima non ingrandiva mai | testato |
+| `gettimeofday` monotòno, ancorato una volta sola all'orologio | testato |
+| `time_t` a 64 bit | testato |
+| I file temporanei seguono `TMPDIR`, non più solo la radice | testato |
+| Cache del disco da 128 settori: `cc1` da 19,61 s a 10,19 s | misurato |
+| 276 prove automatiche in `libctest` | testato |
+
+### Catena di compilazione
+
+| | |
+|---|---|
+| `as` e `ld` (binutils 2.44) nativi | testato |
+| `cc1`: compila C e produce assembly dentro EX-OS | testato |
+| Runtime del bersaglio sul CD (`crt0.o`, `libc.a`, `libgcc.a`) | testato |
+| `as` + `ld` collegano un programma C vero con gli archivi | testato |
+| **`gcc` come programma di guida, che concatena cc1 → as → collect2 → ld** | **testato** |
+| **`gcc` trova gli header di sistema da solo, senza `-I`** | **testato** |
+| **`g++`: la stessa catena in C++, con libstdc++ ed eccezioni** | **testato** |
+| FreeBASIC: `fbc` trova i propri `.bi` da solo | testato |
+| FreeBASIC: link finale (fbc emette opzioni Linux) | da fare a mano |
+| TLS/SSL come libreria userspace (OpenSSL 4.1.0, programma `openssl`) | testato |

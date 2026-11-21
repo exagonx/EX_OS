@@ -6831,6 +6831,10 @@ $(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) $(ESOS_STUB) $(
 	@# i due elenchi divergono: e' cosi' che KERNEL_CORE_NOTES.md e' finito
 	@# sul CD senza che il CD dipendesse da lui.
 	@cp $(ISO_DOC) $(ISO_ROOT)/doc/
+	@# ! THE MANUALS TOO: since 21/11/2026 the README is a short page and
+	@# what it used to hold (the news, the reference chapters) is in
+	@# manuali/. A README here without them points at nothing.
+	@cp -r $(ISO_MANUALI) $(ISO_ROOT)/doc/
 	@# provacpp si costruisce con UNA RIGA e con g++, come su qualunque
 	@# altro bersaglio: libstdc++ per i386-exos c'e' (dal 3 agosto 2026,
 	@# vedi HANDOFF). Prima serviva compilare con g++ e collegare con gcc,

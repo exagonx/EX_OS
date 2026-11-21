@@ -189,10 +189,10 @@ cc1.
 
 Manca poco: quattro funzioni POSIX che GCC usa sull'ospite, il canadian
 cross, e una macchina con abbastanza RAM (cc1 spogliato sara' sui 25-30
-MB, quindi CD e non floppy). Vedi /doc/README.md.
+MB, quindi CD e non floppy). Vedi /doc/manuali/sviluppo.it.md.
 
 Fino ad allora i programmi di EX-OS si compilano da un'altra macchina,
-con il cross-compilatore descritto in /doc/README.md -- oppure si scrive
+con il cross-compilatore descritto in /doc/manuali/costruire.it.md -- oppure si scrive
 in assembly e si usano gli strumenti qui accanto.
 
 

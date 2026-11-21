@@ -291,7 +291,9 @@ build (quando i suoi file sono cambiati). Quella con la stessa build di
 quella installata non si guarda, tranne avvio e sistema: i loro file
 essenziali (kernel, moduli, libc) si controllano sempre sul disco (0.051;
 con la 0.050 un ext4.mod vecchio restava e il disco andava in sola
-lettura). I file che non arrivano si ritentano da
+lettura). stage2.bin e' quello del server anche con la mappa di rdboot e
+il modo video scritti dentro (0.052): prima ogni -check lo riscriveva e
+diceva di riavviare. I file che non arrivano si ritentano da
 soli (tentativi = 3 in /boot/netupdate.cnf), poi si chiede; quelli rimasti
 vanno in /boot/netupdate.err e il -check dopo li riprende. Il netupdate di
 prima legge ancora catalogo.txt, che ha solo avvio e sistema: porta la 0.050,

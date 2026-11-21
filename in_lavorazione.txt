@@ -2,6 +2,21 @@
 
 QUEL CHE E' APERTO — 15 settembre 2026
 
+!!! IL 21 NOVEMBRE: I README SONO CORTI, IL RESTO E' IN manuali/ (l'utente:
+    "Puoi sistemare i due leggimi inglese e italiano cosi che sia aggiornato
+    e piu facile da leggere ?", scelta "README corto + manuali"). README.md
+    e README.it.md: che cos'e', che cosa sa fare oggi (32 e 64 bit),
+    installare, costruire, l'indice dei manuali, le ultime 8 novita'.
+    Le 221 novita' in manuali/novita.md e novita.it.md (con l'indice), i
+    capitoli in manuali/costruire, kernel, comandi, scrivania, dischi,
+    sviluppo, driver, rete, piano (.it.md l'italiano). Nessuna riga persa
+    (controllato riga per riga), 713 collegamenti, nessuno rotto. Il CD
+    degli strumenti porta anche manuali/ (Makefile).
+    ! UNA NOVITA' NUOVA va in cima a manuali/novita.md e novita.it.md, e
+    nelle 8 righe "Ultime novita'" dei due README.
+    DA GUARDARE: tools/iso/leggimi.txt "Cosa NON c'e' ancora" dice che
+    manca cc1, ed e' vecchio dal 6 agosto.
+
 !!! IL 13 NOVEMBRE: LE PROVE DI CARICO DI MARIADB CON IL DISCO SU /home SI
     FERMANO AL BOOTSTRAP: "ATA: timeout BSY sul canale 0 (stato=0xc0)" e
     "ATA: DMA fermo a lba=2056 dopo 8000 ms", mariadbd non parte. Visto due
@@ -10512,6 +10527,24 @@ tools/netinst/velocita tolto da netinst.
       17/11, DOPO IL RIAVVIO NELLA 0.343: il telnetd 0.015 dell'avvio, porta
       23, telnet_piu_prova.py 6 su 6.
 
+  108. LE ICONE DELLA SCRIVANIA LENTE AL CLIC, E UN FILE MANAGER A ICONE COME
+      EXPLORER (l'utente, 21/11: "nel program manager quando faccio un click su
+      una icona del desktop o il doppio click e' lentissimo da l'impressione
+      che il desktop sia bloccato, attualmente viene eseguito il file manager,
+      ma sarebbe utile che file manager si implementassero funzioni che lo
+      renderebbero come visualizzazione a icone e interazione con il desktop
+      simile a explorer di windows, e' possibile o controproducente ? sperando
+      che questo renda le operazioni piu rapide").
+      PRIMA LA MISURA, poi la scelta: dove va il tempo fra il clic e la
+      risposta (pm che riconosce il doppio clic, spawn di filemgr, la sua
+      prima lettura della cartella, il primo disegno), in QEMU e sul .253.
+      Se il tempo e' nell'avvio di filemgr, la scrivania di filemgr (come
+      Explorer: un processo solo che disegna le icone e apre le cartelle)
+      lo toglie; se e' in pm stesso, va corretto pm.
+      Poi: filemgr con vista a icone (oltre all'elenco), trascinare fra
+      cartelle e scrivania, la scrivania come cartella ~/Desktop.
+      In coda, non cominciata.
+
   107. IL NUOVO NETUPDATE: UN ARCHIVIO NUOVO, PER APPLICAZIONE (l'utente, 20/11
       mattina: "netupdate non leggera' piu il vecchio archivio ma ne cerchera'
       uno nuovo parallelo dove contiene, nome del programma i file che
@@ -10833,6 +10866,14 @@ tools/netinst/velocita tolto da netinst.
          mai. prova_menu_netupdate e prova_verifiche ripubblicano anche
          app/<id>.txt e app.txt; prova_modulo_disco vuole /bin/uname di
          ritorno (regola del 4/11, file_dovuto).
+         FATTO 21/11 mattina: netupdate 0.052. Guardando sempre avvio, sul
+         .253 ogni -check riscriveva stage2.bin (la tabella RDMAPPA di
+         bootinstall e il byte di SVGAMODE non sono mai come l'elenco) e
+         chiedeva il riavvio. disco_giusto: con la tabella vuota e un
+         valore del modo, l'impronta del server. Il .253 a 0.352: -check
+         dice niente, verifiche a posto. FATTO dall'utente alla console:
+         system -unload -yes / -load sul .253 a 0.352, il disco torna radice
+         in scrittura.
       5. Il video dentro la finestra di VLC: una finestra figlia in ExWin,
          un modulo finestra di VLC per ExWin, la piattaforma exwin
          nell'interfaccia Qt. Via la sed su embedded-video.
