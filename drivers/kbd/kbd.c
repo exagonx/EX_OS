@@ -236,7 +236,14 @@ static unsigned char g_leds  = 0;   /* bit0=Scroll, bit1=Num, bit2=Caps */
 
 typedef struct {
     /* Riga in costruzione (line discipline "cooked") */
-    char     line[KBD_LINE_MAX];
+    /* ! THE LINE GROWS UP TO KBD_RIGA_MAX (kbd.drv, 21 November 2026): it
+     * starts in line_base and is malloc'd larger when full (riga_posto);
+     * vis goes with it. It was KBD_LINE_MAX, one message. */
+    char          line_base[KBD_LINE_MAX];
+    unsigned char vis_base[KBD_LINE_MAX];
+    char         *line;
+    unsigned char *vis;
+    unsigned      line_posti;
     unsigned line_len;
 
     /* Per ogni carattere del buffer: l'abbiamo disegnato o no?
@@ -245,7 +252,6 @@ typedef struct {
      * come sequenza ANSI "ESC [ A": due dei tre byte sono stampabili, e
      * nessuno dei tre e' stato ecoato. Chiederlo al carattere darebbe due
      * colonne da cancellare che non esistono — di nuovo il prompt. */
-    unsigned char vis[KBD_LINE_MAX];
 
     /* =====================================================================
      * QUANTE COLONNE DI SCHERMO ABBIAMO DAVVERO DISEGNATO PER QUESTA RIGA
@@ -272,7 +278,9 @@ typedef struct {
      * il comando precedente). Contiene i byte delle righe, '\n' incluso;
      * rlines conta quanti '\n' ci sono, cioè quante righe complete sono
      * disponibili. */
-    char     ring[KBD_RING_SIZE];
+    char     ring_base[KBD_RING_SIZE];
+    char    *ring;              /* ring_base, or larger for a long line */
+    unsigned rposti;
     unsigned rhead, rtail, rcount, rlines;
 
     /* Client in attesa di una RIGA (0 = nessuno) */
@@ -507,6 +515,68 @@ static int eco_visibile(char c)
 }
 
 /* =============================================================================
+ * Growing buffers (kbd.drv, 21 November 2026)
+ *
+ * The line being typed and the ring of finished lines start small, inside
+ * ConsoleIn, and are malloc'd larger only when a long line needs it: the
+ * line up to KBD_RIGA_MAX (a spawn, as the kernel's pty and the MAX_CMDLINE
+ * of sh), the ring as large as the lines waiting in it. No memory: the key
+ * is refused, as when the line was full.
+ * ============================================================================= */
+static void console_buffer_inizia(void)
+{
+    unsigned i;
+
+    for (i = 0; i < KBD_N_CONSOLE; i++) {
+        g_c[i].line       = g_c[i].line_base;
+        g_c[i].vis        = g_c[i].vis_base;
+        g_c[i].line_posti = KBD_LINE_MAX;
+        g_c[i].ring       = g_c[i].ring_base;
+        g_c[i].rposti     = KBD_RING_SIZE;
+    }
+}
+
+/* room for `serve` bytes in the line */
+static int riga_posto(ConsoleIn *c, unsigned serve)
+{
+    unsigned       posti = c->line_posti;
+    char          *l;
+    unsigned char *v;
+
+    if (serve <= posti) return 1;
+    if (serve > KBD_RIGA_MAX) return 0;
+    while (posti < serve) posti *= 2u;
+    if (posti > KBD_RIGA_MAX) posti = KBD_RIGA_MAX;
+    l = (char *)malloc(posti);
+    v = (unsigned char *)malloc(posti);
+    if (l == NULL || v == NULL) { free(l); free(v); return 0; }
+    memcpy(l, c->line, c->line_len);
+    memcpy(v, c->vis, c->line_len);
+    if (c->line != c->line_base) { free(c->line); free(c->vis); }
+    c->line       = l;
+    c->vis        = v;
+    c->line_posti = posti;
+    return 1;
+}
+
+static int ring_cresci(ConsoleIn *c, unsigned serve)
+{
+    unsigned posti = c->rposti, i;
+    char    *nuovo;
+
+    while (posti < serve) posti *= 2u;
+    nuovo = (char *)malloc(posti);
+    if (nuovo == NULL) return 0;
+    for (i = 0; i < c->rcount; i++) nuovo[i] = c->ring[(c->rhead + i) % c->rposti];
+    if (c->ring != c->ring_base) free(c->ring);
+    c->ring   = nuovo;
+    c->rposti = posti;
+    c->rhead  = 0;
+    c->rtail  = c->rcount % posti;
+    return 1;
+}
+
+/* =============================================================================
  * Ring buffer delle righe complete
  * ============================================================================= */
 static void ring_put_line(ConsoleIn *c, const char *s, unsigned len)
@@ -518,36 +588,38 @@ static void ring_put_line(ConsoleIn *c, const char *s, unsigned len)
      * mentirebbe a ring_take_line, che consumerebbe anche la riga
      * successiva credendola la stessa. Meglio perdere la riga in
      * overflow che disallineare il buffer. */
-    if (len + 1 > KBD_RING_SIZE - c->rcount) return;
+    if (len + 1 > c->rposti - c->rcount && !ring_cresci(c, c->rcount + len + 1)) return;
 
     for (i = 0; i < len; i++) {
         c->ring[c->rtail] = s[i];
-        c->rtail = (c->rtail + 1) % KBD_RING_SIZE;
+        c->rtail = (c->rtail + 1) % c->rposti;
         c->rcount++;
     }
     c->ring[c->rtail] = '\n';
-    c->rtail = (c->rtail + 1) % KBD_RING_SIZE;
+    c->rtail = (c->rtail + 1) % c->rposti;
     c->rcount++;
     c->rlines++;
 }
 
-/* Estrae la prossima riga completa. Copia al più 'max' byte in out; i
- * byte eccedenti vengono comunque consumati dal ring (la riga non resta
- * a metà). Ritorna il numero di byte copiati. */
+/* Estrae la prossima riga completa, al piu' 'max' byte. Ritorna il numero
+ * di byte copiati.
+ * ! WHAT DOES NOT FIT WAITS FOR THE NEXT READ (kbd.drv, 21 November 2026),
+ * as on every Unix: a line longer than one message (KBD_LINE_MAX) comes in
+ * pieces, and the line ends with its '\n'. The bytes past `max` were
+ * thrown away. */
 static unsigned ring_take_line(ConsoleIn *c, char *out, unsigned max)
 {
     unsigned n = 0;
 
     if (c->rlines == 0) return 0;
 
-    while (c->rcount > 0) {
+    while (c->rcount > 0 && n < max) {
         char ch = c->ring[c->rhead];
-        c->rhead = (c->rhead + 1) % KBD_RING_SIZE;
+        c->rhead = (c->rhead + 1) % c->rposti;
         c->rcount--;
-        if (n < max) out[n++] = ch;
-        if (ch == '\n') break;
+        out[n++] = ch;
+        if (ch == '\n') { c->rlines--; break; }
     }
-    c->rlines--;
     return n;
 }
 
@@ -557,9 +629,9 @@ static void ring_put_bytes(ConsoleIn *c, const char *s, unsigned len)
 {
     unsigned i;
 
-    for (i = 0; i < len && c->rcount < KBD_RING_SIZE; i++) {
+    for (i = 0; i < len && c->rcount < c->rposti; i++) {
         c->ring[c->rtail] = s[i];
-        c->rtail = (c->rtail + 1) % KBD_RING_SIZE;
+        c->rtail = (c->rtail + 1) % c->rposti;
         c->rcount++;
     }
 }
@@ -570,7 +642,7 @@ static unsigned ring_take_bytes(ConsoleIn *c, char *out, unsigned max)
 
     while (c->rcount > 0 && n < max) {
         out[n++] = c->ring[c->rhead];
-        c->rhead = (c->rhead + 1) % KBD_RING_SIZE;
+        c->rhead = (c->rhead + 1) % c->rposti;
         c->rcount--;
     }
     return n;
@@ -1460,7 +1532,7 @@ static void kbd_process_scancode(unsigned char sc)
             ring_put_bytes(c, seq, 3);
             return;
         }
-        if (c->line_len + 3 < KBD_LINE_MAX) {
+        if (riga_posto(c, c->line_len + 4)) {
             c->vis[c->line_len]  = 0;
             c->line[c->line_len++] = seq[0];
             c->vis[c->line_len]  = 0;
@@ -1596,7 +1668,7 @@ static void kbd_process_scancode(unsigned char sc)
      * lascia sullo schermo caratteri che nel buffer non ci sono: si
      * esegue meno di quello che si legge, e il Backspace non ritrova piu'
      * il conto. A riga piena il carattere si rifiuta e basta. */
-    if (c->line_len >= KBD_LINE_MAX - 1) return;
+    if (!riga_posto(c, c->line_len + 2)) return;   /* one place for the '\n' */
 
     c->vis[c->line_len]    = (unsigned char)eco_visibile(ascii);
     c->line[c->line_len++] = ascii;
@@ -2147,6 +2219,8 @@ int main(int argc, char **argv)
     unsigned char payload[64];
     int           rc, i;
     char          scelta[KBD_MAP_NOME_MAX];
+
+    console_buffer_inizia();
 
     /* =====================================================================
      * La disposizione: prima kernel.cfg, poi la riga di comando.

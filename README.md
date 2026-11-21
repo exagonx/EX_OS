@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.352
+**Version:** 0.353
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -120,6 +120,7 @@ Inside EX-OS the same manuals are in `/doc/manuali` (from the CD:
 
 ## Latest changes
 
+- [A command line up to 32 KB, at the console and over telnet (kernel 0.353, sh 0.014, kbd.drv)](manuali/novita.md#a-command-line-up-to-32-kb-at-the-console-and-over-telnet-kernel-0353-sh-0014-kbddrv--tested-in-qemu-and-on-the-test-pc) — *tested in QEMU and on the test PC*
 - [netupdate 0.051 and 0.052: avvio and sistema are always looked at](manuali/novita.md#netupdate-0051-and-0052-avvio-and-sistema-are-always-looked-at--tested-in-qemu-and-on-the-test-pc) — *tested in QEMU and on the test PC*
 - [Kernel 0.352: at 64 bit the system calls run with interrupts on](manuali/novita.md#kernel-0352-at-64-bit-the-system-calls-run-with-interrupts-on--tested-in-qemu-and-on-the-test-pc) — *tested in QEMU and on the test PC*
 - [exide compiles at 64 bit too (exide 0.027)](manuali/novita.md#exide-compiles-at-64-bit-too-exide-0027--tested-in-qemu-and-on-the-test-pc) — *tested in QEMU and on the test PC*
@@ -127,7 +128,6 @@ Inside EX-OS the same manuals are in `/doc/manuali` (from the CD:
 - [The archive by application: netupdate brings only what changed, ExPackage has Update and Upgrade (netupdate 0.050, expackage 0.002, voci 106 and 107)](manuali/novita.md#the-archive-by-application-netupdate-brings-only-what-changed-expackage-has-update-and-upgrade-netupdate-0050-expackage-0002-voci-106-and-107--tested-in-qemu-and-on-the-test-pc) — *tested in QEMU and on the test PC*
 - [Every program on /lib/ld-exos.so, the EX-OS libraries are real .so files (kernel 0.351, voce 105)](manuali/novita.md#every-program-on-libld-exosso-the-ex-os-libraries-are-real-so-files-kernel-0351-voce-105--tested-in-qemu) — *tested in QEMU*
 - [The shared libc: /lib/ld-exos.so, and the kernel starts the interpreter (kernel 0.350, voce 105)](manuali/novita.md#the-shared-libc-libld-exosso-and-the-kernel-starts-the-interpreter-kernel-0350-voce-105--tested-in-qemu) — *tested in QEMU*
-- [pthread_cancel stops a thread that waits, FD_CLOEXEC closes at exec, posix_spawn (kernel 0.349, ip.drv 0.027, voce 105)](manuali/novita.md#pthread_cancel-stops-a-thread-that-waits-fd_cloexec-closes-at-exec-posix_spawn-kernel-0349-ipdrv-0027-voce-105--tested-in-qemu) — *tested in QEMU*
 
 All the others, newest first: [What's new](manuali/novita.md).
 

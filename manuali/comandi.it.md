@@ -383,6 +383,15 @@ linguaggio di posizionamento del cursore. Conseguenza: su una riga più
 lunga della larghezza dello schermo la modifica si vede male — ma la riga
 resta corretta, e quello che si legge è ciò che verrà eseguito.
 
+**Quanto è lunga una riga: fino a 32 768 caratteri** (kernel 0.353, sh
+0.014), alla console e da telnet; ssh passa dallo stesso pty, e gli script
+e `sh -c` hanno lo stesso limite, ma la prova copre console e telnet.
+Prima la console si fermava a 511 caratteri e telnet a 255: una riga di
+`gcc` con molti file non ci stava. La cronologia tiene ogni riga intera,
+alla sua lunghezza; una riga più lunga del limite si taglia lì e la shell
+resta viva. Il kernel e `kbd.drv` partono con un buffer piccolo e lo
+allargano solo quando serve. Prova: `tools/prova_riga_lunga.sh 32|64`.
+
 ## Nomi con spazi: le virgolette
 
 ```

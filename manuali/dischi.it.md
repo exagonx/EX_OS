@@ -328,8 +328,10 @@ riga della tastiera) e alzarne uno solo avrebbe spostato il taglio di un passo.
 Un nome troncato non è un nome accorciato: è un nome che non apre niente.
 
 Su FAT i nomi restano 8.3; il campo è largo per il filesystem più generoso.
-Sopra i 511 caratteri una riga di comando non si può digitare, ed è il limite di
-un singolo messaggio IPC fra tastiera e shell.
+Una riga di comando arriva fino a 32 768 caratteri, alla console come da
+telnet (kernel 0.353): una riga più lunga di un messaggio IPC fra
+tastiera e shell viaggia in più messaggi. Vedi
+[Cronologia dei comandi e modifica della riga](comandi.it.md#cronologia-dei-comandi-e-modifica-della-riga).
 
 Il driver legge e scrive anche i volumi fatti da `mke2fs`: la dimensione del blocco
 (1024/2048/4096), `s_first_data_block` (1 o 0 a seconda) e la dimensione

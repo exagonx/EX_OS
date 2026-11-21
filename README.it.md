@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.352
+**Versione:** 0.353
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -120,6 +120,7 @@ Dentro EX-OS gli stessi manuali sono in `/doc/manuali` (dal CD:
 
 ## Ultime novità
 
+- [Una riga di comando fino a 32 KB, alla console e da telnet (kernel 0.353, sh 0.014, kbd.drv)](manuali/novita.it.md#una-riga-di-comando-fino-a-32-kb-alla-console-e-da-telnet-kernel-0353-sh-0014-kbddrv--testato-in-qemu-e-sul-pc-di-prova) — *testato in QEMU e sul PC di prova*
 - [netupdate 0.051 e 0.052: avvio e sistema si guardano sempre](manuali/novita.it.md#netupdate-0051-e-0052-avvio-e-sistema-si-guardano-sempre--testato-in-qemu-e-sul-pc-di-prova) — *testato in QEMU e sul PC di prova*
 - [Kernel 0.352: a 64 bit le chiamate di sistema girano con gli interrupt accesi](manuali/novita.it.md#kernel-0352-a-64-bit-le-chiamate-di-sistema-girano-con-gli-interrupt-accesi--testato-in-qemu-e-sul-pc-di-prova) — *testato in QEMU e sul PC di prova*
 - [exide compila anche a 64 bit (exide 0.027)](manuali/novita.it.md#exide-compila-anche-a-64-bit-exide-0027--testato-in-qemu-e-sul-pc-di-prova) — *testato in QEMU e sul PC di prova*
@@ -127,7 +128,6 @@ Dentro EX-OS gli stessi manuali sono in `/doc/manuali` (dal CD:
 - [L'archivio per applicazione: netupdate aggiorna solo cio' che e' cambiato, ExPackage ha Update e Upgrade (netupdate 0.050, expackage 0.002, voci 106 e 107)](manuali/novita.it.md#larchivio-per-applicazione-netupdate-aggiorna-solo-cio-che-e-cambiato-expackage-ha-update-e-upgrade-netupdate-0050-expackage-0002-voci-106-e-107--testato-in-qemu-e-sul-pc-di-prova) — *testato in QEMU e sul PC di prova*
 - [Ogni programma su /lib/ld-exos.so, le librerie di EX-OS sono .so vere (kernel 0.351, voce 105)](manuali/novita.it.md#ogni-programma-su-libld-exosso-le-librerie-di-ex-os-sono-so-vere-kernel-0351-voce-105--testato-in-qemu) — *testato in QEMU*
 - [La libc condivisa: /lib/ld-exos.so, e il kernel avvia l'interprete (kernel 0.350, voce 105)](manuali/novita.it.md#la-libc-condivisa-libld-exosso-e-il-kernel-avvia-linterprete-kernel-0350-voce-105--testato-in-qemu) — *testato in QEMU*
-- [pthread_cancel ferma un filo che aspetta, FD_CLOEXEC chiude all'exec, posix_spawn (kernel 0.349, ip.drv 0.027, voce 105)](manuali/novita.it.md#pthread_cancel-ferma-un-filo-che-aspetta-fd_cloexec-chiude-allexec-posix_spawn-kernel-0349-ipdrv-0027-voce-105--testato-in-qemu) — *testato in QEMU*
 
 Tutte le altre, dalla più recente: [Novità](manuali/novita.it.md).
 

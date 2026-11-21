@@ -107,10 +107,10 @@ echo "=== 2. A: il repository com'e' ==="
 gira a "${CNF[@]}" "netupdate -version@3" \
     "netupdate -list@~120" "netupdate -list:nan@~120" \
     "netupdate -install:nano -yes@~400" \
-    "netupdate -check -yes@~400" \
+    "netupdate -check -yes@~400" "echo SECONDO GIRO@1" "netupdate -check -yes@~400" \
     "cat /boot/netupdate.reg@6" "grep Nano /exwin/lib/applicazioni.txt@3" "sync@5"
 A="$D/a.txt"
-grep -aq "netupdate 0.050" "$A" && si "A: netupdate 0.050" || no "A: non e' netupdate 0.050 ($A)"
+grep -aqE "netupdate 0\.0(5[0-9]|[6-9][0-9])" "$A" && si "A: netupdate 0.050 o dopo" || no "A: netupdate prima della 0.050 ($A)"
 pezzo "$A" "netupdate -list$" "netupdate -list:nan" > "$D/a1.txt"
 [ "$(grep -ac '^  [a-z0-9-]* *\(installato\|no\|aggiornabile\) ' "$D/a1.txt")" -ge 20 ] \
     && si "A: -list mostra le applicazioni del server" || no "A: -list ($D/a1.txt)"
@@ -118,7 +118,11 @@ grep -aq "^  vlc .* VLC 3\.0\.24" "$D/a1.txt" && si "A: -list dice la versione (
 pezzo "$A" "netupdate -list:nan" "netupdate -install" > "$D/a2.txt"
 grep -aq "^  nano " "$D/a2.txt" && [ "$(grep -ac '^  [a-z0-9-]* *\(installato\|no\|aggiornabile\) ' "$D/a2.txt")" = 1 ] \
     && si "A: -list:nan mostra solo nano" || no "A: -list:nan ($D/a2.txt)"
-pezzo "$A" "netupdate -check -yes" "cat /boot/netupdate.reg" > "$D/a3.txt"
+# ! THE SECOND -check: since 0.051 sistema is always looked at, and the first
+# one brings the files of sistema that a disk installed from the CD lacks
+# (help.txt, the drivers...). The second must find nothing, stage2.bin
+# included (0.052).
+pezzo "$A" "echo SECONDO GIRO" "cat /boot/netupdate.reg" > "$D/a3.txt"
 grep -aq "con la stessa versione e build del server" "$D/a3.txt" && si "A: -check: le app con la stessa build non si guardano" \
     || no "A: -check non salta le app uguali ($D/a3.txt)"
 grep -aq "Niente da fare" "$D/a3.txt" && si "A: -check: niente da fare" || no "A: -check ha trovato da fare ($D/a3.txt)"

@@ -140,6 +140,13 @@ typedef struct {
  * errore che parlava d'altro. */
 #define KBD_LINE_MAX        512
 
+/* ! A LINE IS LONGER THAN A MESSAGE (kbd.drv, 21 November 2026): KBD_LINE_MAX
+ * is what one KBD_MSG_LINE carries, and a longer line comes in pieces, one
+ * per KBD_MSG_READLINE, the last with its '\n'. The line typed at the
+ * console grows up to KBD_RIGA_MAX, the same as PTY_RIGA_MAX in the kernel
+ * and MAX_CMDLINE in sh: a line that can be spawned. */
+#define KBD_RIGA_MAX        32768
+
 /* Quante console virtuali esistono. DEVE restare uguale a VGA_N_CONSOLE
  * in kernel/include/vga.h: il driver tiene uno stato di input per
  * ciascuna, e se le due costanti divergessero le console in eccesso

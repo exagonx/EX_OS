@@ -6,6 +6,7 @@
 
 **Indice**
 
+- [Una riga di comando fino a 32 KB, alla console e da telnet (kernel 0.353, sh 0.014, kbd.drv) — testato in QEMU e sul PC di prova](#una-riga-di-comando-fino-a-32-kb-alla-console-e-da-telnet-kernel-0353-sh-0014-kbddrv--testato-in-qemu-e-sul-pc-di-prova)
 - [netupdate 0.051 e 0.052: avvio e sistema si guardano sempre — testato in QEMU e sul PC di prova](#netupdate-0051-e-0052-avvio-e-sistema-si-guardano-sempre--testato-in-qemu-e-sul-pc-di-prova)
 - [Kernel 0.352: a 64 bit le chiamate di sistema girano con gli interrupt accesi — testato in QEMU e sul PC di prova](#kernel-0352-a-64-bit-le-chiamate-di-sistema-girano-con-gli-interrupt-accesi--testato-in-qemu-e-sul-pc-di-prova)
 - [exide compila anche a 64 bit (exide 0.027) — testato in QEMU e sul PC di prova](#exide-compila-anche-a-64-bit-exide-0027--testato-in-qemu-e-sul-pc-di-prova)
@@ -235,6 +236,31 @@
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### Una riga di comando fino a 32 KB, alla console e da telnet (kernel 0.353, sh 0.014, kbd.drv) — testato in QEMU e sul PC di prova
+
+- **Prima** una riga digitata via telnet o ssh si fermava a 255 caratteri (la riga del pty del
+  kernel, 256 byte) e alla console a 511 (sh, e un messaggio di `kbd.drv`). Un comando incollato,
+  o una riga di `gcc` con molti file, arrivava tagliato.
+- **Il pty** parte con la riga di 256 byte e la raddoppia quando serve fino a `PTY_RIGA_MAX`
+  (32 768, quanto porta uno spawn); l'anello d'ingresso si allarga per prendere la riga intera.
+  Una riga più lunga si taglia lì e la sessione resta viva.
+- **sh 0.014**: un limite solo, `MAX_CMDLINE`, per il prompt, gli script e `-c`. La cronologia
+  (24 righe) tiene ogni riga alla sua lunghezza in un'arena che cresce, non 24 copie da 512
+  byte; se la riga arriva in più pezzi, la shell li raccoglie fino all'a capo.
+- **kbd.drv**: alla console riga e anello crescono fino a 32 768; una riga più lunga di un
+  messaggio IPC arriva in più messaggi invece di essere tagliata. La tastiera di riserva del
+  kernel (`tty.c`) ha 32 KB fissi.
+- **Testato** con `tools/prova_riga_lunga.sh` a 32 e 64 bit, 13 su 13: via telnet righe di 300,
+  4000, 20 000 e 32 000 caratteri, ognuna scrive un file confrontato byte per byte sul disco
+  dopo lo spegnimento; una di 40 000 è tagliata, nessun file, e la sessione risponde; alla
+  console una riga di 1200 battuta tasto per tasto e richiamata dalla cronologia. A posto anche
+  termios, telnet (più sessioni, fine sessione), ssh, nano, la prova della shell, VLC,
+  lucchetti ed epoll.
+- **Sul PC di prova** (.253, 64 bit): aggiornato con `netupdate -check -yes` dalla 0.352 e
+  riavviato; `netupdate -verifica` tutto a posto. Via telnet le righe di 300, 4000, 20 000 e
+  32 000 caratteri arrivano intere (306, 4006, 20 006 e 32 006 byte nei file), quella di 40 000
+  è tagliata e la sessione risponde.
 
 ### netupdate 0.051 e 0.052: avvio e sistema si guardano sempre — testato in QEMU e sul PC di prova
 

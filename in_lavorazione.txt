@@ -10853,6 +10853,22 @@ tools/netinst/velocita tolto da netinst.
          DA FARE: la shell taglia una riga a 255 caratteri (bin/sh/shell.c,
          char buf[256]): un tetto fisso, la riga di gcc di exide non ci sta
          a mano.
+         FATTO 21/11 (l'utente: "Tutto fino a 32 KB"): kernel 0.353, sh
+         0.014, kbd.drv. La riga del pty cresce fino a PTY_RIGA_MAX 32768 e
+         il suo anello prende una riga intera; sh un solo limite MAX_CMDLINE
+         per prompt, script e -c, la cronologia in un'arena che cresce,
+         leggi_riga raccoglie i pezzi; kbd.drv riga e anello che crescono
+         fino a KBD_RIGA_MAX, una riga lunga in piu' messaggi; tty.c del
+         kernel 32 KB fissi (97 KB di bss). tools/prova_riga_lunga.sh 13 su
+         13 a 32 e 64 bit (telnet 300/4000/20000/32000 interi sul disco,
+         40000 tagliata, console 1200 battuta e dalla cronologia); termios,
+         telnet_piu, telnet_fine, telnet, ssh, nano, prova-sh, vlc,
+         lucchetti, epoll a posto. ! Le porte 2323 e 2324 dell'host le
+         tiene sbbs: prova_riga_lunga usa 2391, telnet_fine con
+         TN_PORTA=2390.
+         21/11 14:10 SUL .253: netupdate -check -yes a 0.353, riavvio,
+         -verifica tutto a posto, righe via telnet fino a 32000 intere,
+         40000 tagliata. Il server locale netinst_64 a 0.353.
          FATTO 21/11 notte: kernel 0.352, a 64 bit int 0x80 trap gate come
          a 32 (ogni syscall girava con IF=0: system -load fermo in
          ata_attesa_ms). DA DECIDERE con l'utente: tools/prova_kernel64.sh,

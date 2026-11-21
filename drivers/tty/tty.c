@@ -58,7 +58,7 @@ static uint32_t g_kbd_pid   = 0;
 /* Deve reggere la riga piu' lunga che la shell accetta (MAX_LINE): una
  * riga piu' lunga del ring viene consegnata a pezzi, e il comando arriva
  * troncato senza che niente lo segnali. */
-#define TTY_BUF_SIZE    512
+#define TTY_BUF_SIZE    PTY_RIGA_MAX    /* a whole line goes in (0.353) */
 
 typedef struct {
     char     buf[TTY_BUF_SIZE];
@@ -94,7 +94,10 @@ static volatile uint32_t g_con_dati[VGA_N_CONSOLE];
  * rimuovere dal ring buffer: lo schermo viene "pulito" ma il carattere
  * resta nel buffer di riga del chiamante (es. la shell).
  * ============================================================================= */
-#define TTY_LINE_MAX    256
+/* ! AS LONG AS A LINE OF THE PTY (kernel 0.353): this is the keyboard of
+ * the kernel when kbd.drv is not there, one console, so the buffers are
+ * fixed - 96 KB of bss - and nothing is allocated in the IRQ. It was 256. */
+#define TTY_LINE_MAX    PTY_RIGA_MAX
 
 static char     g_line_buf[TTY_LINE_MAX];
 static uint32_t g_line_len = 0;

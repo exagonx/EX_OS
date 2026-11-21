@@ -387,6 +387,16 @@ positioning language. Consequence: on a line longer than the screen width the
 editing looks wrong — but the line stays correct, and what you read is what
 will be executed.
 
+
+**How long a line can be: up to 32,768 characters** (kernel 0.353, sh
+0.014), at the console and over telnet; ssh goes through the same pty, and
+scripts and `sh -c` have the same limit, but the test covers the console and
+telnet. Before, the console stopped at 511 characters and telnet at 255: a `gcc`
+line with many files did not fit. The history keeps every line whole, at
+its own length; a line longer than the limit is cut there and the shell
+lives on. The kernel and `kbd.drv` start with a small buffer and grow it
+only when needed. Test: `tools/prova_riga_lunga.sh 32|64`.
+
 ## Names with spaces: quoting
 
 ```

@@ -1128,9 +1128,8 @@ static void verbose_init(void)
  * supera i 256. Un nome che si puo' creare ed elencare ma non digitare e'
  * un nome irraggiungibile per meta'. */
 /* +0.001 a ogni modifica: `sh -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define SH_VERSIONE  "0.013"
+#define SH_VERSIONE  "0.014"
 
-#define MAX_LINE    512
 
 /* ! LA RIGA DI `sh -c` NON E' UNA RIGA DIGITATA, e non puo' avere lo
  * stesso tetto. MAX_LINE e' tarato su quanto una persona puo' scrivere al
@@ -1144,6 +1143,14 @@ static void verbose_init(void)
  * 32768 e' lo stesso numero di SPAWN_ARENA_BYTES nel kernel: e' inutile
  * accettare qui una riga che la syscall rifiutera' dopo. */
 #define MAX_CMDLINE 32768
+
+/* ! THE TYPED LINE HAS THE SAME LIMIT (sh 0.014, 21 November 2026). It was
+ * 512 here, 256 in the kernel's pty and in tty.drv, 512 in kbd: a command
+ * pasted over telnet stopped at 255 characters, and exide's gcc line did
+ * not fit. Now one number for the prompt, the history, the scripts and -c:
+ * a line the kernel will spawn is a line that can be typed. The buffers sit
+ * on the stack, whose pages are taken only when touched. */
+#define MAX_LINE    MAX_CMDLINE
 
 /* Che cosa e' un token, oltre a essere una parola.
  *
@@ -3776,9 +3783,15 @@ static int esegui_riga(char *line, int n)
 
 #define CRONOLOGIA_N   24
 
-static char g_storia[CRONOLOGIA_N][MAX_LINE];
-static int  g_storia_n = 0;     /* quante righe valide */
-static int  g_storia_p = 0;     /* prossima posizione di scrittura */
+/* ! EACH LINE AS LONG AS IT IS (sh 0.014). 24 slots of MAX_LINE would be
+ * 768 KB for every shell; the lines sit one after the other in an arena
+ * that grows with sbrk, oldest first, and the oldest goes by moving the
+ * rest down. */
+static char    *g_storia_testo = 0;
+static uint32_t g_storia_posti = 0;     /* bytes of the arena */
+static uint32_t g_storia_usati = 0;
+static uint32_t g_storia_da[CRONOLOGIA_N];  /* where each line starts */
+static int      g_storia_n = 0;         /* quante righe valide */
 
 static int  g_kbd_pid = -1;     /* -1 = non ancora cercato, 0 = assente */
 
@@ -3793,28 +3806,63 @@ static int  g_console_raw = 0;
  * ! NON SI REGISTRANO LE RIGHE VUOTE NE' I DOPPIONI CONSECUTIVI: chi
  * ripete lo stesso comando dieci volte non vuole dieci voci da
  * riattraversare con la freccia. */
+static int storia_posto(uint32_t serve)
+{
+    uint32_t nuovi, tutti, i;
+    int32_t  r;
+    char    *dove;
+
+    if (g_storia_usati + serve <= g_storia_posti) return 1;
+    nuovi = (g_storia_usati + serve - g_storia_posti + 4095u) & ~4095u;
+    r = syscall1(SYS_SBRK, nuovi);
+    if (r == 0 || (uint32_t)r >= 0xFFFFF001u) return 0;
+    dove = (char *)(uintptr_t)(uint32_t)r;
+    if (g_storia_testo != 0 && dove == g_storia_testo + g_storia_posti) {
+        g_storia_posti += nuovi;            /* the arena just got longer */
+        return 1;
+    }
+    /* the first time, or somebody else moved the break: the arena starts
+     * again up there, whole, and the old one is left behind */
+    tutti = (g_storia_usati + serve + 4095u) & ~4095u;
+    if (tutti > nuovi) {
+        r = syscall1(SYS_SBRK, tutti - nuovi);
+        if (r == 0 || (uint32_t)r >= 0xFFFFF001u ||
+            (char *)(uintptr_t)(uint32_t)r != dove + nuovi) return 0;
+    } else {
+        tutti = nuovi;
+    }
+    for (i = 0; i < g_storia_usati; i++) dove[i] = g_storia_testo[i];
+    g_storia_testo = dove;
+    g_storia_posti = tutti;
+    return 1;
+}
+
 static void storia_aggiungi(const char *riga)
 {
-    int prec;
+    uint32_t l = sh_strlen(riga) + 1, via, i;
 
     if (riga[0] == '\0') return;
+    if (g_storia_n > 0 &&
+        sh_strcmp(g_storia_testo + g_storia_da[g_storia_n - 1], riga) == 0) return;
 
-    prec = (g_storia_p - 1 + CRONOLOGIA_N) % CRONOLOGIA_N;
-    if (g_storia_n > 0 && sh_strcmp(g_storia[prec], riga) == 0) return;
-
-    sh_strcpy(g_storia[g_storia_p], riga, MAX_LINE);
-    g_storia_p = (g_storia_p + 1) % CRONOLOGIA_N;
-    if (g_storia_n < CRONOLOGIA_N) g_storia_n++;
+    if (g_storia_n == CRONOLOGIA_N) {       /* the oldest goes */
+        via = g_storia_da[1];
+        for (i = via; i < g_storia_usati; i++) g_storia_testo[i - via] = g_storia_testo[i];
+        g_storia_usati -= via;
+        for (i = 1; i < CRONOLOGIA_N; i++) g_storia_da[i - 1] = g_storia_da[i] - via;
+        g_storia_n--;
+    }
+    if (!storia_posto(l)) return;           /* no memory: no history, the line still runs */
+    g_storia_da[g_storia_n++] = g_storia_usati;
+    for (i = 0; i < l; i++) g_storia_testo[g_storia_usati + i] = riga[i];
+    g_storia_usati += l;
 }
 
 /* La riga a `indietro` passi dal fondo (1 = l'ultima). NULL se non c'e'. */
 static const char *storia_leggi(int indietro)
 {
-    int i;
-
     if (indietro < 1 || indietro > g_storia_n) return 0;
-    i = (g_storia_p - indietro + CRONOLOGIA_N * 2) % CRONOLOGIA_N;
-    return g_storia[i];
+    return g_storia_testo + g_storia_da[g_storia_n - indietro];
 }
 
 static int kbd_trova(void)
@@ -4197,7 +4245,7 @@ static int esegui_script(const char *nome, const char *etichetta,
      * incompleta si sposta in testa e si legge il pezzo dopo. Il file non ha
      * piu' un tetto; ce l'ha solo la singola riga, che e' MAX_LINE. La
      * memoria in gioco e' la stessa di prima. */
-    char        buf[2048];
+    char        buf[MAX_LINE];
     char        riga[MAX_LINE];
     /* ! L'ETICHETTA SI COPIA, non si tiene il puntatore. Quando lo script
      * l'ha nominato l'utente, `etichetta` punta dentro argv[0] — cioe'
@@ -4432,6 +4480,24 @@ static void esegui_autoexec_exwin(void)
  * dettaglio estetico: chi la chiama è un programma che legge l'output del
  * comando, e il banner glielo sporcherebbe.
  * ============================================================================= */
+/* ! A LONG LINE COMES IN PIECES (sh 0.014): the pty hands over at most what
+ * it holds per read (PTY_DIM), a pipe what has arrived. One read was one
+ * line while lines were short; now the pieces are put together up to the
+ * newline, the end of the data or the end of the buffer. */
+static int leggi_riga(char *buf, int max)
+{
+    int n = 0;
+
+    while (n < max) {
+        int r = (int)sh_read(STDIN, buf + n, (uint32_t)(max - n));
+
+        if (r <= 0) return n > 0 ? n : r;
+        n += r;
+        if (buf[n - 1] == '\n') break;
+    }
+    return n;
+}
+
 int shell_main(int argc, char **argv, char **envp)
 {
     char line[MAX_LINE];
@@ -4568,7 +4634,7 @@ int shell_main(int argc, char **argv, char **envp)
          * shell. */
         n = riga_modifica(line, MAX_LINE);
         if (n < 0) {
-            n = sh_read(STDIN, line, MAX_LINE - 1);
+            n = leggi_riga(line, MAX_LINE - 1);
             /* ! ZERO E' LA FINE DEI DATI, NON UNA RIGA VUOTA (8 ottobre 2026):
              * una riga vuota arriva col suo a capo, cioe' lunga uno. Dietro
              * una pipe o uno pseudo-terminale vuol dire che dall'altra parte

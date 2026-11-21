@@ -1037,7 +1037,10 @@
  * interrupt gate, and every system call ran with interrupts off: a wait on
  * the clock inside one (ata_attesa_ms, mounting an empty CD drive) never
  * ended, and `system -load` hung. */
-#define EXOS_VERSION    "0.352"
+/* 0.352 -> 0.353: the line of a pty grows up to PTY_RIGA_MAX (32768, a
+ * spawn), its input ring takes a whole line: a command pasted over telnet
+ * or ssh stopped at 255 characters. */
+#define EXOS_VERSION    "0.353"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

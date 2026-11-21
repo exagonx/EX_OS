@@ -46,7 +46,10 @@
 
 /* PTY_MAX (4 pairs) is gone since kernel 0.282: see pty.c */
 #define PTY_DIM         4096    /* buffer, per direzione (1024 until 0.330) */
-#define PTY_RIGA_MAX    256     /* la riga in costruzione */
+/* ! THE LINE BEING BUILT GROWS, UP TO A SPAWN (kernel 0.353): 256 bytes,
+ * doubled when full, as far as SPAWN_ARENA_BYTES and the MAX_CMDLINE of sh.
+ * It was 256 fixed: a command pasted over telnet stopped at 255. */
+#define PTY_RIGA_MAX    32768
 
 /* I modi della disciplina. Il canonico e' quello di sempre: si accumula una
  * riga e si consegna all'Invio. In modo grezzo ogni byte passa subito — serve

@@ -6,6 +6,7 @@
 
 **Contents**
 
+- [A command line up to 32 KB, at the console and over telnet (kernel 0.353, sh 0.014, kbd.drv) — tested in QEMU and on the test PC](#a-command-line-up-to-32-kb-at-the-console-and-over-telnet-kernel-0353-sh-0014-kbddrv--tested-in-qemu-and-on-the-test-pc)
 - [netupdate 0.051 and 0.052: avvio and sistema are always looked at — tested in QEMU and on the test PC](#netupdate-0051-and-0052-avvio-and-sistema-are-always-looked-at--tested-in-qemu-and-on-the-test-pc)
 - [Kernel 0.352: at 64 bit the system calls run with interrupts on — tested in QEMU and on the test PC](#kernel-0352-at-64-bit-the-system-calls-run-with-interrupts-on--tested-in-qemu-and-on-the-test-pc)
 - [exide compiles at 64 bit too (exide 0.027) — tested in QEMU and on the test PC](#exide-compiles-at-64-bit-too-exide-0027--tested-in-qemu-and-on-the-test-pc)
@@ -235,6 +236,30 @@
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### A command line up to 32 KB, at the console and over telnet (kernel 0.353, sh 0.014, kbd.drv) — tested in QEMU and on the test PC
+
+- **Before**, a line typed over telnet or ssh stopped at 255 characters (the kernel's pty line,
+  256 bytes) and at the console at 511 (sh, and one `kbd.drv` message). A pasted command, or a
+  `gcc` line with many files, arrived cut.
+- **The pty** starts with a 256-byte line and doubles it when needed up to `PTY_RIGA_MAX`
+  (32,768, what a spawn carries); the input ring grows to take the whole line. A longer line is
+  cut there and the session lives on.
+- **sh 0.014**: one limit, `MAX_CMDLINE`, for the prompt, scripts and `-c`. The history (24
+  lines) keeps every line at its own length in an arena that grows, not 24 copies of 512 bytes;
+  if the line arrives in several pieces, the shell gathers them up to the newline.
+- **kbd.drv**: at the console the line and the ring grow up to 32,768; a line longer than one
+  IPC message arrives in several messages instead of being cut. The kernel's fallback keyboard
+  (`tty.c`) has a fixed 32 KB.
+- **Tested** with `tools/prova_riga_lunga.sh` at 32 and 64 bit, 13 out of 13: over telnet lines
+  of 300, 4000, 20,000 and 32,000 characters, each writing a file compared byte for byte on the
+  disk after power-off; one of 40,000 is cut, no file, and the session answers; at the console
+  a line of 1200 typed key by key and recalled from the history. Also fine: termios, telnet
+  (several sessions, end of session), ssh, nano, the shell test, VLC, locks and epoll.
+- **On the test PC** (.253, 64 bit): updated with `netupdate -check -yes` from 0.352 and
+  rebooted; `netupdate -verifica` all fine. Over telnet the lines of 300, 4000, 20,000 and
+  32,000 characters arrive whole (306, 4006, 20,006 and 32,006 bytes in the files), the one of
+  40,000 is cut and the session answers.
 
 ### netupdate 0.051 and 0.052: avvio and sistema are always looked at — tested in QEMU and on the test PC
 

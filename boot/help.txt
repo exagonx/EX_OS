@@ -1672,8 +1672,8 @@ Serve il CD degli strumenti, o `install -tools` per averli sul disco.
 Dal CD senza installarli il comando e' /cdrom/exos/bin/gcc.
 Senza -static il programma gira su /lib/ld-exos.so, come i comandi.
 
-!! UNA RIGA DELLA SHELL TIENE 256 CARATTERI: una riga di gcc piu' lunga
-va in uno script (sh compila.sh), come fa exide.
+Una riga della shell arriva a 32768 caratteri (kernel 0.353), alla
+console come da telnet: anche una riga di gcc con molti file.
 
 !! NON copiare gcc in /bin e non lanciarlo da un'altra directory. Calcola
 i propri percorsi da dove sta il suo binario: da /bin cercherebbe

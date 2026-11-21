@@ -329,8 +329,10 @@ and raising only one of them would have moved the cut by one step. A
 truncated name is not a shortened name: it is a name that opens nothing.
 
 On FAT names stay 8.3; the field is sized for the most generous filesystem.
-Above 511 characters a command line cannot be typed, and that is the limit of
-a single IPC message between the keyboard and the shell.
+A command line goes up to 32,768 characters, at the console as over telnet
+(kernel 0.353): a line longer than one IPC message between the
+keyboard and the shell travels in several messages. See
+[Command history and line editing](comandi.md#command-history-and-line-editing).
 
 The driver reads and writes volumes made by `mke2fs` too: the block size
 (1024/2048/4096), `s_first_data_block` (1 or 0 depending) and the inode size

@@ -34,7 +34,9 @@ typedef struct {
 
     /* Verso lo SLAVE: cio' che e' stato battuto, gia' passato dalla
      * disciplina. */
-    uint8_t  in[PTY_DIM];
+    uint8_t  in_base[PTY_DIM];
+    uint8_t *in;                /* in_base, or larger for a long line (0.353) */
+    uint32_t in_posti;
     uint32_t in_testa, in_quanti;
 
     /* Verso il MASTER: cio' che il programma stampa, piu' l'eco. */
@@ -42,7 +44,9 @@ typedef struct {
     uint32_t out_testa, out_quanti;
 
     /* La riga in costruzione, che non e' ancora di nessuno. */
-    uint8_t  riga[PTY_RIGA_MAX];
+    uint8_t  riga_base[256];
+    uint8_t *riga;              /* riga_base, or larger: see riga_cresci */
+    uint32_t riga_posti;
     uint32_t riga_n;
 
     PtyTermios t;               /* the modes: see pty.h */
@@ -88,6 +92,9 @@ static void pty_azzera(Pty *p)
 {
     Attese a, b, c;
 
+    /* what a long line made larger goes back (0.353) */
+    if (p->in != NULL && p->in != p->in_base) kfree(p->in);
+    if (p->riga != NULL && p->riga != p->riga_base) kfree(p->riga);
     ATTESE_TIENI(&p->att_in, a);
     ATTESE_TIENI(&p->att_out, b);
     ATTESE_TIENI(&p->att_spazio, c);
@@ -95,6 +102,10 @@ static void pty_azzera(Pty *p)
     attese_rimetti(&p->att_in, &a);
     attese_rimetti(&p->att_out, &b);
     attese_rimetti(&p->att_spazio, &c);
+    p->in         = p->in_base;
+    p->in_posti   = PTY_DIM;
+    p->riga       = p->riga_base;
+    p->riga_posti = sizeof(p->riga_base);
 }
 
 /* Interrupts OFF: everyone on all three sides wakes (a close) */
@@ -146,7 +157,8 @@ static int pty_in_piu(void)
 /* -----------------------------------------------------------------------------
  * I due anelli
  * --------------------------------------------------------------------------- */
-static void metti(uint8_t *buf, uint32_t *testa, uint32_t *quanti, uint8_t c)
+static void metti(uint8_t *buf, uint32_t posti, uint32_t *testa, uint32_t *quanti,
+                  uint8_t c)
 {
     /* ! PIENO VUOL DIRE BUTTARE L'ULTIMO ARRIVATO, ED E' LA SCELTA GIUSTA PER
      * L'ECO E BASTA. Chi scrive qui dentro facendo l'eco e' il KERNEL mentre
@@ -169,19 +181,19 @@ static void metti(uint8_t *buf, uint32_t *testa, uint32_t *quanti, uint8_t c)
      *
      * Adesso pty_scrivi_slave non passa piu' di qui quando il tubo e' pieno:
      * si ferma e aspetta posto. Vedi la' sotto. */
-    if (*quanti >= PTY_DIM) return;
-    buf[(*testa + *quanti) % PTY_DIM] = c;
+    if (*quanti >= posti) return;
+    buf[(*testa + *quanti) % posti] = c;
     (*quanti)++;
 }
 
-static uint32_t prendi(uint8_t *buf, uint32_t *testa, uint32_t *quanti,
+static uint32_t prendi(uint8_t *buf, uint32_t posti, uint32_t *testa, uint32_t *quanti,
                        uint8_t *dst, uint32_t n)
 {
     uint32_t presi = (n < *quanti) ? n : *quanti;
     uint32_t i;
 
-    for (i = 0; i < presi; i++) dst[i] = buf[(*testa + i) % PTY_DIM];
-    *testa   = (*testa + presi) % PTY_DIM;
+    for (i = 0; i < presi; i++) dst[i] = buf[(*testa + i) % posti];
+    *testa   = (*testa + presi) % posti;
     *quanti -= presi;
     return presi;
 }
@@ -193,8 +205,8 @@ static void eco(Pty *p, uint8_t c)
 {
     if (!(p->t.c_lflag & T_ECHO)) return;
     if (c == '\n' && (p->t.c_oflag & (T_OPOST | T_ONLCR)) == (T_OPOST | T_ONLCR))
-        metti(p->out, &p->out_testa, &p->out_quanti, '\r');
-    metti(p->out, &p->out_testa, &p->out_quanti, c);
+        metti(p->out, PTY_DIM, &p->out_testa, &p->out_quanti, '\r');
+    metti(p->out, PTY_DIM, &p->out_testa, &p->out_quanti, c);
 }
 
 static void eco_str(Pty *p, const char *s)
@@ -202,14 +214,64 @@ static void eco_str(Pty *p, const char *s)
     while (*s) eco(p, (uint8_t)*s++);
 }
 
+/* ! A LONG LINE AND ITS RING GROW (kernel 0.353), with interrupts off as
+ * everything here: kmalloc takes care of itself (kmalloc.c, the public
+ * doors). The line doubles up to PTY_RIGA_MAX; the ring toward the slave
+ * takes a whole line when it ends, so a read sees it as it was typed. No
+ * memory: the line stops growing, the byte is lost, as when it was full. */
+static int riga_cresci(Pty *p)
+{
+    uint32_t posti = p->riga_posti * 2u, i;
+    uint8_t *nuova;
+
+    if (p->riga_posti >= PTY_RIGA_MAX) return 0;
+    if (posti > PTY_RIGA_MAX) posti = PTY_RIGA_MAX;
+    nuova = (uint8_t *)kmalloc(posti);
+    if (nuova == NULL) return 0;
+    for (i = 0; i < p->riga_n; i++) nuova[i] = p->riga[i];
+    if (p->riga != p->riga_base) kfree(p->riga);
+    p->riga       = nuova;
+    p->riga_posti = posti;
+    return 1;
+}
+
+static void in_cresci(Pty *p, uint32_t serve)
+{
+    uint32_t posti = p->in_posti, i;
+    uint8_t *nuovo;
+
+    while (posti < serve) posti *= 2u;
+    if (posti == p->in_posti) return;
+    nuovo = (uint8_t *)kmalloc(posti);
+    if (nuovo == NULL) return;
+    for (i = 0; i < p->in_quanti; i++) nuovo[i] = p->in[(p->in_testa + i) % p->in_posti];
+    if (p->in != p->in_base) kfree(p->in);
+    p->in       = nuovo;
+    p->in_posti = posti;
+    p->in_testa = 0;
+}
+
 /* La riga finita passa allo slave. */
 static void consegna_riga(Pty *p)
 {
     uint32_t i;
 
+    if (p->in_quanti + p->riga_n > p->in_posti) in_cresci(p, p->in_quanti + p->riga_n);
+
     for (i = 0; i < p->riga_n; i++)
-        metti(p->in, &p->in_testa, &p->in_quanti, p->riga[i]);
+        metti(p->in, p->in_posti, &p->in_testa, &p->in_quanti, p->riga[i]);
     p->riga_n = 0;
+}
+
+/* ! ROOM FOR ONE MORE BYTE FROM THE MASTER (0.353). Without ICANON a byte
+ * goes in the ring, which is as large as it is. With ICANON it goes in the
+ * line, which grows by itself (riga_cresci drops what goes past
+ * PTY_RIGA_MAX): only a reader a whole PTY_DIM behind stops the writer. It
+ * was in_quanti + riga_n < PTY_DIM, with a line of 256. */
+static int c_e_posto(Pty *p)
+{
+    if (p->t.c_lflag & T_ICANON) return p->in_quanti < PTY_DIM;
+    return p->in_quanti < p->in_posti;
 }
 
 /* -----------------------------------------------------------------------------
@@ -244,7 +306,7 @@ static void disciplina(Pty *p, uint8_t c)
     }
 
     if (!(p->t.c_lflag & T_ICANON)) {
-        metti(p->in, &p->in_testa, &p->in_quanti, c);
+        metti(p->in, p->in_posti, &p->in_testa, &p->in_quanti, c);
         eco(p, c);
         return;
     }
@@ -284,7 +346,7 @@ static void disciplina(Pty *p, uint8_t c)
     }
 
     if (c == '\n') {
-        if (p->riga_n < PTY_RIGA_MAX) p->riga[p->riga_n++] = '\n';
+        if (p->riga_n < p->riga_posti) p->riga[p->riga_n++] = '\n';
         eco(p, '\n');
         consegna_riga(p);
         return;
@@ -293,7 +355,8 @@ static void disciplina(Pty *p, uint8_t c)
     /* ! I TASTI SPECIALI NON ENTRANO IN UNA RIGA DI TESTO: the control
      * characters stay out. Bytes from 0x80 go in: they are UTF-8. */
     if (c >= 0x20 && c != 0x7F) {
-        if (p->riga_n < PTY_RIGA_MAX - 1) {
+        /* one place stays free for the newline */
+        if (p->riga_n + 2u <= p->riga_posti || riga_cresci(p)) {
             p->riga[p->riga_n++] = c;
             eco(p, c);
         }
@@ -496,7 +559,7 @@ int32_t pty_scrivi_master(int h, const void *buf, uint32_t n)
             int     segnale = (p->t.c_lflag & T_ISIG) && p->t.c_cc[T_VINTR] &&
                               c == p->t.c_cc[T_VINTR];
 
-            if (!segnale && p->in_quanti + p->riga_n + 1u >= PTY_DIM) break;
+            if (!segnale && !c_e_posto(p)) break;
             disciplina(p, c);
         }
 
@@ -581,9 +644,9 @@ int32_t pty_scrivi_slave(int h, const void *buf, uint32_t n)
             if (pezzo[k] == '\n' &&
                 (p->t.c_oflag & (T_OPOST | T_ONLCR)) == (T_OPOST | T_ONLCR)) {
                 if (p->out_quanti > PTY_DIM - 2) break;
-                metti(p->out, &p->out_testa, &p->out_quanti, '\r');
+                metti(p->out, PTY_DIM, &p->out_testa, &p->out_quanti, '\r');
             }
-            metti(p->out, &p->out_testa, &p->out_quanti, pezzo[k++]);
+            metti(p->out, PTY_DIM, &p->out_testa, &p->out_quanti, pezzo[k++]);
         }
         scritti += k;
 
@@ -705,7 +768,7 @@ int32_t pty_leggi_slave(int h, void *buf, uint32_t n)
         if (proc_da_interrompere()) return ERR(EINTR);
     }
 
-    presi = prendi(p->in, &p->in_testa, &p->in_quanti, appoggio, n);
+    presi = prendi(p->in, p->in_posti, &p->in_testa, &p->in_quanti, appoggio, n);
     /* room in the input: who polls the master for POLLOUT waits on att_out */
     if (presi) attese_sveglia_locked(&p->att_out);
     if (fl_if & 0x200u) interrupts_enable();
@@ -751,7 +814,7 @@ int32_t pty_leggi_master(int h, void *buf, uint32_t n)
         if (proc_da_interrompere()) return ERR(EINTR);
     }
 
-    presi = prendi(p->out, &p->out_testa, &p->out_quanti, appoggio, n);
+    presi = prendi(p->out, PTY_DIM, &p->out_testa, &p->out_quanti, appoggio, n);
 
     /* ! ADESSO C'E' POSTO, E CHI ASPETTAVA VA SVEGLIATO. Senza questa riga
      * pty_scrivi_slave dormirebbe per sempre: il posto si libera solo qui. */
@@ -947,7 +1010,7 @@ int pty_spazio_master(int h)
     Pty *p = pty_da_handle(h);
 
     if (!p) return 1;
-    return p->in_quanti + p->riga_n + 1u < PTY_DIM;
+    return c_e_posto(p);
 }
 
 int pty_pronto_master(int h)
