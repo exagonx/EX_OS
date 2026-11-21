@@ -41,7 +41,7 @@ DEBUGFS=$(command -v debugfs || echo /usr/sbin/debugfs)
 # Il decodificatore JPG di eximg, sull'host: serve a sapere che pixel ha visto
 # Pennello (un JPG non ha UNA decodifica giusta al pixel).
 SP="$D/scrivi"
-tools/prova_scrivi.sh "$SP" > "$D/scrivi.log" 2>&1 || { echo "tools/prova_scrivi.sh non passa: vedi $D/scrivi.log"; exit 1; }
+bash tools/prova_scrivi.sh "$SP" > "$D/scrivi.log" 2>&1 || { echo "tools/prova_scrivi.sh non passa: vedi $D/scrivi.log"; exit 1; }
 
 magick -size 320x200 gradient:skyblue-seagreen -fill orange -draw 'circle 160,100 160,40' \
        -quality 90 "$D/foto.jpg"

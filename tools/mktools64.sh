@@ -207,6 +207,24 @@ else
     manca "rustc per EX-OS ($RB)" "tools/rust-exos/rustc-nativo/costruisci-exos.sh"
 fi
 
+# --- what exide's compila.sh links (20 November 2026) ------------------------------
+# ! THE 64-BIT CD HAD NONE OF IT: a new exide project on the .253 died with
+# "/exos/start.S: no such file" and "exwin.h: no such file". The same files
+# the 32-bit CD gets in the Makefile: the public headers and the stubs of the
+# optional libraries (ESOS_STUB, read from the Makefile: one list, not two),
+# the C++ and FreeBASIC headers of ExWin, win_proto.h, the program's start
+# and libexos_avvio.a at the root of the tree, where exide looks for them.
+STUB=$(sed -n '/^ESOS_STUB :=/,/^$/p' Makefile | sed 's/^ESOS_STUB :=//; s/\\//g')
+[ -n "$STUB" ] || fail "ESOS_STUB not found in the Makefile"
+for f in $STUB lib/exwin/exwin.hpp lib/exwin/exwin.bi drivers/wserver/win_proto.h; do
+    cp -p "$f" "$E/include/" || fail "missing $f"
+done
+cp -p lib/start.S "$E/start.S"
+[ -f build-64/ld/libexos_avvio.a ] || fail "missing build-64/ld/libexos_avvio.a: make utente64"
+cp -p build-64/ld/libexos_avvio.a "$E/libexos_avvio.a"
+cp -p lib/programma64.ld "$E/programma.ld"
+echo "mktools64: exide - $(echo $STUB | wc -w) header e stub, start.S, libexos_avvio.a"
+
 # --- the catalogue, the test sources, a note -------------------------------------
 cp tools/iso/strumenti.txt "$E/strumenti.txt"     # the Makefile copies it as it is too
 for f in tools/iso/prova-gcc.c tools/iso/prova-cpp.cpp tools/iso/prova-mat.c tools/iso/prova-make \

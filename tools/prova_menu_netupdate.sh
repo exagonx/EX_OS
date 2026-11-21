@@ -82,9 +82,28 @@ for l in open(e, "rb").read().split(b"\n"):
         c[1] = str(len(dati)).encode(); c[2] = sha.encode(); l = b"\t".join(c)
     righe.append(l)
 el = b"\n".join(righe); nuovo(e, el)
+# netupdate 0.050 on reads app/sistema.txt, pinned by app.txt: the same
+# line there, its elimpronta and a later build, as a real publish writes
+a = os.path.join(r, "app/sistema.txt"); righe = []
+for l in open(a, "rb").read().split(b"\n"):
+    c = l.split(b"\t")
+    if c[0] == b"exwin/lib/applicazioni.txt":
+        c[1] = str(len(dati)).encode(); c[2] = sha.encode(); l = b"\t".join(c)
+    righe.append(l)
+al = b"\n".join(righe); nuovo(a, al)
+ap = os.path.join(r, "app.txt"); out = []; blocco = b""
+for l in open(ap, "rb").read().split(b"\n"):
+    if l.startswith(b"["): blocco = l
+    if blocco == b"[sistema]" and l.startswith(b"elimpronta"):
+        l = b"elimpronta = " + hashlib.sha256(al).hexdigest().encode()
+    if blocco == b"[sistema]" and l.startswith(b"build"):
+        l = b"build      = " + str(int(l.split(b"=")[1]) + 1).encode()
+    out.append(l)
+apl = b"\n".join(out); nuovo(ap, apl)
 v = os.path.join(r, "versione.txt"); out = []
 for l in open(v, "rb").read().split(b"\n"):
     if l.startswith(b"elenco "): l = b"elenco    = " + hashlib.sha256(el).hexdigest().encode()
+    if l.startswith(b"app "):    l = b"app       = " + hashlib.sha256(apl).hexdigest().encode()
     out.append(l)
 nuovo(v, b"\n".join(out))
 PY

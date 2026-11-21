@@ -76,6 +76,32 @@ E="$D/srv-d/$NOME/elenco.txt"; V="$D/srv-d/$NOME/versione.txt"
 rm "$E"; awk -F'\t' -v OFS='\t' -v b="$kb" -v h="$kh" '$1 == "boot/kernel.bin" { $2 = b; $3 = h } { print }' \
     "$RADICE/$REPO/elenco.txt" > "$E"
 rm "$V"; sed "s/^elenco    = .*/elenco    = $(sha256sum "$E" | cut -d' ' -f1)/" "$RADICE/$REPO/versione.txt" > "$V"
+# netupdate 0.050 on reads app/avvio.txt, pinned by app.txt: the same line
+# there, its elimpronta, a later build and the app hash, as a publish writes
+python3 -I - "$D/srv-d/$NOME" "$kb" "$kh" <<'PY' || exit 1
+import hashlib, os, re, sys
+r, kb, kh = sys.argv[1:4]
+def nuovo(p, dati):
+    os.remove(p); open(p, "w").write(dati)
+a = os.path.join(r, "app/avvio.txt"); righe = []
+for l in open(a).read().split("\n"):
+    c = l.split("\t")
+    if c[0] == "boot/kernel.bin": c[1] = kb; c[2] = kh; l = "\t".join(c)
+    righe.append(l)
+al = "\n".join(righe); nuovo(a, al)
+ap = os.path.join(r, "app.txt"); out = []; blocco = ""
+for l in open(ap).read().split("\n"):
+    if l.startswith("["): blocco = l
+    if blocco == "[avvio]" and l.startswith("elimpronta"):
+        l = "elimpronta = " + hashlib.sha256(al.encode()).hexdigest()
+    if blocco == "[avvio]" and l.startswith("build"):
+        l = "build      = " + str(int(l.split("=")[1]) + 1)
+    out.append(l)
+apl = "\n".join(out); nuovo(ap, apl)
+v = os.path.join(r, "versione.txt")
+t = re.sub(r"(?m)^app *=.*$", "app       = " + hashlib.sha256(apl.encode()).hexdigest(), open(v).read())
+nuovo(v, t)
+PY
 
 L=("root@2" "root@6" "keymap us@3")
 gira() {    # $1 = run, then the commands

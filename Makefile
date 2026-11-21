@@ -6737,7 +6737,7 @@ FB_CD_DOC := $(wildcard $(TOOLS_DIR)/freebasic-exos/MODIFICHE-FBC.md) \
 # =============================================================================
 ESOS_STUB := lib/exwin/exwin.h      lib/include/exlib.h \
              lib/exdlg/exdlg.h \
-             lib/exhttp/exhttp.h \
+             lib/exhttp/exhttp.h      lib/exhttp/http.h \
              lib/exhtml/html.h \
              lib/excss/excss_stub.c   lib/excss/css.h \
              lib/exjs/exjs_stub.c     lib/exjs/exjs.h \
@@ -7057,6 +7057,21 @@ $(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) $(ESOS_STUB) $(
 	        cp $(EXOS_CROSS)/lib/gcc/i386-exos/$$V/$$o $$LG/ 2>/dev/null || true; \
 	    done; \
 	    cp -r $(EXOS_CROSS)/lib/gcc/i386-exos/$$V/include $$LG/ 2>/dev/null || true; \
+	    \
+	    : "! THE SPECS, AND THE RUNTIME THEY LINK (20 November 2026): the LINK_SPEC"; \
+	    : "built into gcc says -static (tools/gcc-exos/exos.h), and without the specs"; \
+	    : "of tools/gcc-exos/specs-condivise.sh exide died with ld: attempted static"; \
+	    : "link of dynamic object exwin.so. As tools/mktools64.sh: cross_compile 0."; \
+	    awk 'f{print "0"; f=0; next} /^\*cross_compile:$$/{f=1} {print}' \
+	        $(EXOS_CROSS)/lib/gcc/i386-exos/$$V/specs > $$LG/specs; \
+	    grep -q ld-exos.so $$LG/specs || { echo "     ! le specs di $(EXOS_CROSS) non sanno di ld-exos.so: tools/gcc-exos/specs-condivise.sh"; exit 1; }; \
+	    for o in crtbeginS.o crtendS.o; do \
+	        cp $(EXOS_CROSS)/lib/gcc/i386-exos/$$V/$$o $$LG/ 2>/dev/null || true; \
+	    done; \
+	    for f in ld-exos.so libc.so libexos_avvio.a libm.so libm.so.4 libgcc_s.so libgcc_s.so.1 \
+	             libstdc++.so libstdc++.so.6; do \
+	        cp -pL $(CROSS_SYSROOT)/lib/$$f $(ISO_ROOT)/exos/lib/ || exit 1; \
+	    done; \
 	    cp -r $(EXOS_CROSS)/i386-exos/include/c++ $(ISO_ROOT)/exos/include/ 2>/dev/null || true; \
 	    cp $(CROSS_SYSROOT)/lib/libstdc++.a $(ISO_ROOT)/exos/lib/ 2>/dev/null || true; \
 	    mkdir -p $(ISO_ROOT)/exos/bin; \

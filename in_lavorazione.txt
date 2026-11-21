@@ -10804,8 +10804,35 @@ tools/netinst/velocita tolto da netinst.
          ricostruiscono, prendono libncurses.so.6: [nano] e [mariadb]
          vorranno curses (controlla_dipendenze.py lo dice); math.h e
          ld-exos.so nuovi nei sysroot veri (prepara-cross.sh/cross64.sh);
-         complex.h non c'e' (le cabs, cexp... di openlibm senza header);
-         ISO e netinst del clone da rifare.
+         complex.h non c'e' (le cabs, cexp... di openlibm senza header).
+         ! I SYSROOT VERI (~/cross_build/nasi5deb/exos-cross*) NON HANNO
+         NEMMENO IL PASSO 3: niente ld-exos.so, specs senza ld-exos.so, i
+         porting di ~/cross_build fermi al 18/11. ISO e netinst si fanno
+         dal clone finche' i sysroot del clone non tornano in ~/cross_build.
+         FATTO 20-21/11 notte: netinst_64 del clone pubblicato, il .253
+         aggiornato e riavviato: FLAC e MP3 sulla scheda vera, ncurses da
+         telnet, gizmo e vp9cake in finestra, Qt col cono, plugins.dat
+         scritto da verifiche/vlc.sh. ncurses-exos/su-cd.sh copiava solo i
+         .a: le .so non arrivavano sul CD (quindi nemmeno col netupdate).
+         Anche: exide 0.027 compila a 64 bit (mktools64.sh senza header,
+         start.S e libexos_avvio.a; exide scriveva -m32; http.h su nessun
+         CD; il CD a 32 senza le specs condivise collegava -static).
+         DA FARE: la shell taglia una riga a 255 caratteri (bin/sh/shell.c,
+         char buf[256]): un tetto fisso, la riga di gcc di exide non ci sta
+         a mano.
+         FATTO 21/11 notte: kernel 0.352, a 64 bit int 0x80 trap gate come
+         a 32 (ogni syscall girava con IF=0: system -load fermo in
+         ata_attesa_ms). DA DECIDERE con l'utente: tools/prova_kernel64.sh,
+         la tappa 1 non si collega piu' (colla64.c "deve sparire"): togliere
+         la tappa 1 dalla prova o allungare la colla. date con ExJs: OUT OF
+         MEMORY a 32 MB dopo la libc condivisa, da misurare.
+         FATTO 21/11 notte: netupdate 0.051. Con la 0.050 (voce 107)
+         un'applicazione con la build di quella installata non si guardava,
+         nemmeno avvio e sistema: un ext4.mod vecchio con un registro
+         bugiardo restava (prova_modulo_disco C). Le `sempre` non si saltano
+         mai. prova_menu_netupdate e prova_verifiche ripubblicano anche
+         app/<id>.txt e app.txt; prova_modulo_disco vuole /bin/uname di
+         ritorno (regola del 4/11, file_dovuto).
       5. Il video dentro la finestra di VLC: una finestra figlia in ExWin,
          un modulo finestra di VLC per ExWin, la piattaforma exwin
          nell'interfaccia Qt. Via la sed su embedded-video.

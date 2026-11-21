@@ -288,7 +288,10 @@ Chi aveva gia' Exilla li chiede da se': netupdate -install:font-cjk.
 
 Dalla 0.050 il repository ha app.txt: per ogni applicazione versione e
 build (quando i suoi file sono cambiati). Quella con la stessa build di
-quella installata non si guarda. I file che non arrivano si ritentano da
+quella installata non si guarda, tranne avvio e sistema: i loro file
+essenziali (kernel, moduli, libc) si controllano sempre sul disco (0.051;
+con la 0.050 un ext4.mod vecchio restava e il disco andava in sola
+lettura). I file che non arrivano si ritentano da
 soli (tentativi = 3 in /boot/netupdate.cnf), poi si chiede; quelli rimasti
 vanno in /boot/netupdate.err e il -check dopo li riprende. Il netupdate di
 prima legge ancora catalogo.txt, che ha solo avvio e sistema: porta la 0.050,
@@ -895,6 +898,16 @@ sistema: `system -unload`, `chkdsk -r`, `system -load` - oppure
 l'avvio, prima di montarla.
 
 [problemi guasti]
+SYSTEM -LOAD A 64 BIT SI FERMA DOPO "Riaccendo:" e la macchina non
+  risponde piu': e' il kernel a 64 bit fino alla 0.351, dove ogni chiamata
+  di sistema girava con gli interrupt spenti e l'attesa del lettore CD
+  vuoto non finiva. Riavvia col tasto, aggiorna con netupdate (0.352).
+EXIDE: "/exos/start.S: file o directory inesistente" E "exwin.h: file o
+  directory inesistente" su EX-OS a 64 bit, o "attempted static link of
+  dynamic object exwin.so" a 32: gli strumenti non avevano gli header di
+  ExWin, l'avvio e le specs del gcc, ed exide fino alla 0.026 scriveva
+  -m32 anche a 64 bit. netupdate (o il CD degli strumenti nuovo), poi in
+  exide Strumenti > Compilatore, "Scrivi compila.sh".
 CACHEDISCO IN /boot/kernel.cfg NON CAMBIA NIENTE: dmesg | grep BLK dice
   ancora "fino a N MB" col valore di serie. E' il kernel fino alla 0.343: la
   cache si faceva prima di leggere kernel.cfg. Aggiorna con netupdate e
@@ -1655,6 +1668,10 @@ il compilatore C e C++
 
 Serve il CD degli strumenti, o `install -tools` per averli sul disco.
 Dal CD senza installarli il comando e' /cdrom/exos/bin/gcc.
+Senza -static il programma gira su /lib/ld-exos.so, come i comandi.
+
+!! UNA RIGA DELLA SHELL TIENE 256 CARATTERI: una riga di gcc piu' lunga
+va in uno script (sh compila.sh), come fa exide.
 
 !! NON copiare gcc in /bin e non lanciarlo da un'altra directory. Calcola
 i propri percorsi da dove sta il suo binario: da /bin cercherebbe

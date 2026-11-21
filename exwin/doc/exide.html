@@ -36,7 +36,12 @@ apre anche dal menu Avvio.
 <b>Da CD non si puo' scrivere.</b> Un ambiente di sviluppo ha bisogno di un
 posto dove salvare: si monta un disco in lettura e scrittura
 (<code>mount hd0p1 /disk</code>) e si crea il progetto dentro quello. Per
-COMPILARE serve anche il CD degli strumenti montato su <code>/cdrom</code>.
+COMPILARE serve anche il CD degli strumenti montato su <code>/cdrom</code>
+(o installato con <code>toolinst</code> in <code>/exos</code>), della stessa
+architettura del sistema: exide scrive in <code>compila.sh</code>
+<code>-m32</code> a 32 bit e <code>-m64</code> a 64 (dalla 0.027). Un progetto
+fatto con un exide piu' vecchio a 64 bit: <b>Strumenti &gt; Compilatore</b>,
+"Scrivi compila.sh".
 </p>
 </div>
 

@@ -38,8 +38,8 @@ partizione() { dd if="$1" of="$2" bs=512 skip=2048 status=none; }
 
 # --- the two repositories ------------------------------------------------------
 echo "=== 0. i repository dei sorgenti ==="
-SRC_FUORI="$D/srv-a/netinst_src" tools/mknetinstsrc.sh > "$D/mknetinstsrc-a.log" || exit 1
-SRC_FUORI="$D/srv-b/netinst_src" SRC_PEZZO=4194304 tools/mknetinstsrc.sh > "$D/mknetinstsrc-b.log" || exit 1
+SRC_FUORI="$D/srv-a/netinst_src" sh tools/mknetinstsrc.sh > "$D/mknetinstsrc-a.log" || exit 1
+SRC_FUORI="$D/srv-b/netinst_src" SRC_PEZZO=4194304 sh tools/mknetinstsrc.sh > "$D/mknetinstsrc-b.log" || exit 1
 VER=$(sed -n 's/^versione *= *//p' "$D/srv-a/netinst_src/versione.txt")
 NOME="exos-$VER"
 N_PEZZI=$(ls "$D/srv-b/netinst_src/file/src/" | grep -c '\.p[0-9][0-9][0-9]$')

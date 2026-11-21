@@ -10,28 +10,40 @@
 # gli strumenti di prima non compilava niente.
 #
 #     tools/prova_exide_compila.sh [directory-di-lavoro]  (default /tmp/exos-ide-compila)
+#     BIT=64 tools/prova_exide_compila.sh                 (EX-OS a 64 bit)
 #
 # Vuole dist/exos.iso e un CD degli strumenti COI COMPILATORI:
 #     EXOS_STRUMENTI_ISO=<percorso>   (default dist/exos-tools.iso)
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1
-D="${1:-/tmp/exos-ide-compila}"
-STRUMENTI="${EXOS_STRUMENTI_ISO:-dist/exos-tools.iso}"
+BIT=${BIT:-32}
+# ! A 64 BIT NON C'ERA (20 novembre 2026): sul .253 un progetto nuovo non
+# trovava ne' exwin.h ne' start.S, ed exide scriveva -m32
+if [ "$BIT" = 64 ]; then
+    D="${1:-/tmp/exos-ide-compila64}"; SISTEMA=dist/exos64.iso
+    STRUMENTI="${EXOS_STRUMENTI_ISO:-dist/exos64-tools.iso}"
+    CPU="-m64"; PAGINE=" -Wl,-z,max-page-size=4096"
+    export EXOS_QEMU=qemu-system-x86_64 EXOS_ISTANZA=idecompila64; QCPU="-cpu qemu64"
+else
+    D="${1:-/tmp/exos-ide-compila}"; SISTEMA=dist/exos.iso
+    STRUMENTI="${EXOS_STRUMENTI_ISO:-dist/exos-tools.iso}"
+    CPU="-m32"; PAGINE=""
+    export EXOS_ISTANZA=idecompila; QCPU=""
+fi
 mkdir -p "$D"
 IMG="$D/prova-hd.img"
 OFF="$IMG?offset=1048576"
 
-[ -f dist/exos.iso ] || { echo "manca dist/exos.iso: lancia 'make iso-exos'" >&2; exit 1; }
+[ -f $SISTEMA ] || { echo "manca $SISTEMA: lancia 'make iso-exos' (o iso64)" >&2; exit 1; }
 [ -f "$STRUMENTI" ] || { echo "manca il CD degli strumenti ($STRUMENTI): lancia 'make iso'" >&2; exit 1; }
 SFDISK=$(command -v sfdisk || echo /usr/sbin/sfdisk)
 DEBUGFS=$(command -v debugfs || echo /usr/sbin/debugfs)
 
-export EXOS_ISTANZA=idecompila
 export EXOS_NO_FLOPPY=1
-export EXOS_CDROM=dist/exos.iso
+export EXOS_CDROM=$SISTEMA
 export EXOS_RAM="${EXOS_RAM:-256M}"
-export EXOS_QEMU_EXTRA="-drive file=$IMG,format=raw,if=ide,index=0 -drive file=$STRUMENTI,media=cdrom,if=ide,index=3,readonly=on"
-SER=/tmp/exos/serialidecompila.txt
+export EXOS_QEMU_EXTRA="$QCPU -drive file=$IMG,format=raw,if=ide,index=0 -drive file=$STRUMENTI,media=cdrom,if=ide,index=3,readonly=on"
+SER=/tmp/exos/serial$EXOS_ISTANZA.txt
 
 esito=0
 ok() { echo "  [OK]  $1"; }
@@ -63,7 +75,7 @@ R=/cdrom/exos
 cat > "$D/prima/compila.sh" <<EOF
 SO=/exwin/lib; [ -f \$SO/exwin.so ] || SO=/cdrom/exwin/lib
 LDX=/lib/ld-exos.so; [ -f \$LDX ] || LDX=/rdboot/lib/ld-exos.so; [ -f \$LDX ] || LDX=/cdrom/lib/ld-exos.so
-$R/bin/gcc -m32 -ffreestanding -fno-builtin -nostdlib -fno-pic -fno-pie -O2 -Wall -I $R/include -I inc -Wl,-Ttext-segment=0x08000000 -Wl,-z,separate-code -Wl,--hash-style=both -Wl,-dynamic-linker,/lib/ld-exos.so $R/start.S src/finestra.c src/finestra_gen.c \$SO/exwin.so $R/libexos_avvio.a \$LDX -o bin/nuovo
+$R/bin/gcc $CPU -ffreestanding -fno-builtin -nostdlib -fno-pic -fno-pie -O2 -Wall -I $R/include -I inc -Wl,-Ttext-segment=0x08000000 -Wl,-z,separate-code -Wl,--hash-style=both -Wl,-dynamic-linker,/lib/ld-exos.so$PAGINE $R/start.S src/finestra.c src/finestra_gen.c \$SO/exwin.so $R/libexos_avvio.a \$LDX -o bin/nuovo
 EOF
 "$DEBUGFS" -w -R "write $D/prima/finestra.dis nuovo/src/finestra.dis" "$OFF" > /dev/null 2>&1
 "$DEBUGFS" -w -R "write $D/prima/compila.sh nuovo/compila.sh" "$OFF" > /dev/null 2>&1

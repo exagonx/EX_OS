@@ -62,7 +62,7 @@ grep "costruiti\|NON costruiti\|non compilano" /tmp/exos-kernel64-intero-make.lo
 # Si avvia dal CD e si BATTONO i comandi nella shell (tools/prova64.sh): il
 # primo programma senza libc, e la prova della libc - segnali, fili, __thread,
 # setjmp, virgola mobile, file.
-tools/prova64.sh "primo64@~8" "prova64 uno due@~15" "ping 10.0.2.2@~15" > /tmp/exos-kernel64-c.out 2>&1
+sh tools/prova64.sh "primo64@~8" "prova64 uno due@~15" "ping 10.0.2.2@~15" > /tmp/exos-kernel64-c.out 2>&1
 tr -d '\r' < /tmp/exos/serial64.txt | sed 's/\x1b\[[0-9;]*m//g' > /tmp/exos-kernel64-c.txt
 echo "=== 3. il sistema a 64 bit: kernel intero, driver, shell, libc ==="
 grep -a "Long Mode\|VFS: root\|servizio 'rete0'\|dhcp: configurato\|ricevuti\|PROVA64-LIBC\|EXOS64-TAPPA3D\|SBAGLIATO" /tmp/exos-kernel64-c.txt | sed 's/^/    /'

@@ -52,7 +52,7 @@
 
 /* +0.001 a ogni modifica, aggiunta o prova: `exide -version` la stampa.
  * Vedi EX_VERSIONE in libc.h; la stessa stringa la mostra «Informazioni su». */
-#define VERSIONE_APP "0.026"
+#define VERSIONE_APP "0.027"
 EX_VERSIONE("exide", VERSIONE_APP);
 
 /* -----------------------------------------------------------------------------
@@ -522,8 +522,15 @@ static char g_cc_radice[PERC_MAX] = "/cdrom/exos";
  *
  * La casella resta per quel che e' davvero facoltativo: ottimizzazione,
  * avvisi, definizioni. Vuota va benissimo. */
+/* ! THE CPU OF THE exide THAT RUNS (20 November 2026): a 64-bit exide wrote
+ * -m32 too, and the 64-bit gcc of the tools CD built nothing */
+#if defined(__x86_64__)
+#define CC_CPU "-m64"
+#else
+#define CC_CPU "-m32"
+#endif
 #define CC_OBBLIGATORIE \
-    "-m32 -ffreestanding -fno-builtin -nostdlib -fno-pic -fno-pie"
+    CC_CPU " -ffreestanding -fno-builtin -nostdlib -fno-pic -fno-pie"
 static char g_cc_opzioni[100] = "-O2 -Wall";
 static char g_cc_nome[NOME_MAX] = "";
 
@@ -4101,9 +4108,16 @@ static void cc_radice_scegli(void)
  * Makefile. The base is 0x08000000 as with lib/programma.ld, and the code in
  * pages of its own; programma.ld itself would throw away .gnu.hash and .rel*,
  * which a dynamic program cannot do without. */
+/* At 64 bit the same base, and pages of 4 KB as tools/costruisci-utente64.sh
+ * links every program of the system. */
+#if defined(__x86_64__)
+#define CC_PAGINE " -Wl,-z,max-page-size=4096"
+#else
+#define CC_PAGINE ""
+#endif
 #define CC_DINAMICO \
     "-Wl,-Ttext-segment=0x08000000 -Wl,-z,separate-code -Wl,--hash-style=both" \
-    " -Wl,-dynamic-linker,/lib/ld-exos.so"
+    " -Wl,-dynamic-linker,/lib/ld-exos.so" CC_PAGINE
 
 /* The first of `dove` + `nome` that exists, or the first one anyway (the
  * link will say what is missing). */

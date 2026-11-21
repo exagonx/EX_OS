@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.351
+**Versione:** 0.352
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -113,7 +113,53 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
-### VLC come su Linux: libvlc.so, libvlccore.so e ogni modulo una .so aperta con dlopen (voce 105, passo 4) — testato in QEMU
+### netupdate 0.051: avvio e sistema si guardano sempre — testato in QEMU
+
+Con la 0.050 un'applicazione con la stessa build di quella installata non si guardava piu', e
+cosi' anche `avvio` e `sistema`, che hanno i file essenziali (kernel, moduli, libc) controllati sul
+disco: un `ext4.mod` vecchio con un registro che lo diceva giusto restava, e il disco partiva in
+sola lettura. Le applicazioni `sempre` non si saltano mai. `tools/prova_modulo_disco.sh` 16 su 16;
+`prova_menu_netupdate.sh` e `prova_verifiche.sh` pubblicano il menu e il kernel nuovi anche in
+`app/<id>.txt` e `app.txt`, come `mknetinst.sh`, e non solo in `elenco.txt`.
+
+### Kernel 0.352: a 64 bit le chiamate di sistema girano con gli interrupt accesi — testato in QEMU
+
+`system -load` a 64 bit rimontava il disco, scriveva "Riaccendo:" e si fermava li': la macchina
+non rispondeva piu'. Il kernel girava per sempre in `ata_attesa_ms`, chiamata da `sys_mount` per il
+lettore CD vuoto di `kernel.cfg`, con gli interrupt spenti: l'orologio non avanzava e l'attesa non
+finiva mai. A 32 bit `int 0x80` e' una trap gate (0xEF), e la chiamata di sistema lascia accesi
+gli interrupt (`kernel/arch/x86/idt.c` lo spiega); a 64 bit era una interrupt gate (0xEE) dalla
+prima tappa, e ogni chiamata di sistema girava con IF=0. Ora e' una trap gate anche a 64 bit
+(`kernel/arch/x86_64/idt64.c`). `tools/prova_system.sh` a 64 bit: 8 su 8 (prima 7).
+
+Sistemate anche, nelle prove: `prova_sorgenti.sh` e `prova_pennello.sh` chiamano gli script con
+`sh`/`bash` (MEGA toglie il permesso di esecuzione); `libgit2-exos/prova.sh` prende header e
+libreria dalla costruzione e non dal sysroot; il disco di `prova-fb64-nativo.sh` cresce con
+l'albero degli strumenti (400 MB fissi non bastavano piu'); `prova_exbrowser_misura.sh` porta il
+puntatore sulla presa con `vai:`, che lo controlla, e non dice piu' `[OK]` se la finestra non si
+e' mossa.
+
+### exide compila anche a 64 bit (exide 0.027) — testato in QEMU e sul PC di prova
+
+Su EX-OS a 64 bit un progetto nuovo di exide non compilava: "`/exos/start.S`: file o directory
+inesistente" e "`exwin.h`: file o directory inesistente". Il CD degli strumenti a 64 bit
+(`tools/mktools64.sh`) non aveva gli header di ExWin e delle altre librerie, ne' `start.S` e
+`libexos_avvio.a`; e anche con quelli exide scriveva `-m32` nella riga di compilazione.
+
+- exide scrive la riga della sua architettura: `-m64` e le pagine da 4 KB a 64 bit, `-m32` a 32.
+- `mktools64.sh` copia gli stessi file del CD a 32 bit, con l'elenco `ESOS_STUB` letto dal
+  Makefile (un elenco solo).
+- `exhttp.h` include `http.h`, che non c'era su nessuno dei due CD: ora e' in `ESOS_STUB`.
+- Il CD a 32 bit non aveva le specs di `tools/gcc-exos/specs-condivise.sh`: il `gcc` nativo
+  collegava sempre `-static` ("attempted static link of dynamic object exwin.so"). Ora le ha,
+  con `ld-exos.so`, `libc.so`, `libgcc_s` e `libstdc++.so` in `/exos/lib`, come a 64 bit.
+
+Se un progetto vecchio non compila: in exide **Strumenti > Compilatore**, "Scrivi compila.sh", e
+la riga nuova sostituisce quella con `-m32`. `tools/prova_exide_compila.sh` (e `BIT=64`): exide
+genera, il gcc dentro EX-OS compila, la finestra si apre, a 32 e 64 bit. Sul PC di prova il
+progetto che non compilava ora apre la sua finestra.
+
+### VLC come su Linux: libvlc.so, libvlccore.so e ogni modulo una .so aperta con dlopen (voce 105, passo 4) — testato in QEMU e sul PC di prova
 
 `/exos/bin/vlc` ora gira su `/exos/lib/libvlc.so.5` e `libvlccore.so.9`, e ognuno dei suoi 241
 moduli e' una `.so` in `/exos/lib/vlc/plugins/<tipo>/`, aperta con dlopen quando serve, come su
@@ -149,7 +195,11 @@ rese static con sed, e mancava il packetizer FLAC, quindi nessun FLAC suonava. I
 
 `tools/vlc-exos/prova.sh` a 32 e 64 bit: i tre file audio confrontati con FFmpeg (FLAC
 compreso), l'interfaccia ncurses e il suo volume, i tre video nella loro finestra, `vlc-cache-gen`
-che scrive `plugins.dat`, l'interfaccia Qt col cono: tutto `[OK]`.
+che scrive `plugins.dat`, l'interfaccia Qt col cono: tutto `[OK]`. Sul PC di prova a 64 bit,
+aggiornato con netupdate: il FLAC e l'MP3 sulla scheda vera, l'interfaccia ncurses da telnet,
+gizmo.mp4 e vp9cake.webm nella finestra, Qt col cono; `plugins.dat` scritto dal controllo di
+netupdate. Le `.so` di ncurses non arrivavano sul CD degli strumenti
+(`tools/ncurses-exos/su-cd.sh` copiava solo i `.a`): ora si'.
 
 ### L'archivio per applicazione: netupdate aggiorna solo cio' che e' cambiato, ExPackage ha Update e Upgrade (netupdate 0.050, expackage 0.002, voci 106 e 107) — testato in QEMU e sul PC di prova
 

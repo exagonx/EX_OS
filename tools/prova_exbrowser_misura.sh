@@ -24,16 +24,6 @@ rm -f "$D"/*.ppm
 [ -f dist/exos.iso ] || { echo "manca dist/exos.iso: lancia 'make iso-exos'" >&2; exit 1; }
 export EXOS_ISTANZA=exbmisura EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso EXOS_RAM=128M
 
-passi_a() {
-    local dx=$1 dy=$2 i d rx ry
-    d=$(( (dx < dy ? dx : dy) / 10 ))
-    for ((i = 0; i < d; i++)); do printf '%s\n' "mon:mouse_move 10 10@0"; done
-    rx=$(( dx - d * 10 )); ry=$(( dy - d * 10 ))
-    for ((i = 10; i <= rx; i += 10)); do printf '%s\n' "mon:mouse_move 10 0@0"; done
-    for ((i = 10; i <= ry; i += 10)); do printf '%s\n' "mon:mouse_move 0 10@0"; done
-    printf '%s\n' "mon:mouse_move $(( rx % 10 )) $(( ry % 10 ))@0"
-}
-
 barra() {
     python3 - "$1" <<'EOF'
 import sys
@@ -107,8 +97,10 @@ fi
     echo "key:alt-f1@2"
     echo "/exwin/bin/exbrowser &@10"
     echo "key:alt-f5@4"
-    for i in $(seq 1 5); do echo "mon:mouse_move -600 -600@0"; done
-    passi_a $PRESA
+    # ! vai:, NOT STEPS COUNTED FROM THE CORNER: QEMU leaves the pointer about
+    # ten pixels short (tools/qemu_drive.py, vai), and on 20/11 the press
+    # missed the 14-pixel grip and selected text in the page instead
+    echo "vai:$PX,$PY@1"
     echo "mon:mouse_button 1@1"
     for i in $(seq 1 8);  do echo "mon:mouse_move -10 -10@0"; done
     for i in $(seq 1 4);  do echo "mon:mouse_move -10 0@0"; done
@@ -136,7 +128,8 @@ P1=$(destra_pulsanti "$D/1-prima.ppm" "$X0" "$(( X1 + 1 ))" "$RIGA")
 P2=$(destra_pulsanti "$D/2-dopo.ppm" "$Z0" "$(( Z1 + 1 ))" "$RIGA")
 echo "      il pulsante «?» finiva a x=$P1, adesso a x=$P2"
 # Il pulsante si sposta ESATTAMENTE quanto il bordo destro.
-if [ "$P2" -gt 0 ] && [ $(( P1 - P2 )) -eq $(( X1 - Z1 )) ]; then
+# ! AND IT MUST HAVE MOVED: 0 = 0 passed with a window that never resized
+if [ "$P2" -gt 0 ] && [ $(( X1 - Z1 )) -gt 0 ] && [ $(( P1 - P2 )) -eq $(( X1 - Z1 )) ]; then
     echo "  [OK]  i pulsanti di destra si sono spostati con il bordo"
 else
     echo "  [NO]  i pulsanti di destra non hanno seguito il bordo"; esito=1

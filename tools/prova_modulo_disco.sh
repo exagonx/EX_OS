@@ -14,8 +14,8 @@
 #    than 0.031 never had the module in it), then `netupdate -check -yes`
 #    against dist/netinst served by tools/prova_netupdate_http.py through
 #    QEMU's guestfwd (no socket on the host). The module is marked
-#    `essenziale` and must come back, byte for byte; uname is not and must
-#    stay out. e2fsck clean.
+#    `essenziale` and must come back, byte for byte; uname too, as a file of
+#    `sistema` that is installed (netupdate 0.043 on). e2fsck clean.
 # C. The disk of B with a module for another kernel, same size: it boots
 #    writable from /rdboot/dev/ext4.mod and `netupdate -check -yes` replaces
 #    the file, with no register and with one that says the right hash.
@@ -108,8 +108,8 @@ if disco "$B" cd "$D/b-install.log"; then
         && si "/dev/ext4.mod e' tornato, uguale a quello pubblicato" \
         || no "/dev/ext4.mod non e' tornato (vedi $D/b.log)"
     $SBIN/debugfs -R "stat /bin/uname" "$D/b-p1.img" 2>&1 | grep -q "not found\|File not found" \
-        && si "/bin/uname (non essenziale) e' rimasto fuori" \
-        || no "/bin/uname e' stato reinstallato senza -yesall"
+        && no "/bin/uname non e' tornato: e' di sistema, che e' installato (vedi $D/b.log)" \
+        || si "/bin/uname e' tornato: un file mancante di un pacchetto installato"
     $SBIN/e2fsck -fn "$D/b-p1.img" > "$D/b-e2fsck.log" 2>&1 \
         && si "e2fsck pulito" || no "e2fsck (vedi $D/b-e2fsck.log)"
 else

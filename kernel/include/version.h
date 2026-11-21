@@ -1033,7 +1033,11 @@
  * cache's frames in every process, at any base; the writable ones a copy,
  * pure .bss a promise. The interpreter comes from there, and SYS_SO_MAPPA
  * (274) gives the same to dlopen. Key: VFS identity, size, mtime. */
-#define EXOS_VERSION    "0.351"
+/* 0.351 -> 0.352: at 64 bit int 0x80 is a trap gate, as at 32. It was an
+ * interrupt gate, and every system call ran with interrupts off: a wait on
+ * the clock inside one (ata_attesa_ms, mounting an empty CD drive) never
+ * ended, and `system -load` hung. */
+#define EXOS_VERSION    "0.352"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

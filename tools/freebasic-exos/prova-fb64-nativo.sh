@@ -43,11 +43,15 @@ cp build-64/iso/prova-gcc.c "$T/prova-gcc.c"
 
 IMG="$D/fb64-hd.img"
 rm -f "$IMG"
-qemu-img create -f raw "$IMG" 400M > /dev/null
+# ! THE DISK FOLLOWS THE TREE: 400 MB fixed held the tools CD until Qt, VLC
+# and MariaDB came on it (20/11: "Could not allocate block ... libstdc++.a").
+# The tree, a quarter more for ext2 and the programs' output.
+MB=$(( $(du -sm "$T" | cut -f1) * 5 / 4 + 64 ))
+qemu-img create -f raw "$IMG" $((MB + 2))M > /dev/null
 printf 'label: dos\nunit: sectors\n\nstart=2048, type=83, bootable\n' \
     | "$(command -v sfdisk || echo /sbin/sfdisk)" "$IMG" > /dev/null 2>&1
 "$(command -v mke2fs || echo /sbin/mke2fs)" -q -t ext2 -b 1024 -L prova -d "$T" \
-    -E offset=1048576 "$IMG" 398M
+    -E offset=1048576 "$IMG" ${MB}M
 
 KVM=""; [ -w /dev/kvm ] && KVM="-enable-kvm"
 export EXOS_QEMU=qemu-system-x86_64 EXOS_ISTANZA=fb64 EXOS_NO_FLOPPY=1

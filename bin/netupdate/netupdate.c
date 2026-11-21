@@ -65,7 +65,7 @@
 #include "inflate.h"
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.050");
+EX_VERSIONE("netupdate", "0.051");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -2410,7 +2410,12 @@ static int elenchi_aggiungi(const Config *c, const char *cat, const char *ele)
         for (i = 0; qui && i < n; i++) {
             Pacchetto *q = qui[i] ? cerca(r, nr, v[i].id) : NULL;
 
+            /* ! `sempre` IS NEVER SKIPPED: avvio and sistema hold the essential
+             * files, checked on the disk (verdetto). Skipped by build, a stale
+             * ext4.mod under a lying register stayed and the disk went
+             * read-only (prova_modulo_disco, 21 November 2026). */
             if (q && q->build[0] && v[i].build[0] && build_cmp(q->build, v[i].build) >= 0 &&
+                !v[i].sempre &&
                 strcmp(v[i].id, g_anche) != 0 && !fra(catena, ncatena, v[i].id))
                 lista_metti(&g_fermi, &g_nfermi, v[i].id);
             else if (qui[i] && v[i].build[0])

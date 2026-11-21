@@ -83,7 +83,11 @@ void idt64_installa(void)
 
     for (i = 0; i < 256; i++) porta((uint8_t)i, 0x8E, 0);
     porta(8, 0x8E, 1);                      /* il doppio errore, sulla sua pila */
-    porta(0x80, 0xEE, 0);                   /* le chiamate di sistema: anche da ring 3 */
+    /* ! A TRAP GATE, AS AT 32 BIT (kernel/arch/x86/idt.c): the system calls
+     * run with interrupts on. With 0xEE, an interrupt gate, every syscall
+     * ran with IF=0 and a wait on g_ticks never ended: `system -load` hung
+     * in ata_attesa_ms mounting an empty CD drive (20/11, kernel 0.352). */
+    porta(0x80, 0xEF, 0);                   /* le chiamate di sistema: anche da ring 3 */
 
     pic_rimappa();
 

@@ -12,7 +12,7 @@
 # tools/iso/strumenti.txt. From what tools/ncurses-exos/costruisci.sh left
 # in cross_build/ncurses-exos32 (64):
 #
-#     exos/lib/       libncurses.a libcurses.a libpanel.a libmenu.a
+#     exos/lib/       libncurses.a libcurses.a libpanel.a libmenu.a (and .so.6)
 #                     libform.a libncurses++.a
 #     exos/include/   curses.h ncurses.h term.h panel.h menu.h form.h ...
 #     exos/share/terminfo/   the database (vga, xterm, vt100, screen...)
@@ -42,7 +42,9 @@ if [ ! -f "$N/lib/libncurses.a" ] || [ -z "$CD" ]; then
 fi
 E="$CD/exos"
 mkdir -p "$E/lib" "$E/include" "$E/share" "$E/bin" "$E/src/ncurses"
-cp -p "$N"/lib/*.a "$E/lib/"
+# the .a for -static, the .so.6 and their ld scripts for everybody else
+# (20 November 2026, voce 105 step 4: VLC's ncurses plugin needs them)
+cp -p "$N"/lib/*.a "$N"/lib/*.so* "$E/lib/"
 cp -rp "$N/include/." "$E/include/"
 # the 32-bit gcc looks for headers in exos/i386-exos/include (where the
 # Makefile puts the libc's too); the catalogue names them with `file`
