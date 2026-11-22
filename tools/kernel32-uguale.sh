@@ -1,4 +1,6 @@
 #!/bin/sh
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/kernel32-uguale.sh — il kernel a 32 bit e' rimasto lo stesso? (@EXOS-64)
 #
@@ -26,8 +28,8 @@
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-P="cross_build/$MACCHINA/costruzione-sistema/albero"
-B="cross_build/$MACCHINA/kernel32-base.txt"
+P="${EXOS_FUORI}/cross_build/$MACCHINA/costruzione-sistema/albero"
+B="${EXOS_FUORI}/cross_build/$MACCHINA/kernel32-base.txt"
 
 impronte() {
     (cd "$P/build/kernel" && find . -name '*.o' | sort | while read -r o; do

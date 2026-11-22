@@ -1,4 +1,6 @@
 #!/bin/sh
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/mknetinst.sh
 # EX-OS — Extensible Operating System
@@ -73,8 +75,8 @@ cd "$RADICE"
 # macchina, e quello a 64 bit va a cercare da solo la directory con «_64».
 ARCH="${ARCH:-i386}"
 case "$ARCH" in
-    i386)   CODA="";    COSTR=build ;;
-    x86_64) CODA="_64"; COSTR=build-64 ;;
+    i386)   CODA="";    COSTR=${EXOS_FUORI}/build ;;
+    x86_64) CODA="_64"; COSTR=${EXOS_FUORI}/build-64 ;;
     *) echo "mknetinst: ARCH=$ARCH non la conosco (i386 o x86_64)." >&2; exit 1 ;;
 esac
 ALBERO=$COSTR/iso-exos         # il sistema, composto da `make iso-exos`
@@ -157,6 +159,21 @@ if [ -x "$STRUMENTI/exos/bin/gcc" ]; then
     cp -a "$STRUMENTI/exos"/. "$FUORI/file/exos/"
     STRUM_CI_SONO=si
 fi
+
+# ! A LINK THAT CAME IN WITH cp -a BECOMES A COPY (22/11/2026): the CD of the
+# tools still had exos/include/ncurses.h -> curses.h from 25/10, cp -a brought
+# it here, and a server or MEGA turns it into nothing. A broken one stops.
+# (plain sh: this script runs under dash, no < <(...) and no read -d)
+ROTTI=$(find "$FUORI/file" -type l ! -exec test -e {} \; -print)
+if [ -n "$ROTTI" ]; then
+    echo "! collegamenti rotti in $FUORI/file:"
+    echo "$ROTTI"
+    exit 1
+fi
+find "$FUORI/file" -type l | while IFS= read -r l; do
+    cp -rL "$l" "$l.copia$$" && rm -f "$l" && mv "$l.copia$$" "$l" &&
+        echo "  collegamento diventato copia: ${l#"$FUORI"/}"
+done
 
 # --- chi possiede cosa -------------------------------------------------------
 #
@@ -335,14 +352,14 @@ mb_di() {
 # esporta perche' la sua copia dell'albero non ha cross_build; altrimenti il
 # posto dove lo lascia tools/exilla/prova-gecko.sh. Se non c'e', il repository
 # si pubblica senza Exilla e lo dice.
-EXILLA_DIST="${EXILLA_DIST:-cross_build/exilla-obj/gecko/dist/firefox}"
-EXILLA_LANCIA=build/exilla/exilla
+EXILLA_DIST="${EXILLA_DIST:-${EXOS_FUORI}/cross_build/exilla-obj/gecko/dist/firefox}"
+EXILLA_LANCIA=${EXOS_FUORI}/build/exilla/exilla
 # 64 bit (16 October 2026): the Firefox built for x86_64-exos (EXOS_ARCH=x86_64
 # tools/exilla/gecko-costruisci.sh, packaged by prova-gecko.sh) and the
 # launcher that make utente64 builds with the desktop
 if [ "$ARCH" = x86_64 ]; then
-    EXILLA_DIST="${EXILLA_DIST64:-cross_build/exilla-obj/gecko64/dist/firefox}"
-    EXILLA_LANCIA=build-64/exwin/bin/exilla
+    EXILLA_DIST="${EXILLA_DIST64:-${EXOS_FUORI}/cross_build/exilla-obj/gecko64/dist/firefox}"
+    EXILLA_LANCIA=${EXOS_FUORI}/build-64/exwin/bin/exilla
 fi
 EXILLA_ICONE=exwin/bin/exilla
 EXILLA_DOVE=exwin/app/exilla
@@ -385,7 +402,7 @@ fi
 #
 # Da dove: tools/font-cjk/prepara.sh (Noto Sans CJK e Noto Serif CJK, Regular
 # e Bold, con la licenza OFL).
-FONT_CJK_DIST="${FONT_CJK_DIST:-cross_build/terze-parti/noto-cjk/scelti}"
+FONT_CJK_DIST="${FONT_CJK_DIST:-${EXOS_FUORI}/cross_build/terze-parti/noto-cjk/scelti}"
 FONT_CJK_CI_E=no
 FONT_CJK_MB=0
 if [ -f "$FONT_CJK_DIST/NotoSansCJK-Regular.ttc" ] && [ "$EXILLA_CI_E" = si ]; then

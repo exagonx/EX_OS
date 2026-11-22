@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/exilla/prova-finestra.sh — Firefox in una finestra di ExWin (tappa 7)
 #
@@ -20,7 +22,7 @@
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-B="$PWD/cross_build/$MACCHINA"
+B="${EXOS_FUORI}/cross_build/$MACCHINA"
 D="$B/costruzione-prova"
 SUFF=""
 [ "$EXOS_ARCH" = x86_64 ] && { D="$B/costruzione-prova64"; SUFF=64; }
@@ -31,8 +33,8 @@ IMG="$D/gecko-hd.img"
 # si provava il binario di un giro prima, senza saperlo.
 # ! SI CONFRONTA COL PACCHETTO, NON COL DISCO: QEMU scrive sul disco a ogni
 # prova, e il disco risulterebbe sempre piu' nuovo di Firefox.
-O="$PWD/cross_build/exilla-obj/gecko"
-[ "$EXOS_ARCH" = x86_64 ] && O="$PWD/cross_build/exilla-obj/gecko64"
+O="${EXOS_FUORI}/cross_build/exilla-obj/gecko"
+[ "$EXOS_ARCH" = x86_64 ] && O="${EXOS_FUORI}/cross_build/exilla-obj/gecko64"
 if [ ! -f "$IMG" ] || [ -n "$(find -L "$O/dist/bin" -newer "$O/dist/firefox/firefox" -type f -print -quit 2>/dev/null)" ]; then
     tools/exilla/prova-gecko.sh > "$D/prova-gecko-da-finestra.log" 2>&1
     echo "prova-gecko (pacchetto e disco): $(tail -1 "$D/prova-gecko-da-finestra.log")"

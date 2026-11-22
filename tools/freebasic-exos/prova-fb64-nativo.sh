@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/freebasic-exos/prova-fb64-nativo.sh — native fbc inside 64-bit EX-OS
 #
@@ -23,23 +25,23 @@ set -e
 cd "$(dirname "$0")/../.."
 RADICE="$PWD"
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-D="$RADICE/cross_build/$MACCHINA/costruzione-prova-fb64"
-FB="$RADICE/cross_build/fb64/fb-build-exos64"
-ALBERO="$RADICE/cross_build/fb64/albero"
+D="${EXOS_FUORI}/cross_build/$MACCHINA/costruzione-prova-fb64"
+FB="${EXOS_FUORI}/cross_build/fb64/fb-build-exos64"
+ALBERO="${EXOS_FUORI}/cross_build/fb64/albero"
 T="$D/albero"
 
-[ -d build-64/iso/exos/bin ] || { echo "manca build-64/iso/exos: make tools64" >&2; exit 1; }
+[ -d ${EXOS_FUORI}/build-64/iso/exos/bin ] || { echo "manca ${EXOS_FUORI}/build-64/iso/exos: make tools64" >&2; exit 1; }
 [ -x "$FB/fbc" ] || { echo "manca $FB/fbc: tools/freebasic-exos/prepara-fb64.sh" >&2; exit 1; }
 
 rm -rf "$T"; mkdir -p "$T"
-cp -a build-64/iso/exos/. "$T/"
+cp -a ${EXOS_FUORI}/build-64/iso/exos/. "$T/"
 mkdir -p "$T/include/freebasic" "$T/lib/freebasic/exos-x86_64"
 cp "$FB/fbc" "$T/bin/fbc"
 cp -a "$ALBERO/inc/." "$T/include/freebasic/"
 cp "$FB/libfb.a" "$FB/fbrt0.o" "$T/lib/freebasic/exos-x86_64/"
 cp "$FB/fbextra.x" "$T/lib/freebasic/exos-x86_64/" 2>/dev/null || true
 cp tools/freebasic-exos/prova64.bas "$T/prova64.bas"
-cp build-64/iso/prova-gcc.c "$T/prova-gcc.c"
+cp ${EXOS_FUORI}/build-64/iso/prova-gcc.c "$T/prova-gcc.c"
 
 IMG="$D/fb64-hd.img"
 rm -f "$IMG"

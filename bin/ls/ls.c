@@ -74,7 +74,7 @@
 #include "libc.h"
 
 /* +0.001 a ogni modifica: `ls -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("ls", "0.003");
+EX_VERSIONE("ls", "0.004");
 
 /* Il blocco per chiamata e' LISTDIR_MAX_BATCH e non un numero scelto qui:
  * il kernel non ne consegna di piu' comunque, e chiederne 32 per poi
@@ -315,6 +315,9 @@ static void permessi(char *out, unsigned short modo, int e_dir)
     out[0] = e_dir ? 'd' : '-';
     for (i = 0; i < 9; i++)
         out[i + 1] = (modo & (1u << (8 - i))) ? R[i] : '-';
+    /* the sticky bit as Linux writes it: t over x, T without x (/tmp is
+     * drwxrwxrwt; up to ls 0.003 it looked like an ordinary 0777) */
+    if (modo & 01000u) out[9] = (modo & 1u) ? 't' : 'T';
     out[10] = '\0';
 }
 
@@ -641,7 +644,13 @@ static int elenca(const char *bersaglio, int titolo)
             return 0;
         }
 
-        printf("ls: impossibile leggere '%s'\n", bersaglio);
+        /* (0.004) the reason: since kernel 0.355 a folder that exists can be
+         * closed to whoever asks (/root 0700), and "impossibile leggere"
+         * sounded like a broken disk */
+        if ((stat(bersaglio, &st) == 0 && S_ISDIR(st.st_mode)) || errno == EACCES)
+            printf("ls: '%s': permesso negato\n", bersaglio);
+        else
+            printf("ls: impossibile leggere '%s'\n", bersaglio);
         return 1;
     }
 

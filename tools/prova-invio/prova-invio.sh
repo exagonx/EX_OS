@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova-invio/prova-invio.sh - TCP sending from EX-OS to EX-OS over a
 # line with a real delay (ip.drv 0.024: the send queue that grows and the
@@ -30,12 +32,12 @@ RADICE="$PWD"
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
 if [ "${1:-64}" = 32 ]; then
     T=i386-exos; ARCH=""; CD="$RADICE/dist/exos.iso"; QEMU=qemu-system-i386; CPU=""
-    export PATH="$RADICE/cross_build/$MACCHINA/exos-cross/bin:$PATH"
+    export PATH="${EXOS_FUORI}/cross_build/$MACCHINA/exos-cross/bin:$PATH"
 else
     T=x86_64-exos; ARCH=x86_64; CD="$RADICE/dist/exos64.iso"; QEMU=qemu-system-x86_64; CPU="-cpu qemu64"
-    export PATH="$RADICE/cross_build/$MACCHINA/exos-cross64/bin:$PATH"
+    export PATH="${EXOS_FUORI}/cross_build/$MACCHINA/exos-cross64/bin:$PATH"
 fi
-D="$RADICE/cross_build/$MACCHINA/costruzione-prova-invio-$T"
+D="${EXOS_FUORI}/cross_build/$MACCHINA/costruzione-prova-invio-$T"
 BYTE="${BYTE:-2097152}"
 mkdir -p "$D" /tmp/exos
 $T-gcc -O2 -o "$D/prova-invio" tools/prova-invio/prova-invio.c || exit 1

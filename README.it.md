@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.354
+**Versione:** 0.355
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -120,14 +120,14 @@ Dentro EX-OS gli stessi manuali sono in `/doc/manuali` (dal CD:
 
 ## Ultime novità
 
+- [Utenti separati davvero: una cartella chiusa e' chiusa, /tmp ha il bit sticky (kernel 0.355, voce 111)](manuali/novita.it.md#utenti-separati-davvero-una-cartella-chiusa-e-chiusa-tmp-ha-il-bit-sticky-kernel-0355-voce-111--testato-in-qemu) — *testato in QEMU*
+- [I cloni dei sorgenti di terzi restano su MEGA e li rimettono a posto gli script (tools/ripara-cloni.sh)](manuali/novita.it.md#i-cloni-dei-sorgenti-di-terzi-restano-su-mega-e-li-rimettono-a-posto-gli-script-toolsripara-clonish--testato-su-questo-pc) — *testato su questo PC*
+- [Cio' che la costruzione produce sta fuori dall'albero dei sorgenti, in ~/ex_os (tools/fuori.sh)](manuali/novita.it.md#cio-che-la-costruzione-produce-sta-fuori-dallalbero-dei-sorgenti-in-ex_os-toolsfuorish--testato-su-questo-pc) — *testato su questo PC*
+- [Firefox su /lib/ld-exos.so: AAC e H.264 suonano di nuovo (voce 105)](manuali/novita.it.md#firefox-su-libld-exosso-aac-e-h264-suonano-di-nuovo-voce-105--testato-in-qemu) — *testato in QEMU*
 - [Due fili non ricevono piu' lo stesso descrittore, SQLite non dice piu' disk I/O error (kernel 0.354)](manuali/novita.it.md#due-fili-non-ricevono-piu-lo-stesso-descrittore-sqlite-non-dice-piu-disk-io-error-kernel-0354--testato-in-qemu) — *testato in QEMU*
 - [Impostazioni > Applicazioni: il programma di ogni tipo di file e di indirizzo (pm 0.029, exwin 0.023, voce 109)](manuali/novita.it.md#impostazioni--applicazioni-il-programma-di-ogni-tipo-di-file-e-di-indirizzo-pm-0029-exwin-0023-voce-109--testato-in-qemu) — *testato in QEMU*
 - [VLC suona il video dentro la sua finestra: le finestre figlie in ExWin (wserver 0.016, voce 105 passo 5)](manuali/novita.it.md#vlc-suona-il-video-dentro-la-sua-finestra-le-finestre-figlie-in-exwin-wserver-0016-voce-105-passo-5--testato-in-qemu) — *testato in QEMU*
 - [Una riga di comando fino a 32 KB, alla console e da telnet (kernel 0.353, sh 0.014, kbd.drv)](manuali/novita.it.md#una-riga-di-comando-fino-a-32-kb-alla-console-e-da-telnet-kernel-0353-sh-0014-kbddrv--testato-in-qemu-e-sul-pc-di-prova) — *testato in QEMU e sul PC di prova*
-- [netupdate 0.051 e 0.052: avvio e sistema si guardano sempre](manuali/novita.it.md#netupdate-0051-e-0052-avvio-e-sistema-si-guardano-sempre--testato-in-qemu-e-sul-pc-di-prova) — *testato in QEMU e sul PC di prova*
-- [Kernel 0.352: a 64 bit le chiamate di sistema girano con gli interrupt accesi](manuali/novita.it.md#kernel-0352-a-64-bit-le-chiamate-di-sistema-girano-con-gli-interrupt-accesi--testato-in-qemu-e-sul-pc-di-prova) — *testato in QEMU e sul PC di prova*
-- [exide compila anche a 64 bit (exide 0.027)](manuali/novita.it.md#exide-compila-anche-a-64-bit-exide-0027--testato-in-qemu-e-sul-pc-di-prova) — *testato in QEMU e sul PC di prova*
-- [VLC come su Linux: libvlc.so, libvlccore.so e ogni modulo una .so aperta con dlopen (voce 105, passo 4)](manuali/novita.it.md#vlc-come-su-linux-libvlcso-libvlccoreso-e-ogni-modulo-una-so-aperta-con-dlopen-voce-105-passo-4--testato-in-qemu-e-sul-pc-di-prova) — *testato in QEMU e sul PC di prova*
 
 Tutte le altre, dalla più recente: [Novità](manuali/novita.it.md).
 

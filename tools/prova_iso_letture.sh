@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_iso_letture.sh - files of an ISO 9660 CD read in pieces
 # (analisi_kernel voce 75)
@@ -21,7 +23,7 @@ D="${1:-/tmp/exos-prove/isol-$ARCH}"
 rm -rf "$D"; mkdir -p "$D/albero" "$D/cd/a/b/c/d/e"
 IMG="$D/hd.img"
 SBIN=/usr/sbin
-X=cross_build/nasi5deb
+X=${EXOS_FUORI}/cross_build/nasi5deb
 KVM=""; [ -w /dev/kvm ] && KVM="-enable-kvm"
 
 if [ "$ARCH" = x86_64 ]; then

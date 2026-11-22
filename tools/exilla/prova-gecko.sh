@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/exilla/prova-gecko.sh &#x2014; Gecko senza finestre dentro EX-OS (tappa 6)
 #
@@ -26,12 +28,12 @@
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-B="$PWD/cross_build/$MACCHINA"
-O="$PWD/cross_build/exilla-obj/gecko"
+B="${EXOS_FUORI}/cross_build/$MACCHINA"
+O="${EXOS_FUORI}/cross_build/exilla-obj/gecko"
 D="$B/costruzione-prova"
 SUFF=""
 if [ "$EXOS_ARCH" = x86_64 ]; then
-    O="$PWD/cross_build/exilla-obj/gecko64"
+    O="${EXOS_FUORI}/cross_build/exilla-obj/gecko64"
     D="$B/costruzione-prova64"
     SUFF=64
 fi
@@ -57,7 +59,7 @@ cp exwin/font/*.ttf "$S/font/"
 # they are there: the page has a line in Chinese, Japanese and Korean, which
 # without them comes out as boxes. FONT_CJK=no leaves them out (a disk 93 MB
 # smaller, and the boxes).
-CJK=cross_build/terze-parti/noto-cjk/scelti
+CJK=${EXOS_FUORI}/cross_build/terze-parti/noto-cjk/scelti
 if [ "${FONT_CJK:-si}" != no ] && [ -d "$CJK" ]; then
     cp "$CJK"/*.ttc "$S/font/"
     cp tools/font-cjk/exos-cjk.js "$S/firefox/defaults/pref/"

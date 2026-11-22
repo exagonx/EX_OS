@@ -83,7 +83,7 @@
 #include "exuser.h"
 
 /* +0.001 a ogni modifica: `login -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("login", "0.005");
+EX_VERSIONE("login", "0.006");
 
 #define UTENTI     "/boot/utenti"    /* nome:uid:gid — pubblico */
 #define OMBRA      "/boot/ombra"     /* nome:sale:impronta — di root */
@@ -292,7 +292,12 @@ static void avvia_shell(const char *utente, unsigned int uid, unsigned int gid)
         if (uid == 0) snprintf(casa, sizeof(casa), "/root");
         else          snprintf(casa, sizeof(casa), "/home/%s", utente);
 
-        if (mkdir(casa, 0755) == 0) {
+        /* ! 0700 (voce 111, the user 22/11): a home is closed to the other
+         * users, as on Linux; with 0755 anybody listed it and read every
+         * 0644 file inside. An existing home keeps the mode it has: its
+         * owner may have opened it on purpose (netupdate's check says so). */
+        if (mkdir(casa, 0700) == 0) {
+            chmod(casa, 0700);
             if (uid != 0 && chown(casa, uid, gid) != 0 && errno != ENOSYS)
                 printf("login: %s creata ma non consegnata (%s)\n",
                        casa, strerror(errno));
@@ -306,7 +311,7 @@ static void avvia_shell(const char *utente, unsigned int uid, unsigned int gid)
      * diventarlo — quindi il permesso si CONTROLLA invece di provarlo: una
      * casa che l'utente non puo' attraversare e' una casa da riparare, e dirlo
      * qui e' meglio di una shell che parte in una directory in cui non puo'
-     * leggere. La crea `login` stesso qui sopra con 0755 e la consegna, quindi
+     * leggere. La crea `login` stesso qui sopra con 0700 e la consegna, quindi
      * il caso normale passa; ci si arriva se qualcuno le ha cambiato modo o
      * padrone. */
     if (g_casa[0]) {

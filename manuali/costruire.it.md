@@ -103,6 +103,16 @@ documentazione in `/doc`.
 > quello che serve a quel bersaglio, e il Makefile lo chiama da solo
 > all'inizio dei bersagli grandi.
 >
+> **Ciò che la costruzione produce sta fuori dall'albero dei sorgenti**, in
+> `~/ex_os` (la home di chi costruisce; `EXOS_FUORI` la sposta): `cross_build`,
+> `build`, `build-64`, `dischi` e `stress/risultati` stanno lì, usati
+> direttamente dal Makefile e dagli script con `$EXOS_FUORI` (`tools/fuori.sh`),
+> senza collegamenti. La cartella dei sorgenti tiene
+> i sorgenti, le ISO finite e `dist/netinst`, `dist/netinst_64`, e i cloni git
+> dei sorgenti di terzi (mesa, mariadb-server, httpd...): MEGA li tiene, ma
+> senza collegamenti e modi, a volte senza `.git`. `tools/ripara-cloni.sh`
+> rimette cio' che manca da `tools/cloni.txt`, senza toccare il lavoro.
+>
 > Il cross-compilatore `i686-elf` descritto qui sotto è quello dei primi
 > mesi: il Makefile di oggi non lo usa più.
 

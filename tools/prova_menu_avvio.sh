@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_menu_avvio.sh - the Start menu in groups (voce 80, pm 0.028)
 #
@@ -31,7 +33,7 @@ cd "$(dirname "$0")/.." || exit 1
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
 SUFF=""; CD="$PWD/dist/exos.iso"
 if [ "$EXOS_ARCH" = x86_64 ]; then SUFF=64; CD="$PWD/dist/exos64.iso"; export EXOS_QEMU=qemu-system-x86_64; fi
-D="$PWD/cross_build/$MACCHINA/prova-menu-avvio$SUFF"
+D="${EXOS_FUORI}/cross_build/$MACCHINA/prova-menu-avvio$SUFF"
 # ! THE PHOTOGRAPHS GO THROUGH /tmp/exos: the project's path has the user's
 # «@», which qemu_drive.py would take for the wait («cmd@seconds»).
 T=/tmp/exos/menu-avvio$SUFF

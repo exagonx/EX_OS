@@ -1,4 +1,6 @@
 #!/bin/sh
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/librerie-exos/su-cd.sh — the third-party libraries on the tools CD
 #
@@ -39,8 +41,8 @@ BIT="$2"
 cd "$(dirname "$0")/../.." || exit 1
 . tools/mancanti.sh
 case "$BIT" in
-    64) STRIP=cross_build/nasi5deb/exos-cross64/bin/x86_64-exos-strip ;;
-    32) STRIP=cross_build/nasi5deb/exos-cross/bin/i386-exos-strip ;;
+    64) STRIP=${EXOS_FUORI}/cross_build/nasi5deb/exos-cross64/bin/x86_64-exos-strip ;;
+    32) STRIP=${EXOS_FUORI}/cross_build/nasi5deb/exos-cross/bin/i386-exos-strip ;;
     *) echo "uso: $0 <albero> 32|64" >&2; exit 2 ;;
 esac
 [ -n "$CD" ] || exit 2
@@ -55,22 +57,23 @@ fatte=""
 # VLC tests copied them by hand, so nobody saw it.
 for NOME in zlib bzip2 xz lz4 zstd pcre2 fmt libpng freetype harfbuzz openssl mariadb-connector-c mariadb-connector-cpp mariadb \
         expat apr apr-util httpd php valkey nano ogg vorbis opus flac libvpx dav1d ffmpeg vlc mesa; do
-    N=cross_build/$NOME-exos$BIT/exos
+    N=${EXOS_FUORI}/cross_build/$NOME-exos$BIT/exos
     if [ ! -d "$N/src/$NOME" ]; then
         manca "$NOME a $BIT bit" "tools/$NOME-exos/costruisci.sh $BIT"
         continue
     fi
     mkdir -p "$E/lib" "$E/include" "$E/src"
     if [ -d "$N/lib" ]; then
-        # cp -rp: a library's own subdirectories too (lib/rust/mariadb)
-        cp -rp "$N/lib/." "$E/lib/"
+        # cp -rp: a library's own subdirectories too (lib/rust/mariadb);
+        # --remove-destination: an old link is replaced, not written through
+        cp -rp --remove-destination "$N/lib/." "$E/lib/"
     fi
     if [ -d "$N/include" ]; then
-        cp -rp "$N/include/." "$E/include/"
+        cp -rp --remove-destination "$N/include/." "$E/include/"
         # the 32-bit gcc's own include directory; FreeBASIC's .bi stay out
         if [ -d "$E/i386-exos/include" ]; then
             for x in "$N"/include/*; do
-                [ "$(basename "$x")" = freebasic ] || cp -rp "$x" "$E/i386-exos/include/"
+                [ "$(basename "$x")" = freebasic ] || cp -rp --remove-destination "$x" "$E/i386-exos/include/"
             done
         fi
     fi
@@ -102,7 +105,7 @@ for NOME in zlib bzip2 xz lz4 zstd pcre2 fmt libpng freetype harfbuzz openssl ma
     fatte="$fatte $NOME"
 done
 # Qt 5: /exos/qt5 (its prefix), the sources in exos/src/qt5
-Q=cross_build/qt5-exos$BIT/exos
+Q=${EXOS_FUORI}/cross_build/qt5-exos$BIT/exos
 if [ -f "$Q/qt5/lib/libQt5Core.so.5" ] && [ -d "$Q/src/qt5" ]; then
     rm -rf "$E/qt5" "$E/src/qt5"
     mkdir -p "$E/src"
@@ -117,8 +120,8 @@ fi
 # VLC from the desktop (voce 79): the launcher the menu entry starts, and the
 # icons (tools/vlc-exos/icone, from VLC's own share/icons/256x256/vlc.png).
 # Group [vlc] of the catalogue: solo = bin/vlcapri, solo = share/vlc.
-if [ -x cross_build/vlc-exos$BIT/exos/bin/vlc ]; then
-    if [ "$BIT" = 64 ]; then L=build-64/exwin/bin/vlcapri; else L=build/vlcapri/vlcapri; fi
+if [ -x ${EXOS_FUORI}/cross_build/vlc-exos$BIT/exos/bin/vlc ]; then
+    if [ "$BIT" = 64 ]; then L=${EXOS_FUORI}/build-64/exwin/bin/vlcapri; else L=${EXOS_FUORI}/build/vlcapri/vlcapri; fi
     if [ -f "$L" ]; then
         "$STRIP" -o "$E/bin/vlcapri" "$L" 2> /dev/null || cp -p "$L" "$E/bin/vlcapri"
         chmod 755 "$E/bin/vlcapri"

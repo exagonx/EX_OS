@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/exilla/esegui-in-exos.sh — un programma EX-OS, eseguito in QEMU
 #
@@ -33,8 +35,8 @@ cd "$(dirname "$0")/../.." || exit 1
 BIN="$1"; shift
 [ -f "$BIN" ] || { echo "uso: $0 <binario> [argomenti]" >&2; exit 2; }
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-D="$PWD/cross_build/$MACCHINA/costruzione-prova"
-CD="${CD_FORZATO:-$PWD/cross_build/$MACCHINA/costruzione-sistema/albero/dist/exos.iso}"
+D="${EXOS_FUORI}/cross_build/$MACCHINA/costruzione-prova"
+CD="${CD_FORZATO:-${EXOS_FUORI}/cross_build/$MACCHINA/costruzione-sistema/albero/dist/exos.iso}"
 [ -f "$CD" ] || CD="$PWD/dist/exos.iso"
 CPU=""
 if [ "$EXOS_ARCH" = x86_64 ]; then

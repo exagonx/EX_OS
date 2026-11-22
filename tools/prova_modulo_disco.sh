@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_modulo_disco.sh — /dev/ext4.mod on an INSTALLED disk, and
 # netupdate 0.031 bringing it back (kernel 0.263-0.264, 32 bit, QEMU)
@@ -104,7 +106,7 @@ if disco "$B" cd "$D/b-install.log"; then
         && si "install non ha copiato /rdboot sul disco" \
         || no "/rdboot e' finito sul disco"
     $SBIN/debugfs -R "dump /dev/ext4.mod $D/b-ext4.mod" "$D/b-p1.img" > /dev/null 2>&1
-    cmp -s "$D/b-ext4.mod" build/iso-exos/dev/ext4.mod \
+    cmp -s "$D/b-ext4.mod" ${EXOS_FUORI}/build/iso-exos/dev/ext4.mod \
         && si "/dev/ext4.mod e' tornato, uguale a quello pubblicato" \
         || no "/dev/ext4.mod non e' tornato (vedi $D/b.log)"
     $SBIN/debugfs -R "stat /bin/uname" "$D/b-p1.img" 2>&1 | grep -q "not found\|File not found" \
@@ -121,7 +123,7 @@ fi
 # and a register saying it was the new one.
 vecchio() {   # puts a module for kernel 0.280 on the disk $B
     partizione "$B" "$D/c-p1.img"
-    cp build/iso-exos/dev/ext4.mod "$D/c-ext4.mod"
+    cp ${EXOS_FUORI}/build/iso-exos/dev/ext4.mod "$D/c-ext4.mod"
     python3 tools/modulo-invecchia.py "$D/c-ext4.mod" 0.280
     printf 'rm /dev/ext4.mod\nwrite %s /dev/ext4.mod\n' "$D/c-ext4.mod" \
         | $SBIN/debugfs -w -f - "$D/c-p1.img" > "$D/c-debugfs.log" 2>&1
@@ -139,7 +141,7 @@ giro_c() {    # $1 = name, $2.. = commands before the update
         || no "$n: radice in sola lettura (vedi $D/c-$n.log)"
     partizione "$B" "$D/c-p1.img"
     $SBIN/debugfs -R "dump /dev/ext4.mod $D/c-dopo.mod" "$D/c-p1.img" > /dev/null 2>&1
-    cmp -s "$D/c-dopo.mod" build/iso-exos/dev/ext4.mod \
+    cmp -s "$D/c-dopo.mod" ${EXOS_FUORI}/build/iso-exos/dev/ext4.mod \
         && si "$n: netupdate ha sostituito il modulo" \
         || no "$n: il modulo vecchio e' rimasto (vedi $D/c-$n.log)"
 }
@@ -150,7 +152,7 @@ if [ -f "$B" ]; then
     giro_c "registro-bugiardo"     # the register now says the right hash
     # hwconfig writes the block of nv50.drv (hwconfig 0.009)
     partizione "$B" "$D/c-p1.img"
-    printf 'write build/drivers-cd/nv50.drv /dev/nv50.drv\n' \
+    printf "write ${EXOS_FUORI}/build/drivers-cd/nv50.drv /dev/nv50.drv\n" \
         | $SBIN/debugfs -w -f - "$D/c-p1.img" >> "$D/c-debugfs.log" 2>&1
     dd if="$D/c-p1.img" of="$B" bs=512 seek=2048 conv=notrunc status=none
     EXOS_ISTANZA=mdc timeout 300 python3 tools/qemu_drive.py "${L[@]}" \

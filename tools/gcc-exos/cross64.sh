@@ -1,4 +1,6 @@
 #!/bin/sh
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/gcc-exos/cross64.sh — the x86_64-exos cross toolchain (@EXOS-64)
 #
@@ -55,16 +57,19 @@
 set -e
 cd "$(dirname "$0")/../.." || exit 1
 ROOT=$(pwd)
+# cross_build is a link to <home>/ex_os/cross_build: made here too, the
+# toolchain is the first thing a new machine builds
+sh tools/fuori.sh > /dev/null
 
-TC64="${TC64:-$ROOT/cross_build/exos-cross64}"
+TC64="${TC64:-${EXOS_FUORI}/cross_build/exos-cross64}"
 TARGET=x86_64-exos
-BINUTILS_SRC="${BINUTILS_SRC:-$ROOT/cross_build/exos-native/binutils-2.44}"
+BINUTILS_SRC="${BINUTILS_SRC:-${EXOS_FUORI}/cross_build/exos-native/binutils-2.44}"
 GCC_SRC="${GCC_SRC:-$ROOT/gcc}"
 JOBS="${JOBS:-3}"            # 4 cores here: one is left to the machine
 
 STEPS="${*:-binutils sysroot gcc libm cxx specs gcclibs nbinutils ngcc nmake nnasm}"
-NATIVE="$ROOT/cross_build/exos-native64"
-SRC="$ROOT/cross_build/exos-native"      # third-party sources, shared with 32 bit
+NATIVE="${EXOS_FUORI}/cross_build/exos-native64"
+SRC="${EXOS_FUORI}/cross_build/exos-native"      # third-party sources, shared with 32 bit
 S="$TC64/$TARGET"
 PATH="$TC64/bin:$PATH"
 export PATH
@@ -79,13 +84,13 @@ binutils)
     say "binutils for $TARGET"
     [ -d "$BINUTILS_SRC" ] || fail "no binutils sources in $BINUTILS_SRC"
     python3 tools/binutils-exos/applica.py "$BINUTILS_SRC" | tail -1
-    mkdir -p cross_build/binutils-build-64
-    (cd cross_build/binutils-build-64 &&
+    mkdir -p ${EXOS_FUORI}/cross_build/binutils-build-64
+    (cd ${EXOS_FUORI}/cross_build/binutils-build-64 &&
      "$BINUTILS_SRC/configure" --target=$TARGET --prefix="$TC64" \
          --disable-nls --disable-werror --disable-gdb --disable-gprofng \
          --disable-sim --disable-libdecnumber --disable-readline > configure.log 2>&1 &&
      make -j"$JOBS" > make.log 2>&1 &&
-     make install > install.log 2>&1) || fail "binutils (logs in cross_build/binutils-build-64)"
+     make install > install.log 2>&1) || fail "binutils (logs in ${EXOS_FUORI}/cross_build/binutils-build-64)"
     for t in as ld ar ranlib nm objcopy objdump strip; do
         [ -x "$TC64/bin/$TARGET-$t" ] || fail "binutils: $TARGET-$t was not installed"
     done
@@ -103,8 +108,8 @@ sysroot)
     CFLAGS64="-m64 -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie \
               -Wall -O2 -std=c11 -ffunction-sections -fdata-sections -DEXOS_LIBC_PORTATI"
     gcc -m64 -c lib/start.S -o "$S/lib/crt0.o"
-    gcc $CFLAGS64 -Ilib/include -c lib/libc.c -o "$S/lib/libc.o" 2> cross_build/sysroot64.log ||
-        fail "the libc does not compile at 64 bit (cross_build/sysroot64.log)"
+    gcc $CFLAGS64 -Ilib/include -c lib/libc.c -o "$S/lib/libc.o" 2> ${EXOS_FUORI}/cross_build/sysroot64.log ||
+        fail "the libc does not compile at 64 bit (${EXOS_FUORI}/cross_build/sysroot64.log)"
     rm -f "$S/lib/libc.a"
     ar rcs "$S/lib/libc.a" "$S/lib/libc.o"
     rm -f "$S/lib/libc.o"
@@ -125,8 +130,8 @@ gcc)
     grep -q 'x86_64-\*-exos\*' "$GCC_SRC/gcc/config.gcc" || fail "the GCC tree does not carry x86_64-exos"
     [ -x "$TC64/bin/$TARGET-as" ] || fail "binutils first (step binutils)"
     [ -f "$TC64/$TARGET/lib/libc.a" ] || fail "sysroot first (step sysroot)"
-    mkdir -p cross_build/gcc-build-64
-    (cd cross_build/gcc-build-64 &&
+    mkdir -p ${EXOS_FUORI}/cross_build/gcc-build-64
+    (cd ${EXOS_FUORI}/cross_build/gcc-build-64 &&
      "$GCC_SRC/configure" --target=$TARGET --prefix="$TC64" \
          --enable-languages=c --without-headers --with-newlib \
          --disable-nls --disable-shared --disable-threads --disable-multilib \
@@ -136,8 +141,8 @@ gcc)
      make -j"$JOBS" all-gcc > make-gcc.log 2>&1 &&
      make -j"$JOBS" all-target-libgcc > make-libgcc.log 2>&1 &&
      make install-gcc install-target-libgcc > install.log 2>&1) ||
-        fail "gcc (logs in cross_build/gcc-build-64)"
-    [ -x cross_build/gcc-build-64/gcc/cc1 ] || fail "gcc: cc1 is missing even if make said yes"
+        fail "gcc (logs in ${EXOS_FUORI}/cross_build/gcc-build-64)"
+    [ -x ${EXOS_FUORI}/cross_build/gcc-build-64/gcc/cc1 ] || fail "gcc: cc1 is missing even if make said yes"
     [ -x "$TC64/bin/$TARGET-gcc" ] || fail "gcc: $TARGET-gcc was not installed"
     ls "$TC64"/lib/gcc/$TARGET/*/libgcc.a > /dev/null 2>&1 || fail "gcc: libgcc.a was not installed"
     echo "[OK] $("$TC64/bin/$TARGET-gcc" --version | head -1)"
@@ -148,19 +153,19 @@ libm)
     # the same sources is not disturbed.
     say "libm (openlibm) for $TARGET"
     [ -x "$TC64/bin/$TARGET-gcc" ] || fail "gcc first"
-    rm -rf cross_build/openlibm-build-64
-    cp -a "$(ls -d "$SRC"/openlibm-*/ | head -1)" cross_build/openlibm-build-64
-    (cd cross_build/openlibm-build-64 && make clean > /dev/null 2>&1;
+    rm -rf ${EXOS_FUORI}/cross_build/openlibm-build-64
+    cp -a "$(ls -d "$SRC"/openlibm-*/ | head -1)" ${EXOS_FUORI}/cross_build/openlibm-build-64
+    (cd ${EXOS_FUORI}/cross_build/openlibm-build-64 && make clean > /dev/null 2>&1;
      make ARCH=x86_64 OS=Linux USEGCC=1 CC="$TARGET-gcc" AR=$TARGET-ar RANLIB=$TARGET-ranlib \
-          libopenlibm.a > build.log 2>&1) || fail "openlibm (cross_build/openlibm-build-64/build.log)"
-    cp cross_build/openlibm-build-64/libopenlibm.a "$S/lib/libm.a"
-    $TARGET-gcc -O2 -c tools/openlibm-exos/nearbyintl-exos.c -o cross_build/openlibm-build-64/nearbyintl-exos.o &&
-        $TARGET-ar rcs "$S/lib/libm.a" cross_build/openlibm-build-64/nearbyintl-exos.o || fail "nearbyintl"
+          libopenlibm.a > build.log 2>&1) || fail "openlibm (${EXOS_FUORI}/cross_build/openlibm-build-64/build.log)"
+    cp ${EXOS_FUORI}/cross_build/openlibm-build-64/libopenlibm.a "$S/lib/libm.a"
+    $TARGET-gcc -O2 -c tools/openlibm-exos/nearbyintl-exos.c -o ${EXOS_FUORI}/cross_build/openlibm-build-64/nearbyintl-exos.o &&
+        $TARGET-ar rcs "$S/lib/libm.a" ${EXOS_FUORI}/cross_build/openlibm-build-64/nearbyintl-exos.o || fail "nearbyintl"
     # the six <fenv.h> functions openlibm's amd64 header keeps static inline
     # (tools/openlibm-exos/fenv-amd64-exos.c; Exilla wanted fegetround)
-    $TARGET-gcc -O2 -I cross_build/openlibm-build-64/include -I cross_build/openlibm-build-64/src \
-        -c tools/openlibm-exos/fenv-amd64-exos.c -o cross_build/openlibm-build-64/fenv-amd64-exos.o &&
-        $TARGET-ar rcs "$S/lib/libm.a" cross_build/openlibm-build-64/fenv-amd64-exos.o || fail "fenv"
+    $TARGET-gcc -O2 -I ${EXOS_FUORI}/cross_build/openlibm-build-64/include -I ${EXOS_FUORI}/cross_build/openlibm-build-64/src \
+        -c tools/openlibm-exos/fenv-amd64-exos.c -o ${EXOS_FUORI}/cross_build/openlibm-build-64/fenv-amd64-exos.o &&
+        $TARGET-ar rcs "$S/lib/libm.a" ${EXOS_FUORI}/cross_build/openlibm-build-64/fenv-amd64-exos.o || fail "fenv"
     for f in sin cos exp log pow atan2 floor fmod hypot nearbyintl fegetround fesetround; do
         $TARGET-nm --defined-only "$S/lib/libm.a" | grep -qE " [TW] $f\$" || fail "libm.a lacks $f"
     done
@@ -170,7 +175,7 @@ libm)
 cxx)
     say "GCC (C, C++) and libstdc++ for $TARGET"
     [ -f "$S/lib/libm.a" ] || fail "libm first"
-    (cd cross_build/gcc-build-64 &&
+    (cd ${EXOS_FUORI}/cross_build/gcc-build-64 &&
      "$GCC_SRC/configure" --target=$TARGET --prefix="$TC64" \
          --enable-languages=c,c++ --without-headers --with-newlib \
          --disable-nls --disable-shared --disable-threads --disable-multilib \
@@ -180,7 +185,7 @@ cxx)
      make -j"$JOBS" all-gcc > make-cxx.log 2>&1 &&
      make -j"$JOBS" all-target-libgcc all-target-libstdc++-v3 > make-libstdcxx.log 2>&1 &&
      make install-gcc install-target-libgcc install-target-libstdc++-v3 > install-cxx.log 2>&1) ||
-        fail "c++ (logs in cross_build/gcc-build-64)"
+        fail "c++ (logs in ${EXOS_FUORI}/cross_build/gcc-build-64)"
     [ -x "$TC64/bin/$TARGET-g++" ] || fail "$TARGET-g++ was not installed"
     [ -f "$S/lib/libstdc++.a" ] || fail "libstdc++.a was not installed"
     echo "[OK] $("$TC64/bin/$TARGET-g++" --version | head -1), libstdc++.a"

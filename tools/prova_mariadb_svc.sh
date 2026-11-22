@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_mariadb_svc.sh — the MariaDB service on an installed EX-OS
 #
@@ -29,8 +31,8 @@ mkdir -p "$D"
 IMG="$D/hd-mariadb.img"
 OFF="$IMG?offset=1048576"
 SBIN=/usr/sbin
-N=cross_build/mariadb-exos32/exos
-STRIP=cross_build/nasi5deb/exos-cross/bin/i386-exos-strip
+N=${EXOS_FUORI}/cross_build/mariadb-exos32/exos
+STRIP=${EXOS_FUORI}/cross_build/nasi5deb/exos-cross/bin/i386-exos-strip
 
 [ -f dist/exos.iso ] || { echo "manca dist/exos.iso: make iso-exos" >&2; exit 1; }
 [ -x "$N/mariadb/bin/mariadbd" ] || { echo "manca $N: tools/mariadb-exos/costruisci.sh 32" >&2; exit 1; }
@@ -44,7 +46,7 @@ export EXOS_RAM=1024M
 # --- 1. the installed disk ---------------------------------------------------
 if [ ! -f "$IMG" ]; then
     echo "=== 1. disco installato dal CD ($IMG), qualche minuto ==="
-    sed "s|^IMG=dischi/hd.img|IMG=$IMG|; s|^MB=\"\${1:-512}\"|MB=\"\${1:-1024}\"|; \
+    sed "s|^IMG=${EXOS_FUORI}/dischi/hd.img|IMG=$IMG|; s|^MB=\"\${1:-512}\"|MB=\"\${1:-1024}\"|; \
          s|/tmp/exos-mkhd.log|$D/mkhd.log|g; \
          s|^EXOS_QEMU_EXTRA=\"-drive file=\$IMG,format=raw,if=ide\"|EXOS_QEMU_EXTRA=\"-drive file=\$IMG,format=raw,if=ide -nic none\"|" \
         tools/mkhd.sh > "$D/mkhd.sh"
@@ -74,7 +76,7 @@ while [ -n "$nomi" ]; do
     for l in $nomi; do
         case $l in ld-exos.so|libm.so.4|libstdc++.so.6|libgcc_s.so.1) continue ;; esac
         [ -f "$T/lib/$l" ] && continue
-        f=$(ls cross_build/*-exos32/exos/lib/"$l" 2>/dev/null | head -1)
+        f=$(ls ${EXOS_FUORI}/cross_build/*-exos32/exos/lib/"$l" 2>/dev/null | head -1)
         [ -n "$f" ] || { echo "manca $l (a 32 bit)"; exit 1; }
         cp -L "$f" "$T/lib/"
         nuovi="$nuovi $(readelf -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')"

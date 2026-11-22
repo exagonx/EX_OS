@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/mkrdboot.sh — the base system as one archive: rdboot.img
 #
@@ -41,9 +43,9 @@
 cd "$(dirname "$0")/.." || exit 1
 ARCH="${1:-i386}"
 if [ "$ARCH" = x86_64 ]; then
-    B=build-64; OUT="${2:-build-64/rdboot.img}"
+    B=${EXOS_FUORI}/build-64; OUT="${2:-${EXOS_FUORI}/build-64/rdboot.img}"
 else
-    B=build; OUT="${2:-build/rdboot.img}"
+    B=${EXOS_FUORI}/build; OUT="${2:-${EXOS_FUORI}/build/rdboot.img}"
 fi
 MB=4
 
@@ -55,7 +57,7 @@ DRIVER="kbd pci svga mouseser uhci ohci ehci xhci"
 # build-64/bin ha anche quelli del CD: si prendono gli stessi nomi del 32.
 programmi() {
     local p
-    for p in build/bin/*; do
+    for p in ${EXOS_FUORI}/build/bin/*; do
         case "$(basename "$p")" in *.o|*.d|*.a|*.so) continue ;; esac
         [ "$(head -c 4 "$p" | od -An -c | tr -d ' ')" = '177ELF' ] || continue
         case " whoami chown poweroff reboot halt " in *" $(basename "$p") "*) continue ;; esac

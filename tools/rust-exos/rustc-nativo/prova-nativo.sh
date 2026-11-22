@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/rust-exos/rustc-nativo/prova-nativo.sh — rustc running INSIDE EX-OS
 #
@@ -23,20 +25,20 @@ set -e
 cd "$(dirname "$0")/../../.."
 RADICE="$PWD"
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-B="$RADICE/cross_build/$MACCHINA/rustc-build"
+B="${EXOS_FUORI}/cross_build/$MACCHINA/rustc-build"
 RUSTC="$B/x86_64-unknown-exos/stage2/bin/rustc"
 STAMP="$B/x86_64-unknown-linux-gnu/stage1-std/x86_64-unknown-exos/dist/.libstd-stamp"
-D="$RADICE/cross_build/$MACCHINA/costruzione-prova-rustc-nativo"
+D="${EXOS_FUORI}/cross_build/$MACCHINA/costruzione-prova-rustc-nativo"
 T="$D/albero"
 
 [ -x "$RUSTC" ] || { echo "manca $RUSTC: costruisci-exos.sh" >&2; exit 1; }
 [ -f "$STAMP" ] || { echo "manca la std per EX-OS ($STAMP)" >&2; exit 1; }
-[ -d build-64/iso/exos/bin ] || { echo "manca build-64/iso/exos: make tools64" >&2; exit 1; }
+[ -d ${EXOS_FUORI}/build-64/iso/exos/bin ] || { echo "manca ${EXOS_FUORI}/build-64/iso/exos: make tools64" >&2; exit 1; }
 
 rm -rf "$T"; mkdir -p "$T"
-cp -a build-64/iso/exos/. "$T/"
+cp -a ${EXOS_FUORI}/build-64/iso/exos/. "$T/"
 cp "$RUSTC" "$T/bin/rustc"
-"$RADICE/cross_build/exos-cross64/bin/x86_64-exos-strip" "$T/bin/rustc"
+"${EXOS_FUORI}/cross_build/exos-cross64/bin/x86_64-exos-strip" "$T/bin/rustc"
 L="$T/lib/rustlib/x86_64-unknown-exos/lib"
 mkdir -p "$L"
 # the stamp: NUL-separated paths, each with a one-letter kind in front

@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/rust-exos/prova-rete.sh — @SOCKET-BSD: std::net di Rust dentro EX-OS
 #
@@ -12,7 +14,7 @@
 cd "$(dirname "$0")/../.." || exit 1
 tools/rust-exos/prova-std.sh --solo-compila > /dev/null || { tools/rust-exos/prova-std.sh --solo-compila; exit 1; }
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-B="$PWD/cross_build/$MACCHINA"
+B="${EXOS_FUORI}/cross_build/$MACCHINA"
 CARGO="${CARGO:-$(command -v cargo || echo "$HOME/.cargo/bin/cargo")}"
 export RUSTUP_HOME="$B/rust-macchina/rustup" CARGO_HOME="$B/rust-macchina/cargo"
 export CARGO_TARGET_DIR="$B/costruzione-rust"

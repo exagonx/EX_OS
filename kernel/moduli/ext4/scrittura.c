@@ -1543,7 +1543,13 @@ int ext2_chown(int mnt, const char *percorso, uint32_t uid, uint32_t gid)
 
 /* Cambia i nove bit di permesso, lasciando intatti i quattro alti che dicono
  * il TIPO: sovrascrivere i_mode per intero trasformerebbe una directory in un
- * file agli occhi di chiunque la legga dopo. */
+ * file agli occhi di chiunque la legga dopo.
+ *
+ * ! AND THE STICKY BIT (01000) TOO, since ext4.mod 0.007 (voce 111): with
+ * only 0777 install's chmod 01777 on /tmp came out 0777 - a /tmp where any
+ * user deleted the others' files. setuid and setgid (06000) stay out on
+ * purpose: exec does not honour them, and a bit written but not obeyed
+ * would make `ls` lie. */
 int ext2_chmod(int mnt, const char *percorso, uint32_t modo)
 {
     Ext2Mount *m = prendi_scrivibile(mnt);
@@ -1556,7 +1562,7 @@ int ext2_chmod(int mnt, const char *percorso, uint32_t modo)
     if (ino == 0) return -1;
 
     vecchio = le16(inode + 0);
-    p16(inode + 0, (vecchio & ~0777u) | (modo & 0777u));
+    p16(inode + 0, (vecchio & ~07777u) | (modo & 01777u));
 
     if (scrivi_inode(m, ino, inode) != 0) return -1;
     return super_aggiorna(m);

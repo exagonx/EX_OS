@@ -900,6 +900,22 @@ sistema: `system -unload`, `chkdsk -r`, `system -load` - oppure
 l'avvio, prima di montarla.
 
 [problemi guasti]
+"PERMESSO NEGATO" DAL KERNEL 0.355 IN UNA CARTELLA DOVE PRIMA SI ENTRAVA:
+  ora conta la x di OGNI cartella del percorso, la r per elencarne una e
+  la x per entrarci con cd, come su Linux. Fino alla 0.354 il kernel
+  guardava solo il file finale, e un utente leggeva dentro /root/privata
+  0700. Se una cartella va condivisa, il padrone la apre: chmod 755 <cartella>
+  (o 711: si attraversa ma non si elenca). /root e' 0700: i file che un
+  utente deve leggere non stanno li'.
+IN /tmp NON SI CANCELLA IL FILE DI UN ALTRO ("operazione non permessa"):
+  e' il bit sticky (/tmp drwxrwxrwt, dal kernel 0.355 e ext4.mod 0.007),
+  ognuno toglie solo i suoi. root puo'.
+#include <ncurses.h> A 64 BIT: "file o directory inesistente", o ncurses.h
+  vuoto, con curses.h a posto: il repository a 64 bit fino al 22/11/2026
+  portava ncurses.h come collegamento a curses.h, e un server che non
+  segue i collegamenti lo da' vuoto o non lo da'. E' lo stesso file:
+      cp /exos/include/curses.h /exos/include/ncurses.h
+  oppure netupdate, quando il repository nuovo e' pubblicato.
 SYSTEM -LOAD A 64 BIT SI FERMA DOPO "Riaccendo:" e la macchina non
   risponde piu': e' il kernel a 64 bit fino alla 0.351, dove ogni chiamata
   di sistema girava con gli interrupt spenti e l'attesa del lettore CD

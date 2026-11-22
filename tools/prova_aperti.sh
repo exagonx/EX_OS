@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_aperti.sh — an open file follows the file, not its name, in QEMU
 #
@@ -15,7 +17,7 @@ D="${1:-/tmp/exos-prove/aperti-$ARCH}"
 rm -rf "$D"; mkdir -p "$D"
 IMG="$D/hd.img"
 SBIN=/usr/sbin
-X=cross_build/nasi5deb
+X=${EXOS_FUORI}/cross_build/nasi5deb
 P1_SETT=131072; P2_SETT=131072                 # 64 MB each
 P1=$((2048 * 512)); P2=$(((2048 + P1_SETT) * 512))
 

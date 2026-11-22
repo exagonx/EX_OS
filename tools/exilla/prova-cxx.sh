@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/exilla/prova-cxx.sh — tools/exilla/prova-cxx.cc, eseguito dentro EX-OS
 #
@@ -16,8 +18,8 @@
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-TCB="$PWD/cross_build/$MACCHINA/exos-cross/bin"
-D="$PWD/cross_build/$MACCHINA/costruzione-prova"
+TCB="${EXOS_FUORI}/cross_build/$MACCHINA/exos-cross/bin"
+D="${EXOS_FUORI}/cross_build/$MACCHINA/costruzione-prova"
 IMG="$D/prova-hd.img"
 OFF="$IMG?offset=1048576"
 mkdir -p "$D"

@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_nomi.sh - names, sizes and files in pieces on ext2, ext4 and FAT
 # (kernel 0.333, analisi_kernel voci 56 and 75)
@@ -20,7 +22,7 @@ D="${1:-/tmp/exos-prove/nomi-$ARCH}"
 rm -rf "$D"; mkdir -p "$D/albero"
 IMG="$D/hd.img"
 SBIN=/usr/sbin
-X=cross_build/nasi5deb
+X=${EXOS_FUORI}/cross_build/nasi5deb
 S1=131072; S2=131072; S3=262144                 # sectors: 64, 64, 128 MB
 O1=2048; O2=$((O1 + S1)); O3=$((O2 + S2))
 

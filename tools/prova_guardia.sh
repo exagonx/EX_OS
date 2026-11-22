@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_guardia.sh - the countdown of /bin/guardia (kernel 0.299)
 #
@@ -42,8 +44,8 @@ prova() {   # nome  programma  qemu  [variabili del CD]
     fi
 }
 
-EXOS_QEMU=qemu-system-i386 prova 32 build/bin-cd/guardia
+EXOS_QEMU=qemu-system-i386 prova 32 ${EXOS_FUORI}/build/bin-cd/guardia
 export EXOS_QEMU=qemu-system-x86_64 EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos64.iso
-prova 64 build-64/bin/guardia
+prova 64 ${EXOS_FUORI}/build-64/bin/guardia
 [ "$esito" = 0 ] && echo "TUTTO A POSTO" || echo "QUALCOSA NON VA"
 exit $esito

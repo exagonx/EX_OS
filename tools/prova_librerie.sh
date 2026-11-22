@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_librerie.sh — zlib, bzip2, xz, lz4, zstd, PCRE2, {fmt} in EX-OS
 #
@@ -21,7 +23,7 @@ rm -rf "$D"; mkdir -p "$D"
 IMG="$D/hd.img"
 OFF="$IMG?offset=1048576"
 SBIN=/usr/sbin
-X=cross_build/nasi5deb
+X=${EXOS_FUORI}/cross_build/nasi5deb
 if [ "$ARCH" = x86_64 ]; then
     ISO=dist/exos64.iso; GXX=$X/exos-cross64/bin/x86_64-exos-g++; BIT=64
     export EXOS_QEMU=qemu-system-x86_64 EXOS_RAM=512M EXTRA="-cpu qemu64"
@@ -35,7 +37,7 @@ mkdir -p "$T/bin"
 $GXX -O2 -s tools/prove/libreprova.cpp -o "$T/libreprova" -lfmt -lpcre2-posix -lpcre2-8 \
     -lzstd -llz4 -llzma -lbz2 -lz || { echo "  (mancano librerie: tools/<lib>-exos/costruisci.sh)"; exit 1; }
 for p in xz/xz zstd/zstd bzip2/bzip2 lz4/lz4; do
-    cp "cross_build/${p%/*}-exos$BIT/exos/bin/${p#*/}" "$T/bin/" || exit 1
+    cp "${EXOS_FUORI}/cross_build/${p%/*}-exos$BIT/exos/bin/${p#*/}" "$T/bin/" || exit 1
 done
 # ! the libraries are shared since 3 November 2026 and the EX-OS CD has none
 # of them (on a system they are in /exos/lib): the ones named by DT_NEEDED,
@@ -48,7 +50,7 @@ while [ -n "$nomi" ]; do
         [ -f "$T/lib/$l" ] && continue
         # the shared libc is the system's, in /lib of the CD (voce 105)
         [ "$l" = ld-exos.so ] && continue
-        f=$(ls cross_build/*-exos$BIT/exos/lib/"$l" 2>/dev/null | head -1)
+        f=$(ls ${EXOS_FUORI}/cross_build/*-exos$BIT/exos/lib/"$l" 2>/dev/null | head -1)
         [ -n "$f" ] || { echo "manca $l (a $BIT bit)" >&2; exit 1; }
         cp "$f" "$T/lib/"
         nuovi="$nuovi $(readelf -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')"
@@ -58,10 +60,10 @@ done
 # the Linux side needs the lz4 program too: if this machine has none, one is
 # built for it from the same archive
 if ! command -v lz4 > /dev/null; then
-    H=cross_build/costruzione-lz4/host
+    H=${EXOS_FUORI}/cross_build/costruzione-lz4/host
     if [ ! -x "$H/lz4" ]; then
         rm -rf "$H"; mkdir -p "$H"
-        tar -xzf cross_build/terze-parti/lz4/lz4-1.10.0.tar.gz -C "$H"
+        tar -xzf ${EXOS_FUORI}/cross_build/terze-parti/lz4/lz4-1.10.0.tar.gz -C "$H"
         make -C "$H"/lz4-1.10.0/programs -j3 lz4 > "$H/costruisci.log" 2>&1 \
             && cp "$H"/lz4-1.10.0/programs/lz4 "$H/lz4" || { echo "  lz4 per Linux non si costruisce"; exit 1; }
     fi

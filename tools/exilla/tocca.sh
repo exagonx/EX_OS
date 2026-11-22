@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/exilla/tocca.sh — prima di cambiare un file di firefox-main, se ne
 # tiene l'originale (@EXILLA-PATCH, 30 settembre 2026)
@@ -14,7 +16,7 @@
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-ORIG="cross_build/$MACCHINA/firefox-originali"
+ORIG="${EXOS_FUORI}/cross_build/$MACCHINA/firefox-originali"
 for f in "$@"; do
     f="${f#./}"
     case "$f" in firefox-main/*) ;; *) echo "tocca: $f non e' in firefox-main/" >&2; exit 1 ;; esac

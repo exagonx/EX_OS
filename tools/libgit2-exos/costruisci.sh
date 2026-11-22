@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/libgit2-exos/costruisci.sh — libgit2 for 64-bit EX-OS
 #
@@ -31,7 +33,7 @@
 set -e
 cd "$(dirname "$0")/../.." || exit 1
 R=$PWD
-TC=$R/cross_build
+TC=${EXOS_FUORI}/cross_build
 VEND=$TC/terze-parti/rust-src/rustc-nightly-src/vendor/libgit2-sys-0.18.7+1.9.6/libgit2
 SRC=$TC/terze-parti/libgit2-1.9.6
 B=$TC/libgit2-build-exos64

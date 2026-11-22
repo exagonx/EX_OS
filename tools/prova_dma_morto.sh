@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_dma_morto.sh — a card outliving its driver writes nowhere (voce 63)
 #
@@ -13,7 +15,7 @@ cd "$(dirname "$0")/.." || exit 1
 ARCH="${EXOS_ARCH:-i386}"
 D="${1:-/tmp/exos-prove/dma-$ARCH}"
 SBIN=/usr/sbin; [ -x /sbin/mke2fs ] && SBIN=/sbin
-X=cross_build
+X=${EXOS_FUORI}/cross_build
 rm -rf "$D"; mkdir -p "$D/albero"
 if [ "$ARCH" = x86_64 ]; then
     ISO=${EXOS_ISO:-dist/exos64.iso}; GCC=$X/exos-cross64/bin/x86_64-exos-gcc

@@ -1,4 +1,6 @@
 #!/bin/sh
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/mkiso64.sh — il CD avviabile di EX-OS a 64 bit (@EXOS-64)
 #
@@ -25,37 +27,37 @@ cd "$(dirname "$0")/.."
 
 QUALE="${1:-intero}"
 case "$QUALE" in
-    intero) KERNEL=build-64/kernel-intero.bin; ISO=dist/exos64.iso;       ETICHETTA="EXOS64" ;;
-    prove)  KERNEL=build-64/kernel.bin;        ISO=dist/exos64-prove.iso; ETICHETTA="EXOS64 PROVE" ;;
+    intero) KERNEL=${EXOS_FUORI}/build-64/kernel-intero.bin; ISO=dist/exos64.iso;       ETICHETTA="EXOS64" ;;
+    prove)  KERNEL=${EXOS_FUORI}/build-64/kernel.bin;        ISO=dist/exos64-prove.iso; ETICHETTA="EXOS64 PROVE" ;;
     *) echo "uso: $0 [intero|prove]" >&2; exit 2 ;;
 esac
 # Stage 2 del CD: quello assemblato apposta da `make iso64` (senza volume in
 # RAM), non quello di build/, che dipende da cio' che si e' costruito per ultimo.
-STAGE2=build-64/avvio/stage2-cd.bin
-[ -f "$STAGE2" ] || STAGE2=build/stage2.bin
-for f in build/stage1.bin "$STAGE2" "$KERNEL"; do
+STAGE2=${EXOS_FUORI}/build-64/avvio/stage2-cd.bin
+[ -f "$STAGE2" ] || STAGE2=${EXOS_FUORI}/build/stage2.bin
+for f in ${EXOS_FUORI}/build/stage1.bin "$STAGE2" "$KERNEL"; do
     [ -f "$f" ] || { echo "mkiso64: manca $f" >&2; exit 1; }
 done
 
 # --- l'immagine di avvio (interna) ---------------------------------------------
-mkdir -p build-64/avvio dist
-AVVIO=build-64/avvio/avvio-$QUALE.img
+mkdir -p ${EXOS_FUORI}/build-64/avvio dist
+AVVIO=${EXOS_FUORI}/build-64/avvio/avvio-$QUALE.img
 dd if=/dev/zero of="$AVVIO" bs=512 count=2880 status=none
 mformat -f 1440 -v "EXOS64  " -i "$AVVIO" ::
-dd if=build/stage1.bin of="$AVVIO" bs=512 count=1 conv=notrunc status=none
+dd if=${EXOS_FUORI}/build/stage1.bin of="$AVVIO" bs=512 count=1 conv=notrunc status=none
 mcopy -i "$AVVIO" "$STAGE2" ::/LOADER.BIN
 mcopy -i "$AVVIO" "$KERNEL" ::/KERNEL.BIN
 # Il sistema di base (@RDBOOT): Stage 2 lo porta in RAM anche dal CD, e il
 # kernel lo monta su /rdboot. Solo sul CD intero.
-if [ "$QUALE" = "intero" ] && [ -f build-64/rdboot.lz4 ]; then
-    mcopy -i "$AVVIO" build-64/rdboot.lz4 ::/RDBOOT.LZ4
+if [ "$QUALE" = "intero" ] && [ -f ${EXOS_FUORI}/build-64/rdboot.lz4 ]; then
+    mcopy -i "$AVVIO" ${EXOS_FUORI}/build-64/rdboot.lz4 ::/RDBOOT.LZ4
 fi
 
 # --- il contenuto del CD: la radice che il kernel monta -------------------------
 # ! PER IL SISTEMA L'ALBERO E' build-64/iso-exos, lo stesso nome di quello a
 # 32 bit (build/iso-exos): e' da li' che tools/mknetinst.sh prende cio' che
 # pubblica, e cosi' `make netinst64` non ha un elenco suo da tenere uguale.
-if [ "$QUALE" = "intero" ]; then RADICE=build-64/iso-exos; else RADICE=build-64/iso-prove; fi
+if [ "$QUALE" = "intero" ]; then RADICE=${EXOS_FUORI}/build-64/iso-exos; else RADICE=${EXOS_FUORI}/build-64/iso-prove; fi
 rm -rf "$RADICE"
 mkdir -p "$RADICE/doc"
 printf 'EX-OS a 64 bit - %s\r\nNon e'"'"' ancora un sistema: vedi @EXOS-64 in in_lavorazione.txt\r\n' \
@@ -73,97 +75,97 @@ if [ "$QUALE" = "intero" ]; then
     # tenere uguale: un file di dati nuovo sul CD a 32 bit arriva qui da solo.
     # I programmi a 32 bit restano fuori: qui girerebbero solo per dire che
     # non sono di questa macchina.
-    if [ -d build/iso-exos ]; then
-        (cd build/iso-exos && find . -type f ! -name KERNEL.BIN ! -name LOADER.BIN) | while read -r f; do
-            if [ "$(head -c 4 "build/iso-exos/$f" | od -An -tx1 | tr -d ' \n')" != "7f454c46" ]; then
+    if [ -d ${EXOS_FUORI}/build/iso-exos ]; then
+        (cd ${EXOS_FUORI}/build/iso-exos && find . -type f ! -name KERNEL.BIN ! -name LOADER.BIN) | while read -r f; do
+            if [ "$(head -c 4 "${EXOS_FUORI}/build/iso-exos/$f" | od -An -tx1 | tr -d ' \n')" != "7f454c46" ]; then
                 mkdir -p "$RADICE/$(dirname "$f")"
-                cp "build/iso-exos/$f" "$RADICE/$f"
+                cp "${EXOS_FUORI}/build/iso-exos/$f" "$RADICE/$f"
             fi
         done
         # ! E LE DIRECTORY VUOTE: il ciclo qui sopra copia file, e /USB e'
         # vuota per forza (automount ci monta le chiavette, e da CD non la
         # puo' creare). Senza questa riga a 64 bit automount usciva subito.
-        (cd build/iso-exos && find . -mindepth 1 -type d -empty) | while read -r d; do
+        (cd ${EXOS_FUORI}/build/iso-exos && find . -mindepth 1 -type d -empty) | while read -r d; do
             mkdir -p "$RADICE/$d"
         done
     else
-        echo "mkiso64: manca build/iso-exos (make iso-exos): il CD avra' solo i programmi" >&2
+        echo "mkiso64: manca ${EXOS_FUORI}/build/iso-exos (make iso-exos): il CD avra' solo i programmi" >&2
     fi
     mkdir -p "$RADICE/bin" "$RADICE/dev" "$RADICE/drivers"
-    if [ -f build-64/rdboot.lz4 ]; then
+    if [ -f ${EXOS_FUORI}/build-64/rdboot.lz4 ]; then
         mkdir -p "$RADICE/boot"
-        cp build-64/rdboot.lz4 "$RADICE/boot/rdboot.lz4"
+        cp ${EXOS_FUORI}/build-64/rdboot.lz4 "$RADICE/boot/rdboot.lz4"
         # il minimale a 64 bit e' il sistema di base a 64 bit
         { printf 'kernel.bin\nloader.bin\nrdboot.lz4\nboot/kernel.cfg\nboot/kernel.txt\n'
-          cat build-64/rdboot.lista; } | sort -u > "$RADICE/boot/minimale.txt"
+          cat ${EXOS_FUORI}/build-64/rdboot.lista; } | sort -u > "$RADICE/boot/minimale.txt"
     fi
     # i comandi a 64 bit (tools/costruisci-utente64.sh), shell compresa
-    if [ -d build-64/bin ] && [ -f build-64/bin/sh ]; then
-        cp build-64/bin/* "$RADICE/bin/"
+    if [ -d ${EXOS_FUORI}/build-64/bin ] && [ -f ${EXOS_FUORI}/build-64/bin/sh ]; then
+        cp ${EXOS_FUORI}/build-64/bin/* "$RADICE/bin/"
         # one program for mount and umount, by argv[0] (as the 32-bit CD,
         # Makefile iso-exos): without this copy the 64-bit system had no
         # umount, and a volume was never unmounted cleanly
-        [ -f build-64/bin/mount ] && cp build-64/bin/mount "$RADICE/bin/umount"
+        [ -f ${EXOS_FUORI}/build-64/bin/mount ] && cp ${EXOS_FUORI}/build-64/bin/mount "$RADICE/bin/umount"
     fi
     # la scrivania: i programmi di ExWin e il server grafico (che si costruisce
     # come un driver ma sta con loro, come sul CD a 32 bit)
-    if [ -d build-64/exwin/bin ]; then
+    if [ -d ${EXOS_FUORI}/build-64/exwin/bin ]; then
         mkdir -p "$RADICE/exwin/bin"
-        cp build-64/exwin/bin/* "$RADICE/exwin/bin/" 2>/dev/null || true
+        cp ${EXOS_FUORI}/build-64/exwin/bin/* "$RADICE/exwin/bin/" 2>/dev/null || true
         # ! THE LAUNCHERS OF THE PACKAGES ARE NOT THE SYSTEM'S (voce 79):
         # costruisci-utente64.sh builds every exwin/bin/*, but exilla belongs
         # to the exilla package (/exwin/app/exilla) and vlcapri to vlc
         # (/exos/bin). On the 32-bit CD the Makefile builds them aside.
         rm -f "$RADICE/exwin/bin/exilla" "$RADICE/exwin/bin/vlcapri"
-        [ -f build-64/drivers/wserver.drv ] && cp build-64/drivers/wserver.drv "$RADICE/exwin/bin/wserver"
+        [ -f ${EXOS_FUORI}/build-64/drivers/wserver.drv ] && cp ${EXOS_FUORI}/build-64/drivers/wserver.drv "$RADICE/exwin/bin/wserver"
     fi
     # /lib/ld-exos.so (voce 105): the shared libc and the interpreter that
     # the kernel (0.350) starts for every program linked without -static
-    bash tools/costruisci-ld.sh 64 build-64/ld > /dev/null || exit 1
+    bash tools/costruisci-ld.sh 64 ${EXOS_FUORI}/build-64/ld > /dev/null || exit 1
     mkdir -p "$RADICE/lib"
-    cp build-64/ld/ld-exos.so "$RADICE/lib/"
+    cp ${EXOS_FUORI}/build-64/ld/ld-exos.so "$RADICE/lib/"
     # libm.so.4 (openlibm, 3 November 2026): programs linked to shared
     # objects and the libraries they load take their math from it
     # (lib/libc_dl.c). Only the file DT_NEEDED names: no symbolic links here.
-    if [ -f cross_build/libm-exos64/exos/lib/libm.so.4 ]; then
+    if [ -f ${EXOS_FUORI}/cross_build/libm-exos64/exos/lib/libm.so.4 ]; then
         mkdir -p "$RADICE/lib"
-        cp cross_build/libm-exos64/exos/lib/libm.so.4 "$RADICE/lib/"
+        cp ${EXOS_FUORI}/cross_build/libm-exos64/exos/lib/libm.so.4 "$RADICE/lib/"
     fi
     # libstdc++.so.6 and libgcc_s.so.1 (4 November 2026, voce 85): the C++
     # runtime of programs and libraries that are not -static (Qt), from
     # tools/librerie-exos/cxx-condivise.sh. In /lib like libm: a C++ program
     # rebuilt with the threaded toolchain asks for them at start.
     for f in libstdc++.so.6 libgcc_s.so.1; do
-        if [ -f cross_build/cxx-exos64/exos/lib/$f ]; then
+        if [ -f ${EXOS_FUORI}/cross_build/cxx-exos64/exos/lib/$f ]; then
             mkdir -p "$RADICE/lib"
-            cp cross_build/cxx-exos64/exos/lib/$f "$RADICE/lib/"
+            cp ${EXOS_FUORI}/cross_build/cxx-exos64/exos/lib/$f "$RADICE/lib/"
         fi
     done
     # the shared objects (exjs.so, quickjs.so): ELF libraries for dlopen
-    if ls build-64/exwin/lib/*.so > /dev/null 2>&1; then
+    if ls ${EXOS_FUORI}/build-64/exwin/lib/*.so > /dev/null 2>&1; then
         mkdir -p "$RADICE/exwin/lib"
-        cp build-64/exwin/lib/*.so "$RADICE/exwin/lib/"
+        cp ${EXOS_FUORI}/build-64/exwin/lib/*.so "$RADICE/exwin/lib/"
     fi
     # i driver: in /dev (da dove kernel.cfg e i comandi li caricano) e in
     # /drivers (da dove `install` li copia), come sul CD a 32 bit
-    if [ -d build-64/drivers ]; then
-        cp build-64/drivers/*.drv "$RADICE/dev/" 2>/dev/null || true
-        cp build-64/drivers/*.drv "$RADICE/drivers/" 2>/dev/null || true
+    if [ -d ${EXOS_FUORI}/build-64/drivers ]; then
+        cp ${EXOS_FUORI}/build-64/drivers/*.drv "$RADICE/dev/" 2>/dev/null || true
+        cp ${EXOS_FUORI}/build-64/drivers/*.drv "$RADICE/drivers/" 2>/dev/null || true
     fi
     # il modulo che scrive ext2/3/4 (kernel 0.263): in /dev, dove il kernel
     # lo cerca all'avvio e da dove `install` lo copia insieme al kernel
-    [ -f build-64/moduli/ext4.mod ] && cp build-64/moduli/ext4.mod "$RADICE/dev/"
+    [ -f ${EXOS_FUORI}/build-64/moduli/ext4.mod ] && cp ${EXOS_FUORI}/build-64/moduli/ext4.mod "$RADICE/dev/"
     # il primo programma a 64 bit resta, col suo nome: e' una prova che non
     # dipende dalla libc. Se la shell non c'e' ancora, fa lui da /bin/sh.
-    if [ -f build-64/prove/primo ]; then
-        cp build-64/prove/primo "$RADICE/bin/primo64"
-        [ -f "$RADICE/bin/sh" ] || cp build-64/prove/primo "$RADICE/bin/sh"
+    if [ -f ${EXOS_FUORI}/build-64/prove/primo ]; then
+        cp ${EXOS_FUORI}/build-64/prove/primo "$RADICE/bin/primo64"
+        [ -f "$RADICE/bin/sh" ] || cp ${EXOS_FUORI}/build-64/prove/primo "$RADICE/bin/sh"
     fi
     # (Fino al 10 ottobre 2026 qui si lasciava build-64/NON-ANCORA-UN-SISTEMA.txt,
     # che fermava exagonx/repo-update.sh -64 prima di pubblicare. Tolto quando
     # il sistema a 64 bit si e' avviato sul PC vero e l'utente ha chiesto il
     # repository: senza, netupdate non ha da dove prendere il resto.)
-    rm -f build-64/NON-ANCORA-UN-SISTEMA.txt
+    rm -f ${EXOS_FUORI}/build-64/NON-ANCORA-UN-SISTEMA.txt
 fi
 
 python3 tools/mkiso.py "$ISO" --da "$RADICE" --avvio "$AVVIO" --etichetta "$ETICHETTA" > /dev/null

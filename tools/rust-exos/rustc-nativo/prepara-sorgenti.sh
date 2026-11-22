@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/rust-exos/rustc-nativo/prepara-sorgenti.sh — rustc's sources with EX-OS
 #
@@ -21,7 +23,7 @@
 set -e
 cd "$(dirname "$0")/../../.."
 RADICE="$PWD"
-T="${RUSTC_SORGENTI:-$RADICE/cross_build/terze-parti/rust-src/rustc-nightly-src}"
+T="${RUSTC_SORGENTI:-${EXOS_FUORI}/cross_build/terze-parti/rust-src/rustc-nightly-src}"
 # ! ONLY THE TARBALL TRAVELS (MEGA, .megaignore): the tree is 4.5 GB in
 # 357,000 files and comes back from rustc-nightly-src.tar.xz, the nightly's
 # own (static.rust-lang.org/dist/2026-10-15/, sha256 next to it).
@@ -43,8 +45,8 @@ python3 tools/rust-exos/std/aggiungi-exos.py "$T"
 # <tree>/libc, and x.py builds the std with --frozen - "cannot update the
 # lock file" (16 October 2026). Updated here, offline, from vendor/.
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-export RUSTUP_HOME="${RUSTUP_HOME:-$RADICE/cross_build/$MACCHINA/rust-macchina/rustup}"
-export CARGO_HOME="${CARGO_HOME:-$RADICE/cross_build/$MACCHINA/rust-macchina/cargo}"
+export RUSTUP_HOME="${RUSTUP_HOME:-${EXOS_FUORI}/cross_build/$MACCHINA/rust-macchina/rustup}"
+export CARGO_HOME="${CARGO_HOME:-${EXOS_FUORI}/cross_build/$MACCHINA/rust-macchina/cargo}"
 (cd "$T/library" && RUSTC_BOOTSTRAP=1 "$HOME/.cargo/bin/cargo" +nightly update -p "libc@$VER" --offline \
     --config 'source.crates-io.replace-with="vendored-sources"' \
     --config 'source.vendored-sources.directory="../vendor"' > /dev/null 2>&1) ||

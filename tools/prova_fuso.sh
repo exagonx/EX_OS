@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_fuso.sh - the time zone (kernel 0.340): time() in UTC
 #
@@ -22,7 +24,7 @@ D="${1:-/tmp/exos-prove/fuso-$ARCH}"
 rm -rf "$D"; mkdir -p "$D/albero"
 IMG="$D/hd.img"
 SBIN=/usr/sbin
-X=cross_build/nasi5deb
+X=${EXOS_FUORI}/cross_build/nasi5deb
 KVM=""; [ -w /dev/kvm ] && KVM="-enable-kvm"
 S1=65536; S2=131072; O1=2048; O2=$((O1 + S1))   # sectors: 32 and 64 MB
 

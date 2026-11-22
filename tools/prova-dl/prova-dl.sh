@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova-dl/prova-dl.sh — the ELF loader (lib/libc_dl.c) inside EX-OS
 #
@@ -16,12 +18,12 @@ RADICE="$PWD"
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
 if [ "$EXOS_ARCH" = i386 ]; then
     T=i386-exos; ARCH=""
-    export PATH="$RADICE/cross_build/$MACCHINA/exos-cross/bin:$RADICE/cross_build/exos-cross/bin:$PATH"
+    export PATH="${EXOS_FUORI}/cross_build/$MACCHINA/exos-cross/bin:${EXOS_FUORI}/cross_build/exos-cross/bin:$PATH"
 else
     T=x86_64-exos; ARCH=x86_64
-    export PATH="$RADICE/cross_build/exos-cross64/bin:$PATH"
+    export PATH="${EXOS_FUORI}/cross_build/exos-cross64/bin:$PATH"
 fi
-D="$RADICE/cross_build/$MACCHINA/costruzione-prova-dl-$T"
+D="${EXOS_FUORI}/cross_build/$MACCHINA/costruzione-prova-dl-$T"
 mkdir -p "$D"
 set -e
 $T-gcc -O2 -fPIC -shared -Wl,-soname,libdue.so -o "$D/libdue.so" tools/prova-dl/libdue.c

@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/exilla/gecko-costruisci.sh — Gecko per EX-OS (tappa 6 di Exilla)
 #
@@ -20,7 +22,7 @@ fi
 # Node.js serve al browser per costruire (non gira dentro EX-OS): sta in
 # cross_build/<macchina>/costruzione-strumenti/node, scaricato da nodejs.org.
 export MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-export NODEJS="$PWD/cross_build/$MACCHINA/costruzione-strumenti/node/bin/node"
+export NODEJS="${EXOS_FUORI}/cross_build/$MACCHINA/costruzione-strumenti/node/bin/node"
 [ -x "$NODEJS" ] || { echo "manca $NODEJS (Node 22 linux-x64 da nodejs.org)" >&2; exit 1; }
 # bindgen legge gli header di Gecko con la libclang dell'HOST: gli si danno gli
 # header di EX-OS (libstdc++ e libc della toolchain di questa macchina) al posto
@@ -30,10 +32,10 @@ export NODEJS="$PWD/cross_build/$MACCHINA/costruzione-strumenti/node/bin/node"
 # stdint.h) devono venire prima e passare ai nostri con #include_next. Il
 # nostro limits.h da solo non ha CHAR_BIT: se lo aspetta dal compilatore.
 if [ "$EXOS_ARCH" = x86_64 ]; then
-    T=x86_64-exos; I="$PWD/cross_build/$MACCHINA/exos-cross64/$T/include"
-    [ -d "$I" ] || I="$PWD/cross_build/exos-cross64/$T/include"
+    T=x86_64-exos; I="${EXOS_FUORI}/cross_build/$MACCHINA/exos-cross64/$T/include"
+    [ -d "$I" ] || I="${EXOS_FUORI}/cross_build/exos-cross64/$T/include"
 else
-    T=i386-exos;   I="$PWD/cross_build/$MACCHINA/exos-cross/$T/include"
+    T=i386-exos;   I="${EXOS_FUORI}/cross_build/$MACCHINA/exos-cross/$T/include"
 fi
 V=$(ls "$I/c++" | head -1)
 export BINDGEN_CFLAGS="-nostdlibinc -isystem $I/c++/$V -isystem $I/c++/$V/$T -idirafter $I -D__exos__ -D__EXOS__ -D__ELF__ -D__unix__=1 -D__unix=1 -DEXOS_SOLO_POSIX"

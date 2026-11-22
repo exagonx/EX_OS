@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/mksonda.sh
 # EX-OS — Extensible Operating System
@@ -34,9 +36,9 @@ set -e
 # stessa immagine con un altro nome. Serve a tenere separati i dischetti di
 # prova di una macchina dalla sonda di sempre, senza due script che divergono.
 IMG="${1:-dist/sonda.img}"
-BOOT_SECTOR="build/stage1.bin"
-LOADER="build/stage2.bin"
-KERNEL="build/kernel.bin"
+BOOT_SECTOR="${EXOS_FUORI}/build/stage1.bin"
+LOADER="${EXOS_FUORI}/build/stage2.bin"
+KERNEL="${EXOS_FUORI}/build/kernel.bin"
 
 FLOPPY_SECTORS=2880
 
@@ -198,9 +200,9 @@ done
 # ! sonda.drv sta in build/drivers-cd, non in build/drivers, e non e' un
 # capriccio: mkfloppy.sh copia sul floppy normale tutto quel che trova nella
 # seconda, e li' non ci sta. Vedi il commento accanto a SONDA_OUT nel Makefile.
-SONDA_DRV="build/drivers-cd/sonda.drv"
+SONDA_DRV="${EXOS_FUORI}/build/drivers-cd/sonda.drv"
 
-for f in "$BOOT_SECTOR" "$LOADER" "$KERNEL" "$SONDA_DRV" build/bin/sh; do
+for f in "$BOOT_SECTOR" "$LOADER" "$KERNEL" "$SONDA_DRV" ${EXOS_FUORI}/build/bin/sh; do
     [ -f "$f" ] || log_err "manca '$f' — compila prima con 'make'"
 done
 
@@ -481,27 +483,27 @@ for p in $PROGRAMMI; do
     # un albero copiato con uno strumento che lo perde lasciava fuori LA SHELL
     # con un avviso giallo in mezzo a trenta righe verdi — un dischetto che si
     # costruisce e non arriva al prompt.
-    if [ -f "build/bin/$p" ]; then
-        mcopy -i "$IMG" "build/bin/$p" "::/bin/$p"
+    if [ -f "${EXOS_FUORI}/build/bin/$p" ]; then
+        mcopy -i "$IMG" "${EXOS_FUORI}/build/bin/$p" "::/bin/$p"
         log_ok "  /bin/$p"
     else
-        log_warn "  build/bin/$p non c'e': saltato"
+        log_warn "  ${EXOS_FUORI}/build/bin/$p non c'e': saltato"
     fi
 done
 
 # umount e' lo stesso binario di mount: guarda argv[0]. Copiarlo due volte
 # costa dodici KB su un dischetto che ne ha settecentomila liberi.
-if [ -f build/bin/mount ]; then
-    mcopy -i "$IMG" build/bin/mount ::/bin/umount
+if [ -f ${EXOS_FUORI}/build/bin/mount ]; then
+    mcopy -i "$IMG" ${EXOS_FUORI}/build/bin/mount ::/bin/umount
     log_ok "  /bin/umount"
 fi
 
 for p in $PROGRAMMI_CD; do
-    if [ -f "build/bin-cd/$p" ]; then
-        mcopy -i "$IMG" "build/bin-cd/$p" "::/bin/$p"
+    if [ -f "${EXOS_FUORI}/build/bin-cd/$p" ]; then
+        mcopy -i "$IMG" "${EXOS_FUORI}/build/bin-cd/$p" "::/bin/$p"
         log_ok "  /bin/$p"
     else
-        log_warn "  build/bin-cd/$p non c'e': saltato"
+        log_warn "  ${EXOS_FUORI}/build/bin-cd/$p non c'e': saltato"
     fi
 done
 
@@ -509,38 +511,38 @@ done
 # rispondeva «non trovo la libreria condivisa /lib/libc.so» e usciva con 1.
 # La sonda no — nei .drv la libc e' dentro — ma un dischetto su cui non si
 # riesce a fare `ls` e' un dischetto su cui non si vede il referto.
-if [ -f build/lib/libc.so ]; then
-    mcopy -i "$IMG" build/lib/libc.so ::/lib/libc.so
+if [ -f ${EXOS_FUORI}/build/lib/libc.so ]; then
+    mcopy -i "$IMG" ${EXOS_FUORI}/build/lib/libc.so ::/lib/libc.so
     log_ok "  /lib/libc.so"
 else
-    log_err "manca build/lib/libc.so — senza, /bin non funziona"
+    log_err "manca ${EXOS_FUORI}/build/lib/libc.so — senza, /bin non funziona"
 fi
 
 # netupdate parla HTTP con exhttp.so, che cerca in /exwin/lib.
 if [ "$INSTALLA" = "1" ]; then
-    [ -f build/exwin/lib/exhttp.so ] || log_err "manca build/exwin/lib/exhttp.so — senza, netupdate non scarica"
+    [ -f ${EXOS_FUORI}/build/exwin/lib/exhttp.so ] || log_err "manca ${EXOS_FUORI}/build/exwin/lib/exhttp.so — senza, netupdate non scarica"
     mmd -i "$IMG" ::/exwin ::/exwin/lib
     # ! /disk NON SI CREA QUI: `mount` vuole farlo lui, e se lo trova dice
     # «il punto di montaggio esiste gia'» e l'installazione si ferma li'.
-    mcopy -i "$IMG" build/exwin/lib/exhttp.so ::/exwin/lib/exhttp.so
+    mcopy -i "$IMG" ${EXOS_FUORI}/build/exwin/lib/exhttp.so ::/exwin/lib/exhttp.so
     log_ok "  /exwin/lib/exhttp.so"
 fi
 
 for d in $DRIVER_CD; do
-    if [ -f "build/drivers-cd/$d" ]; then
-        mcopy -i "$IMG" "build/drivers-cd/$d" "::/dev/$d"
+    if [ -f "${EXOS_FUORI}/build/drivers-cd/$d" ]; then
+        mcopy -i "$IMG" "${EXOS_FUORI}/build/drivers-cd/$d" "::/dev/$d"
         log_ok "  /dev/$d"
     else
-        log_warn "  build/drivers-cd/$d non c'e': saltato"
+        log_warn "  ${EXOS_FUORI}/build/drivers-cd/$d non c'e': saltato"
     fi
 done
 
 for d in $DRIVER; do
-    if [ -f "build/drivers/$d" ]; then
-        mcopy -i "$IMG" "build/drivers/$d" "::/dev/$d"
+    if [ -f "${EXOS_FUORI}/build/drivers/$d" ]; then
+        mcopy -i "$IMG" "${EXOS_FUORI}/build/drivers/$d" "::/dev/$d"
         log_ok "  /dev/$d"
     else
-        log_warn "  build/drivers/$d non c'e': saltato"
+        log_warn "  ${EXOS_FUORI}/build/drivers/$d non c'e': saltato"
     fi
 done
 

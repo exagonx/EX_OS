@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/freebasic-exos/prepara-fb64.sh — FreeBASIC for 64-bit EX-OS (@FB-64)
 #
@@ -27,9 +29,9 @@
 # =============================================================================
 set -e
 RADICE=$(cd "$(dirname "$0")/../.." && pwd)
-ALBERO="$RADICE/cross_build/fb64/albero"
-USCITA="$RADICE/cross_build/fb64/fb-build-exos64"
-PREFISSO="$RADICE/cross_build/exos-cross64"
+ALBERO="${EXOS_FUORI}/cross_build/fb64/albero"
+USCITA="${EXOS_FUORI}/cross_build/fb64/fb-build-exos64"
+PREFISSO="${EXOS_FUORI}/cross_build/exos-cross64"
 export PATH="$PREFISSO/bin:$PATH"
 CC=x86_64-exos-gcc
 FASE="${1:-tutto}"

@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/exilla/prova-media.sh - Firefox plays audio and video inside EX-OS
 #
@@ -20,9 +22,9 @@
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-B="$PWD/cross_build/$MACCHINA"
-O="$PWD/cross_build/exilla-obj/gecko"; D="$B/costruzione-prova"; SUFF=""
-if [ "$EXOS_ARCH" = x86_64 ]; then O="$PWD/cross_build/exilla-obj/gecko64"; D="$B/costruzione-prova64"; SUFF=64; fi
+B="${EXOS_FUORI}/cross_build/$MACCHINA"
+O="${EXOS_FUORI}/cross_build/exilla-obj/gecko"; D="$B/costruzione-prova"; SUFF=""
+if [ "$EXOS_ARCH" = x86_64 ]; then O="${EXOS_FUORI}/cross_build/exilla-obj/gecko64"; D="$B/costruzione-prova64"; SUFF=64; fi
 P="$O/dist/firefox"
 [ -x "$P/firefox" ] || { echo "manca $P/firefox: prima tools/exilla/prova-gecko.sh" >&2; exit 1; }
 S="$D/media-disco"
@@ -36,7 +38,7 @@ for f in $FILE; do cp "firefox-main/dom/media/test/$f" "$S/m/"; done
 BITS=32; [ "$EXOS_ARCH" = x86_64 ] && BITS=64
 mkdir -p "$S/lib"
 for l in ffmpeg libvpx dav1d opus vorbis ogg zlib; do
-    cp cross_build/$l-exos$BITS/exos/lib/lib*.so.[0-9]* "$S/lib/" 2>/dev/null
+    cp ${EXOS_FUORI}/cross_build/$l-exos$BITS/exos/lib/lib*.so.[0-9]* "$S/lib/" 2>/dev/null
 done
 echo "  librerie per Firefox: $(ls "$S/lib" | tr '\n' ' ')"
 cat > "$S/profilo/user.js" <<'EOF'
@@ -94,7 +96,11 @@ if [ "$EXOS_ARCH" = x86_64 ]; then CD="$PWD/dist/exos64.iso"; CPU="-cpu qemu64";
 export EXOS_ISTANZA=media$SUFF EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD" EXOS_RAM="${EXOS_RAM:-2048M}"
 export EXOS_QEMU_EXTRA="$KVM $CPU${QEMU_PIU:+ $QEMU_PIU} -drive file=$IMG,format=raw,if=ide -audiodev wav,id=a0,path=$D/media-uscita.wav -device AC97,audiodev=a0"
 SER=/tmp/exos/serialmedia$SUFF.txt; rm -f "$SER" "$D/media-uscita.wav"
-timeout "${ATTESA:-1500}" python3 tools/qemu_drive.py "mount hd0p1 /disk@5" "echo attendo@25" "audio -i@40" "audio@5" \
+# ! THE BOOT JOBS FIRST (ehci, ohci, sis.drv -2dservizio, date -auto): `audio
+# -i` typed while they were still ending came back to the prompt without a
+# word, twice out of two on 22/11 (32 and 64 bit), and Firefox had no sound
+# card ("Can't get cubeb context"). Voce 97, as exwin there. As prova-lampi.
+timeout "${ATTESA:-1500}" python3 tools/qemu_drive.py "mount hd0p1 /disk@5" "echo attendo la fine dei lavori di avvio@60" "audio -i@40" "audio@5" \
     "export MOZ_FORCE_DISABLE_E10S=1@1" "export MOZ_HEADLESS=1@1" \
     "export HOME=/disk/casa@1" "export LD_LIBRARY_PATH=/disk/lib@1" "export MOZ_LOG=${MOZ_LOG:-}@1" "export LANG=it_IT.UTF-8@1" "export EXILLA_FONTS=/disk/font@1" \
     "/disk/firefox/firefox --headless -no-remote -profile /disk/profilo --window-size 800,600 file:///disk/media.html &@${SECONDI:-600}" \

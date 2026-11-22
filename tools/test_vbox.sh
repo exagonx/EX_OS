@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/test_vbox.sh
 # EX-OS — Extensible Operating System
@@ -214,20 +216,20 @@ cmd_debug() {
     log_step "Avvio QEMU in modalita' debug"
 
     echo -e "${YELLOW}In un altro terminale esegui:${NC}"
-    echo "  i686-elf-gdb build/kernel/kernel.bin"
+    echo "  i686-elf-gdb ${EXOS_FUORI}/build/kernel/kernel.bin"
     echo "  (gdb) target remote :1234"
     echo "  (gdb) break kernel_main"
     echo "  (gdb) continue"
     echo "  (gdb) layout src"
     echo ""
     echo -e "${CYAN}Oppure usa questo one-liner:${NC}"
-    echo "  i686-elf-gdb build/kernel/kernel.bin -ex 'target remote :1234' -ex 'break kernel_main' -ex 'continue'"
+    echo "  i686-elf-gdb ${EXOS_FUORI}/build/kernel/kernel.bin -ex 'target remote :1234' -ex 'break kernel_main' -ex 'continue'"
     echo ""
 
     $QEMU $QEMU_FLAGS \
         -s -S \
         -d int,cpu_reset \
-        -D build/qemu_debug.log \
+        -D ${EXOS_FUORI}/build/qemu_debug.log \
         2>/dev/null || true
 }
 
@@ -326,13 +328,13 @@ VBOXCLI
 cmd_disasm() {
     log_step "Disassembly"
     echo "--- Stage 1 (boot sector) ---"
-    if [ -f "build/stage1.bin" ]; then
-        ndisasm -b 16 -o 0x7C00 build/stage1.bin | head -50
+    if [ -f "${EXOS_FUORI}/build/stage1.bin" ]; then
+        ndisasm -b 16 -o 0x7C00 ${EXOS_FUORI}/build/stage1.bin | head -50
     fi
     echo ""
     echo "--- Kernel (prime 40 istruzioni) ---"
-    if [ -f "build/kernel/kernel_main.o" ]; then
-        i686-elf-objdump -d -M intel build/kernel/kernel_main.o | head -60
+    if [ -f "${EXOS_FUORI}/build/kernel/kernel_main.o" ]; then
+        i686-elf-objdump -d -M intel ${EXOS_FUORI}/build/kernel/kernel_main.o | head -60
     fi
 }
 
@@ -345,21 +347,21 @@ cmd_size() {
     printf "%-25s %10s %10s %10s\n" "Componente" "Testo" "Dati" "BSS"
     echo "  -------------------------------------------------------"
 
-    for obj in build/stage1.bin build/stage2.bin; do
+    for obj in ${EXOS_FUORI}/build/stage1.bin ${EXOS_FUORI}/build/stage2.bin; do
         if [ -f "$obj" ]; then
             SIZE=$(stat -c%s "$obj")
             printf "  %-23s %10s byte\n" "$(basename $obj)" "$SIZE"
         fi
     done
 
-    if [ -f "build/kernel.bin" ]; then
-        i686-elf-size build/kernel.bin 2>/dev/null || \
-            printf "  %-23s %10s byte\n" "kernel.bin" "$(stat -c%s build/kernel.bin)"
+    if [ -f "${EXOS_FUORI}/build/kernel.bin" ]; then
+        i686-elf-size ${EXOS_FUORI}/build/kernel.bin 2>/dev/null || \
+            printf "  %-23s %10s byte\n" "kernel.bin" "$(stat -c%s ${EXOS_FUORI}/build/kernel.bin)"
     fi
 
-    if [ -f "build/bin/sh" ]; then
-        i686-elf-size build/bin/sh 2>/dev/null || \
-            printf "  %-23s %10s byte\n" "bin/sh" "$(stat -c%s build/bin/sh)"
+    if [ -f "${EXOS_FUORI}/build/bin/sh" ]; then
+        i686-elf-size ${EXOS_FUORI}/build/bin/sh 2>/dev/null || \
+            printf "  %-23s %10s byte\n" "bin/sh" "$(stat -c%s ${EXOS_FUORI}/build/bin/sh)"
     fi
 }
 

@@ -17,6 +17,7 @@
 # platform (system 'exos' in meson, src/egl/drivers/exos, the winsys
 # src/gallium/winsys/sw/exos). The patch is made on the clone mesa/ at the
 # project root, branch exos-$VER (tools/aggiorna-sorgenti.sh -clone mesa):
+#     tools/ripara-cloni.sh mesa     (what MEGA took away: links, modes, .git)
 #     cd mesa && git diff > ../tools/mesa-exos/exos-$VER.patch
 #     (and git diff --no-index /dev/null FILE >> ... for the new files)
 #

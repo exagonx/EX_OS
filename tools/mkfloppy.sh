@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/mkfloppy.sh
 # EX-OS — Extensible Operating System
@@ -14,12 +16,12 @@ set -e  # Esci immediatamente su qualsiasi errore
 
 # --- Configurazione -----------------------------------------------------------
 IMG="dist/floppy.img"           # Percorso immagine output
-BOOT_SECTOR="build/stage1.bin"  # Boot sector 512 byte (Stage 1)
-LOADER="build/stage2.bin"       # Stage 2 loader
-KERNEL="build/kernel.bin"       # Kernel binario
+BOOT_SECTOR="${EXOS_FUORI}/build/stage1.bin"  # Boot sector 512 byte (Stage 1)
+LOADER="${EXOS_FUORI}/build/stage2.bin"       # Stage 2 loader
+KERNEL="${EXOS_FUORI}/build/kernel.bin"       # Kernel binario
 KERNEL_CFG="boot/kernel.cfg"    # File di configurazione kernel
 KERNEL_TXT="boot/kernel.txt"    # Spiegazione delle voci del .cfg (non letto dal kernel)
-RDBOOT="build/rdboot.lz4"       # Il sistema di base (tools/mkrdboot.sh), @RDBOOT
+RDBOOT="${EXOS_FUORI}/build/rdboot.lz4"       # Il sistema di base (tools/mkrdboot.sh), @RDBOOT
 
 # Dimensione floppy 1.44MB in byte (512 * 2880 settori)
 FLOPPY_SIZE=1474560

@@ -6,6 +6,10 @@
 
 **Indice**
 
+- [Utenti separati davvero: una cartella chiusa e' chiusa, /tmp ha il bit sticky (kernel 0.355, voce 111) — testato in QEMU](#utenti-separati-davvero-una-cartella-chiusa-e-chiusa-tmp-ha-il-bit-sticky-kernel-0355-voce-111--testato-in-qemu)
+- [I cloni dei sorgenti di terzi restano su MEGA e li rimettono a posto gli script (tools/ripara-cloni.sh) — testato su questo PC](#i-cloni-dei-sorgenti-di-terzi-restano-su-mega-e-li-rimettono-a-posto-gli-script-toolsripara-clonish--testato-su-questo-pc)
+- [Cio' che la costruzione produce sta fuori dall'albero dei sorgenti, in ~/ex_os (tools/fuori.sh) — testato su questo PC](#cio-che-la-costruzione-produce-sta-fuori-dallalbero-dei-sorgenti-in-ex_os-toolsfuorish--testato-su-questo-pc)
+- [Firefox su /lib/ld-exos.so: AAC e H.264 suonano di nuovo (voce 105) — testato in QEMU](#firefox-su-libld-exosso-aac-e-h264-suonano-di-nuovo-voce-105--testato-in-qemu)
 - [Due fili non ricevono piu' lo stesso descrittore, SQLite non dice piu' disk I/O error (kernel 0.354) — testato in QEMU](#due-fili-non-ricevono-piu-lo-stesso-descrittore-sqlite-non-dice-piu-disk-io-error-kernel-0354--testato-in-qemu)
 - [Impostazioni > Applicazioni: il programma di ogni tipo di file e di indirizzo (pm 0.029, exwin 0.023, voce 109) — testato in QEMU](#impostazioni--applicazioni-il-programma-di-ogni-tipo-di-file-e-di-indirizzo-pm-0029-exwin-0023-voce-109--testato-in-qemu)
 - [VLC suona il video dentro la sua finestra: le finestre figlie in ExWin (wserver 0.016, voce 105 passo 5) — testato in QEMU](#vlc-suona-il-video-dentro-la-sua-finestra-le-finestre-figlie-in-exwin-wserver-0016-voce-105-passo-5--testato-in-qemu)
@@ -240,6 +244,87 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
+### Utenti separati davvero: una cartella chiusa e' chiusa, /tmp ha il bit sticky (kernel 0.355, voce 111) — testato in QEMU
+
+- **Misurato prima sul PC di prova** (`tools/prove/permprova.c`, da root sceso a uid 1000): dentro
+  `/root/privata` 0700 un utente normale elencava, faceva stat, leggeva un file 0644 e ci entrava
+  con cd. Il kernel guardava solo il file finale.
+- **Kernel 0.355**: la `x` su **ogni** cartella del percorso (aprire, creare, cancellare,
+  rinominare, troncare, chmod, eseguire, stat), la `r` per elencare una cartella, la `x` per
+  entrarci con `cd`. **Il bit sticky**: in una cartella 1777 un nome lo tolgono solo il padrone
+  del file, quello della cartella o root (EPERM), come su Linux. root non paga i controlli in piu'.
+- **ext4.mod 0.007**: chmod teneva solo i nove bit, e il 1777 di `/tmp` non arrivava mai sul disco
+  (era 0777). setuid e setgid restano fuori: exec non li fa valere.
+- **install 0.013, login 0.006**: `/root` e le case 0700, `/home` 0755. **ls 0.004** scrive `t`/`T`
+  per il bit sticky e "permesso negato" davanti a una cartella chiusa; il `cat` di **sh 0.015** dice
+  "permesso negato" ed esce con 1 (fino alla 0.014 "file non trovato" e 0).
+- **Macchine installate**: la verifica di netupdate rimette da se' `/root` 0700 e `/tmp` 1777 e
+  nomina le case che gli altri possono leggere (decide il padrone).
+- Provato: `tools/prova_permessi.sh` (disco installato dal CD, permprova con 0 falle e 0 "piu'
+  stretto di Linux", la verifica che ripara) 7 su 7 a 32 e 64 bit; un utente normale con casa,
+  file, `cd`, ExWin e pm. Trovato per strada: dopo il trasloco in `~/ex_os` i `.d` del 32 bit
+  dicevano ancora `build/...` e make non vedeva piu' i cambi di header (il CD a 32 bit aveva il
+  kernel 0.354 con ext4.mod 0.355): riscritti.
+
+### I cloni dei sorgenti di terzi restano su MEGA e li rimettono a posto gli script (tools/ripara-cloni.sh) — testato su questo PC
+
+- **MEGA sincronizza file, non git.** I cloni alla radice (apr, apr-util, httpd, libexpat,
+  mariadb-server, mesa, php-src) arrivavano senza i collegamenti simbolici (10 in mesa, 1 in
+  libexpat, 2 nel duckdb di mariadb-server), coi modi che piacciono a MEGA, e una volta senza
+  `.git`. Un `git diff` per una patch si portava dietro collegamenti cancellati e modi cambiati,
+  e `aggiorna-sorgenti.sh -clone` rifiutava il clone.
+- **`tools/ripara-cloni.sh [NOME]`** (`-n` dice soltanto): una cartella che manca si riclona al
+  commit scritto in `tools/cloni.txt` (in git, quindi viaggia con MEGA); un `.git` che manca si
+  rifa' da quel commit **senza toccare i file**, e il lavoro di EX-OS resta come modifiche;
+  `core.fileMode false`; i `+x` che git conosce; i collegamenti mancanti. Anche le submodule. Un
+  file al posto di un collegamento, diverso da cio' a cui punta, si segnala e basta.
+- `aggiorna-sorgenti.sh -clone` e la costruzione di PHP lo chiamano da soli; la ricetta della
+  patch di mesa comincia da li'. mariadb-server ora e' un clone di `tools/sorgenti-terzi.txt`.
+- **`exos/include/ncurses.h` del CD degli strumenti a 64 bit era un collegamento** a `curses.h`,
+  avanzato dal 25/10: `su-cd.sh` ci scriveva attraverso con `cp` e restava, poi `cp -a` lo portava
+  in `dist/netinst_64`. Ora e' una copia; `su-cd.sh` copia con `--remove-destination` e
+  `mknetinst.sh` trasforma ogni collegamento in copia (uno rotto lo ferma).
+- Provato: libexpat copiato come fa MEGA (senza collegamenti, 600, con e senza `.git`, cartella
+  sparita) e un repository con una submodule, ogni caso tornato alle sole modifiche di EX-OS; i 7
+  cloni veri invariati (`git status` come prima).
+
+### Cio' che la costruzione produce sta fuori dall'albero dei sorgenti, in ~/ex_os (tools/fuori.sh) — testato su questo PC
+
+- **Nella cartella sincronizzata da MEGA restano solo i sorgenti, le ISO finite e netinst/netinst_64.**
+  Le toolchain incrociate e le costruzioni di terzi, gli oggetti a 32 e 64 bit, i dischi di QEMU
+  e i risultati delle prove di carico stanno in `<home dell'utente>/ex_os/cross_build`, `build`,
+  `build-64`, `dischi`, `stress/risultati`. **Nessun collegamento**: il Makefile e gli script
+  usano `$EXOS_FUORI` direttamente (MEGA dava errori sui collegamenti).
+- **L'utente e' chi costruisce**: `SUDO_USER`, poi `id -un`, la home dal database degli utenti;
+  un altro utente ha la sua `~/ex_os`. `EXOS_FUORI=/altrove` sposta tutto. `tools/fuori.sh` la
+  stampa e crea le cartelle; il Makefile la chiama per prima, ogni script la trova da solo con la
+  stessa regola (una riga in cima), quindi va anche senza make.
+- 670 percorsi in 157 script riscritti, piu' il Makefile; le patch e le cartelle `build/` dei
+  sorgenti di terzi (`$SRC/build/config.guess`) non si toccano.
+- Su questo PC `~/cross_build` e' diventata `~/ex_os/cross_build`; i vecchi percorsi assoluti
+  scritti nei suoi file di testo (specs del gcc incrociato, `.pc`, gli oggetti di Firefox) sono
+  riscritti, con le date di prima. Controllato: `make kernel`, il gcc incrociato a 64 bit,
+  `bash -n` su ogni script toccato.
+
+### Firefox su /lib/ld-exos.so: AAC e H.264 suonano di nuovo (voce 105) — testato in QEMU
+
+- **Firefox e' collegato su `/lib/ld-exos.so` come ogni altro programma**, a 32 e a 64 bit:
+  `dlopen`, `getenv` e il caricatore sono quelli del sistema, non una copia della `libc.a` del 16/11
+  dentro `firefox`. Quel caricatore vecchio non apriva le `.so` di FFmpeg rifatte sulla libc
+  condivisa, e `small-shot.m4a` (AAC) e `gizmo.mp4` (H.264) dicevano "Failed to open media".
+- **`tools/exilla/prova-media.sh` 8 su 8 a 32 e a 64 bit**: Ogg Vorbis, FLAC, MP3, AAC, VP8, VP9,
+  AV1 e H.264.
+- **La toolchain di costruzione ha la libc condivisa**: i sysroot di `exos-cross` ed `exos-cross64`
+  in `cross_build` erano fermi al 18/11, senza `ld-exos.so`. Ora sono quelli della voce 105, e le
+  `specs` collegano `-lc` anche con `-shared`.
+- **Il Rust a 32 bit e' PIC** (`tools/rust-exos/i686-unknown-exos.json`,
+  `"relocation-model": "pic"`, come a 64 bit): con `environ` nella libreria condivisa, la std
+  statica ne metteva l'indirizzo nel testo e `ld` rifiutava Firefox ("read-only segment has dynamic
+  relocations").
+- **`prova-media` aspetta i lavori di avvio prima di `audio -i`**: battuto mentre ehci, ohci e
+  sis.drv finivano ancora, tornava senza dire niente e Firefox non aveva la scheda audio
+  ("Can't get cubeb context").
+
 ### Due fili non ricevono piu' lo stesso descrittore, SQLite non dice piu' disk I/O error (kernel 0.354) — testato in QEMU
 
 - **Il kernel si puo' interrompere, e la tabella dei descrittori e' di tutto il programma.** Fra
@@ -260,9 +345,9 @@ quella sull'hardware o sul caso reale — non è ancora stata fatta.
   supera i 16 MB.
 - **`LD_DEBUG=libs`** nel caricatore: ogni nome cercato, ogni percorso provato e l'esito, e il
   `dlerror` di un `dlopen` fallito, su stderr (vedi [Scrivere una libreria condivisa](sviluppo.it.md#le-regole)).
-- ! **AAC e H.264 in Firefox non vanno**: il Firefox della prova ha ancora dentro la `libc.a` del
-  16/11, con il caricatore di prima, e non apre le `.so` di FFmpeg rifatte sulla libc condivisa.
-  Va ricollegato su `ld-exos.so`.
+- **AAC e H.264 in Firefox**: il Firefox della prova aveva ancora dentro la `libc.a` del 16/11,
+  con il caricatore di prima, e non apriva le `.so` di FFmpeg rifatte sulla libc condivisa.
+  Ricollegato lo stesso giorno: vedi la voce qui sopra.
 
 ### Impostazioni > Applicazioni: il programma di ogni tipo di file e di indirizzo (pm 0.029, exwin 0.023, voce 109) — testato in QEMU
 

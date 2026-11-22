@@ -1,4 +1,6 @@
 #!/bin/sh
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/mkusb.sh
 # EX-OS — Extensible Operating System
@@ -68,7 +70,7 @@ cd "$RADICE"
 
 DISPOSITIVO="$1"
 MB="${2:-1024}"
-IMG="dischi/usb-${MB}.img"
+IMG="${EXOS_FUORI}/dischi/usb-${MB}.img"
 
 # ! LA VERSIONE A 64 BIT (make usb64, cioe' EXOS_ARCH=x86_64): stessa strada,
 # stesse protezioni. Cambiano il CD da cui si installa (dist/exos64.iso),
@@ -99,7 +101,7 @@ CD_SISTEMA=dist/exos.iso
 CD_STRUMENTI=dist/exos-tools.iso
 FLOPPY=dist/floppy.img          # serve al secondo giro, per gli strumenti
 if [ $ARCH64 -eq 1 ]; then
-    IMG="dischi/usb64-${MB}.img"
+    IMG="${EXOS_FUORI}/dischi/usb64-${MB}.img"
     CD_SISTEMA=dist/exos64.iso
     export EXOS_QEMU=qemu-system-x86_64
     export EXOS_RAM="${EXOS_RAM:-256M}"

@@ -19,7 +19,7 @@ expat|https://github.com/libexpat/libexpat.git|^R_[0-9_]+$|s/^R_//;s/_/./g|https
 fmt|https://github.com/fmtlib/fmt.git|^[0-9]+\.[0-9]+\.[0-9]+$|s/x/x/|https://github.com/fmtlib/fmt/releases/download/@V@/fmt-@V@.zip
 httpd|https://github.com/apache/httpd.git|^[0-9]+\.[0-9]+\.[0-9]+$|s/x/x/|https://downloads.apache.org/httpd/httpd-@V@.tar.bz2|httpd
 lz4|https://github.com/lz4/lz4.git|^v[0-9.]+$|s/^v//|https://github.com/lz4/lz4/releases/download/v@V@/lz4-@V@.tar.gz
-mariadb|https://github.com/MariaDB/server.git|^mariadb-[0-9.]+$|s/^mariadb-//|https://archive.mariadb.org/mariadb-@V@/source/mariadb-@V@.tar.gz
+mariadb|https://github.com/MariaDB/server.git|^mariadb-[0-9.]+$|s/^mariadb-//|https://archive.mariadb.org/mariadb-@V@/source/mariadb-@V@.tar.gz|mariadb-server
 mariadb-connector-c|https://github.com/mariadb-corporation/mariadb-connector-c.git|^v[0-9.]+$|s/^v//|https://archive.mariadb.org/connector-c-@V@/mariadb-connector-c-@V@-src.tar.gz
 mariadb-connector-cpp|https://github.com/mariadb-corporation/mariadb-connector-cpp.git|^[0-9]+\.[0-9]+\.[0-9]+$|s/x/x/|-
 qt5|https://code.qt.io/qt/qtbase.git|^v5\.15\.[0-9]+-lts-lgpl$|s/^v//;s/-lts-lgpl$//|https://download.qt.io/archive/qt/5.15/@V@/submodules/qtbase-everywhere-opensource-src-@V@.tar.xz

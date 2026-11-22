@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova-gnu/prova-gnu.sh - the libc Mesa asks for (voce 88)
 #
@@ -18,12 +20,12 @@ RADICE="$PWD"
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
 if [ "${1:-64}" = 32 ]; then
     T=i386-exos; ARCH=""
-    export PATH="$RADICE/cross_build/$MACCHINA/exos-cross/bin:$PATH"
+    export PATH="${EXOS_FUORI}/cross_build/$MACCHINA/exos-cross/bin:$PATH"
 else
     T=x86_64-exos; ARCH=x86_64
-    export PATH="$RADICE/cross_build/$MACCHINA/exos-cross64/bin:$PATH"
+    export PATH="${EXOS_FUORI}/cross_build/$MACCHINA/exos-cross64/bin:$PATH"
 fi
-D="$RADICE/cross_build/$MACCHINA/costruzione-prova-gnu-$T"
+D="${EXOS_FUORI}/cross_build/$MACCHINA/costruzione-prova-gnu-$T"
 CD="${CD_FORZATO:-$RADICE/dist/exos.iso}"; [ -n "$ARCH" ] && CD="${CD_FORZATO:-$RADICE/dist/exos64.iso}"
 mkdir -p "$D"
 $T-gcc -O2 -o "$D/prova-gnu" tools/prova-gnu/prova-gnu.c -lpthread || exit 1

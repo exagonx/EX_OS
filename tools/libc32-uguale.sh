@@ -1,4 +1,6 @@
 #!/bin/sh
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/libc32-uguale.sh — la libc e i programmi a 32 bit sono rimasti uguali?
 #
@@ -22,7 +24,7 @@
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-B="cross_build/$MACCHINA/libc32-base.txt"
+B="${EXOS_FUORI}/cross_build/$MACCHINA/libc32-base.txt"
 T=/tmp/exos-libc32-uguale
 rm -rf "$T"; mkdir -p "$T"
 

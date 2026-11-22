@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/mkfixsys.sh — costruisce dist/fixsys.img, il disco di SOCCORSO
 #
@@ -58,9 +60,9 @@
 set -e
 
 IMG="dist/fixsys.img"
-BOOT_SECTOR="build/stage1.bin"
-LOADER="build/stage2.bin"
-KERNEL="build/kernel.bin"
+BOOT_SECTOR="${EXOS_FUORI}/build/stage1.bin"
+LOADER="${EXOS_FUORI}/build/stage2.bin"
+KERNEL="${EXOS_FUORI}/build/kernel.bin"
 FLOPPY_SECTORS=2880          # 1.44 MB
 
 # ! QUESTO E' L'ELENCO, ED E' CORTO APPOSTA.
@@ -108,16 +110,16 @@ cd "$(dirname "$0")/.."
 # liberi: chi non ci sta va in build/bin-cd/, che e' la roba del CD. Questo
 # dischetto ha 770 KB liberi e li prende da tutt'e due.
 dove_sta() {
-    if   [ -x "build/bin/$1" ];    then echo "build/bin/$1"
-    elif [ -x "build/bin-cd/$1" ]; then echo "build/bin-cd/$1"
+    if   [ -x "${EXOS_FUORI}/build/bin/$1" ];    then echo "${EXOS_FUORI}/build/bin/$1"
+    elif [ -x "${EXOS_FUORI}/build/bin-cd/$1" ]; then echo "${EXOS_FUORI}/build/bin-cd/$1"
     fi
 }
 
-for f in "$BOOT_SECTOR" "$LOADER" "$KERNEL" build/lib/libc.so; do
+for f in "$BOOT_SECTOR" "$LOADER" "$KERNEL" ${EXOS_FUORI}/build/lib/libc.so; do
     [ -f "$f" ] || err "manca $f: prima `make`"
 done
 for p in $PROGRAMMI; do
-    [ -n "$(dove_sta "$p")" ] || err "manca $p (ne' in build/bin/ ne' in build/bin-cd/)"
+    [ -n "$(dove_sta "$p")" ] || err "manca $p (ne' in ${EXOS_FUORI}/build/bin/ ne' in ${EXOS_FUORI}/build/bin-cd/)"
 done
 
 mkdir -p dist
@@ -145,23 +147,23 @@ mcopy -i "$IMG" "$LOADER" ::/LOADER.BIN
 mcopy -i "$IMG" "$KERNEL" ::/KERNEL.BIN
 ok "Avvio: LOADER.BIN + KERNEL.BIN"
 
-mcopy -i "$IMG" build/lib/libc.so ::/lib/libc.so
-ok "La libc: $(stat -c %s build/lib/libc.so) byte"
+mcopy -i "$IMG" ${EXOS_FUORI}/build/lib/libc.so ::/lib/libc.so
+ok "La libc: $(stat -c %s ${EXOS_FUORI}/build/lib/libc.so) byte"
 
 for p in $PROGRAMMI; do
     mcopy -i "$IMG" "$(dove_sta "$p")" "::/bin/$p"
     ok "  $p"
 done
 # umount e' lo stesso binario di mount: il programma guarda argv[0].
-mcopy -i "$IMG" build/bin/mount ::/bin/umount
+mcopy -i "$IMG" ${EXOS_FUORI}/build/bin/mount ::/bin/umount
 ok "  umount (stesso binario di mount)"
 
 for d in $DRIVER; do
-    if [ -f "build/drivers/$d.drv" ]; then
-        mcopy -i "$IMG" "build/drivers/$d.drv" "::/dev/$d.drv"
+    if [ -f "${EXOS_FUORI}/build/drivers/$d.drv" ]; then
+        mcopy -i "$IMG" "${EXOS_FUORI}/build/drivers/$d.drv" "::/dev/$d.drv"
         ok "  $d.drv"
-    elif [ -f "build/drivers-cd/$d.drv" ]; then
-        mcopy -i "$IMG" "build/drivers-cd/$d.drv" "::/dev/$d.drv"
+    elif [ -f "${EXOS_FUORI}/build/drivers-cd/$d.drv" ]; then
+        mcopy -i "$IMG" "${EXOS_FUORI}/build/drivers-cd/$d.drv" "::/dev/$d.drv"
         ok "  $d.drv (da drivers-cd)"
     else
         err "manca $d.drv: senza, dal dischetto non si batte niente"

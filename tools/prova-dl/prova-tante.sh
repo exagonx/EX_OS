@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova-dl/prova-tante.sh - the loader has no fixed number of libraries
 #
@@ -24,14 +26,14 @@ MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
 N=${N:-40}
 if [ "${1:-64}" = 32 ]; then
     T=i386-exos; ARCH=""
-    export PATH="$RADICE/cross_build/$MACCHINA/exos-cross/bin:$PATH"
+    export PATH="${EXOS_FUORI}/cross_build/$MACCHINA/exos-cross/bin:$PATH"
     CF="-m32 -march=pentium-mmx -mtune=pentium-mmx -fno-asynchronous-unwind-tables"
 else
     T=x86_64-exos; ARCH=x86_64
-    export PATH="$RADICE/cross_build/$MACCHINA/exos-cross64/bin:$PATH"
+    export PATH="${EXOS_FUORI}/cross_build/$MACCHINA/exos-cross64/bin:$PATH"
     CF="-m64"
 fi
-D="$RADICE/cross_build/$MACCHINA/costruzione-prova-tante-$T"
+D="${EXOS_FUORI}/cross_build/$MACCHINA/costruzione-prova-tante-$T"
 rm -rf "$D"; mkdir -p "$D/lib" "$D/so"
 set -e
 # the libc of the sysroot (EXOS_LIBC_PORTATI), the options of cross64.sh

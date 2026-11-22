@@ -1,3 +1,5 @@
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/librerie-exos/comune.sh — what every third-party library port shares
 #
@@ -35,7 +37,7 @@
 # =============================================================================
 set -e
 R=$(cd "$(dirname "$0")/../.." && pwd)
-TC=$R/cross_build
+TC=${EXOS_FUORI}/cross_build
 TP=$TC/terze-parti
 
 manca() { echo "! manca $1"; echo "    rimedio: $2"; exit 1; }

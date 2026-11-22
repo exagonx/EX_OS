@@ -1046,7 +1046,13 @@
  * descriptor and SQLite said "disk I/O error" (EBADF). At 64 bit the window
  * is open since 0.352, when system calls started running with interrupts
  * on. */
-#define EXOS_VERSION    "0.354"
+/* 0.354 -> 0.355 (voce 111, step 3): x on every folder of a path (open,
+ * stat, chdir, exec, create, unlink, rename, truncate, chmod), r to list a
+ * folder, x to cd into it, and the sticky bit: in a 1777 folder only the
+ * owner of a file, of the folder or root take its name away. Until 0.354
+ * only the final file was looked at: /root/privata 0700 listed, stat-ed,
+ * read and entered by any user (permprova on the .253). */
+#define EXOS_VERSION    "0.355"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

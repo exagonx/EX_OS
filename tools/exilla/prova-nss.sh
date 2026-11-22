@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/exilla/prova-nss.sh — NSS dentro EX-OS (tappa 5 di Exilla)
 #
@@ -16,7 +18,7 @@
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-B="$PWD/cross_build/$MACCHINA"
+B="${EXOS_FUORI}/cross_build/$MACCHINA"
 N="$B/costruzione-nss/dist/Release/bin"
 D="$B/costruzione-prova"
 mkdir -p "$D" /tmp/exos

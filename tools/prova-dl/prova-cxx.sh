@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova-dl/prova-cxx.sh - C++ with libstdc++.so.6 and libgcc_s.so.1
 #
@@ -21,14 +23,14 @@ RADICE="$PWD"
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
 if [ "${1:-64}" = 32 ]; then
     T=i386-exos; ARCH=""; BIT=32
-    export PATH="$RADICE/cross_build/$MACCHINA/exos-cross/bin:$PATH"
+    export PATH="${EXOS_FUORI}/cross_build/$MACCHINA/exos-cross/bin:$PATH"
 else
     T=x86_64-exos; ARCH=x86_64; BIT=64
-    export PATH="$RADICE/cross_build/$MACCHINA/exos-cross64/bin:$PATH"
+    export PATH="${EXOS_FUORI}/cross_build/$MACCHINA/exos-cross64/bin:$PATH"
 fi
-L="$RADICE/cross_build/cxx-exos$BIT/exos/lib"
+L="${EXOS_FUORI}/cross_build/cxx-exos$BIT/exos/lib"
 [ -f "$L/libstdc++.so.6" ] || { echo "manca $L/libstdc++.so.6: tools/librerie-exos/cxx-condivise.sh $BIT"; exit 1; }
-D="$RADICE/cross_build/$MACCHINA/costruzione-prova-cxx-$T"
+D="${EXOS_FUORI}/cross_build/$MACCHINA/costruzione-prova-cxx-$T"
 mkdir -p "$D"
 set -e
 $T-g++ -O2 -fPIC -shared -Wl,-soname,libcxx.so -o "$D/libcxx.so" tools/prova-dl/libcxx.cpp

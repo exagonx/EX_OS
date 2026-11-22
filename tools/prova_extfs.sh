@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_extfs.sh — mkfs, chkdsk, disk and mount on ext2, ext3 and ext4,
 # inside EX-OS, with Linux's e2fsck as the judge (kernel 0.292, mkfs 0.002,
@@ -85,7 +87,7 @@ for n in 1 2 3 4; do
     [ "$c" = 1 ] && ok "p$n: il file scritto da EX-OS si rilegge da Linux" \
         || no "p$n: eco.txt non si rilegge"
     cmp -s <($SBIN/debugfs -R "cat /nuova/ls" "$D/p$n.img" 2>/dev/null) \
-           "$([ "$ARCH" = x86_64 ] && echo build-64 || echo build)/iso-exos/bin/ls" \
+           "${EXOS_FUORI}/$([ "$ARCH" = x86_64 ] && echo build-64 || echo build)/iso-exos/bin/ls" \
         && ok "p$n: /nuova/ls identico byte per byte" || no "p$n: /nuova/ls diverso"
 done
 

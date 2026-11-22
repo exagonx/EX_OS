@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/mariadb-exos/costruisci.sh — MariaDB (11.8 LTS) for EX-OS
 #
@@ -60,7 +62,7 @@
 set -e
 cd "$(dirname "$0")/../.." || exit 1
 R=$PWD
-TC=$R/cross_build
+TC=${EXOS_FUORI}/cross_build
 VER=11.8.9
 ARCHIVIO=$TC/terze-parti/mariadb/mariadb-$VER.tar.gz
 SRC=$TC/costruzione-mariadb-src/mariadb-$VER

@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/exilla/prova-chiusura.sh — how long Firefox takes to close (voce 38)
 #
@@ -14,7 +16,7 @@ cd "$(dirname "$0")/../.." || exit 1
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
 D="${1:-/tmp/exos/chiusura}"
 SUFF=""; [ "$EXOS_ARCH" = x86_64 ] && SUFF=64
-S="$PWD/cross_build/$MACCHINA/costruzione-prova$SUFF/gecko-hd.img"
+S="${EXOS_FUORI}/cross_build/$MACCHINA/costruzione-prova$SUFF/gecko-hd.img"
 [ -f "$S" ] || { echo "manca $S: tools/exilla/prova-gecko.sh" >&2; exit 1; }
 rm -rf "$D"; mkdir -p "$D"
 cp --sparse=always "$S" "$D/hd.img"

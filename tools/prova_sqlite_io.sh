@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_sqlite_io.sh - SQLite and its system calls on a real disk, in QEMU
 #
@@ -13,7 +15,7 @@ FS="${1:-ext4}"; FILI="${2:-4}"; GIRI="${3:-30}"
 ARCH="${EXOS_ARCH:-x86_64}"
 D="${EXOS_DIR:-/tmp/exos-prove/sqlite-io-$ARCH-$FS}"
 rm -rf "$D"; mkdir -p "$D"
-X=cross_build/nasi5deb
+X=${EXOS_FUORI}/cross_build/nasi5deb
 SQ=firefox-main/third_party/sqlite3/src
 if [ "$ARCH" = x86_64 ]; then
     GCC=$X/exos-cross64/bin/x86_64-exos-gcc; ISO=dist/exos64.iso

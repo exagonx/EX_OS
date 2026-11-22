@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/exilla/prova-primotab.sh - the address bar of the FIRST tab (voce 73)
 #
@@ -26,8 +28,8 @@ if [ "$EXOS_ARCH" = x86_64 ]; then
 else
     SUFF="";  CD="$R/dist/exos.iso";   CPU=""
 fi
-O="$R/cross_build/exilla-obj/gecko$SUFF"; P="$O/dist/firefox"
-D="$R/cross_build/$MACCHINA/costruzione-prova$SUFF"; OUT="$D/primotab"
+O="${EXOS_FUORI}/cross_build/exilla-obj/gecko$SUFF"; P="$O/dist/firefox"
+D="${EXOS_FUORI}/cross_build/$MACCHINA/costruzione-prova$SUFF"; OUT="$D/primotab"
 G="$D/primotab-disco"; IMG="$D/primotab-hd.img"; PART="$D/primotab-part.img"
 mkdir -p "$D" /tmp/exos; rm -rf "$OUT"; mkdir -p "$OUT"
 

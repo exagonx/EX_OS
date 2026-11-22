@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_ahci_smp.sh - the disk on AHCI with several processors (voce 58)
 #
@@ -11,8 +13,8 @@ cd "$(dirname "$0")/.." || exit 1
 D="${1:-/tmp/exos-ahcismp}"
 rm -rf "$D"; mkdir -p "$D/albero"
 [ -f dist/exos64.iso ] || { echo "manca dist/exos64.iso: make iso64" >&2; exit 1; }
-cp build-64/bin/smpprova "$D/albero/sp" || exit 1
-cp build-64/bin/dmesg "$D/albero/dm" || exit 1
+cp ${EXOS_FUORI}/build-64/bin/smpprova "$D/albero/sp" || exit 1
+cp ${EXOS_FUORI}/build-64/bin/dmesg "$D/albero/dm" || exit 1
 qemu-img create -f raw "$D/hd.img" 40M > /dev/null
 /usr/sbin/mke2fs -q -F -t ext2 -b 4096 -d "$D/albero" "$D/hd.img"
 

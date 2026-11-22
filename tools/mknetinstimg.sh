@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/mknetinstimg.sh
 # EX-OS — Extensible Operating System
@@ -120,18 +122,18 @@ manca=0
 # pci.drv e' del secondo gruppo, e cercarlo solo nel primo lo faceva sembrare
 # non compilato.
 drv_dove() {
-    if [ -f "build/drivers-cd/$1" ]; then echo "build/drivers-cd/$1"
-    elif [ -f "build/drivers/$1" ];  then echo "build/drivers/$1"
+    if [ -f "${EXOS_FUORI}/build/drivers-cd/$1" ]; then echo "${EXOS_FUORI}/build/drivers-cd/$1"
+    elif [ -f "${EXOS_FUORI}/build/drivers/$1" ];  then echo "${EXOS_FUORI}/build/drivers/$1"
     else echo ""; fi
 }
 for d in $DRIVER; do
     [ -n "$(drv_dove "$d")" ] || { log_warn "manca il driver $d"; manca=1; }
 done
 for p in $PROGRAMMI; do
-    [ -f "build/bin-cd/$p" ] || [ -f "build/bin/$p" ] || {
-        log_warn "manca $p (ne' in build/bin-cd ne' in build/bin)"; manca=1; }
+    [ -f "${EXOS_FUORI}/build/bin-cd/$p" ] || [ -f "${EXOS_FUORI}/build/bin/$p" ] || {
+        log_warn "manca $p (ne' in ${EXOS_FUORI}/build/bin-cd ne' in ${EXOS_FUORI}/build/bin)"; manca=1; }
 done
-[ -f "build/exwin/lib/exhttp.so" ] || { log_warn "manca build/exwin/lib/exhttp.so"; manca=1; }
+[ -f "${EXOS_FUORI}/build/exwin/lib/exhttp.so" ] || { log_warn "manca ${EXOS_FUORI}/build/exwin/lib/exhttp.so"; manca=1; }
 [ $manca -eq 1 ] && log_err "compila prima:  make -j2 iso-exos"
 
 # --- Il conto, PRIMA di formattare ------------------------------------------
@@ -144,9 +146,9 @@ TOTALE=0
 somma() { TOTALE=$((TOTALE + $(stat -c%s "$1"))); }
 for d in $DRIVER;    do somma "$(drv_dove "$d")"; done
 for p in $PROGRAMMI; do
-    if [ -f "build/bin-cd/$p" ]; then somma "build/bin-cd/$p"; else somma "build/bin/$p"; fi
+    if [ -f "${EXOS_FUORI}/build/bin-cd/$p" ]; then somma "${EXOS_FUORI}/build/bin-cd/$p"; else somma "${EXOS_FUORI}/build/bin/$p"; fi
 done
-somma "build/exwin/lib/exhttp.so"
+somma "${EXOS_FUORI}/build/exwin/lib/exhttp.so"
 
 log_info "contenuto: $TOTALE byte ($((TOTALE / 1024)) KB) su $((UTILE / 1024)) KB utili"
 [ $TOTALE -gt $UTILE ] && log_err "non ci sta: togli qualcosa da PROGRAMMI"
@@ -165,10 +167,10 @@ mmd -i "$IMG" ::/dev ::/bin ::/exwin ::/exwin/lib
 
 for d in $DRIVER;    do mcopy -i "$IMG" "$(drv_dove "$d")" "::/dev/$d"; done
 for p in $PROGRAMMI; do
-    if [ -f "build/bin-cd/$p" ]; then mcopy -i "$IMG" "build/bin-cd/$p" "::/bin/$p"
-    else                              mcopy -i "$IMG" "build/bin/$p"    "::/bin/$p"; fi
+    if [ -f "${EXOS_FUORI}/build/bin-cd/$p" ]; then mcopy -i "$IMG" "${EXOS_FUORI}/build/bin-cd/$p" "::/bin/$p"
+    else                              mcopy -i "$IMG" "${EXOS_FUORI}/build/bin/$p"    "::/bin/$p"; fi
 done
-mcopy -i "$IMG" "build/exwin/lib/exhttp.so" "::/exwin/lib/exhttp.so"
+mcopy -i "$IMG" "${EXOS_FUORI}/build/exwin/lib/exhttp.so" "::/exwin/lib/exhttp.so"
 
 # --- Lo script che fa il lavoro ----------------------------------------------
 TMP=$(mktemp); trap 'rm -f "$TMP" "$TMP.txt"' EXIT
@@ -338,10 +340,10 @@ mkdir -p "$USBDIR/dev" "$USBDIR/bin" "$USBDIR/exwin/lib"
 
 for d in $DRIVER;    do cp "$(drv_dove "$d")" "$USBDIR/dev/$d"; done
 for p in $PROGRAMMI; do
-    if [ -f "build/bin-cd/$p" ]; then cp "build/bin-cd/$p" "$USBDIR/bin/$p"
-    else                              cp "build/bin/$p"    "$USBDIR/bin/$p"; fi
+    if [ -f "${EXOS_FUORI}/build/bin-cd/$p" ]; then cp "${EXOS_FUORI}/build/bin-cd/$p" "$USBDIR/bin/$p"
+    else                              cp "${EXOS_FUORI}/build/bin/$p"    "$USBDIR/bin/$p"; fi
 done
-cp "build/exwin/lib/exhttp.so" "$USBDIR/exwin/lib/exhttp.so"
+cp "${EXOS_FUORI}/build/exwin/lib/exhttp.so" "$USBDIR/exwin/lib/exhttp.so"
 sed -e 's|@COMEMONTARE@|#     (la chiavetta la monta automount in /USB/DRIVE0)|' \
     -e "s|@ACCENDI@|$ACCENDI_USB|" \
     -e 's|@DA@|/USB/DRIVE0|g' "$TMP" > "$USBDIR/netinst.sh"

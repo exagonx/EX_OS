@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/qt5-exos/prova.sh - a Qt Widgets program in ExWin, inside QEMU
 #
@@ -31,7 +33,7 @@
 cd "$(dirname "$0")/../.." || exit 1
 BIT=${1:-64}
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-TC="$PWD/cross_build"
+TC="${EXOS_FUORI}/cross_build"
 case $BIT in
     64) T=x86_64-exos; CROSS=$TC/$MACCHINA/exos-cross64; CD="$PWD/dist/exos64.iso"; CPU="-cpu qemu64"
         export EXOS_QEMU=qemu-system-x86_64 ;;

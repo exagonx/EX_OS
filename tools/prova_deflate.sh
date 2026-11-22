@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_deflate.sh — il compressore DEFLATE di exzip, provato sull'host
 #
@@ -103,7 +105,7 @@ print(' '.join(random.choice(parole) for _ in range(120000)))" > "$D/parole"
 
 esito=0
 for f in "$D/vuoto" "$D/uno" "$D/zeri" "$D/caso" "$D/parole" README.md \
-         lib/libc.c build/exwin/bin/exbrowser dist/floppy.img; do
+         lib/libc.c ${EXOS_FUORI}/build/exwin/bin/exbrowser dist/floppy.img; do
     [ -f "$f" ] || continue
     riga=$("$D/prova" "$f" "$D/uscita.deflate") || { echo "NO   $f: $riga"; esito=1; continue; }
     set -- $riga

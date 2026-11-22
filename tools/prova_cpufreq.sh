@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_cpufreq.sh - kernel 0.311 and /dev/cpufreq.drv in QEMU (voce 78)
 #
@@ -38,8 +40,8 @@ no() { echo "  [NO] $1"; no=$((no+1)); }
 giro() {    # $1 = 32|64, $2 = v|n
     local bit=$1 v=$2 iso q cpu log ser img L atteso drv
     local supporto entra
-    if [ "$bit" = 64 ]; then iso=dist/exos64.iso; q=qemu-system-x86_64; cpu=qemu64; drv=build-64/drivers/cpufreq.drv
-    else                     iso=dist/exos.iso;   q=qemu-system-i386;   cpu=pentium3; drv=build/drivers-cd/cpufreq.drv; fi
+    if [ "$bit" = 64 ]; then iso=dist/exos64.iso; q=qemu-system-x86_64; cpu=qemu64; drv=${EXOS_FUORI}/build-64/drivers/cpufreq.drv
+    else                     iso=dist/exos.iso;   q=qemu-system-i386;   cpu=pentium3; drv=${EXOS_FUORI}/build/drivers-cd/cpufreq.drv; fi
     [ "$v" = n ] && cpu="$cpu,-hypervisor"
     [ "$v" = c ] && cpu="Penryn,-hypervisor,+est"
     log="$D/$bit$v.log"; ser=/tmp/exos/serialcf$bit$v.txt; rm -f "$ser"

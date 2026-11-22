@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_cachedisco.sh - cachedisco in kernel.cfg counts (kernel 0.344,
 # voce 27)
@@ -27,8 +29,8 @@
 cd "$(dirname "$0")/.." || exit 1
 BIT=${1:-32}
 D=/tmp/exos-prove/cachedisco$BIT; rm -rf "$D"; mkdir -p "$D"
-if [ "$BIT" = 64 ]; then ISO=dist/exos64.iso; export EXOS_QEMU=qemu-system-x86_64; CFG=build-64/iso-exos/boot/kernel.cfg
-else                     ISO=dist/exos.iso;   CFG=build/iso-exos/boot/kernel.cfg; fi
+if [ "$BIT" = 64 ]; then ISO=dist/exos64.iso; export EXOS_QEMU=qemu-system-x86_64; CFG=${EXOS_FUORI}/build-64/iso-exos/boot/kernel.cfg
+else                     ISO=dist/exos.iso;   CFG=${EXOS_FUORI}/build/iso-exos/boot/kernel.cfg; fi
 [ -f "$ISO" ] && [ -f "$CFG" ] || { echo "manca $ISO o $CFG" >&2; exit 1; }
 command -v xorriso > /dev/null || { echo "manca xorriso" >&2; exit 1; }
 # the disk: one ext2 partition with a 4 MB file

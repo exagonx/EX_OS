@@ -1,4 +1,6 @@
 #!/bin/sh
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/exilla/gcc-fili.sh — GCC, libgcc e libstdc++ di EX-OS CON I FILI
 # EX-OS — Extensible Operating System
@@ -45,14 +47,14 @@ set -e
 
 RADICE=$(cd "$(dirname "$0")/../.." && pwd)
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-DEST="$RADICE/cross_build/$MACCHINA"
+DEST="${EXOS_FUORI}/cross_build/$MACCHINA"
 GCC_SRC="${GCC_SRC:-$RADICE/gcc}"
 if [ "$EXOS_ARCH" = x86_64 ]; then
     T=x86_64-exos
     PREFISSO="$DEST/exos-cross64"
     B="$DEST/costruzione-gcc-fili64"
     PIU="--enable-initfini-array"
-    ORIGINE="${ORIGINE:-$RADICE/cross_build/exos-cross64}"
+    ORIGINE="${ORIGINE:-${EXOS_FUORI}/cross_build/exos-cross64}"
     if [ ! -x "$PREFISSO/bin/$T-as" ]; then
         [ -x "$ORIGINE/bin/$T-as" ] || { echo "manca $ORIGINE: tools/gcc-exos/cross64.sh" >&2; exit 1; }
         echo "copio $ORIGINE in $PREFISSO (una volta sola)"
@@ -63,7 +65,7 @@ else
     PREFISSO="$DEST/exos-cross"
     B="$DEST/costruzione-gcc-fili"
     PIU=""
-    ORIGINE="${ORIGINE:-$RADICE/cross_build/exos-cross}"
+    ORIGINE="${ORIGINE:-${EXOS_FUORI}/cross_build/exos-cross}"
 fi
 
 [ -x "$PREFISSO/bin/$T-as" ] || { echo "manca la toolchain di questa macchina: tools/exilla/toolchain-questa-macchina.sh" >&2; exit 1; }

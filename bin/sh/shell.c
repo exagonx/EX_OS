@@ -1128,7 +1128,7 @@ static void verbose_init(void)
  * supera i 256. Un nome che si puo' creare ed elencare ma non digitare e'
  * un nome irraggiungibile per meta'. */
 /* +0.001 a ogni modifica: `sh -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define SH_VERSIONE  "0.014"
+#define SH_VERSIONE  "0.015"
 
 
 /* ! LA RIGA DI `sh -c` NON E' UNA RIGA DIGITATA, e non puo' avere lo
@@ -2318,9 +2318,13 @@ static void cmd_cat(int argc, char *argv[])
 
     fd = syscall3(SYS_OPEN, (uintptr_t)argv[1], 0, 0);
     if (fd < 0) {
+        /* (0.015) the real reason and status 1: until 0.014 a /boot/ombra
+         * refused to a user said "file non trovato" and $? was 0 */
         print("cat: ");
         print(argv[1]);
-        printerr(": file non trovato");
+        printerr(fd == -SH_EACCES ? ": permesso negato" :
+                 fd == -SH_ENOENT ? ": file non trovato" : ": non si apre");
+        g_ultimo_stato = 1;
         return;
     }
 

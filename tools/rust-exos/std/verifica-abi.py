@@ -28,6 +28,7 @@
 # ! A struct that lib/include does not have (statvfs: EX-OS has no statvfs())
 # is listed and skipped: Rust has it only because the crate names it.
 # =============================================================================
+import pwd, getpass
 import os
 import re
 import subprocess
@@ -36,7 +37,7 @@ import tempfile
 
 QUI = os.path.dirname(os.path.abspath(__file__))
 RADICE = os.path.abspath(os.path.join(QUI, "..", "..", ".."))
-CROSS = os.path.join(RADICE, "cross_build")
+CROSS = os.path.join(os.environ.get("EXOS_FUORI") or os.path.join(pwd.getpwnam(os.environ.get("SUDO_USER") or getpass.getuser()).pw_dir, "ex_os"), "cross_build")
 MACCHINA = os.environ.get("MACCHINA", os.uname().nodename.lower())
 
 

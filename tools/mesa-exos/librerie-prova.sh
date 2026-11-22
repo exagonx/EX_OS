@@ -1,3 +1,5 @@
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/mesa-exos/librerie-prova.sh - the shared objects a test program needs
 #
@@ -14,7 +16,7 @@
 # =============================================================================
 librerie_prova() {
     local prog=$1 T=$2 X=$3 BIT=$4 D=$5 cerca altri="" fatti=" " coda f n p c
-    cerca="$X/$T/lib $RADICE/cross_build/libm-exos$BIT/exos/lib"
+    cerca="$X/$T/lib ${EXOS_FUORI}/cross_build/libm-exos$BIT/exos/lib"
     coda="$prog"
     while [ -n "$coda" ]; do
         f=${coda%% *}; [ "$coda" = "$f" ] && coda="" || coda=${coda#* }

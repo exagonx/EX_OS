@@ -1,0 +1,12 @@
+# tools/cloni.txt - written by tools/ripara-cloni.sh: where each clone at the
+# root stands, so that a copy without .git can be put back. folder|url|branch|commit
+apr|https://github.com/apache/apr.git|exos-1.7.6|5c18df51a91bcb3807f78eb36841d4d2ccf5563d
+apr-util|https://github.com/apache/apr-util.git|exos-1.6.5|eb1f0c8ebd4f9633c327f595746933da6349dded
+libexpat|https://github.com/libexpat/libexpat.git|exos-2.9.0|a76b1174c1ea52abb639a4c69d52b630a8a106a2
+httpd|https://github.com/apache/httpd.git|exos-2.4.69|1e06e9860794ce39605b79a0a787abfe084e5677
+mariadb-server|https://github.com/MariaDB/server|11.8|274dd0d8d90bc773090d13303b8d5e36d2390241
+mariadb-server/libmariadb|https://github.com/MariaDB/mariadb-connector-c.git||ae4495ef07c3bcf57641b977efc10e5f6fc70666
+mariadb-server/libmariadb/docs|https://github.com/mariadb-corporation/mariadb-connector-c.wiki.git||7e12bcea26c8a7fe5ee77f5e5341011bb9d7e084
+mariadb-server/storage/duckdb/third_parties/duckdb|https://github.com/duckdb/duckdb.git||d8cdaa33fda8df955cc76ef58a280f68f4cd43fa
+php-src|https://github.com/php/php-src.git|exos-8.5.12|136e049ac10b032c83018e65b63b6df858943750
+mesa|https://gitlab.freedesktop.org/mesa/mesa.git|exos-26.2.6|8e87a503ebd91408c88596d1b9eeb5f4c0b2088d

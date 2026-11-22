@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_disco_veloce.sh — how fast EX-OS writes and reads files on an
 # IDE disk, in QEMU (@DISCO-VELOCE). A measure, before and after a change.
@@ -23,7 +25,7 @@ D="${1:-/tmp/exos-prove/disco-$ARCH}"
 rm -rf "$D"; mkdir -p "$D"
 IMG="$D/hd.img"
 SBIN=/usr/sbin
-X=cross_build/nasi5deb
+X=${EXOS_FUORI}/cross_build/nasi5deb
 P1_SETT=262144; P2_SETT=262144                 # 128 MB each
 P1=$((2048 * 512)); P2=$(((2048 + P1_SETT) * 512))
 

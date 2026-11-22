@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_lucchetti.sh — file locks between processes (kernel 0.291)
 #
@@ -13,7 +15,7 @@ cd "$(dirname "$0")/.." || exit 1
 ARCH="${EXOS_ARCH:-i386}"
 D="${1:-/tmp/exos-prove/lucchetti-$ARCH}"
 rm -rf "$D"; mkdir -p "$D/albero"
-M=$(hostname | tr 'A-Z' 'a-z'); X=cross_build/$M; [ -d "$X/exos-cross" ] || X=cross_build
+M=$(hostname | tr 'A-Z' 'a-z'); X=${EXOS_FUORI}/cross_build/$M; [ -d "$X/exos-cross" ] || X=${EXOS_FUORI}/cross_build
 SBIN=/usr/sbin
 if [ "$ARCH" = x86_64 ]; then
     ISO=dist/exos64.iso; GCC=$X/exos-cross64/bin/x86_64-exos-gcc

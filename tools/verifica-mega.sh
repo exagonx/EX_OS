@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/verifica-mega.sh — cio' che ho modificato e' davvero su MEGA?
 #
@@ -31,7 +33,7 @@ for f in "$LOG"/*.log; do zcat -f "$f" 2>/dev/null; done | \
     sed "s/.*exa_os\/\([^']*\)'.*Fingerprint: \([0-9]*:[0-9]*\).*/\1 \2/" > "$CARICATI"
 
 if [ $# -eq 0 ]; then
-    set -- $( { git status --short --untracked-files=all | grep -v " build/\| dist/\| .megaignore$" | awk '{print $2}';
+    set -- $( { git status --short --untracked-files=all | grep -v " ${EXOS_FUORI}/build/\| dist/\| .megaignore$" | awk '{print $2}';
                echo scambio.txt; echo messaggio-commit.txt; echo in_lavorazione.txt; } | sort -u)
 fi
 

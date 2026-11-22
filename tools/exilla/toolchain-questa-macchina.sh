@@ -1,4 +1,6 @@
 #!/bin/sh
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/exilla/toolchain-questa-macchina.sh
 # EX-OS — Extensible Operating System
@@ -43,9 +45,9 @@ set -e
 
 RADICE=$(cd "$(dirname "$0")/../.." && pwd)
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-DEST="$RADICE/cross_build/$MACCHINA"
+DEST="${EXOS_FUORI}/cross_build/$MACCHINA"
 PREFISSO="$DEST/exos-cross"
-ORIGINE="${ORIGINE:-$RADICE/cross_build/exos-cross}"
+ORIGINE="${ORIGINE:-${EXOS_FUORI}/cross_build/exos-cross}"
 GCC_SRC="${GCC_SRC:-$RADICE/gcc}"
 VERSIONE=$(cat "$GCC_SRC/gcc/BASE-VER")
 

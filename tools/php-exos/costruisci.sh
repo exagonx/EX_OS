@@ -68,7 +68,11 @@ CACHE="ac_cv_func_dlopen=no ac_cv_lib_dl_dlopen=no ac_cv_func_fork=no
 costruisci() {
     local HTTPD=$TC/httpd-exos$1/exos/apache2 APR=$TC/apr-exos$1/exos APU=$TC/apr-util-exos$1/exos S f o
     [ -x "$RE2C" ] || manca "re2c per l'host ($RE2C)" "vedi il commento in testa a $0"
-    [ -d "$R/php-src/.git" ] || manca "il clone php-src/" "git clone https://github.com/php/php-src.git php-src"
+    # the clone through MEGA: no .git, or no folder at all, is put back here
+    "$R/tools/ripara-cloni.sh" php > /dev/null || manca "il clone php-src/ a posto" "tools/ripara-cloni.sh php"
+    git -C "$R/php-src" rev-parse -q --verify "php-$VER^{commit}" > /dev/null ||
+        git -C "$R/php-src" fetch -q --tags origin ||
+        manca "il tag php-$VER in php-src/" "git -C php-src fetch --tags origin"
     [ -f "$HTTPD/include/httpd.h" ] || manca "httpd a $1 bit" "tools/httpd-exos/costruisci.sh $1"
     lib_per "$1"
     SRC=$B/src/php-$VER

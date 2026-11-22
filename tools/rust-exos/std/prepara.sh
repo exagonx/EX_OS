@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/rust-exos/std/prepara.sh — la std di Rust per EX-OS (@RUST-STD)
 #
@@ -19,7 +21,7 @@ set -e
 cd "$(dirname "$0")/../../.."
 RADICE="$PWD"
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-B="$RADICE/cross_build/$MACCHINA"
+B="${EXOS_FUORI}/cross_build/$MACCHINA"
 LAV="$B/costruzione-std"
 export RUSTUP_HOME="$B/rust-macchina/rustup" CARGO_HOME="$B/rust-macchina/cargo"
 PROXY_RUSTC="$HOME/.cargo/bin/rustc"   # il proxy di rustup: RUSTC puo essere rustc-exos

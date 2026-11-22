@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_openssl.sh — OpenSSL 4.1 with sockets and threads, in EX-OS
 #
@@ -23,7 +25,7 @@ rm -rf "$D"; mkdir -p "$D"
 IMG="$D/hd.img"
 OFF="$IMG?offset=1048576"
 SBIN=/usr/sbin
-X=cross_build/nasi5deb
+X=${EXOS_FUORI}/cross_build/nasi5deb
 if [ "$ARCH" = x86_64 ]; then
     ISO=dist/exos64.iso; GCC=$X/exos-cross64/bin/x86_64-exos-gcc; BIT=64
     export EXOS_QEMU=qemu-system-x86_64 EXOS_RAM=512M EXTRA="-cpu qemu64"
@@ -36,7 +38,7 @@ T="$D/albero"
 mkdir -p "$T"
 $GCC -O2 -s tools/prove/sslprova.c -o "$T/sslprova" -lssl -lcrypto \
     || { echo "  (manca OpenSSL: tools/openssl-exos/costruisci.sh $BIT)"; exit 1; }
-cp cross_build/openssl-exos$BIT/exos/bin/openssl "$T/" || exit 1
+cp ${EXOS_FUORI}/cross_build/openssl-exos$BIT/exos/bin/openssl "$T/" || exit 1
 # ! the libraries are shared since 3 November 2026 and the EX-OS CD has none
 # of them (on a system they are in /exos/lib): the ones named by DT_NEEDED,
 # and theirs, go to /a/lib, found through LD_LIBRARY_PATH, as prova_httpd.sh
@@ -48,7 +50,7 @@ while [ -n "$nomi" ]; do
         [ -f "$T/lib/$l" ] && continue
         # the shared libc is the system's, in /lib of the CD (voce 105)
         [ "$l" = ld-exos.so ] && continue
-        f=$(ls cross_build/*-exos$BIT/exos/lib/"$l" 2>/dev/null | head -1)
+        f=$(ls ${EXOS_FUORI}/cross_build/*-exos$BIT/exos/lib/"$l" 2>/dev/null | head -1)
         [ -n "$f" ] || { echo "manca $l (a $BIT bit)" >&2; exit 1; }
         cp "$f" "$T/lib/"
         nuovi="$nuovi $(readelf -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')"

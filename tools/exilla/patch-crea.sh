@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/exilla/patch-crea.sh — le patch di Exilla, da originali e file di adesso
 #
@@ -13,7 +15,7 @@
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-ORIG="$PWD/cross_build/$MACCHINA/firefox-originali"
+ORIG="${EXOS_FUORI}/cross_build/$MACCHINA/firefox-originali"
 P="$PWD/tools/exilla/patch"
 mkdir -p "$P"; rm -f "$P"/*.patch
 [ -d "$ORIG" ] || { echo "nessun file toccato"; exit 0; }

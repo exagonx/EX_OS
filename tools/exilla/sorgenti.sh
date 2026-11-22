@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/exilla/sorgenti.sh - the Mozilla sources: the latest official release,
 # signature checked, and our patches on it (18 November 2026)
@@ -40,8 +42,8 @@ set -u
 cd "$(dirname "$0")/../.." || exit 1
 R=$PWD
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-TP=$R/cross_build/terze-parti
-LAVORO=$R/cross_build/aggiorna
+TP=${EXOS_FUORI}/cross_build/terze-parti
+LAVORO=${EXOS_FUORI}/cross_build/aggiorna
 CHIAVE=$R/tools/exilla/mozilla-chiave.txt
 ARCHIVIO_M=https://archive.mozilla.org/pub
 DETTAGLI=https://product-details.mozilla.org/1.0
@@ -57,7 +59,7 @@ prodotto() {    # $1: firefox|thunderbird -> P ALBERO ORIG PATCHES
                      PATCHES="$R/tools/exilla/patch $R/tools/thunderbird-exos/patch" ;;
         *) uso ;;
     esac
-    ORIG=$R/cross_build/$MACCHINA/$P-originali
+    ORIG=${EXOS_FUORI}/cross_build/$MACCHINA/$P-originali
 }
 
 # the official version of a channel: release (default), esr, beta

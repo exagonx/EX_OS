@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/ambiente.sh — what the build needs, what is missing, and how to get it
 #
@@ -31,11 +33,11 @@ cd "$(dirname "$0")/.." || exit 1
 
 # Where the toolchains live: cross_build/ if it is there, else the old place
 # in the home (the same choice as `dentro` in the Makefile).
-dentro() { if [ -d "cross_build/$1" ]; then echo "cross_build/$1"; else echo "$HOME/$1"; fi; }
+dentro() { if [ -d "${EXOS_FUORI}/cross_build/$1" ]; then echo "${EXOS_FUORI}/cross_build/$1"; else echo "$HOME/$1"; fi; }
 C32=$(dentro exos-cross)
-C64=cross_build/exos-cross64
+C64=${EXOS_FUORI}/cross_build/exos-cross64
 N32=$(dentro exos-native)
-N64=cross_build/exos-native64
+N64=${EXOS_FUORI}/cross_build/exos-native64
 
 PER=""
 case "${1:-}" in
@@ -128,6 +130,11 @@ voce "$S" obbl "all iso iso-exos iso64 utente64 netinst netinst64" "albero di Qu
 voce "$S" obbl "all iso iso-exos iso64 utente64 netinst netinst64" "QuickJS adattato a EX-OS" \
     "grep -q __EXOS__ quickjs/cutils.h 2>/dev/null" \
     "python3 tools/quickjs-exos/applica.py quickjs"
+# the git clones at the root (tools/cloni.txt): from a bare clone of EX-OS
+# they are fetched again, after MEGA their links, modes and .git come back
+voce "$S" fac "iso iso64 tools64" "cloni git dei sorgenti di terzi (mesa, php-src, httpd... in tools/cloni.txt)" \
+    "tools/ripara-cloni.sh -n > /dev/null 2>&1" \
+    "tools/ripara-cloni.sh"
 voce "$S" fac "iso toolchain" "albero di OpenSSL (openssl/)" \
     "[ -f openssl/Configure ]" "ripristinare openssl/ dall'archivio di backup.sh"
 voce "$S" fac "iso toolchain" "albero di FreeBASIC 1.10.1" \
@@ -161,13 +168,13 @@ voce "$T" fac "iso" "NASM per EX-OS" \
 voce "$T" fac "iso" "FreeBASIC per EX-OS (fbc)" \
     "[ -x $(dentro fb-build-110)/fbc ]" "tools/freebasic-exos/prepara-fb.sh"
 voce "$T" fac "iso" "ncurses per i386-exos (libncurses.a, terminfo, tic)" \
-    "[ -f cross_build/ncurses-exos32/exos/lib/libncurses.a ]" "tools/ncurses-exos/costruisci.sh 32"
+    "[ -f ${EXOS_FUORI}/cross_build/ncurses-exos32/exos/lib/libncurses.a ]" "tools/ncurses-exos/costruisci.sh 32"
 for l in zlib:libz bzip2:libbz2 xz:liblzma lz4:liblz4 zstd:libzstd pcre2:libpcre2-8 fmt:libfmt ogg:libogg vorbis:libvorbis opus:libopus flac:libFLAC libvpx:libvpx dav1d:libdav1d ffmpeg:libavcodec; do
     voce "$T" fac "iso" "${l%%:*} per i386-exos" \
-        "[ -f cross_build/${l%%:*}-exos32/exos/lib/${l#*:}.a ]" "tools/${l%%:*}-exos/costruisci.sh 32"
+        "[ -f ${EXOS_FUORI}/cross_build/${l%%:*}-exos32/exos/lib/${l#*:}.a ]" "tools/${l%%:*}-exos/costruisci.sh 32"
 done
 voce "$T" fac "iso" "VLC per i386-exos (bin/vlc)" \
-    "[ -x cross_build/vlc-exos32/exos/bin/vlc ]" "tools/vlc-exos/costruisci.sh 32"
+    "[ -x ${EXOS_FUORI}/cross_build/vlc-exos32/exos/bin/vlc ]" "tools/vlc-exos/costruisci.sh 32"
 
 # --- 4. the 64-bit toolchain ------------------------------------------------------
 Q="toolchain x86_64-exos (64 bit)"
@@ -178,26 +185,46 @@ voce "$Q" fac "utente64 iso64 netinst64" "libgcc e libm di x86_64-exos (per quic
 voce "$Q" fac "tools64" "GCC, binutils, make e nasm nativi a 64 bit ($N64)" \
     "[ -d $N64/build-gcc ] && [ -x $N64/build-make/make ]" "tools/gcc-exos/cross64.sh"
 voce "$Q" fac "tools64" "OpenSSL per x86_64-exos" \
-    "[ -f cross_build/openssl-build-exos64/libssl.a ]" "tools/openssl-exos/costruisci.sh 64"
+    "[ -f ${EXOS_FUORI}/cross_build/openssl-build-exos64/libssl.a ]" "tools/openssl-exos/costruisci.sh 64"
 voce "$Q" fac "tools64" "libgit2 per x86_64-exos" \
-    "[ -f cross_build/libgit2-exos64/lib/libgit2.a ]" "tools/libgit2-exos/costruisci.sh"
+    "[ -f ${EXOS_FUORI}/cross_build/libgit2-exos64/lib/libgit2.a ]" "tools/libgit2-exos/costruisci.sh"
 voce "$Q" fac "tools64" "ncurses per x86_64-exos (libncurses.a, terminfo, tic)" \
-    "[ -f cross_build/ncurses-exos64/exos/lib/libncurses.a ]" "tools/ncurses-exos/costruisci.sh 64"
+    "[ -f ${EXOS_FUORI}/cross_build/ncurses-exos64/exos/lib/libncurses.a ]" "tools/ncurses-exos/costruisci.sh 64"
 for l in zlib:libz bzip2:libbz2 xz:liblzma lz4:liblz4 zstd:libzstd pcre2:libpcre2-8 fmt:libfmt ogg:libogg vorbis:libvorbis opus:libopus flac:libFLAC libvpx:libvpx dav1d:libdav1d ffmpeg:libavcodec; do
     voce "$Q" fac "tools64" "${l%%:*} per x86_64-exos" \
-        "[ -f cross_build/${l%%:*}-exos64/exos/lib/${l#*:}.a ]" "tools/${l%%:*}-exos/costruisci.sh 64"
+        "[ -f ${EXOS_FUORI}/cross_build/${l%%:*}-exos64/exos/lib/${l#*:}.a ]" "tools/${l%%:*}-exos/costruisci.sh 64"
 done
 voce "$Q" fac "tools64" "VLC per x86_64-exos (bin/vlc)" \
-    "[ -x cross_build/vlc-exos64/exos/bin/vlc ]" "tools/vlc-exos/costruisci.sh 64"
+    "[ -x ${EXOS_FUORI}/cross_build/vlc-exos64/exos/bin/vlc ]" "tools/vlc-exos/costruisci.sh 64"
 voce "$Q" fac "tools64" "FreeBASIC per EX-OS a 64 bit" \
-    "[ -x cross_build/fb64/fb-build-exos64/fbc ]" "tools/freebasic-exos/prepara-fb64.sh"
+    "[ -x ${EXOS_FUORI}/cross_build/fb64/fb-build-exos64/fbc ]" "tools/freebasic-exos/prepara-fb64.sh"
+
+# --- 4b. files git deleted that came back -------------------------------------------
+# ! MEGA PUT BACK 33 FILES THE VOCE 105 HAD DELETED (22/11/2026): the lib/*_stub.c
+# and *_esporta.c went into libexos.a next to the real ones, every symbol twice,
+# and netupdate at 64 bit no longer linked (so netinst64 had none). Only the
+# untracked files of the code folders are asked about: git log on all the
+# history is 7 seconds, too much at every make.
+risorti() {
+    local f c t=0
+    command -v git > /dev/null 2>&1 && [ -d .git ] || return 0
+    for f in $(git ls-files --others --exclude-standard -- lib kernel bin exwin drivers 2>/dev/null); do
+        c=$(git log --format=%h --diff-filter=D -1 -- "$f" 2>/dev/null)
+        [ -n "$c" ] && { echo "    $f (cancellato da git in $c)" >&2; t=1; }
+    done
+    return $t
+}
+R4="file cancellati da git e ricomparsi"
+voce "$R4" obbl "all iso iso-exos iso64 utente64 kernel64 netinst netinst64" "nessun file che git ha cancellato e' tornato nel codice (MEGA)" \
+    "risorti" \
+    "spostarli fuori dal progetto (mkdir -p ~/ex_os/risorti; mv <file> ~/ex_os/risorti/): git li ha tolti, MEGA li ha rimessi"
 
 # --- 5. what one target needs from another -----------------------------------------
 B="pezzi fatti da altri bersagli"
-voce "$B" obbl "iso64 kernel64" "settori d'avvio fatti dal 32 bit (build/boot/mbr_bin.c, boothd_bin.c)" \
-    "[ -f build/boot/mbr_bin.c ] && [ -f build/boot/boothd_bin.c ]" "make"
-voce "$B" fac "iso64" "albero del CD a 32 bit (build/iso-exos: kernel.cfg, manuali, caratteri)" \
-    "[ -d build/iso-exos ]" "make iso-exos"
+voce "$B" obbl "iso64 kernel64" "settori d'avvio fatti dal 32 bit (${EXOS_FUORI}/build/boot/mbr_bin.c, boothd_bin.c)" \
+    "[ -f ${EXOS_FUORI}/build/boot/mbr_bin.c ] && [ -f ${EXOS_FUORI}/build/boot/boothd_bin.c ]" "make"
+voce "$B" fac "iso64" "albero del CD a 32 bit (${EXOS_FUORI}/build/iso-exos: kernel.cfg, manuali, caratteri)" \
+    "[ -d ${EXOS_FUORI}/build/iso-exos ]" "make iso-exos"
 
 # --- the verdict -------------------------------------------------------------------
 if [ -n "$PER" ]; then

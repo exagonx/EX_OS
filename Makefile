@@ -1,3 +1,13 @@
+# ! CIO' CHE LA COSTRUZIONE PRODUCE STA FUORI DAL PROGETTO, in <home
+# dell'utente>/ex_os: build, build-64, dischi, cross_build, i risultati delle
+# prove di carico (22/11/2026, l'utente: in MEGA solo i sorgenti, le ISO finite
+# e i netinst; niente collegamenti, MEGA li da' per errore). tools/fuori.sh
+# trova l'utente (anche sotto sudo) e crea le cartelle; EXOS_FUORI=/altrove le
+# manda altrove. Prima di ogni altra riga: tutto il resto la usa.
+# Si chiama con sh: MEGA toglie il +x.
+EXOS_FUORI  := $(shell sh tools/fuori.sh)
+export EXOS_FUORI
+
 # stage2 of the 64-bit build refuses a CPU without long mode, on screen
 STAGE2_64 = $(if $(filter x86_64,$(ARCH)),-DRICHIEDE64)
 # =============================================================================
@@ -146,7 +156,7 @@ arch-dice:
 # ==============================================================================
 .PHONY: iso64 tools64 netinst64
 iso64:
-	@[ -d build/iso-exos ] || echo "! manca build/iso-exos: senza 'make iso-exos' il CD a 64 bit non avra' kernel.cfg, manuali e caratteri"
+	@[ -d $(EXOS_FUORI)/build/iso-exos ] || echo "! manca $(EXOS_FUORI)/build/iso-exos: senza 'make iso-exos' il CD a 64 bit non avra' kernel.cfg, manuali e caratteri"
 	@$(MAKE) --no-print-directory ARCH=x86_64 utente64
 	@$(MAKE) --no-print-directory ARCH=x86_64 kernel64
 	@ls -la dist/exos64.iso
@@ -178,7 +188,7 @@ iso64:
 # dischetto, settore di avvio, Stage 2 con RAMDISCO=1). La vecchia
 # chiavetta-disco installata da QEMU, quella che sul PC vero non partiva,
 # e' stata tolta da mkusb.sh.
-USB_AVVIO = build-64/avvio
+USB_AVVIO = $(EXOS_FUORI)/build-64/avvio
 define usb_caricatori
 	@mkdir -p $(USB_AVVIO)
 	$(AS) -f bin -DDISCHETTO=288 -DGEOMETRIA_BIOS bootloader/stage1/boot.asm -o $(USB_AVVIO)/stage1-288.bin
@@ -200,7 +210,7 @@ chiave64: usb64
 # poteva piu' riscriverli (14 ottobre 2026).
 COME_UTENTE = $(if $(SUDO_USER),sudo -u $(SUDO_USER) -H env PATH="$(PATH)")
 usb64:
-	@[ -d build/iso-exos ] || $(COME_UTENTE) $(MAKE) --no-print-directory iso-exos
+	@[ -d $(EXOS_FUORI)/build/iso-exos ] || $(COME_UTENTE) $(MAKE) --no-print-directory iso-exos
 	@echo "=== make usb64: ricostruisco kernel e programmi a 64 bit ==="
 	@$(COME_UTENTE) $(MAKE) --no-print-directory iso64
 	@$(COME_UTENTE) $(MAKE) --no-print-directory usb-caricatori
@@ -220,9 +230,9 @@ utente64:
 netinst64: iso64
 	@chmod +x $(TOOLS_DIR)/mknetinst.sh
 	@ARCH=x86_64 $(TOOLS_DIR)/mknetinst.sh
-	@[ ! -f build-64/NON-ANCORA-UN-SISTEMA.txt ] || { echo ""; \
+	@[ ! -f $(EXOS_FUORI)/build-64/NON-ANCORA-UN-SISTEMA.txt ] || { echo ""; \
 	    echo "! dist/netinst_64 c'e', ma NON e' da pubblicare:"; \
-	    echo "  $$(cat build-64/NON-ANCORA-UN-SISTEMA.txt)"; }
+	    echo "  $$(cat $(EXOS_FUORI)/build-64/NON-ANCORA-UN-SISTEMA.txt)"; }
 
 # tools64: the native gcc, g++, binutils, make and nasm for EX-OS 64-bit, on
 # dist/exos64-tools.iso with the layout of the 32-bit tools CD (toolinst
@@ -232,7 +242,7 @@ tools64:
 	@chmod +x $(TOOLS_DIR)/mktools64.sh
 	@$(TOOLS_DIR)/mktools64.sh || { \
 	    echo "tools64: build the toolchain first:"; \
-	    echo "    nohup tools/gcc-exos/cross64.sh > cross_build/cross64.log 2>&1 &"; exit 1; }
+	    echo "    nohup tools/gcc-exos/cross64.sh > $(EXOS_FUORI)/cross_build/cross64.log 2>&1 &"; exit 1; }
 
 # --- @EXOS-64, tappa 1: il kernel arriva in modo a 64 bit --------------------
 #
@@ -247,7 +257,7 @@ tools64:
 #     make ARCH=x86_64 kernel64-prova     costruisce e fa dist/exos64-prove.iso
 #     tools/prova_kernel64.sh             lo avvia in QEMU e guarda la seriale
 K64_DIR := kernel/arch/x86_64
-K64_OUT := build-64
+K64_OUT := $(EXOS_FUORI)/build-64
 K64_CFLAGS := -m64 -ffreestanding -fno-pic -fno-pie -mno-red-zone -mgeneral-regs-only \
               -mcmodel=small -fno-stack-protector -fno-asynchronous-unwind-tables \
               -O2 -Wall -Wextra -Wpointer-to-int-cast -Wint-to-pointer-cast
@@ -258,8 +268,8 @@ K64_COMUNI := kernel/arch/x86/kprintf.c kernel/arch/x86/memfun.c kernel/mm/pmm.c
 .PHONY: kernel64-prova pulisci64
 kernel64-prova:
 	@echo "=== EX-OS a 64 bit, tappa 1: l'ingresso in long mode ==="
-	@[ -f build/stage1.bin ] && [ -f build/stage2.bin ] || \
-	    { echo "mancano build/stage1.bin e build/stage2.bin: prima 'make' (la versione a 32 bit)"; exit 1; }
+	@[ -f $(EXOS_FUORI)/build/stage1.bin ] && [ -f $(EXOS_FUORI)/build/stage2.bin ] || \
+	    { echo "mancano $(EXOS_FUORI)/build/stage1.bin e $(EXOS_FUORI)/build/stage2.bin: prima 'make' (la versione a 32 bit)"; exit 1; }
 	@mkdir -p $(K64_OUT)
 	nasm -f elf64 $(K64_DIR)/entry.asm -o $(K64_OUT)/entry.o
 	nasm -f elf64 $(K64_DIR)/isr64.asm -o $(K64_OUT)/isr64.o
@@ -320,7 +330,7 @@ kernel64-sondaggio:
 	echo "  (fuori dal conto, da riscrivere per i 64 bit: $(K64_RISCRIVERE))"; \
 	echo "  (i particolari: $(K64_SONDA)/)"
 
-BUILD_DIR   := build
+BUILD_DIR   := $(EXOS_FUORI)/build
 DIST_DIR    := dist
 BOOT_DIR    := bootloader
 KERNEL_DIR  := kernel
@@ -594,7 +604,7 @@ SHELL_LD    := bin/sh/shell.ld
 # altrimenti il vecchio posto nella home: una macchina che non ha ancora
 # spostato le sue cartelle continua a compilare. Vedi SVILUPPO.md, sezione 1.
 # =============================================================================
-TOOLCHAIN_DIR := $(CURDIR)/cross_build
+TOOLCHAIN_DIR := $(EXOS_FUORI)/cross_build
 dentro = $(if $(wildcard $(TOOLCHAIN_DIR)/$(1)/.),$(TOOLCHAIN_DIR)/$(1),$(HOME)/$(1))
 
 CFLAGS_USER := -m32 $(CPU_BASE) -ffreestanding -fno-builtin \
@@ -5909,8 +5919,8 @@ K64I_OBJ   := $(patsubst %,$(K64I_OUT)/arch64/%.o,$(K64I_ASM) $(K64I_ARCH)) \
 .PHONY: kernel64
 kernel64:
 	@echo "=== EX-OS a 64 bit: il kernel intero ==="
-	@[ -f build/boot/mbr_bin.c ] && [ -f build/boot/boothd_bin.c ] || \
-	    { echo "mancano i settori di avvio in build/boot: prima 'make' (la versione a 32 bit)"; exit 1; }
+	@[ -f $(EXOS_FUORI)/build/boot/mbr_bin.c ] && [ -f $(EXOS_FUORI)/build/boot/boothd_bin.c ] || \
+	    { echo "mancano i settori di avvio in $(EXOS_FUORI)/build/boot: prima 'make' (la versione a 32 bit)"; exit 1; }
 	@mkdir -p $(K64I_OUT)/arch64
 	@for f in $(K64I_ASM); do \
 	    nasm -f elf64 $(K64_DIR)/$$f.asm -o $(K64I_OUT)/arch64/$$f.o || exit 1; \
@@ -5923,8 +5933,8 @@ kernel64:
 	    gcc $(K64_CFLAGS) $(K64I_INC) -c $$f -o $$o || exit 1; \
 	done
 	@gcc $(K64_CFLAGS) $(K64I_INC) -c drivers/tty/tty.c -o $(K64I_OUT)/tty.o
-	@gcc $(K64_CFLAGS) $(K64I_INC) -c build/boot/mbr_bin.c -o $(K64I_OUT)/mbr_bin.o
-	@gcc $(K64_CFLAGS) $(K64I_INC) -c build/boot/boothd_bin.c -o $(K64I_OUT)/boothd_bin.o
+	@gcc $(K64_CFLAGS) $(K64I_INC) -c $(EXOS_FUORI)/build/boot/mbr_bin.c -o $(K64I_OUT)/mbr_bin.o
+	@gcc $(K64_CFLAGS) $(K64I_INC) -c $(EXOS_FUORI)/build/boot/boothd_bin.c -o $(K64I_OUT)/boothd_bin.o
 	ld -m elf_x86_64 -nostdlib -z max-page-size=4096 -z noexecstack -T $(K64_DIR)/kernel64.ld \
 	    $(K64I_OBJ) -o $(K64_OUT)/kernel-intero.elf
 	objcopy -O binary $(K64_OUT)/kernel-intero.elf $(K64_OUT)/kernel-intero.bin
@@ -5949,11 +5959,11 @@ kernel64:
 	@# build/ cambia con cio' che si e' costruito per ultimo (`make installa` lo
 	@# lascia con RAMDISCO=1, e un CD avviato cosi' monta come radice la sua
 	@# immagine di avvio, dove /bin non c'e'. Successo il 10 ottobre 2026).
-	@mkdir -p build-64/avvio
-	$(AS) -f bin $(STAGE2_64) -DSVGAMODO=$(SVGA_MODO) -DRAMDISCO=0 -DRICHIEDE64 $(STAGE2_ASM_SRC) -o build-64/avvio/stage2-cd.bin
+	@mkdir -p $(EXOS_FUORI)/build-64/avvio
+	$(AS) -f bin $(STAGE2_64) -DSVGAMODO=$(SVGA_MODO) -DRAMDISCO=0 -DRICHIEDE64 $(STAGE2_ASM_SRC) -o $(EXOS_FUORI)/build-64/avvio/stage2-cd.bin
 	@# Il sistema di base a 64 bit (@RDBOOT): i comandi di build-64/bin.
 	@chmod +x $(TOOLS_DIR)/mkrdboot.sh
-	@$(TOOLS_DIR)/mkrdboot.sh x86_64 build-64/rdboot.img
+	@$(TOOLS_DIR)/mkrdboot.sh x86_64 $(EXOS_FUORI)/build-64/rdboot.img
 	@chmod +x tools/mkiso64.sh
 	@tools/mkiso64.sh intero
 	@echo "[OK] $(K64_OUT)/kernel-intero.bin ($$(stat -c%s $(K64_OUT)/kernel-intero.bin) byte)"
@@ -8106,8 +8116,8 @@ verifica-programmi: $(PROGRAMMI_FLOPPY) $(PROGRAMMI_CD) $(DRIVER_CD)
 	    echo "  ! Questi sorgenti non producono niente:$$mancanti"; \
 	    echo ""; \
 	    echo "    Ognuno ha bisogno di due cose nel Makefile:"; \
-	    echo "      1. una regola che lo compili in build/bin (sistema di"; \
-	    echo "         base, va anche sul floppy) oppure in build/bin-cd"; \
+	    echo "      1. una regola che lo compili in $(EXOS_FUORI)/build/bin (sistema di"; \
+	    echo "         base, va anche sul floppy) oppure in $(EXOS_FUORI)/build/bin-cd"; \
 	    echo "         (solo CD di EX-OS);"; \
 	    echo "      2. il suo nome in PROGRAMMI_FLOPPY o in PROGRAMMI_CD,"; \
 	    echo "         che e' cio' che lo fa costruire."; \
@@ -8314,16 +8324,16 @@ $(ISOX_IMG): Makefile $(FLOPPY_IMG) $(RDBOOT_LZ4) $(MOD_EXT4_OUT) boot/autoexec.
 	@cp $(BUILD_LIB)/* $(ISOX_ROOT)/lib/ 2>/dev/null || true
 	@# /lib/ld-exos.so (voce 105): the shared libc and the interpreter the
 	@# kernel (0.350) starts for every program linked without -static
-	@bash tools/costruisci-ld.sh 32 build/ld > /dev/null
-	@cp build/ld/ld-exos.so $(ISOX_ROOT)/lib/
+	@bash tools/costruisci-ld.sh 32 $(EXOS_FUORI)/build/ld > /dev/null
+	@cp $(EXOS_FUORI)/build/ld/ld-exos.so $(ISOX_ROOT)/lib/
 	@# libm.so.4 (openlibm, 3 November 2026): programs linked to shared objects
 	@# and the libraries they load take their math from it (lib/libc_dl.c,
 	@# tools/librerie-exos/comune.sh). Only the file named by DT_NEEDED: EX-OS
 	@# has no symbolic links, libm.so is for the linker in the sysroot.
-	@cp cross_build/libm-exos32/exos/lib/libm.so.4 $(ISOX_ROOT)/lib/ 2>/dev/null || true
+	@cp $(EXOS_FUORI)/cross_build/libm-exos32/exos/lib/libm.so.4 $(ISOX_ROOT)/lib/ 2>/dev/null || true
 	@# libstdc++.so.6, libgcc_s.so.1: the C++ runtime of what is not -static
 	@# (voce 85, tools/librerie-exos/cxx-condivise.sh), in /lib like libm.
-	@cp cross_build/cxx-exos32/exos/lib/libstdc++.so.6 cross_build/cxx-exos32/exos/lib/libgcc_s.so.1 $(ISOX_ROOT)/lib/ 2>/dev/null || true
+	@cp $(EXOS_FUORI)/cross_build/cxx-exos32/exos/lib/libstdc++.so.6 $(EXOS_FUORI)/cross_build/cxx-exos32/exos/lib/libgcc_s.so.1 $(ISOX_ROOT)/lib/ 2>/dev/null || true
 	@cp $(BUILD_DRIVERS)/*.drv $(ISOX_ROOT)/dev/ 2>/dev/null || true
 	@# il modulo che scrive ext2/3/4: senza, la radice di un disco installato
 	@# da qui partirebbe in sola lettura (kernel 0.263)
@@ -8554,7 +8564,7 @@ run-iso: $(FLOPPY_IMG) $(ISO_IMG)
 # installazione le fa EX-OS stesso. Tenerlo in dist/ voleva dire che un
 # `make distclean` — che uno lancia per liberare spazio dalle ISO — portava
 # via anche quello, senza chiedere niente.
-DISCHI_DIR := dischi
+DISCHI_DIR := $(EXOS_FUORI)/dischi
 HD_IMG := $(DISCHI_DIR)/hd.img
 
 .PHONY: hd
@@ -8949,7 +8959,7 @@ help:
 	@echo "  make iso          — CD degli strumenti dist/exos-tools.iso"
 	@echo "                      (gcc, g++, cpp, cc1, fbc, as, ld, OpenSSL)"
 	@echo "  make 3papp        — Solo i binari delle app di terze parti"
-	@echo "                      (build/3papp/bin/, senza creare l'ISO)"
+	@echo "                      ($(EXOS_FUORI)/build/3papp/bin/, senza creare l'ISO)"
 	@echo "  make iso-3papp    — CD autonomo dist/3papp.iso (app di terze parti)"
 	@echo "                      (separato da exos.iso: rigenera solo questo"
 	@echo "                      quando aggiorni 3p_app_source/)"

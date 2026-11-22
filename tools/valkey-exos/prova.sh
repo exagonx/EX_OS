@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/valkey-exos/prova.sh — Valkey on EX-OS, in QEMU (voce 33 i)
 #
@@ -23,7 +25,7 @@
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
 BITS=${1:-64}
-X=cross_build/nasi5deb
+X=${EXOS_FUORI}/cross_build/nasi5deb
 SBIN=/usr/sbin
 if [ "$BITS" = 64 ]; then
     ARCH=x86_64; ISO=dist/exos64.iso
@@ -32,7 +34,7 @@ else
     ARCH=i386; ISO=dist/exos.iso
     export EXOS_RAM=${EXOS_RAM:-1024M} EXTRA=""
 fi
-V=cross_build/valkey-exos$BITS/exos/valkey
+V=${EXOS_FUORI}/cross_build/valkey-exos$BITS/exos/valkey
 D=/tmp/exos-prove/valkey-$ARCH
 [ -f "$ISO" ] || { echo "manca $ISO" >&2; exit 1; }
 [ -x "$V/bin/valkey-server" ] || { echo "manca $V: tools/valkey-exos/costruisci.sh $BITS" >&2; exit 1; }
@@ -48,7 +50,7 @@ for l in $(for f in "$T"/valkey/bin/*; do readelf -d "$f" 2>/dev/null; done |
            sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | sort -u); do
     # the shared libc is the system's, in /lib of the CD (voce 105)
     [ "$l" = ld-exos.so ] && continue
-    f=$(ls cross_build/*-exos$BITS/exos/lib/"$l" 2>/dev/null | head -1)
+    f=$(ls ${EXOS_FUORI}/cross_build/*-exos$BITS/exos/lib/"$l" 2>/dev/null | head -1)
     [ -n "$f" ] || { echo "manca $l (per valkey a $BITS bit)" >&2; exit 1; }
     cp "$f" "$T/lib/"
 done

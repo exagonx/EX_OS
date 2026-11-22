@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_filimorti.sh - threads of a program that exits while they read
 # (analisi_kernel voce 6)
@@ -21,7 +23,7 @@ ARCH="${EXOS_ARCH:-i386}"
 D="${1:-/tmp/exos-prove/filimorti-$ARCH}"
 rm -rf "$D"; mkdir -p "$D/albero"
 SBIN=/usr/sbin
-X=cross_build/nasi5deb
+X=${EXOS_FUORI}/cross_build/nasi5deb
 KVM=""; [ -w /dev/kvm ] && KVM="-enable-kvm"
 
 if [ "$ARCH" = x86_64 ]; then

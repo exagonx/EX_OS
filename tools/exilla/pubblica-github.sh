@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/exilla/pubblica-github.sh — aggiorna il repository github.com/exagonx/exilla
 #
@@ -24,7 +26,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-DEST="$PWD/cross_build/$MACCHINA/exilla-github"
+DEST="${EXOS_FUORI}/cross_build/$MACCHINA/exilla-github"
 REMOTO="${EXILLA_REMOTO:-https://github.com/exagonx/exilla.git}"
 INVIA=1; [ "${1:-}" = "--senza-invio" ] && INVIA=0
 
@@ -50,7 +52,7 @@ cp tools/exilla/github/LICENZE.md "$DEST/"
 {
     echo "Firefox $(cat firefox-main/browser/config/version.txt)"
     echo "istantanea di mozilla-firefox/firefox, ramo main, del 25 settembre 2026"
-    echo "srcdir di mach: $(ls cross_build/"$MACCHINA"/costruzione-mozbuild/srcdirs/ 2>/dev/null | head -1)"
+    echo "srcdir di mach: $(ls ${EXOS_FUORI}/cross_build/"$MACCHINA"/costruzione-mozbuild/srcdirs/ 2>/dev/null | head -1)"
 } > "$DEST/BASE.txt"
 
 cd "$DEST"

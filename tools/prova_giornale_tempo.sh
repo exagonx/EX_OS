@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_giornale_tempo.sh - commits that wait (kernel 0.307)
 #
@@ -19,7 +21,7 @@ cd "$(dirname "$0")/.." || exit 1
 ARCH="${EXOS_ARCH:-i386}"
 D="${1:-/tmp/exos-prove/giornale-$ARCH}"
 rm -rf "$D"; mkdir -p "$D/albero"
-X=cross_build/nasi5deb
+X=${EXOS_FUORI}/cross_build/nasi5deb
 if [ "$ARCH" = x86_64 ]; then
     ISO=dist/exos64.iso; GCC=$X/exos-cross64/bin/x86_64-exos-gcc
     export EXOS_QEMU=qemu-system-x86_64 EXOS_RAM=512M EXTRA="-cpu qemu64"

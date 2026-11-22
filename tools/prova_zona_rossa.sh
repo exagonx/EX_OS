@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_zona_rossa.sh — the stack grows for a write in the red zone
 #
@@ -10,7 +12,7 @@ D="${1:-/tmp/exos-prove/zonarossa}"
 SBIN=/usr/sbin; [ -x /sbin/mke2fs ] && SBIN=/sbin
 rm -rf "$D"; mkdir -p "$D/albero"
 ISO=${EXOS_ISO:-dist/exos64.iso}
-cross_build/exos-cross64/bin/x86_64-exos-gcc -O1 tools/prove/zonarossa.c -o "$D/albero/zonarossa" -lpthread || exit 1
+${EXOS_FUORI}/cross_build/exos-cross64/bin/x86_64-exos-gcc -O1 tools/prove/zonarossa.c -o "$D/albero/zonarossa" -lpthread || exit 1
 IMG="$D/disco.img"; S=32768
 qemu-img create -f raw "$IMG" 20M > /dev/null
 printf 'label: dos\nunit: sectors\n\nstart=2048, size=%d, type=83\n' $S | $SBIN/sfdisk "$IMG" > /dev/null 2>&1

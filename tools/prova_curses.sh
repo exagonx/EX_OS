@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_curses.sh — ncurses on the EX-OS console (kernel 0.279)
 #
@@ -23,7 +25,7 @@ D="${1:-/tmp/exos-prove/curses-$ARCH}"
 rm -rf "$D"; mkdir -p "$D"
 IMG="$D/hd.img"
 SBIN=/usr/sbin
-X=cross_build/nasi5deb
+X=${EXOS_FUORI}/cross_build/nasi5deb
 if [ "$ARCH" = x86_64 ]; then
     ISO=dist/exos64.iso; GCC=$X/exos-cross64/bin/x86_64-exos-gcc
     STRUMENTI=dist/exos64-tools.iso

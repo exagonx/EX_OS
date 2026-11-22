@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/exilla/js-costruisci.sh — SpiderMonkey per EX-OS (tappa 4 di Exilla)
 #
@@ -16,7 +18,7 @@
 cd "$(dirname "$0")/../.." || exit 1
 RADICE="$PWD"
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-B="$RADICE/cross_build/$MACCHINA"
+B="${EXOS_FUORI}/cross_build/$MACCHINA"
 # EXILLA_MOZCONFIG sceglie un altro mozconfig: tools/exilla/gecko-costruisci.sh
 # lo usa per il browser (tappa 6).
 # EXOS_ARCH=x86_64 (16 October 2026): Exilla for 64-bit EX-OS - the
@@ -33,7 +35,7 @@ export RUSTUP_HOME="$B/rust-macchina/rustup" CARGO_HOME="$B/rust-macchina/cargo"
 # $CARGO_HOME/bin: cbindgen, installato con cargo install dentro il progetto
 # at 64 bit this machine's threaded copy (EXOS_ARCH=x86_64 tools/exilla/
 # gcc-fili.sh) comes before the shared toolchain, as exos-cross does at 32
-export PATH="$B/exos-cross/bin:$B/exos-cross64/bin:$RADICE/cross_build/exos-cross64/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:$PATH"
+export PATH="$B/exos-cross/bin:$B/exos-cross64/bin:${EXOS_FUORI}/cross_build/exos-cross64/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:$PATH"
 # Rust: il bersaglio i686-unknown-exos per nome (tools/rust-exos/rustc-exos), la
 # std nel sysroot del nightly (tools/rust-exos/std/installa-sysroot.sh).
 export RUSTUP_TOOLCHAIN=nightly
@@ -64,7 +66,7 @@ fi
 # Mozilla's own clang has one.
 export LLVM_OBJDUMP="${LLVM_OBJDUMP:-$(command -v llvm-objdump || command -v llvm-objdump-14 || echo "$B/costruzione-strumenti/mozclang/clang/bin/llvm-objdump")}"
 export MACH_NO_TERMINAL_FOOTER=1 MOZ_NOSPAM=1
-mkdir -p "$MOZBUILD_STATE_PATH" "$RADICE/cross_build/exilla-obj"
+mkdir -p "$MOZBUILD_STATE_PATH" "${EXOS_FUORI}/cross_build/exilla-obj"
 cd firefox-main || exit 1
 [ $# -eq 0 ] && set -- configure
 exec ./mach "$@"

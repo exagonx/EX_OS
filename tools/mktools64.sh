@@ -1,4 +1,6 @@
 #!/bin/sh
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/mktools64.sh — the 64-bit tools CD: gcc, g++, binutils, make, nasm
 #
@@ -45,9 +47,9 @@ cd "$(dirname "$0")/.." || exit 1
 
 TARGET=x86_64-exos
 VER=17.0.0
-TC64=cross_build/exos-cross64
-N=cross_build/exos-native64
-OUT=build-64/iso
+TC64=${EXOS_FUORI}/cross_build/exos-cross64
+N=${EXOS_FUORI}/cross_build/exos-native64
+OUT=${EXOS_FUORI}/build-64/iso
 E="$OUT/exos"
 STRIP="$TC64/bin/$TARGET-strip"
 
@@ -134,7 +136,7 @@ fi
 # include/ in cross_build/openssl-build-exos64). The same layout as the
 # 32-bit CD: the archives in /exos/lib, the headers, the CA store, and the two
 # test programs in /bin.
-O=cross_build/openssl-build-exos64
+O=${EXOS_FUORI}/cross_build/openssl-build-exos64
 if [ -f "$O/libcrypto.a" ] && [ -f "$O/libssl.a" ]; then
     cp -p "$O/libcrypto.a" "$O/libssl.a" "$E/lib/"
     mkdir -p "$E/include/openssl" "$E/ssl" "$OUT/bin"
@@ -154,7 +156,7 @@ fi
 # --- libgit2, if tools/libgit2-exos/costruisci.sh built it (17 October 2026) -----
 # The static library and its headers next to OpenSSL's, the git2 command and
 # the example: group [git] of the catalogue, which wants [ssl].
-G2=cross_build/libgit2-exos64
+G2=${EXOS_FUORI}/cross_build/libgit2-exos64
 if [ -f "$G2/lib/libgit2.a" ] && [ -f "$O/libssl.a" ]; then
     cp -p "$G2/lib/libgit2.a" "$E/lib/"
     cp -rp "$G2/include/git2.h" "$G2/include/git2" "$E/include/"
@@ -176,11 +178,11 @@ sh tools/librerie-exos/su-cd.sh "$OUT" 64 | sed 's/^ *//; s/^/mktools64: /'
 # (@FB-64, 16 October 2026) The layout of the 32-bit CD, under the target name
 # fbc composes itself: bin/fbc, include/freebasic, lib/freebasic/exos-x86_64.
 # At 64 bit fbc goes through C (-gen gcc), so it wants the gcc group as well.
-F=cross_build/fb64/fb-build-exos64
+F=${EXOS_FUORI}/cross_build/fb64/fb-build-exos64
 if [ -x "$F/fbc" ] && [ -f "$F/libfb.a" ] && [ -f "$F/fbrt0.o" ]; then
     put "$F/fbc" bin/fbc
     mkdir -p "$E/include/freebasic" "$E/lib/freebasic/exos-x86_64"
-    cp -rp cross_build/fb64/albero/inc/. "$E/include/freebasic/"
+    cp -rp ${EXOS_FUORI}/cross_build/fb64/albero/inc/. "$E/include/freebasic/"
     cp -p "$F/libfb.a" "$F/fbrt0.o" "$E/lib/freebasic/exos-x86_64/"
     [ -f "$F/fbextra.x" ] && cp -p "$F/fbextra.x" "$E/lib/freebasic/exos-x86_64/"
     cp tools/freebasic-exos/prova64.bas "$OUT/prova-fb.bas"
@@ -194,7 +196,7 @@ fi
 # program, LLVM inside - and the std for the same target in the sysroot
 # layout rustc finds from where it runs: bin/rustc, lib/rustlib/<target>/lib.
 # It links with the gcc of this CD. The std files are those of x.py's stamp.
-RB="cross_build/$(hostname | tr 'A-Z' 'a-z')/rustc-build"
+RB="${EXOS_FUORI}/cross_build/$(hostname | tr 'A-Z' 'a-z')/rustc-build"
 RS="$RB/x86_64-unknown-linux-gnu/stage1-std/x86_64-unknown-exos/dist/.libstd-stamp"
 if [ -x "$RB/x86_64-unknown-exos/stage2/bin/rustc" ] && [ -f "$RS" ]; then
     put "$RB/x86_64-unknown-exos/stage2/bin/rustc" bin/rustc
@@ -220,8 +222,8 @@ for f in $STUB lib/exwin/exwin.hpp lib/exwin/exwin.bi drivers/wserver/win_proto.
     cp -p "$f" "$E/include/" || fail "missing $f"
 done
 cp -p lib/start.S "$E/start.S"
-[ -f build-64/ld/libexos_avvio.a ] || fail "missing build-64/ld/libexos_avvio.a: make utente64"
-cp -p build-64/ld/libexos_avvio.a "$E/libexos_avvio.a"
+[ -f ${EXOS_FUORI}/build-64/ld/libexos_avvio.a ] || fail "missing ${EXOS_FUORI}/build-64/ld/libexos_avvio.a: make utente64"
+cp -p ${EXOS_FUORI}/build-64/ld/libexos_avvio.a "$E/libexos_avvio.a"
 cp -p lib/programma64.ld "$E/programma.ld"
 echo "mktools64: exide - $(echo $STUB | wc -w) header e stub, start.S, libexos_avvio.a"
 

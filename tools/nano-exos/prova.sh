@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/nano-exos/prova.sh — GNU nano on the EX-OS console, in QEMU
 #
@@ -30,9 +32,9 @@ giro() {    # $1 = 32|64
         ISO=dist/exos.iso; unset EXOS_QEMU; export EXOS_RAM=256M; EXTRA=""
     fi
     echo "=== $bit bit ==="
-    [ -x cross_build/nano-exos$bit/exos/bin/nano ] || { no "$bit: manca nano (tools/nano-exos/costruisci.sh $bit)"; return; }
+    [ -x ${EXOS_FUORI}/cross_build/nano-exos$bit/exos/bin/nano ] || { no "$bit: manca nano (tools/nano-exos/costruisci.sh $bit)"; return; }
     T="$D/albero"; mkdir -p "$T"
-    cp -r cross_build/nano-exos$bit/exos/bin cross_build/nano-exos$bit/exos/nano "$T/"
+    cp -r ${EXOS_FUORI}/cross_build/nano-exos$bit/exos/bin ${EXOS_FUORI}/cross_build/nano-exos$bit/exos/nano "$T/"
     # the system nanorc, pointed at the disk
     sed 's|/exos/nano/share/nano/|/a/nano/share/nano/|' "$T/nano/nanorc" > "$T/nano/prova.rc"
     printf 'int main(void)\n{\n    return 0;\n}\n' > "$T/prova.c"

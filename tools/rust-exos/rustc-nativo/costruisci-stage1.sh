@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/rust-exos/rustc-nativo/costruisci-stage1.sh — check of step c
 #
@@ -15,9 +17,9 @@
 cd "$(dirname "$0")/../../.." || exit 1
 RADICE="$PWD"
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-T="$RADICE/cross_build/terze-parti/rust-src/rustc-nightly-src"
-BUILD="$RADICE/cross_build/$MACCHINA/rustc-build"
-TC64="$RADICE/cross_build/exos-cross64"
+T="${EXOS_FUORI}/cross_build/terze-parti/rust-src/rustc-nightly-src"
+BUILD="${EXOS_FUORI}/cross_build/$MACCHINA/rustc-build"
+TC64="${EXOS_FUORI}/cross_build/exos-cross64"
 tools/rust-exos/rustc-nativo/prepara-sorgenti.sh || { echo FALLITO; exit 1; }
 sed -e "s|@BUILD@|$BUILD|" -e "s|@TC64@|$TC64|g" \
     tools/rust-exos/rustc-nativo/bootstrap-stage1.toml > "$T/bootstrap.toml"

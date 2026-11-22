@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/exilla/prova-lampi.sh - white flashes while Firefox repaints (voce 95)
 #
@@ -36,9 +38,9 @@
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-B="$PWD/cross_build/$MACCHINA"
-O="$PWD/cross_build/exilla-obj/gecko"; D="$B/costruzione-prova"; SUFF=""
-if [ "$EXOS_ARCH" = x86_64 ]; then O="$PWD/cross_build/exilla-obj/gecko64"; D="$B/costruzione-prova64"; SUFF=64; fi
+B="${EXOS_FUORI}/cross_build/$MACCHINA"
+O="${EXOS_FUORI}/cross_build/exilla-obj/gecko"; D="$B/costruzione-prova"; SUFF=""
+if [ "$EXOS_ARCH" = x86_64 ]; then O="${EXOS_FUORI}/cross_build/exilla-obj/gecko64"; D="$B/costruzione-prova64"; SUFF=64; fi
 P="${PACCHETTO:-$O/dist/firefox}"
 [ -x "$P/firefox" ] || { echo "manca $P/firefox: prima tools/exilla/prova-gecko.sh" >&2; exit 1; }
 E="${ETICHETTA:+-$ETICHETTA}"
@@ -58,7 +60,7 @@ if [ "${TIPO:-canvas}" = video ]; then
     BITS=32; [ "$EXOS_ARCH" = x86_64 ] && BITS=64
     mkdir -p "$S/lib"
     for l in ffmpeg libvpx dav1d opus vorbis ogg zlib; do
-        cp cross_build/$l-exos$BITS/exos/lib/lib*.so.[0-9]* "$S/lib/" 2>/dev/null
+        cp ${EXOS_FUORI}/cross_build/$l-exos$BITS/exos/lib/lib*.so.[0-9]* "$S/lib/" 2>/dev/null
     done
     printf '%s\n' 'user_pref("media.autoplay.default", 0);' \
         'user_pref("media.autoplay.blocking_policy", 0);' > "$S/profilo/user.js"

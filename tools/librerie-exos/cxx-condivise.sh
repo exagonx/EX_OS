@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/librerie-exos/cxx-condivise.sh - the C++ runtime as shared objects
 # EX-OS - Extensible Operating System
@@ -44,7 +46,7 @@
 # =============================================================================
 set -e
 R=$(cd "$(dirname "$0")/../.." && pwd)
-TC=$R/cross_build
+TC=${EXOS_FUORI}/cross_build
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
 BIT=${1:?uso: $0 32|64}
 case $BIT in

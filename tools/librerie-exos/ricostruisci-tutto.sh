@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/librerie-exos/ricostruisci-tutto.sh — every port again, in order
 #
@@ -25,7 +27,7 @@ cd "$(dirname "$0")/../.." || exit 1
 ORDINE="zlib bzip2 xz lz4 zstd pcre2 expat fmt openssl ncurses nano libpng freetype harfbuzz
         ogg vorbis opus flac libvpx dav1d ffmpeg mariadb-connector-c mariadb-connector-cpp
         mariadb apr apr-util httpd php valkey mesa qt5 vlc"
-L=cross_build/ricostruzione
+L=${EXOS_FUORI}/cross_build/ricostruzione
 mkdir -p "$L"
 BITS=${1:-"32 64"}
 via=${DA:+no}

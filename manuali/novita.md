@@ -6,6 +6,10 @@
 
 **Contents**
 
+- [Users really apart: a closed folder is closed, /tmp has the sticky bit (kernel 0.355, voce 111) — tested in QEMU](#users-really-apart-a-closed-folder-is-closed-tmp-has-the-sticky-bit-kernel-0355-voce-111--tested-in-qemu)
+- [The third-party clones stay in MEGA and are put back by the scripts (tools/ripara-cloni.sh) — tested on this PC](#the-third-party-clones-stay-in-mega-and-are-put-back-by-the-scripts-toolsripara-clonish--tested-on-this-pc)
+- [The build's own trees live outside the source tree, in ~/ex_os (tools/fuori.sh) — tested on this PC](#the-builds-own-trees-live-outside-the-source-tree-in-ex_os-toolsfuorish--tested-on-this-pc)
+- [Firefox on /lib/ld-exos.so: AAC and H.264 play again (voce 105) — tested in QEMU](#firefox-on-libld-exosso-aac-and-h264-play-again-voce-105--tested-in-qemu)
 - [Two threads no longer get the same descriptor, SQLite no longer says disk I/O error (kernel 0.354) — tested in QEMU](#two-threads-no-longer-get-the-same-descriptor-sqlite-no-longer-says-disk-io-error-kernel-0354--tested-in-qemu)
 - [Impostazioni > Applicazioni: the program of every type of file and address (pm 0.029, exwin 0.023, voce 109) — tested in QEMU](#impostazioni--applicazioni-the-program-of-every-type-of-file-and-address-pm-0029-exwin-0023-voce-109--tested-in-qemu)
 - [VLC plays the video inside its window: child windows in ExWin (wserver 0.016, voce 105 step 5) — tested in QEMU](#vlc-plays-the-video-inside-its-window-child-windows-in-exwin-wserver-0016-voce-105-step-5--tested-in-qemu)
@@ -240,6 +244,85 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
+### Users really apart: a closed folder is closed, /tmp has the sticky bit (kernel 0.355, voce 111) — tested in QEMU
+
+- **Measured on the test PC first** (`tools/prove/permprova.c`, as root going down to uid 1000):
+  inside `/root/privata` 0700 an ordinary user listed, stat-ed, read a 0644 file and cd-ed. The
+  kernel looked only at the final file.
+- **Kernel 0.355**: `x` on **every** folder of a path (open, create, delete, rename, truncate,
+  chmod, exec, stat), `r` to list a folder, `x` to `cd` into it. **The sticky bit**: in a 1777
+  folder only the owner of a file, of the folder or root take a name away (EPERM), as on Linux.
+  Root does not pay the extra checks.
+- **ext4.mod 0.007**: chmod kept only the nine bits, so the 1777 of `/tmp` never reached the disk
+  (it was 0777). setuid/setgid stay out: exec does not honour them.
+- **install 0.013, login 0.006**: `/root` and the homes 0700, `/home` 0755. **ls 0.004** writes
+  `t`/`T` for the sticky bit and "permesso negato" for a closed folder; the `cat` of **sh 0.015**
+  says "permesso negato" and gives status 1 (until 0.014 "file non trovato" and 0).
+- **Installed machines**: netupdate's check puts `/root` 0700 and `/tmp` 1777 right by itself and
+  names the homes the others can read (their owner decides).
+- Tested: `tools/prova_permessi.sh` (disk installed from the CD, permprova with 0 holes and 0
+  "stricter than Linux", the check that repairs) 7 of 7 at 32 and 64 bit; an ordinary user with
+  home, files, `cd`, ExWin and pm. Found on the way: after the move to `~/ex_os` the 32-bit `.d`
+  files still named `build/...` and make no longer saw header changes (the 32-bit CD had kernel
+  0.354 with ext4.mod 0.355): rewritten.
+
+### The third-party clones stay in MEGA and are put back by the scripts (tools/ripara-cloni.sh) — tested on this PC
+
+- **MEGA syncs files, not git.** The clones at the root (apr, apr-util, httpd, libexpat,
+  mariadb-server, mesa, php-src) arrived without their symbolic links (10 in mesa, 1 in
+  libexpat, 2 in the duckdb of mariadb-server), with the modes MEGA likes, and once without
+  `.git`. A `git diff` for a patch then carried deleted links and mode changes, and
+  `aggiorna-sorgenti.sh -clone` refused the clone.
+- **`tools/ripara-cloni.sh [NAME]`** (`-n` only says): a missing folder is cloned again at the
+  commit written in `tools/cloni.txt` (in git, so it travels with MEGA); a missing `.git` is made
+  again from that commit **without touching the files**, so the EX-OS work shows up as changes;
+  `core.fileMode false`; the `+x` git knows; the missing links. Submodules too. A file sitting
+  where a link should be, and different from its target, is only reported.
+- `aggiorna-sorgenti.sh -clone` and the PHP build call it by themselves; the mesa patch recipe
+  starts with it. mariadb-server is now a clone of `tools/sorgenti-terzi.txt`.
+- **`exos/include/ncurses.h` of the 64-bit tools CD was a link** to `curses.h`, left over from
+  25/10: `su-cd.sh` wrote through it with `cp` and it stayed, then `cp -a` took it to
+  `dist/netinst_64`. Now a copy; `su-cd.sh` copies with `--remove-destination`, and
+  `mknetinst.sh` turns any link into a copy (a broken one stops it).
+- Tested: libexpat copied as MEGA does (no links, 600, with and without `.git`, folder gone) and a
+  repository with a submodule, every case back to only the EX-OS changes; the 7 real clones
+  unchanged (`git status` as before).
+
+### The build's own trees live outside the source tree, in ~/ex_os (tools/fuori.sh) — tested on this PC
+
+- **In the folder synced by MEGA only the sources, the finished ISOs and netinst/netinst_64 stay.**
+  The cross toolchains and third-party builds, the objects at 32 and 64 bit, the QEMU disks and
+  the load-test results are in `<home of the user>/ex_os/cross_build`, `build`, `build-64`,
+  `dischi`, `stress/risultati`. **No links**: the Makefile and the scripts use `$EXOS_FUORI`
+  directly (MEGA gave errors on links).
+- **The user is the one who builds**: `SUDO_USER`, then `id -un`, the home from the password
+  database; another user gets their own `~/ex_os`. `EXOS_FUORI=/elsewhere` moves the whole thing.
+  `tools/fuori.sh` prints it and makes the folders; the Makefile calls it first, every script
+  finds it by itself with the same rule (one line at the top), so it works without make too.
+- 670 paths in 157 scripts rewritten, plus the Makefile; patches and the `build/` folders of
+  third-party sources (`$SRC/build/config.guess`) are not touched.
+- On this PC `~/cross_build` became `~/ex_os/cross_build`; the old absolute paths written inside
+  its text files (specs of the cross gcc, `.pc`, Firefox's objects) are rewritten, dates kept.
+  Checked: `make kernel`, the 64-bit cross gcc, `bash -n` on every script touched.
+
+### Firefox on /lib/ld-exos.so: AAC and H.264 play again (voce 105) — tested in QEMU
+
+- **Firefox is linked on `/lib/ld-exos.so` like every other program**, at 32 and 64 bit: `dlopen`,
+  `getenv` and the loader are the system's, not a copy of the `libc.a` of 16/11 inside `firefox`.
+  That old loader did not open the FFmpeg `.so` rebuilt on the shared libc, so `small-shot.m4a`
+  (AAC) and `gizmo.mp4` (H.264) said "Failed to open media".
+- **`tools/exilla/prova-media.sh` 8 out of 8 at 32 and at 64 bit**: Ogg Vorbis, FLAC, MP3, AAC,
+  VP8, VP9, AV1 and H.264.
+- **The build toolchain has the shared libc**: the sysroots of `exos-cross` and `exos-cross64` in
+  `cross_build` were still at 18/11, without `ld-exos.so`. They are the ones of voce 105 now, and
+  the `specs` link `-lc` with `-shared` too.
+- **Rust at 32 bit is PIC** (`tools/rust-exos/i686-unknown-exos.json`, `"relocation-model": "pic"`,
+  as at 64 bit): with `environ` in the shared library, the static std put its address in the text and
+  `ld` refused Firefox ("read-only segment has dynamic relocations").
+- **`prova-media` waits for the boot jobs before `audio -i`**: typed while ehci, ohci and sis.drv
+  were still ending, it came back without a word and Firefox had no sound card
+  ("Can't get cubeb context").
+
 ### Two threads no longer get the same descriptor, SQLite no longer says disk I/O error (kernel 0.354) — tested in QEMU
 
 - **The kernel is preemptible, and the descriptor table belongs to the whole program.** Between
@@ -260,9 +343,9 @@ the one on real hardware or on the real case — has not been done yet.
   16 MB.
 - **`LD_DEBUG=libs`** in the loader: every name looked for, every path tried and how it went, and
   the `dlerror` of a failed `dlopen`, on stderr (see [Writing a shared library](sviluppo.md#the-rules)).
-- ! **AAC and H.264 in Firefox do not work**: the Firefox of the test still has inside it the
-  `libc.a` of 16/11, with the loader of before, and does not open the FFmpeg `.so` rebuilt on the
-  shared libc. It has to be relinked on `ld-exos.so`.
+- **AAC and H.264 in Firefox**: the Firefox of the test still had inside it the `libc.a` of
+  16/11, with the loader of before, and did not open the FFmpeg `.so` rebuilt on the shared libc.
+  Relinked the same day: see the entry above.
 
 ### Impostazioni > Applicazioni: the program of every type of file and address (pm 0.029, exwin 0.023, voce 109) — tested in QEMU
 

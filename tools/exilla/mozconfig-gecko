@@ -8,7 +8,7 @@
 ac_add_options --enable-project=browser
 ac_add_options --target=i386-unknown-exos
 ac_add_options --enable-default-toolkit=cairo-exos
-mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/../cross_build/exilla-obj/gecko
+mk_add_options MOZ_OBJDIR=${EXOS_FUORI}/cross_build/exilla-obj/gecko
 ac_add_options --enable-optimize
 ac_add_options --disable-debug
 ac_add_options --disable-tests
@@ -37,5 +37,5 @@ ac_add_options --disable-audio-backends
 # GCC 17 (operator() statici del C++23, __builtin_popcountg). E' il clang di
 # Mozilla, scaricato con `mach artifact toolchain --from-build linux64-clang`
 # in cross_build/<macchina>/costruzione-strumenti/mozclang.
-ac_add_options --with-clang-path=@TOPSRCDIR@/../cross_build/${MACCHINA}/costruzione-strumenti/mozclang/clang/bin/clang
-ac_add_options --with-libclang-path=@TOPSRCDIR@/../cross_build/${MACCHINA}/costruzione-strumenti/mozclang/clang/lib
+ac_add_options --with-clang-path=${EXOS_FUORI}/cross_build/${MACCHINA}/costruzione-strumenti/mozclang/clang/bin/clang
+ac_add_options --with-libclang-path=${EXOS_FUORI}/cross_build/${MACCHINA}/costruzione-strumenti/mozclang/clang/lib

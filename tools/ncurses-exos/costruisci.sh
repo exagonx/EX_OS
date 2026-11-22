@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/ncurses-exos/costruisci.sh — ncurses 6.6 for EX-OS, 32 and 64 bit
 #
@@ -53,7 +55,7 @@
 set -e
 cd "$(dirname "$0")/../.." || exit 1
 R=$PWD
-TC=$R/cross_build
+TC=${EXOS_FUORI}/cross_build
 VER=6.6
 ARC=$TC/terze-parti/ncurses/ncurses-$VER.tar.gz
 LAVORO=$TC/costruzione-ncurses

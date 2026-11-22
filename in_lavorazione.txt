@@ -2,6 +2,25 @@
 
 QUEL CHE E' APERTO — 15 settembre 2026
 
+!!! IL 22 NOVEMBRE: CIO' CHE LA COSTRUZIONE PRODUCE STA IN ~/ex_os, FUORI DA
+    MEGA (l'utente: "dentro /MEGA/Sviluppo/ ci vanno solo i sorgenti gli ISO
+    costruiti definitivi e i file compilati come netinst e netinst_64"; poi:
+    "non devono esserci alcun link ma devono proprio operare fuori dalla
+    directory, mega continua a generare errori"). ~/ex_os/cross_build, build,
+    build-64, dischi, stress/risultati. NESSUN COLLEGAMENTO: Makefile e script
+    usano $EXOS_FUORI (tools/fuori.sh; ogni script la ricava da solo con una
+    riga in cima: SUDO_USER o id -un, home da getent). Uno script nuovo che
+    scrive oggetti, dischi o risultati li mette li', mai nel progetto.
+    I sorgenti di terzi (gcc, firefox-main, mariadb-server...) restano nel
+    progetto. ~/cross_build non c'e' piu': i percorsi assoluti vecchi nei file
+    di testo di cross_build (e del clone) riscritti con le date di prima.
+    ! Collegamenti rimasti nel progetto, non miei: 20 nei sorgenti di terzi
+    (mesa, mariadb-server, libexpat) e dist/netinst_64/.../ncurses.h ->
+    curses.h: da decidere con l'utente.
+    ! Firefox: MOZ_OBJDIR ora e' ${EXOS_FUORI}/cross_build/exilla-obj/...,
+    prima <progetto>/firefox-main/../cross_build/...: alla prossima mach
+    build potrebbe riconfigurare (attenzione a config.statusd).
+
 !!! IL 21 NOVEMBRE: I README SONO CORTI, IL RESTO E' IN manuali/ (l'utente:
     "Puoi sistemare i due leggimi inglese e italiano cosi che sia aggiornato
     e piu facile da leggere ?", scelta "README corto + manuali"). README.md
@@ -207,6 +226,14 @@ GRUPPO  VOCI             COSA
  --     61 76            solo se ricompare (76: orologio in FAULT, 3/11)
  --     77               seguiti del 3-4/11: H.264 Firefox, Firefox 32, repo 64 da
                          pubblicare, ExPackage sul portatile, statici rimasti
+ --     112              (22/11) DAL SOLO CLONE DI GITHUB A TUTTO: ambiente.sh -fai, i
+                         sorgenti dal loro sito e non dal backup; i cloni FATTI (ripara-cloni.sh)
+ --     111              (22/11) UTENTI SEPARATI DAVVERO: modi di /root e home, VFS (attraversare,
+                         elenco), IPC col mittente, shm per utente, classe Dirty COW, testo dei
+                         programmi condiviso, password grafica per root; prima permprova sul .253
+ --     110              (22/11) PIU' AGENTI CHE ANALIZZANO, UNO CHE MODIFICA: multiA/, una voce
+                         per .txt, presa con un .md atomico; RIMANDATA: quando kernel e libc
+                         non cambiano piu' a ogni voce
  --     109              (21/11) Impostazioni > Applicazioni: programma per ogni tipo di
                          file e indirizzo (http, ftp, smb), Firefox browser predefinito,
                          ogni app installata si prende i suoi tipi. Scheda FATTA, provata (pm 0.029)
@@ -10316,6 +10343,9 @@ tools/netinst/velocita tolto da netinst.
       formato. Pista: la prima apertura dell'uscita audio (cubeb -> servizio
       audio, hdaudio.drv 0.006). Da provare: in QEMU con intel-hda se capita
       uguale; un file muto (solo video) per primo.
+      22/11 ANCHE SUL .253 (0.354, ALC888, Firefox senza finestra): sound.ogg
+      primo resta a tempo=0.00 pronto=1, m4a e mp4 dopo vanno fino in fondo.
+      In QEMU con l'AC'97 prova-media lo suona (8 su 8): si riproduce sul ferro.
       Stato: aperta, causa non cercata.
 
   83. audio -i NON RICONOSCEVA L'HD AUDIO DEL PORTATILE (4/11). nVidia MCP78
@@ -10530,6 +10560,168 @@ tools/netinst/velocita tolto da netinst.
       prove rischiose. Trovato: vedi la voce 100.
       17/11, DOPO IL RIAVVIO NELLA 0.343: il telnetd 0.015 dell'avvio, porta
       23, telnet_piu_prova.py 6 su 6.
+
+  112. DAL SOLO CLONE DI GITHUB A TUTTO L'AMBIENTE (l'utente, 22/11: "gli
+      strumenti e script devono essere in grado di creare ambiente, strumenti,
+      e struttura scaricando e installando le parti mancanti partendo dai
+      sorgenti clonati da github"; prima: "mega deve mantenere anche i
+      sorgenti delle app clonate ... assicurati che gli script di costruzione
+      siano in grado di risolvere mancanze").
+      FATTO 22/11: tools/ripara-cloni.sh (i 7 cloni alla radice: cartella
+      mancante riclonata al commit di tools/cloni.txt, .git rifatto senza
+      toccare i file, fileMode false, +x, collegamenti, submodule; -n esce 1
+      se c'e' da fare), chiamato da aggiorna-sorgenti -clone, dalla
+      costruzione di PHP e da ambiente.sh (voce fac per iso iso64 tools64).
+      mariadb-server nei cloni di sorgenti-terzi.txt. ncurses.h collegamento
+      nel CD a 64 bit e in netinst_64 tolto, su-cd.sh --remove-destination,
+      mknetinst.sh fa copie dei collegamenti.
+      DA FARE: a) ambiente.sh dice il rimedio ma non lo esegue: un modo
+      `-fai [BERSAGLIO]` che esegue i rimedi in ordine (pacchetti dell'host
+      con apt, scarichi, toolchain); b) i rimedi "dall'archivio di
+      backup.sh" non funzionano da un clone di GitHub: gcc/ (+ applica.py),
+      quickjs/, openssl/, FreeBASIC-1.10.1-source-bootstrap, le tarball di
+      binutils 2.44, GMP, MPFR, MPC, openlibm in exos-native: ognuno con il
+      suo indirizzo ufficiale e la firma o sha256 in sorgenti-terzi.txt (o
+      un elenco gemello), scaricati come fa aggiorna-sorgenti -scarica;
+      c) il configure a mano di GCC base (tools/gcc-exos/leggimi.md passi
+      1-4) in uno script; d) la prova vera: clone di EX_OS da GitHub in una
+      cartella vuota con EXOS_FUORI vuota, ambiente.sh -fai, make iso-exos e
+      iso64, in un sistema Debian pulito (macchina virtuale o chroot).
+      Da chiedere all'utente: l'ordine rispetto alla 111.
+
+  111. GLI UTENTI SEPARATI DAVVERO, ANCHE CON PIU' UTENTI INSIEME (l'utente, 22/11:
+      "con l'utente graziano ... sembra che abbia accesso anche alla directory
+      root ... quando fa una operazione ristretta a un root e' necessario
+      confermare con la password sia graficamente che da riga di comando";
+      poi: "linux ha exploit come dirty COW ... il sistema della gestione degli
+      utenti deve prevedere e prevenire tali attacchi ... tramite apache,
+      mariadb, telnetd, ftp, desktop remoto sara' possibile far operare piu
+      utenti contemporaneamente ... condividere le librerie ... se la stessa
+      app e' aperta da piu utenti non deve replicare l'intero ambiente software
+      ma solo la parte dell'utente").
+      C'E' GIA': uid/gid per processo, vfs_permesso (root passa, FAT/ISO senza
+      proprietari passano), sudo con la password verificata dal kernel e
+      /boot/amministratori, setuid solo da root, NESSUN bit setuid sui file,
+      porte/IRQ/DMA/MMIO solo a un .drv di root (e_un_driver), ipc_register
+      per i non-root solo coi nomi "uid:", copia su scrittura di fork (0.313)
+      sotto il lucchetto unico del kernel, mprotect su un frame condiviso ->
+      PG_COW, le .so in una copia sola per la macchina (condivise.c, 0.351).
+      TROVATO (22/11):
+      a) MISURATO SUL .253: /root 0755 con dentro file 0644, /home/graziano
+         0755: chiunque elenca e legge. install non ha root e home nel
+         CATALOGO, login crea la casa a 0755 (bin/login/login.c:295).
+         /boot/ombra 0600 a posto. /tmp rwxrwxrwx: il bit sticky da guardare.
+      b) DAL CODICE (kernel/fs/vfs.c): open guarda solo il file finale, non
+         l'attraversamento (x) delle directory del percorso; vfs_readdir non
+         chiede nessun permesso; stat e chdir da verificare.
+         Prova scritta: tools/prove/permprova.c (da root scende a uid 1000 e
+         prova elenco, lettura, scrittura, creazione, rename, chmod in /root,
+         /root/privata 0700, /boot, /bin, /tmp; segna FALLA dove Linux dice
+         no). DA LANCIARE SUL .253.
+      c) DAL CODICE, IPC: chi riceve sa solo il PID del mittente
+         (IpcMessage.sender_pid); un PID si ricicla, e per sapere l'uid
+         serve una seconda chiamata (sys_proc_uid), cioe' una corsa.
+         e1000.drv accetta NET_MSG_RICEVI e la trasmissione da QUALUNQUE
+         processo: un utente diventa il lettore della scheda (tutto il
+         traffico degli altri, e ip.drv resta senza) e spedisce trame false.
+         Da guardare uguale negli altri driver (audio, video, wserver).
+         IPC_MAILBOX_DEPTH 4 e IPC_NOMI_MAX 128 sono tetti fissi: con molti
+         utenti insieme non bastano (regola: nessun tetto fisso).
+      d) DAL CODICE, shm (kernel/mm/shm.c): nessun controllo di proprietario
+         o modo sulle zone per nome: chi sa il nome si aggancia (le finestre
+         di wserver di un altro utente).
+      e) DAL CODICE, elf.c: il testo di un programma ET_EXEC si legge con
+         vfs_read in pagine del processo, una copia per istanza (firefox e'
+         221 MB): tre utenti con Firefox = tre copie. Le .so invece no.
+      f) CLASSE DIRTY COW (scrittura in una pagina che deve restare in sola
+         lettura, attraverso una corsa fra copia su scrittura e un'altra
+         strada): da verificare uno per uno - le scritture del kernel nella
+         memoria di un processo (copy-out delle syscall) non devono mai
+         finire in un frame condiviso (cache delle .so, testo condiviso di
+         e), zone shm); niente /proc/<pid>/mem (procfs: da confermare); le
+         pagine nuove date a un processo devono essere azzerate
+         (pagina_utente non azzera da se': da verificare chi lo fa, anche
+         per la swap e il .bss); il buffer unico g_cow_buf e la finestra
+         unica sono sicuri SOLO perche' c'e' il lucchetto unico del kernel:
+         regola scritta, da rifare per processore il giorno che il lucchetto
+         si divide; strutture copiate al processo senza azzerare il riempimento.
+      g) la conferma con la password: da riga di comando c'e' (sudo); in
+         grafica manca (una finestra di ExWin, come pkexec, per Impostazioni,
+         ExPackage, file manager sui file di sistema).
+      PIANO PROPOSTO (da decidere con l'utente): 1 permprova e una prova di
+      lettura della scheda come utente sul .253; 2 modi (install, login,
+      verifica di netupdate per le macchine installate); 3 VFS (x su ogni
+      directory, r per elencare); 4 IPC col mittente timbrato dal kernel
+      (uid/gid con ogni messaggio, una chiamata di ricezione nuova senza
+      cambiare IpcMessage, i driver accettano solo dal loro cliente o da
+      root) e code senza tetti; 5 shm con proprietario e modo; 6 controllo
+      della classe Dirty COW (f) con prove; 7 testo dei programmi condiviso
+      come le .so (stesso file = stessi frame in sola lettura, dati e pila
+      per processo); 8 finestra della password in ExWin. Ogni passo a 32 e
+      64 bit, in QEMU e poi sul .253.
+      DECISO DALL'UTENTE (22/11): IPC col timbro del kernel (uid/gid salvati
+      con ogni messaggio, chiamata di ricezione nuova, IpcMessage invariato);
+      case e /root a 0700; il piano nell'ordine 1-8.
+      PASSO 1 MISURATO SUL .253 (22/11 sera, kernel 0.354, x86_64): permprova64
+      da root, scesa a uid 1000: 4 FALLE, tutte delle directory: in
+      /root/privata 0700 l'utente elenca, fa stat di f.txt, lo legge (0644) e
+      ci fa cd. Tengono: /boot/ombra 0600, scrivere /boot/kernel.cfg, creare
+      in /boot e /bin, rename in /boot, chmod di una directory di root.
+      /root, /home, /home/graziano 0755; /tmp 0777 SENZA sticky (permprova
+      non prova ancora a cancellare in /tmp un file di un altro: da
+      aggiungere). In QEMU dal CD non dice niente (niente /root /home /tmp,
+      CD in sola lettura): ci vuole un disco installato. Sul .253 restano
+      /prova111/permprova; /root/privata tolta. La lettura della scheda come
+      utente (parte di 1) va col passo 4.
+      PASSI 2 E 3 FATTI (22/11 notte), kernel 0.355, ext4.mod 0.007, install
+      0.013, login 0.006, ls 0.004: x su ogni directory del percorso
+      (cammino_ok in permesso_su: open, creare, unlink, rename, truncate,
+      chmod, exec; vfs_stat_utente per sys_stat e statperm), r per
+      readdir, x per chdir, il bit sticky (cancellare e rinominare in 1777:
+      solo padrone del file, della cartella o root, EPERM). ext4.mod fino
+      alla 0.006 teneva solo 0777 in chmod: lo sticky di /tmp non arrivava
+      MAI sul disco. /root e le case 0700 (install, login); /home 0755.
+      tools/netinst/verifiche/sistema.sh rimette /root 0700 e /tmp 1777 da
+      se' (uscita 2), le case aperte le dice. ls scrive t/T.
+      Prova: tools/prova_permessi.sh (disco installato dal CD, permprova
+      con 0 falle e 0 troppo stretti, verifica che ripara): 64 bit 7 su 7.
+      GUASTO TROVATO: dopo il trasloco in ~/ex_os i .d del 32 bit dicevano
+      ancora build/kernel/x.o: make non vedeva piu' i cambi di header, e il
+      CD a 32 bit usciva col kernel 0.354 e ext4.mod 0.355 (rifiutato, dischi
+      in sola lettura). 55 .d riscritti col percorso assoluto.
+      ALTRI DUE GUASTI DEL TRASLOCO/MEGA, trovati facendo netinst64: 1) in
+      mknetinst.sh EXILLA_DIST e FONT_CJK_DIST (e STRESS_MARIADB) erano
+      relativi, cross_build/..., e il repository usciva SENZA Exilla e
+      font-cjk: ora ${EXOS_FUORI}/cross_build; 2) 33 file cancellati dal
+      commit 365e1407 (gli stub e gli _esporta della voce 105, libc.ld,
+      libc_ponti.c, exlib, kernel/loader/lib.c) RICOMPARSI nel progetto
+      (MEGA, cartelle datate 22/11 16:53): in libexos.a a 64 bit due volte
+      ogni simbolo, netupdate non si collegava. Spostati in
+      ~/ex_os/risorti-22-11 (l'utente); ambiente.sh ora ferma i bersagli
+      grandi se un file cancellato da git torna nel codice. Rifatti iso64 e
+      netinst64 (0.355, 7836 file, con netupdate, Exilla, font-cjk):
+      prova_permessi 7 su 7 di nuovo. mknetinst.sh: il blocco dei
+      collegamenti era bash in uno script dash, riscritto.
+      DA FARE: il .253 (netupdate a 0.355, permprova di nuovo), poi passo 4.
+
+  110. PIU' AGENTI SULLA CODA (l'utente, 22/11: "dato che il contesto cresce a
+      ogni compito, se avviassi piu agenti [...] si crea una directory
+      chiamandola multiA all'interno ogni voce della coda viene copiato su
+      ogni singolo file con estenzione .txt [...] se ne prende in carico una
+      questa voce creera' un file omonimo .md [...] gli altri agenti lavorano
+      per cercare di capire il problema e trovare una soluzione scrivendola
+      nel file .md, poi l'agente master [...] procedera' con le modifiche").
+      RIMANDATA dall'utente: "piu avanti quando il kernel non avra' piu
+      necessita' di essere modificato lo stesso per la libc".
+      Quel che si era detto: la presa del .md atomica (noclobber: chi non
+      riesce a crearlo passa oltre); nel .md Misurato / Causa (dimostrata o
+      probabile) / Soluzione proposta / Come provarla / Domande / Stato; solo
+      il master tocca codice, versioni, file comuni (in_lavorazione,
+      novita', README, dist/); nei .txt "da sola: si/no" (fuori le voci che
+      vogliono il ferro o una risposta dell'utente). DA DECIDERE allora:
+      multiA fuori dal progetto (~/multiA) o dentro ma fuori da git e MEGA;
+      gli agenti possono lanciare QEMU (istanza e /tmp propri, al piu' due
+      insieme, lucchetti in multiA/lucchetti) o solo leggere il codice.
 
   109. IMPOSTAZIONI > APPLICAZIONI: CON CHE COSA SI APRE OGNI TIPO DI FILE E
       DI INDIRIZZO (l'utente, 21/11: "Nella finestra di impostazioni del
@@ -10900,6 +11092,15 @@ tools/netinst/velocita tolto da netinst.
          NEMMENO IL PASSO 3: niente ld-exos.so, specs senza ld-exos.so, i
          porting di ~/cross_build fermi al 18/11. ISO e netinst si fanno
          dal clone finche' i sysroot del clone non tornano in ~/cross_build.
+         -> 22/11 mattina: I SYSROOT DEL CLONE SONO TORNATI in ~/cross_build
+         (rsync di i386-exos/ e x86_64-exos/, e %{shared:-lc} nelle due
+         specs; il resto delle toolchain era uguale). Copia di prima in
+         ~/cross_build/nasi5deb/sysroot-prima-22-11 (573 MB). Provato: un
+         programma col gcc vero ha DT_NEEDED ld-exos.so e dlopen UND, a 32
+         e 64. Serviva per ricollegare Firefox (vedi sopra, exilla-media).
+         ! I porting fatti nel clone in cartelle sue (costruzione-ffmpeg,
+         vlc-exos, mariadb...) restano nel clone: cross_build del main
+         punta a ~/cross_build, dove ci sono quelli del 18/11.
          FATTO 20-21/11 notte: netinst_64 del clone pubblicato, il .253
          aggiornato e riavviato: FLAC e MP3 sulla scheda vera, ncurses da
          telnet, gizmo e vp9cake in finestra, Qt col cono, plugins.dat
@@ -11008,6 +11209,50 @@ tools/netinst/velocita tolto da netinst.
            circa 100 minuti per architettura; prima write_vars per il
            config.statusd azzerato), poi prova-media 8 su 8. Da guardare se
            il Firefox pubblicato sul server e' lo stesso: non controllato.
+           FATTO 22/11 mattina: Firefox ricollegato su ld-exos.so a 32 e 64
+           (dlopen UND, NEEDED ld-exos.so; il config.statusd stavolta era
+           a posto, OS_TARGET "EXOS"). prova-media 8 su 8 a 32 e a 64 bit.
+           Due inciampi: (1) a 32 bit ld rifiutava libgkrust.a, "relocation
+           against environ in read-only section ... read-only segment has
+           dynamic relocations": la std Rust i686 era relocation-model
+           static, e con -z text -z nocopyreloc un environ che sta in
+           ld-exos.so non si tocca dal testo. Bersaglio i686 ora "pic" come
+           x86_64, std rifatta (installa-sysroot.sh), quella di prima in
+           ~/cross_build/nasi5deb/rust-i686-std-prima-22-11; cargo non
+           ricompilava da se': la cartella vecchia spostata in
+           ~/cross_build/exilla-obj/gecko-i686-rust-prima-22-11 (7 GB, si
+           puo' cancellare). (2) prova-media 2 volte su 2 con audio -i
+           muto ("Suono: spento", cubeb senza contesto): battuto mentre i
+           lavori di avvio (ehci, ohci, sis.drv -2dservizio) finivano.
+           Da solo, 30 s dopo l'avvio, trova l'AC'97. La prova aspetta 60 s
+           invece di 25. ! PERCHE' audio -i esca muto in quel momento NON
+           L'HO GUARDATO: un DA FARE (forse la stessa cosa di exwin, voce
+           97).
+           22/11 POMERIGGIO, RIPROVATO (0.354, 64 bit, ISO del clone,
+           AC'97): audio -i battuto subito al prompt, e la sequenza vecchia
+           (mount hd0p1 /disk, echo dopo 25 s, audio -i) col disco della
+           prova in snapshot, 3 giri: 4 su 4 trova la scheda, collaudo
+           a posto, "Suono: acceso". NON SI RIPRODUCE. Se ricompare:
+           l'uscita intera di audio -i e ps subito dopo.
+           22/11 14:15: netinst_64 del clone rifatto (0.354, Firefox nuovo:
+           sha256 di firefox nel repository = quello ricollegato) e
+           pubblicato su ~/ftp/www/netinst_64. Il .253 NON RISPONDEVA (ping
+           e ARP falliti, nessun telnet sulla 192.168.0.0/24): da
+           aggiornare quando c'e' (netupdate -check -yes, guardia spenta,
+           riavvio solo dopo IL KERNEL E' CAMBIATO e l'hash di
+           /boot/kernel.bin), poi sqlite_io, LD_DEBUG e prova di Firefox
+           con un .m4a e un .mp4. Il netinst a 32 bit non rifatto.
+           22/11 POMERIGGIO, FATTO SUL .253: netupdate -check -yes da 0.353
+           a 0.354, "IL KERNEL E' CAMBIATO", /boot/kernel.bin d6771595 =
+           elenco, riavvio, uname 0.354, netupdate -verifica tutto a posto.
+           sqliteio64 /prova354/p 4 30: parte 2 SENZA NESSUN NO (niente
+           EBADF ne' disk I/O error), resta il NO noto delle due mmap.
+           Firefox (168a24c6, quello dell'elenco exilla) senza finestra con
+           /prova354/w/media.html: small-shot.m4a 0.30/0.30 finito, gizmo.mp4
+           5.59/5.59 166 fotogrammi; LD_DEBUG=libs: libavcodec.so.63 da
+           /exos/lib. sound.ogg, il PRIMO della pagina, resta a 0.00 pronto=1:
+           e' la voce 82, anche sul .253 (in QEMU prova-media no).
+           Sul .253 restano /prova354 (sqliteio64, w/, profilo, ff.txt, ld.txt).
          - LD_DEBUG=libs NUOVO nel caricatore (lib/libc_dl.c, lib/libc.c):
            ogni nome cercato, ogni percorso provato e l'esito, e il
            dlerror di un dlopen fallito, su stderr. Provato in QEMU 64

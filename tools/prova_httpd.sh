@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_httpd.sh — Apache httpd on EX-OS, in QEMU
 #
@@ -35,15 +37,15 @@ D="${1:-/tmp/exos-prove/httpd-$ARCH}"
 rm -rf "$D"; mkdir -p "$D"
 IMG="$D/hd.img"
 SBIN=/usr/sbin
-X=cross_build/nasi5deb
+X=${EXOS_FUORI}/cross_build/nasi5deb
 PORTA=18080
 if [ "$ARCH" = x86_64 ]; then
-    BITS=64; ISO=dist/exos64.iso; GCC=$X/exos-cross64/bin/x86_64-exos-gcc; A=cross_build/httpd-exos64/exos/apache2
-    P=cross_build/php-exos64/exos/php
+    BITS=64; ISO=dist/exos64.iso; GCC=$X/exos-cross64/bin/x86_64-exos-gcc; A=${EXOS_FUORI}/cross_build/httpd-exos64/exos/apache2
+    P=${EXOS_FUORI}/cross_build/php-exos64/exos/php
     export EXOS_QEMU=qemu-system-x86_64 EXOS_RAM=1024M EXTRA="-cpu qemu64"
 else
-    BITS=32; ISO=dist/exos.iso; GCC=$X/exos-cross/bin/i386-exos-gcc; A=cross_build/httpd-exos32/exos/apache2
-    P=cross_build/php-exos32/exos/php
+    BITS=32; ISO=dist/exos.iso; GCC=$X/exos-cross/bin/i386-exos-gcc; A=${EXOS_FUORI}/cross_build/httpd-exos32/exos/apache2
+    P=${EXOS_FUORI}/cross_build/php-exos32/exos/php
     export EXOS_RAM=512M EXTRA=""
 fi
 [ -f "$ISO" ] || { echo "manca $ISO" >&2; exit 1; }
@@ -67,7 +69,7 @@ for l in $(for f in "$T"/apache2/bin/*; do readelf -d "$f" 2>/dev/null; done |
            sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | sort -u); do
     # the shared libc is the system's, in /lib of the CD (voce 105)
     [ "$l" = ld-exos.so ] && continue
-    f=$(ls cross_build/*-exos$BITS/exos/lib/"$l" 2>/dev/null | head -1)
+    f=$(ls ${EXOS_FUORI}/cross_build/*-exos$BITS/exos/lib/"$l" 2>/dev/null | head -1)
     [ -n "$f" ] || { echo "manca $l (per httpd a $BITS bit)" >&2; exit 1; }
     cp "$f" "$T/lib/"
 done

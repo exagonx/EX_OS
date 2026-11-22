@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_modulo.sh — the kernel module /dev/ext4.mod (kernel 0.263), in
 # QEMU, booting from the CD
@@ -36,10 +38,10 @@ P1=$((2048 * 512)); P1_SETT=65536            # 32 MB
 P2=$(((2048 + 65536) * 512)); P2_SETT=98304  # 48 MB
 
 if [ "$ARCH" = x86_64 ]; then
-    ISO=dist/exos64.iso; BIN=build-64/bin; MOD=build-64/moduli/ext4.mod
+    ISO=dist/exos64.iso; BIN=${EXOS_FUORI}/build-64/bin; MOD=${EXOS_FUORI}/build-64/moduli/ext4.mod
     export EXOS_QEMU=qemu-system-x86_64 EXOS_RAM=512M EXTRA="-cpu qemu64"
 else
-    ISO=dist/exos.iso; BIN=build/bin; MOD=build/moduli/ext4.mod
+    ISO=dist/exos.iso; BIN=${EXOS_FUORI}/build/bin; MOD=${EXOS_FUORI}/build/moduli/ext4.mod
     export EXOS_RAM=128M EXTRA=""
 fi
 [ -f "$ISO" ] || { echo "manca $ISO" >&2; exit 1; }

@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_avvio_login.sh — la pagina d'accesso non si fa coprire
 #
@@ -41,7 +43,7 @@ export EXOS_ISTANZA=log
 # --- 1. Il disco, installato dal CD ------------------------------------------
 if [ ! -f "$IMG" ]; then
     echo "=== 1. disco installato dal CD ($IMG) — qualche minuto ==="
-    sed "s|^IMG=dischi/hd.img|IMG=$IMG|; s|^MB=\"\${1:-512}\"|MB=\"\${1:-256}\"|; \
+    sed "s|^IMG=${EXOS_FUORI}/dischi/hd.img|IMG=$IMG|; s|^MB=\"\${1:-512}\"|MB=\"\${1:-256}\"|; \
          s|/tmp/exos-mkhd.log|$D/mkhd.log|g" tools/mkhd.sh > "$D/mkhd.sh"
     EXOS_HD="$IMG" EXOS_SUPPORTO=cd bash "$D/mkhd.sh" > "$D/1-disco.log" 2>&1 || {
         echo "NON RIUSCITO: il disco non si e' installato (vedi $D/1-disco.log)"

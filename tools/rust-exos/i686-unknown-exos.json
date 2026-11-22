@@ -13,7 +13,7 @@
   "linker-flavor": "gnu-cc",
   "linker": "i386-exos-gcc",
   "panic-strategy": "abort",
-  "relocation-model": "static",
+  "relocation-model": "pic",
   "position-independent-executables": false,
   "disable-redzone": true,
   "features": "-mmx,-sse",

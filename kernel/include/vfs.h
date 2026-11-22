@@ -136,6 +136,12 @@ typedef struct {
     int64_t  ctime;
 } VfsStat;
 
+/* stat for a program: -EACCES when a folder of the path has no x for it */
+int vfs_stat_utente(const char *abs, VfsStat *st);
+/* 0 if the current process may do voluto (4 r, 2 w, 1 x) on abs, path
+ * included; -EACCES if not */
+int vfs_puo(const char *abs, uint32_t voluto);
+
 typedef struct {
     uint8_t usato;
     char    punto[VFS_PUNTO_MAX];   /* "/" oppure "/disk" */

@@ -1,4 +1,6 @@
 #!/bin/sh
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/costruisci-utente64.sh — la libc e i comandi di EX-OS a 64 bit
 #
@@ -32,7 +34,7 @@
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1
 
-FUORI=build-64
+FUORI=${EXOS_FUORI}/build-64
 LIBD=$FUORI/lib
 BIND=$FUORI/bin
 OGG=$FUORI/obj
@@ -114,8 +116,8 @@ if [ $# -eq 0 ]; then
     so_fai exzip   lib/exzip/exzip.ver     "lib/exzip/exzip.c lib/eximg/inflate.c lib/exzip/deflate.c" ""
     so_fai exsuono lib/exsuono/exsuono.ver "lib/exsuono/exsuono.c" ""
     # QuickJS carries openlibm, shared (libm.so.4) as at 32 bit, and libgcc
-    LIBM64=cross_build/exos-cross64/x86_64-exos/lib/libm.so
-    LIBGCC64=$(ls cross_build/exos-cross64/lib/gcc/x86_64-exos/*/libgcc.a 2>/dev/null | head -1)
+    LIBM64=${EXOS_FUORI}/cross_build/exos-cross64/x86_64-exos/lib/libm.so
+    LIBGCC64=$(ls ${EXOS_FUORI}/cross_build/exos-cross64/lib/gcc/x86_64-exos/*/libgcc.a 2>/dev/null | head -1)
     if [ -f quickjs/quickjs.c ] && grep -q __EXOS__ quickjs/cutils.h && [ -f "$LIBM64" ] && [ -f "$LIBGCC64" ]; then
         ogg=""; ok=1; r="$REG/quickjs.so.log"; : > "$r"
         for s in quickjs/quickjs.c quickjs/libregexp.c quickjs/libunicode.c quickjs/dtoa.c; do

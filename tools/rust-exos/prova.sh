@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/rust-exos/prova.sh — @RUST-0: un programma Rust no_std dentro EX-OS
 #
@@ -26,8 +28,8 @@
 cd "$(dirname "$0")/../.." || exit 1
 RADICE="$PWD"
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-B="$RADICE/cross_build/$MACCHINA"
-T="$RADICE/cross_build/exos-cross"
+B="${EXOS_FUORI}/cross_build/$MACCHINA"
+T="${EXOS_FUORI}/cross_build/exos-cross"
 D="$B/costruzione-prova"
 RUSTUP="${RUSTUP:-$(command -v rustup || echo "$HOME/.cargo/bin/rustup")}"
 CARGO="$(dirname "$RUSTUP")/cargo"

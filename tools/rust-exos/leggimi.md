@@ -127,6 +127,14 @@ sarebbe «quasi compatibile», sarebbe un programma che parte e muore su una
 macchina che quelle istruzioni non le ha. Le due righe qui sopra sono la stessa
 decisione già presa per il C.
 
+> **Dal 22 novembre 2026 il bersaglio è `"relocation-model": "pic"`**, come a 64
+> bit. Con la libc condivisa (`/lib/ld-exos.so`) `environ` e gli altri dati
+> della libc stanno nella libreria, e Firefox si collega con `-z nocopyreloc` e
+> `-z text`: la std statica nominava `environ` con un indirizzo assoluto nel
+> testo, e ld rifiutava libgkrust.a ("read-only segment has dynamic
+> relocations"). Il codice PIC a 32 bit passa dalla GOT, e gira anche dentro un
+> programma che PIC non è: niente SSE resta com'era.
+
 Il programma, `no_std` perché la `std` non c'è ancora:
 
 ```rust

@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_ld.sh - the shared libc, /lib/ld-exos.so (voce 105)
 #
@@ -22,13 +24,13 @@ tot=0
 giro() {    # $1 = 32|64
     local bit=$1 T TCB D arch cd uscita
     if [ "$bit" = 64 ]; then
-        T=x86_64-exos; TCB="$PWD/cross_build/$MACCHINA/exos-cross64/bin"; arch=x86_64
+        T=x86_64-exos; TCB="${EXOS_FUORI}/cross_build/$MACCHINA/exos-cross64/bin"; arch=x86_64
         cd=dist/exos64.iso
     else
-        T=i386-exos; TCB="$PWD/cross_build/$MACCHINA/exos-cross/bin"; arch=""
+        T=i386-exos; TCB="${EXOS_FUORI}/cross_build/$MACCHINA/exos-cross/bin"; arch=""
         cd=dist/exos.iso
     fi
-    D="$PWD/cross_build/$MACCHINA/costruzione-ld-$T"
+    D="${EXOS_FUORI}/cross_build/$MACCHINA/costruzione-ld-$T"
     mkdir -p "$D/lib"
     echo "=== $bit bit ==="
     bash tools/costruisci-ld.sh $bit "$D/lib" || { tot=$((tot+1)); return; }

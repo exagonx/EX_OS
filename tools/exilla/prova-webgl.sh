@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/exilla/prova-webgl.sh - WebGL in Firefox inside EX-OS (voce 88 d)
 #
@@ -35,11 +37,11 @@
 cd "$(dirname "$0")/../.." || exit 1
 RADICE="$PWD"
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-B="$PWD/cross_build/$MACCHINA"
-O="$PWD/cross_build/exilla-obj/gecko"; D="$B/costruzione-prova"; SUFF=""
+B="${EXOS_FUORI}/cross_build/$MACCHINA"
+O="${EXOS_FUORI}/cross_build/exilla-obj/gecko"; D="$B/costruzione-prova"; SUFF=""
 T=i386-exos; X="$B/exos-cross"; BITS=32
 if [ "$EXOS_ARCH" = x86_64 ]; then
-    O="$PWD/cross_build/exilla-obj/gecko64"; D="$B/costruzione-prova64"; SUFF=64
+    O="${EXOS_FUORI}/cross_build/exilla-obj/gecko64"; D="$B/costruzione-prova64"; SUFF=64
     T=x86_64-exos; X="$B/exos-cross64"; BITS=64
 fi
 P="$O/dist/firefox"

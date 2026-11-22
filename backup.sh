@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 #
 # Copia di sicurezza del progetto in un archivio solo:
 #
@@ -74,70 +76,70 @@ ESCLUSI=(
     "/build"
     "/build-64"
     # Firefox: 76 GB di oggetti, rifatti da tools/exilla/gecko-costruisci.sh
-    "cross_build/exilla-obj"
+    "${EXOS_FUORI}/cross_build/exilla-obj"
     # cartelle di compilazione delle toolchain (quelle installate restano)
-    "cross_build/gcc-build"
-    "cross_build/gcc-build-64"
-    "cross_build/gcc-build-canadian"
-    "cross_build/gcc-build-cpp"
-    "cross_build/gcc-build-cxx"
-    "cross_build/gcc-build-rel"
-    "cross_build/binutils-build-64"
+    "${EXOS_FUORI}/cross_build/gcc-build"
+    "${EXOS_FUORI}/cross_build/gcc-build-64"
+    "${EXOS_FUORI}/cross_build/gcc-build-canadian"
+    "${EXOS_FUORI}/cross_build/gcc-build-cpp"
+    "${EXOS_FUORI}/cross_build/gcc-build-cxx"
+    "${EXOS_FUORI}/cross_build/gcc-build-rel"
+    "${EXOS_FUORI}/cross_build/binutils-build-64"
     # cartelle di compilazione e di prova di ogni macchina; costruzione-strumenti
     # (Node, clang di Mozilla) no: si riscaricano, non si rifanno
-    "cross_build/*/costruzione-gcc*"
-    "cross_build/*/costruzione-binutils"
-    "cross_build/*/costruzione-rust"
-    "cross_build/*/costruzione-std"
-    "cross_build/*/costruzione-crate"
-    "cross_build/*/costruzione-cbindgen"
-    "cross_build/*/costruzione-mozbuild"
-    "cross_build/*/costruzione-prova*"
-    "cross_build/*/costruzione-sistema"
+    "${EXOS_FUORI}/cross_build/*/costruzione-gcc*"
+    "${EXOS_FUORI}/cross_build/*/costruzione-binutils"
+    "${EXOS_FUORI}/cross_build/*/costruzione-rust"
+    "${EXOS_FUORI}/cross_build/*/costruzione-std"
+    "${EXOS_FUORI}/cross_build/*/costruzione-crate"
+    "${EXOS_FUORI}/cross_build/*/costruzione-cbindgen"
+    "${EXOS_FUORI}/cross_build/*/costruzione-mozbuild"
+    "${EXOS_FUORI}/cross_build/*/costruzione-prova*"
+    "${EXOS_FUORI}/cross_build/*/costruzione-sistema"
     # Node e il clang di Mozilla: scaricati, non sorgenti
-    "cross_build/*/costruzione-strumenti"
+    "${EXOS_FUORI}/cross_build/*/costruzione-strumenti"
     # le toolchain installate e gli alberi di compilazione dei nativi
-    "cross_build/exos-cross"
-    "cross_build/exos-cross64"
-    "cross_build/*/exos-cross"
-    "cross_build/*/exos-cross64"
-    "cross_build/*/rust-macchina"
-    "cross_build/exos-native/build-*"
-    "cross_build/exos-native64"
-    "cross_build/openlibm-build-64"
-    "cross_build/openssl-build-exos"
-    "cross_build/openssl-build-exos64"
-    "cross_build/fb64"
-    "cross_build/fb-build-*"
+    "${EXOS_FUORI}/cross_build/exos-cross"
+    "${EXOS_FUORI}/cross_build/exos-cross64"
+    "${EXOS_FUORI}/cross_build/*/exos-cross"
+    "${EXOS_FUORI}/cross_build/*/exos-cross64"
+    "${EXOS_FUORI}/cross_build/*/rust-macchina"
+    "${EXOS_FUORI}/cross_build/exos-native/build-*"
+    "${EXOS_FUORI}/cross_build/exos-native64"
+    "${EXOS_FUORI}/cross_build/openlibm-build-64"
+    "${EXOS_FUORI}/cross_build/openssl-build-exos"
+    "${EXOS_FUORI}/cross_build/openssl-build-exos64"
+    "${EXOS_FUORI}/cross_build/fb64"
+    "${EXOS_FUORI}/cross_build/fb-build-*"
     # immagini e copie vecchie, non sorgenti: un disco di prova, la copia della
     # chiavetta del 10 ottobre, gli elenchi del recupero 0.263
-    "cross_build/exos-native/backup"
-    "cross_build/chiave-10ott"
-    "cross_build/recupero-0.263"
+    "${EXOS_FUORI}/cross_build/exos-native/backup"
+    "${EXOS_FUORI}/cross_build/chiave-10ott"
+    "${EXOS_FUORI}/cross_build/recupero-0.263"
     # MariaDB: le compilazioni a 32 e 64 bit (i sorgenti, mariadb-server/, restano)
-    "cross_build/*/costruzione-mariadb*"
+    "${EXOS_FUORI}/cross_build/*/costruzione-mariadb*"
     # le compilazioni delle librerie di terzi (mariadb-*, ncurses...) e cio'
     # che ne esce: gli archivi in cross_build/terze-parti restano, e
     # tools/<libreria>-exos/costruisci.sh rifa' tutto in un minuto
-    "cross_build/costruzione-*"
-    "cross_build/ncurses-exos32"
-    "cross_build/ncurses-exos64"
-    "cross_build/zlib-exos32"
-    "cross_build/zlib-exos64"
-    "cross_build/bzip2-exos32"
-    "cross_build/bzip2-exos64"
-    "cross_build/xz-exos32"
-    "cross_build/xz-exos64"
-    "cross_build/lz4-exos32"
-    "cross_build/lz4-exos64"
-    "cross_build/zstd-exos32"
-    "cross_build/zstd-exos64"
-    "cross_build/pcre2-exos32"
-    "cross_build/pcre2-exos64"
-    "cross_build/fmt-exos32"
-    "cross_build/fmt-exos64"
-    "cross_build/openssl-exos32"
-    "cross_build/openssl-exos64"
+    "${EXOS_FUORI}/cross_build/costruzione-*"
+    "${EXOS_FUORI}/cross_build/ncurses-exos32"
+    "${EXOS_FUORI}/cross_build/ncurses-exos64"
+    "${EXOS_FUORI}/cross_build/zlib-exos32"
+    "${EXOS_FUORI}/cross_build/zlib-exos64"
+    "${EXOS_FUORI}/cross_build/bzip2-exos32"
+    "${EXOS_FUORI}/cross_build/bzip2-exos64"
+    "${EXOS_FUORI}/cross_build/xz-exos32"
+    "${EXOS_FUORI}/cross_build/xz-exos64"
+    "${EXOS_FUORI}/cross_build/lz4-exos32"
+    "${EXOS_FUORI}/cross_build/lz4-exos64"
+    "${EXOS_FUORI}/cross_build/zstd-exos32"
+    "${EXOS_FUORI}/cross_build/zstd-exos64"
+    "${EXOS_FUORI}/cross_build/pcre2-exos32"
+    "${EXOS_FUORI}/cross_build/pcre2-exos64"
+    "${EXOS_FUORI}/cross_build/fmt-exos32"
+    "${EXOS_FUORI}/cross_build/fmt-exos64"
+    "${EXOS_FUORI}/cross_build/openssl-exos32"
+    "${EXOS_FUORI}/cross_build/openssl-exos64"
     # i dischi delle prove (hd.img, usb-*.img...): li rifanno gli script
     "/dischi"
     # in dist/: le ISO e gli alberi di netinst, rifatti da make
@@ -164,7 +166,7 @@ OPZ=(--anchored)
 for e in "${ESCLUSI[@]}"; do
     case "$e" in
         /*) OPZ+=(--exclude="$BASE$e") ;;
-        cross_build/*) OPZ+=(--exclude="$BASE/$e" --exclude="$e") ;;
+        ${EXOS_FUORI}/cross_build/*) OPZ+=(--exclude="$BASE/$e" --exclude="$e") ;;
         */*) OPZ+=(--exclude="$BASE/$e") ;;
         *)   OPZ+=(--no-anchored --exclude="$e" --anchored) ;;
     esac
@@ -174,7 +176,7 @@ done
 # Si archivia col nome cross_build, dalla cartella che la contiene.
 VOCI=(-C "$PADRE" "$BASE")
 if [ -L "$PROGETTO/cross_build" ]; then
-    CROSS="$(readlink -f "$PROGETTO/cross_build")"
+    CROSS="$(readlink -f "${EXOS_FUORI}/cross_build")"
     if [ -d "$CROSS" ] && [ "$(basename "$CROSS")" = "cross_build" ]; then
         VOCI+=(-C "$(dirname "$CROSS")" "cross_build")
     else

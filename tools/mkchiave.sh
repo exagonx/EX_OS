@@ -1,4 +1,6 @@
 #!/bin/sh
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/mkchiave.sh — la chiavetta USB di EX-OS a 64 bit: un DISCHETTO in RAM
 #
@@ -44,12 +46,12 @@ cd "$(dirname "$0")/.."
 ARCH="${EXOS_ARCH:-x86_64}"
 IMG=dist/exos64-usb.img
 [ "$ARCH" = i386 ] && IMG=dist/exos-usb.img
-STAGE1=build-64/avvio/stage1-288.bin
+STAGE1=${EXOS_FUORI}/build-64/avvio/stage1-288.bin
 STAGE2="${EXOS_STAGE2_CHIAVE:-build-64/avvio/stage2-rd1-288.bin}"
-KERNEL=build-64/kernel-intero.bin
-ALBERO=build-64/iso-exos
-B=build-64/bin
-D=build-64/drivers
+KERNEL=${EXOS_FUORI}/build-64/kernel-intero.bin
+ALBERO=${EXOS_FUORI}/build-64/iso-exos
+B=${EXOS_FUORI}/build-64/bin
+D=${EXOS_FUORI}/build-64/drivers
 
 # Che cosa sta nel dischetto. Poco, perche' la libc a 64 bit e' dentro ogni
 # programma e il kernel da solo ne prende 300 KB: cio' che serve ad avere una
@@ -102,7 +104,7 @@ if [ "$ARCH" = i386 ]; then
     for v in "$T/inst"/*; do mcopy -i "$F" -s -Q "$v" ::; done
     mcopy -i "$F" -o "$STAGE2" ::/LOADER.BIN
     for c in telnetd login; do
-        [ -f "build/iso-exos/bin/$c" ] && mcopy -i "$F" "build/iso-exos/bin/$c" "::/bin/$c" || true
+        [ -f "${EXOS_FUORI}/build/iso-exos/bin/$c" ] && mcopy -i "$F" "${EXOS_FUORI}/build/iso-exos/bin/$c" "::/bin/$c" || true
     done
     # avvio silenzioso e l'indirizzo in fondo, come a 64 bit
     mcopy -n -i "$F" ::/boot/kernel.cfg "$T/k.cfg" && sed -i 's/^verboseboot *= *1/verboseboot = 0/' "$T/k.cfg" &&

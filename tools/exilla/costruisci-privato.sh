@@ -1,4 +1,6 @@
 #!/bin/sh
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/exilla/costruisci-privato.sh — make in una copia PRIVATA dell'albero
 #
@@ -25,7 +27,7 @@ set -e
 cd "$(dirname "$0")/../.."
 RADICE="$PWD"
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-COPIA="$RADICE/cross_build/$MACCHINA/costruzione-sistema/albero"
+COPIA="${EXOS_FUORI}/cross_build/$MACCHINA/costruzione-sistema/albero"
 mkdir -p "$COPIA"
 
 rsync -a --delete \
@@ -39,7 +41,7 @@ mkdir -p "$COPIA/dist" "$COPIA/build/bin"
 # fermava come dipendenza mancante.
 for f in "$COPIA"/build/bin/*; do
     [ -f "$f" ] || continue
-    [ -e "build/bin/$(basename "$f")" ] || rm -f "$f"
+    [ -e "${EXOS_FUORI}/build/bin/$(basename "$f")" ] || rm -f "$f"
 done
 for p in chown halt poweroff reboot whoami sh; do
     [ -f "$COPIA/build/bin/$p" ] && chmod -x "$COPIA/build/bin/$p"
@@ -47,7 +49,7 @@ done
 
 # Exilla per `netinst`: la copia non ha cross_build, e tools/mknetinst.sh la
 # prende da qui.
-export EXILLA_DIST="$RADICE/cross_build/exilla-obj/gecko/dist/firefox"
+export EXILLA_DIST="${EXOS_FUORI}/cross_build/exilla-obj/gecko/dist/firefox"
 
 cd "$COPIA"
 [ $# -eq 0 ] && set -- iso-exos

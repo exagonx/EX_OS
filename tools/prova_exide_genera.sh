@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_exide_genera.sh — quel che exide GENERA compila ed e' coerente
 # (4 ottobre 2026, segnalato dall'utente: «header incoerenti, tipi mancanti,
@@ -144,7 +146,7 @@ done
 # Quel che `make netinst` pubblica e quel che `make iso` ha composto: gli stessi
 # file dei sorgenti, byte per byte. E' da qui che `netupdate` e `toolinst`
 # prendono gli header.
-for albero in build/iso/exos dist/netinst/file/exos; do
+for albero in ${EXOS_FUORI}/build/iso/exos dist/netinst/file/exos; do
     [ -d "$albero/include" ] || { echo "        ($albero non c'e': salto)"; continue; }
     diversi=""
     for f in lib/exwin/exwin.h lib/include/exlib.h lib/include/libc.h lib/exdlg/exdlg.h; do

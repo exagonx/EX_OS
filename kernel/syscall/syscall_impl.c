@@ -3855,14 +3855,21 @@ int32_t sys_chdir(InterruptFrame *frame)
          * qui riguardava solo "/", avrebbe dovuto essere esteso a ogni
          * punto di montaggio — e dimenticarlo avrebbe reso `cd /disk`
          * un "non trovato". */
-        if (vfs_stat(abs, &st) != 0) {
-            klog(LOG_DEBUG, "SYSCALL chdir('%s'): non trovato", abs);
-            return ERR(ENOENT);
+        {
+            int r = vfs_stat_utente(abs, &st);
+            if (r == ERR(EACCES)) return r;
+            if (r != 0) {
+                klog(LOG_DEBUG, "SYSCALL chdir('%s'): non trovato", abs);
+                return ERR(ENOENT);
+            }
         }
         if (!st.is_dir) {
             klog(LOG_DEBUG, "SYSCALL chdir('%s'): non e' una directory", abs);
             return ERR(EINVAL);
         }
+        /* ! cd WANTS x ON THE FOLDER ITSELF (voce 111): until 0.354 any user
+         * went into /root/privata 0700 */
+        if (vfs_puo(abs, 1u) != 0) return ERR(EACCES);
 
         /* ! SI CAMBIA LA DIRECTORY DI QUESTO PROCESSO, non quella del
          * sistema. Prima era una variabile sola e `cd` dentro un processo
@@ -3962,7 +3969,7 @@ int32_t sys_stat(InterruptFrame *frame)
         }
     }
 
-    r = vfs_stat(abs, &vs);
+    r = vfs_stat_utente(abs, &vs);
     if (r != 0) return r;
 
     stat_da_vfs(&vs, st);
@@ -4243,9 +4250,13 @@ int32_t sys_readdir(InterruptFrame *frame)
         if (resolve_path(".", kpath, sizeof(kpath)) != 0) return ERR(EINVAL);
     }
 
-    if (vfs_readdir(kpath, ventries, cap, &fcount, start) != 0) {
-        klog(LOG_DEBUG, "SYSCALL readdir('%s'): non trovata o non e' una directory", kpath);
-        return ERR(ENOENT);
+    {
+        int r = vfs_readdir(kpath, ventries, cap, &fcount, start);
+        if (r == ERR(EACCES)) return r;            /* no r on it (voce 111) */
+        if (r != 0) {
+            klog(LOG_DEBUG, "SYSCALL readdir('%s'): non trovata o non e' una directory", kpath);
+            return ERR(ENOENT);
+        }
     }
 
     for (i = 0; i < fcount; i++) {
@@ -5122,7 +5133,7 @@ int32_t sys_statperm(InterruptFrame *frame)
 
     if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
 
-    rc = vfs_stat(abs, &vs);
+    rc = vfs_stat_utente(abs, &vs);
     if (rc != 0) return rc;
 
     out->modo = vs.modo;

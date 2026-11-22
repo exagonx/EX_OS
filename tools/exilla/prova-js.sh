@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/exilla/prova-js.sh — la shell di SpiderMonkey dentro EX-OS (tappa 4)
 #
@@ -19,8 +21,8 @@
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-B="$PWD/cross_build/$MACCHINA"
-JS="$PWD/cross_build/exilla-obj/js/dist/bin/js"
+B="${EXOS_FUORI}/cross_build/$MACCHINA"
+JS="${EXOS_FUORI}/cross_build/exilla-obj/js/dist/bin/js"
 D="$B/costruzione-prova"
 mkdir -p "$D"
 [ -f "$JS" ] || { echo "manca $JS: tools/exilla/js-costruisci.sh build" >&2; exit 1; }

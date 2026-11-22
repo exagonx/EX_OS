@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/exilla/prova-aggiornamento.sh - Exilla updated over a USED profile
 #
@@ -30,13 +32,13 @@ R="$PWD"
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
 if [ "$EXOS_ARCH" = x86_64 ]; then
     SUFF=64; CD="$R/dist/exos64.iso"; CPU="-cpu qemu64"; export EXOS_QEMU=qemu-system-x86_64
-    LANCIA="$R/build-64/exwin/bin/exilla"
+    LANCIA="${EXOS_FUORI}/build-64/exwin/bin/exilla"
 else
-    SUFF="";  CD="$R/dist/exos.iso";   CPU=""; LANCIA="$R/build/exilla/exilla"
+    SUFF="";  CD="$R/dist/exos.iso";   CPU=""; LANCIA="${EXOS_FUORI}/build/exilla/exilla"
 fi
-O="$R/cross_build/exilla-obj/gecko$SUFF"; P="$O/dist/firefox"
-VECCHIO="${OLD_OMNI:-$HOME/cross_build/prove/firefox-17-11-tab/omni-vecchio$SUFF/omni.ja}"
-D="$R/cross_build/$MACCHINA/costruzione-prova$SUFF"; OUT="$D/aggiornamento"
+O="${EXOS_FUORI}/cross_build/exilla-obj/gecko$SUFF"; P="$O/dist/firefox"
+VECCHIO="${OLD_OMNI:-${EXOS_FUORI}/cross_build/prove/firefox-17-11-tab/omni-vecchio$SUFF/omni.ja}"
+D="${EXOS_FUORI}/cross_build/$MACCHINA/costruzione-prova$SUFF"; OUT="$D/aggiornamento"
 G="$D/aggiornamento-disco"; IMG="$D/aggiornamento-hd.img"; PART="$D/aggiornamento-part.img"
 for f in "$P/firefox" "$P/omni.ja" "$VECCHIO" "$LANCIA" "$CD"; do
     [ -f "$f" ] || { echo "manca $f" >&2; exit 1; }

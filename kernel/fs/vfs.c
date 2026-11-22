@@ -1471,12 +1471,87 @@ static int vfs_permesso(const VfsStat *st, uint32_t voluto)
  * esiste rende 1 — a dire che non c'e' non e' compito di questa funzione, e
  * rispondere «no» qui trasformerebbe un ENOENT in un EACCES, cioe' un «non
  * c'e'» in un «non ti dico se c'e'». */
+/* =============================================================================
+ * cammino_ok — x on EVERY directory of the path, not only on the last one
+ *
+ * ! UNTIL 0.354 ONLY THE FINAL FILE WAS LOOKED AT (voce 111, measured on the
+ * .253): in /root/privata 0700 any user listed, stat-ed, read a 0644 file and
+ * cd-ed. On Unix a 0700 folder is a wall for everything below it; a 0644 file
+ * inside is "readable" only by whoever can get there.
+ *
+ * "/a/b/c" checks "/", "/a", "/a/b". A missing or non-directory piece answers
+ * 1: ENOENT and ENOTDIR are said later by whoever does the job, as for
+ * permesso_su. Root and the volumes without owners (modo 0) pass in
+ * vfs_permesso; root does not even pay the stats.
+ * ============================================================================= */
+static int cammino_ok(const char *abs)
+{
+    char     p[VFS_PATH_MAX];
+    VfsStat  st;
+    uint32_t i, n;
+
+    if (vfs_uid_corrente() == 0) return 1;
+    if (abs == NULL || abs[0] != '/') return 1;
+    n = v_len(abs);
+    if (n >= VFS_PATH_MAX) n = VFS_PATH_MAX - 1;
+
+    for (i = 0; i < n; i++) {
+        if (abs[i] != '/') continue;
+        if (i > 0 && i == n - 1) break;           /* "/a/b/": nothing after it */
+        if (i == 0) { p[0] = '/'; p[1] = '\0'; }
+        else {
+            uint32_t k;
+            for (k = 0; k < i; k++) p[k] = abs[k];
+            p[i] = '\0';
+        }
+        if (vfs_stat_nl(p, &st) != 0) return 1;
+        if (!st.is_dir) return 1;
+        if (!vfs_permesso(&st, P_ESEGUI)) return 0;
+    }
+    return 1;
+}
+
 static int permesso_su(const char *abs, uint32_t voluto)
 {
     VfsStat st;
 
+    if (!cammino_ok(abs)) return 0;
     if (vfs_stat_nl(abs, &st) != 0) return 1;
     return vfs_permesso(&st, voluto);
+}
+
+/* the folder that holds abs: "/a/b" -> "/a", "/a" -> "/" */
+static void padre_di(const char *abs, char *p)
+{
+    int i;
+
+    for (i = 0; abs[i] && i < VFS_PATH_MAX - 1; i++) p[i] = abs[i];
+    p[i] = '\0';
+    while (i > 1 && p[i - 1] != '/') i--;
+    if (i > 1) i--;
+    if (i == 0) i = 1;
+    p[i] = '\0';
+}
+
+/* =============================================================================
+ * appiccicoso_vieta — the sticky bit (01000) on a folder like /tmp
+ *
+ * Writing in a 1777 folder lets everybody create; WITHOUT this anybody also
+ * deletes or renames away the files of the others (a socket, a lock, the
+ * .pid of a server). With it only the owner of the file, the owner of the
+ * folder and root take a name away. Linux answers EPERM.
+ * ============================================================================= */
+static int appiccicoso_vieta(const char *abs)
+{
+    char     p[VFS_PATH_MAX];
+    VfsStat  sp, sf;
+    uint32_t uid = vfs_uid_corrente();
+
+    if (uid == 0) return 0;
+    padre_di(abs, p);
+    if (vfs_stat_nl(p, &sp) != 0 || !(sp.modo & 01000u)) return 0;
+    if (vfs_stat_nl(abs, &sf) != 0) return 0;
+    return sf.uid != uid && sp.uid != uid;
 }
 
 /* Il permesso sulla DIRECTORY che contiene `abs`. Creare, cancellare e
@@ -1486,16 +1561,8 @@ static int permesso_su(const char *abs, uint32_t voluto)
 static int permesso_sul_padre(const char *abs, uint32_t voluto)
 {
     char p[VFS_PATH_MAX];
-    int  i;
 
-    for (i = 0; abs[i] && i < VFS_PATH_MAX - 1; i++) p[i] = abs[i];
-    p[i] = '\0';
-
-    while (i > 1 && p[i - 1] != '/') i--;
-    if (i > 1) i--;
-    if (i == 0) i = 1;
-    p[i] = '\0';
-
+    padre_di(abs, p);
     return permesso_su(p, voluto);
 }
 
@@ -2222,6 +2289,7 @@ static int modifica(const char *abs, int quale)
      * cancellare non richiede alcun permesso SUL FILE, e chi guardasse li'
      * lascerebbe cancellare a chiunque un file leggibile da tutti. */
     if (!permesso_sul_padre(abs, P_SCRIVI | P_ESEGUI)) return ERR(EACCES);
+    if (quale != 0 && appiccicoso_vieta(abs)) return ERR(EPERM);
 
     /* =========================================================================
      * ! GLI ERRORI CHE UN PROGRAMMA DEVE POTER DISTINGUERE SI DECIDONO QUI
@@ -2377,6 +2445,7 @@ static int vfs_rename_nl(const char *da, const char *a)
     if (da == NULL || a == NULL) return ERR(EINVAL);
     if (!permesso_sul_padre(da, P_SCRIVI | P_ESEGUI) ||
         !permesso_sul_padre(a,  P_SCRIVI | P_ESEGUI)) return ERR(EACCES);
+    if (appiccicoso_vieta(da) || appiccicoso_vieta(a)) return ERR(EPERM);
 
     if (da == NULL || a == NULL) return ERR(EINVAL);
 
@@ -2477,7 +2546,7 @@ static int vfs_truncate_nl(const char *abs, uint32_t nuova_dim)
     if (vfs_stat_nl(abs, &st) != 0) return ERR(ENOENT);
     if (st.is_dir)               return ERR(EISDIR);
     /* (0.330, analisi voce 46) truncate("/boot/ombra", 0) by anybody */
-    if (!vfs_permesso(&st, P_SCRIVI)) return ERR(EACCES);
+    if (!cammino_ok(abs) || !vfs_permesso(&st, P_SCRIVI)) return ERR(EACCES);
 
     if (g_posto[im]->m.tipo == VFS_FS_FAT12FD) {
         /* fat12.c non ha un troncamento, e non gliene si aggiunge uno per
@@ -2834,9 +2903,10 @@ int vfs_chown(const char *abs, uint32_t uid, uint32_t gid)
 int vfs_eseguibile(const char *abs)
 {
     VfsStat st;
+    int     r;
 
     if (abs == NULL) return ERR(EINVAL);
-    if (vfs_stat(abs, &st) != 0) return ERR(ENOENT);
+    if ((r = vfs_stat_utente(abs, &st)) != 0) return r;
     if (st.is_dir) return ERR(EACCES);
 
     return vfs_permesso(&st, P_ESEGUI) ? 0 : ERR(EACCES);
@@ -2850,7 +2920,7 @@ int vfs_chmod(const char *abs, uint32_t modo)
 
     if (abs == NULL) return ERR(EINVAL);
 
-    if (vfs_stat(abs, &st) != 0) return ERR(ENOENT);
+    if ((r = vfs_stat_utente(abs, &st)) != 0) return r;
     if (vfs_uid_corrente() != 0 && st.uid != vfs_uid_corrente())
         return ERR(EPERM);
 
@@ -2980,6 +3050,30 @@ int vfs_stat(const char *abs, VfsStat *st)
     int r; fs_prendi_n("stat"); r = vfs_stat_nl(abs, st); fs_rilascia(); return r;
 }
 
+/* stat ASKED BY A PROGRAM: it wants x on every folder of the path (cammino_ok).
+ * vfs_stat stays for the kernel's own looks (cfg, modules, umount). */
+int vfs_stat_utente(const char *abs, VfsStat *st)
+{
+    int r;
+
+    fs_prendi_n("stat");
+    r = cammino_ok(abs) ? vfs_stat_nl(abs, st) : ERR(EACCES);
+    fs_rilascia();
+    return r;
+}
+
+/* May the current process do `voluto` (4 r, 2 w, 1 x) on abs, path included?
+ * 0 or -EACCES; a path that does not exist answers 0 (see permesso_su). */
+int vfs_puo(const char *abs, uint32_t voluto)
+{
+    int r;
+
+    fs_prendi_n("puo");
+    r = permesso_su(abs, voluto) ? 0 : ERR(EACCES);
+    fs_rilascia();
+    return r;
+}
+
 int vfs_fstat(int h, VfsStat *st)
 {
     int r; fs_prendi_n("fstat"); r = vfs_fstat_nl(h, st); fs_rilascia(); return r;
@@ -2988,7 +3082,14 @@ int vfs_fstat(int h, VfsStat *st)
 int vfs_readdir(const char *abs, VfsDirEntry *out, uint32_t max,
                 uint32_t *count, uint32_t start)
 {
-    int r; fs_prendi_n("readdir"); r = vfs_readdir_nl(abs, out, max, count, start); fs_rilascia(); return r;
+    int r;
+
+    fs_prendi_n("readdir");
+    /* ! LISTING WANTS r ON THE FOLDER (and x on the path): until 0.354
+     * readdir asked nothing, /root/privata 0700 listed for anybody */
+    r = permesso_su(abs, P_LEGGI) ? vfs_readdir_nl(abs, out, max, count, start) : ERR(EACCES);
+    fs_rilascia();
+    return r;
 }
 
 int vfs_truncate(const char *abs, uint32_t nuova_dim)

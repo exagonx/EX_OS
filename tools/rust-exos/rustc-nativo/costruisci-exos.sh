@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/rust-exos/rustc-nativo/costruisci-exos.sh — rustc FOR 64-bit EX-OS
 #
@@ -17,11 +19,11 @@
 cd "$(dirname "$0")/../../.." || exit 1
 RADICE="$PWD"
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-T="$RADICE/cross_build/terze-parti/rust-src/rustc-nightly-src"
-BUILD="$RADICE/cross_build/$MACCHINA/rustc-build"
+T="${EXOS_FUORI}/cross_build/terze-parti/rust-src/rustc-nightly-src"
+BUILD="${EXOS_FUORI}/cross_build/$MACCHINA/rustc-build"
 # the gcc with threads (tools/exilla/gcc-fili.sh), else the shared one
-TCF="$RADICE/cross_build/$MACCHINA/exos-cross64"
-[ -x "$TCF/bin/x86_64-exos-g++" ] || TCF="$RADICE/cross_build/exos-cross64"
+TCF="${EXOS_FUORI}/cross_build/$MACCHINA/exos-cross64"
+[ -x "$TCF/bin/x86_64-exos-g++" ] || TCF="${EXOS_FUORI}/cross_build/exos-cross64"
 tools/rust-exos/rustc-nativo/prepara-sorgenti.sh || { echo FALLITO; exit 1; }
 sed -e "s|@BUILD@|$BUILD|" -e "s|@TCF@|$TCF|g" \
     tools/rust-exos/rustc-nativo/bootstrap-exos.toml > "$T/bootstrap.toml"

@@ -1,4 +1,6 @@
 #!/bin/sh
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/mkchiave.sh — la chiavetta USB di EX-OS che parte su QUALUNQUE BIOS
 #
@@ -48,14 +50,14 @@ cd "$(dirname "$0")/.."
 MB="${1:-64}"
 IMG=dist/exos64-chiave.img
 STAGE2="${EXOS_STAGE2_CHIAVE:-build-64/avvio/stage2-chiave.bin}"
-KERNEL=build-64/kernel-intero.bin
-ALBERO=build-64/iso-exos
+KERNEL=${EXOS_FUORI}/build-64/kernel-intero.bin
+ALBERO=${EXOS_FUORI}/build-64/iso-exos
 SIS_MB=16                           # la partizione del sistema
 P1=2048                             # dove comincia (1 MiB: lo spazio prima e' di Stage 2 e del kernel)
 LBA_S2=8
 LBA_K=64
 
-for f in build/boot/mbr.bin build/boot/boothd.bin "$STAGE2" "$KERNEL"; do
+for f in ${EXOS_FUORI}/build/boot/mbr.bin ${EXOS_FUORI}/build/boot/boothd.bin "$STAGE2" "$KERNEL"; do
     [ -f "$f" ] || { echo "mkchiave: manca $f (make iso64, poi make chiave64)" >&2; exit 1; }
 done
 [ -d "$ALBERO/bin" ] || { echo "mkchiave: manca $ALBERO: prima 'make iso64'" >&2; exit 1; }
@@ -94,7 +96,7 @@ fi
 
 # Il suo primo settore: il settore di avvio da disco, col BPB che mformat ha
 # appena scritto (byte 3..89) e la mappa dei settori a 0x1A0.
-python3 - "$T/p1.img" build/boot/boothd.bin $LBA_S2 $SET_S2 $BYTE_K $LBA_K $SET_K <<'PY'
+python3 - "$T/p1.img" ${EXOS_FUORI}/build/boot/boothd.bin $LBA_S2 $SET_S2 $BYTE_K $LBA_K $SET_K <<'PY'
 import struct, sys
 img, boothd, lba_s2, set_s2, byte_k, lba_k, set_k = sys.argv[1], sys.argv[2], *map(int, sys.argv[3:])
 b = bytearray(open(boothd, 'rb').read())
@@ -130,7 +132,7 @@ dd if="$STAGE2"   of="$IMG" bs=512 seek=$LBA_S2 conv=notrunc status=none
 dd if="$KERNEL"   of="$IMG" bs=512 seek=$LBA_K  conv=notrunc status=none
 dd if="$T/p1.img" of="$IMG" bs=512 seek=$P1     conv=notrunc status=none
 dd if="$T/p2.img" of="$IMG" bs=512 seek=$P2     conv=notrunc status=none
-python3 - "$IMG" build/boot/mbr.bin $P1 $SET_P1 $P2 $SET_P2 <<'PY'
+python3 - "$IMG" ${EXOS_FUORI}/build/boot/mbr.bin $P1 $SET_P1 $P2 $SET_P2 <<'PY'
 import struct, sys
 img, mbr, p1, n1, p2, n2 = sys.argv[1], sys.argv[2], *map(int, sys.argv[3:])
 m = bytearray(open(mbr, 'rb').read())

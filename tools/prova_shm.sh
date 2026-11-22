@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_shm.sh — shm_open, ftruncate e mmap dentro EX-OS (@SHM-OPEN)
 #
@@ -19,9 +21,9 @@
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-TCB="$PWD/cross_build/$MACCHINA/exos-cross/bin"
-[ -x "$TCB/i386-exos-gcc" ] || TCB="$PWD/cross_build/exos-cross/bin"
-D="$PWD/cross_build/$MACCHINA/costruzione-prova"
+TCB="${EXOS_FUORI}/cross_build/$MACCHINA/exos-cross/bin"
+[ -x "$TCB/i386-exos-gcc" ] || TCB="${EXOS_FUORI}/cross_build/exos-cross/bin"
+D="${EXOS_FUORI}/cross_build/$MACCHINA/costruzione-prova"
 mkdir -p "$D/lib"
 
 # Le stesse opzioni di tools/gcc-exos/prepara-cross.sh.

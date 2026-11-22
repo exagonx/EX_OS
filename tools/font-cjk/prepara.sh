@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/font-cjk/prepara.sh — Chinese, Japanese and Korean fonts for Exilla
 #
@@ -28,7 +30,7 @@
 # =============================================================================
 set -e
 cd "$(dirname "$0")/../.."
-TP=cross_build/terze-parti/noto-cjk
+TP=${EXOS_FUORI}/cross_build/terze-parti/noto-cjk
 FUORI=$TP/scelti
 mkdir -p "$TP"
 

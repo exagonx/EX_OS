@@ -103,6 +103,15 @@ native `as`, `ld` and `cc1` in `/bin`, the libc headers and source in
 > only at what that target needs, and the Makefile calls it by itself at the
 > start of the big targets.
 >
+> **What the build makes lives outside the source tree**, in `~/ex_os` (the
+> home of the user who builds; `EXOS_FUORI` moves it): `cross_build`, `build`,
+> `build-64`, `dischi` and `stress/risultati` are there, used directly by the
+> Makefile and the scripts through `$EXOS_FUORI` (`tools/fuori.sh`), no links. The source folder keeps the sources, the
+> finished ISOs and `dist/netinst`, `dist/netinst_64`, and the git clones of
+> the third-party sources (mesa, mariadb-server, httpd...): MEGA keeps them,
+> but without links and modes, sometimes without `.git`. `tools/ripara-cloni.sh`
+> puts back what is missing from `tools/cloni.txt`, without touching the work.
+>
 > The `i686-elf` cross compiler described below is the one of the first
 > months: today's Makefile no longer uses it.
 

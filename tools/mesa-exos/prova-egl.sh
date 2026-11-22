@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/mesa-exos/prova-egl.sh - OpenGL ES 2 through EGL in EX-OS (voce 88)
 #
@@ -20,12 +22,12 @@ cd "$(dirname "$0")/../.." || exit 1
 RADICE="$PWD"
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
 if [ "${1:-64}" = 32 ]; then
-    T=i386-exos; ARCH=""; BIT=32; X="$RADICE/cross_build/$MACCHINA/exos-cross"
+    T=i386-exos; ARCH=""; BIT=32; X="${EXOS_FUORI}/cross_build/$MACCHINA/exos-cross"
 else
-    T=x86_64-exos; ARCH=x86_64; BIT=64; X="$RADICE/cross_build/$MACCHINA/exos-cross64"
+    T=x86_64-exos; ARCH=x86_64; BIT=64; X="${EXOS_FUORI}/cross_build/$MACCHINA/exos-cross64"
 fi
 export PATH="$X/bin:$PATH"
-D="$RADICE/cross_build/$MACCHINA/costruzione-prova-egl-$T"
+D="${EXOS_FUORI}/cross_build/$MACCHINA/costruzione-prova-egl-$T"
 CD="${CD_FORZATO:-$RADICE/dist/exos.iso}"; [ -n "$ARCH" ] && CD="${CD_FORZATO:-$RADICE/dist/exos64.iso}"
 mkdir -p "$D"
 $T-gcc -O2 -o "$D/prova-egl" tools/mesa-exos/prova-egl.c -lEGL -lGLESv2 -lpthread || exit 1

@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_palla.sh - a woken thread on an idle processor (analisi_kernel
 # voce 24)
@@ -24,7 +26,7 @@ D="${1:-/tmp/exos-prove/palla-$ARCH}"
 rm -rf "$D"; mkdir -p "$D/albero"
 IMG="$D/hd.img"
 SBIN=/usr/sbin
-X=cross_build/nasi5deb
+X=${EXOS_FUORI}/cross_build/nasi5deb
 KVM=""; [ -w /dev/kvm ] && KVM="-enable-kvm"
 
 if [ "$ARCH" = x86_64 ]; then

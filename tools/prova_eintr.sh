@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_eintr.sh - a signal cuts a wait on a socket short (voce 37)
 #
@@ -18,18 +20,18 @@ tot=0
 giro() {    # $1 = 32|64
     local bit=$1 T TCB D CF arch cd uscita
     if [ "$bit" = 64 ]; then
-        T=x86_64-exos; TCB="$PWD/cross_build/$MACCHINA/exos-cross64/bin"; arch=x86_64
+        T=x86_64-exos; TCB="${EXOS_FUORI}/cross_build/$MACCHINA/exos-cross64/bin"; arch=x86_64
         CF="-m64 -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie \
             -Wall -O2 -std=c11 -ffunction-sections -fdata-sections -DEXOS_LIBC_PORTATI"
         cd=dist/exos64.iso
     else
-        T=i386-exos; TCB="$PWD/cross_build/$MACCHINA/exos-cross/bin"; arch=""
+        T=i386-exos; TCB="${EXOS_FUORI}/cross_build/$MACCHINA/exos-cross/bin"; arch=""
         CF="-m32 -march=pentium-mmx -mtune=pentium-mmx -ffreestanding -fno-builtin \
             -fno-stack-protector -fno-pic -fno-pie -fno-asynchronous-unwind-tables \
             -Wall -O2 -std=c11 -ffunction-sections -fdata-sections -DEXOS_LIBC_PORTATI"
         cd=dist/exos.iso
     fi
-    D="$PWD/cross_build/$MACCHINA/costruzione-eintr-$T"
+    D="${EXOS_FUORI}/cross_build/$MACCHINA/costruzione-eintr-$T"
     mkdir -p "$D/lib"
     echo "=== $bit bit ==="
     gcc $CF -Ilib/include -c lib/libc.c -o "$D/lib/libc.o" || { tot=$((tot+1)); return; }

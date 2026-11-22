@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_mappa_giornale.sh - does the boot map survive the journal? (voce 75)
 #
@@ -16,14 +18,14 @@ cd "$(dirname "$0")/.." || exit 1
 ARCH="${EXOS_ARCH:-i386}"
 D="${1:-/tmp/exos-prove/mappa-$ARCH}"
 rm -rf "$D"; mkdir -p "$D"
-SBIN=/usr/sbin; X=cross_build/nasi5deb; P1_SETT=262144
+SBIN=/usr/sbin; X=${EXOS_FUORI}/cross_build/nasi5deb; P1_SETT=262144
 if [ "$ARCH" = x86_64 ]; then
     ISO=dist/exos64.iso; GCC=$X/exos-cross64/bin/x86_64-exos-gcc
-    KERNEL=build-64/kernel-intero.bin; STAGE2=build-64/avvio/stage2-cd.bin; RDZ=build-64/rdboot.lz4
+    KERNEL=${EXOS_FUORI}/build-64/kernel-intero.bin; STAGE2=${EXOS_FUORI}/build-64/avvio/stage2-cd.bin; RDZ=${EXOS_FUORI}/build-64/rdboot.lz4
     export EXOS_QEMU=qemu-system-x86_64 EXOS_RAM=512M; EXTRA="-cpu qemu64"
 else
     ISO=dist/exos.iso; GCC=$X/exos-cross/bin/i386-exos-gcc
-    KERNEL=build/kernel.bin; STAGE2=build/stage2.bin; RDZ=build/rdboot.lz4
+    KERNEL=${EXOS_FUORI}/build/kernel.bin; STAGE2=${EXOS_FUORI}/build/stage2.bin; RDZ=${EXOS_FUORI}/build/rdboot.lz4
     export EXOS_RAM=128M; EXTRA=""
 fi
 T="$D/albero"; mkdir -p "$T/boot"

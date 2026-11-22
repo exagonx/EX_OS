@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/vlc-exos/prova.sh - VLC plays audio and video inside EX-OS
 #
@@ -40,7 +42,7 @@
 cd "$(dirname "$0")/../.." || exit 1
 BIT=${1:-64}
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-TC="$PWD/cross_build"
+TC="${EXOS_FUORI}/cross_build"
 V="$TC/vlc-exos$BIT/exos/bin/vlc"
 [ -x "$V" ] || { echo "manca $V: prima tools/vlc-exos/costruisci.sh $BIT" >&2; exit 1; }
 D="$TC/$MACCHINA/prova-vlc$BIT"

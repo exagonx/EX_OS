@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/exilla/nss-costruisci.sh — NSS per EX-OS (tappa 5 di Exilla)
 #
@@ -25,9 +27,9 @@ set -e
 cd "$(dirname "$0")/../.."
 RADICE="$PWD"
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-B="$RADICE/cross_build/$MACCHINA"
+B="${EXOS_FUORI}/cross_build/$MACCHINA"
 C="$B/costruzione-nss"
-O="$RADICE/cross_build/exilla-obj/js"
+O="${EXOS_FUORI}/cross_build/exilla-obj/js"
 L="$O/config/external/nspr"
 mkdir -p "$C/nspr/lib"
 

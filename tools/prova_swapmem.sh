@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_swapmem.sh — the swap area under pressure, and `mem` telling it
 #
@@ -26,15 +28,15 @@ P2_SETT=524288                                 # 256 MB of swap
 
 if [ "$ARCH" = x86_64 ]; then
     ISO=dist/exos64.iso
-    KERNEL=build-64/kernel-intero.bin; STAGE2=build-64/avvio/stage2-cd.bin
-    RD=build-64/rdboot.img; RDZ=build-64/rdboot.lz4
-    MEM=build-64/bin/mem; SWT=build-64/bin/swaptest; GCC=cross_build/nasi5deb/exos-cross64/bin/x86_64-exos-gcc
+    KERNEL=${EXOS_FUORI}/build-64/kernel-intero.bin; STAGE2=${EXOS_FUORI}/build-64/avvio/stage2-cd.bin
+    RD=${EXOS_FUORI}/build-64/rdboot.img; RDZ=${EXOS_FUORI}/build-64/rdboot.lz4
+    MEM=${EXOS_FUORI}/build-64/bin/mem; SWT=${EXOS_FUORI}/build-64/bin/swaptest; GCC=${EXOS_FUORI}/cross_build/nasi5deb/exos-cross64/bin/x86_64-exos-gcc
     export EXOS_QEMU=qemu-system-x86_64 EXOS_RAM=256M EXTRA="-cpu qemu64"
     CHIEDI=300; META=170
 else
     ISO=dist/exos.iso
-    KERNEL=build/kernel.bin; STAGE2=build/stage2.bin; RD=build/rdboot.img; RDZ=build/rdboot.lz4
-    MEM=build/bin/mem; SWT=build/bin-cd/swaptest; GCC=cross_build/nasi5deb/exos-cross/bin/i386-exos-gcc
+    KERNEL=${EXOS_FUORI}/build/kernel.bin; STAGE2=${EXOS_FUORI}/build/stage2.bin; RD=${EXOS_FUORI}/build/rdboot.img; RDZ=${EXOS_FUORI}/build/rdboot.lz4
+    MEM=${EXOS_FUORI}/build/bin/mem; SWT=${EXOS_FUORI}/build/bin-cd/swaptest; GCC=${EXOS_FUORI}/cross_build/nasi5deb/exos-cross/bin/i386-exos-gcc
     export EXOS_RAM=128M EXTRA=""
     CHIEDI=160; META=85
 fi

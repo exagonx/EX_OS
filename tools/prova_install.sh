@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_install.sh - `<driver> -install` / `-remove` in QEMU (voce 24)
 #
@@ -30,8 +32,8 @@ no() { echo "  [NO] $1"; no=$((no+1)); }
 
 giro() {    # $1 = 32|64
     local bit=$1 iso q cpu dr log ser img
-    if [ "$bit" = 64 ]; then iso=dist/exos64.iso; q=qemu-system-x86_64; cpu=qemu64; dr=build-64/drivers
-    else                     iso=dist/exos.iso;   q=qemu-system-i386;   cpu=pentium3; dr=build/drivers; fi
+    if [ "$bit" = 64 ]; then iso=dist/exos64.iso; q=qemu-system-x86_64; cpu=qemu64; dr=${EXOS_FUORI}/build-64/drivers
+    else                     iso=dist/exos.iso;   q=qemu-system-i386;   cpu=pentium3; dr=${EXOS_FUORI}/build/drivers; fi
     log="$D/$bit.log"; ser=/tmp/exos/serialin$bit.txt; rm -f "$ser"
     echo "=== $bit bit ==="
     img="$D/hd$bit.img"

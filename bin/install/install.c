@@ -84,7 +84,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `install -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("install", "0.012");
+EX_VERSIONE("install", "0.013");
 
 #define BLOCCO      4096
 #define PERC_MAX    128
@@ -2343,6 +2343,10 @@ int main(int argc, char **argv)
 
         unisci(h, argv[1], "root");
         crea_dir(h);
+        /* ! 0700, AS ON LINUX (voce 111, the user 22/11): with 0755 any user
+         * listed /root and read every 0644 file of the administrator */
+        if (chmod(h, 0700) != 0 && errno != ENOSYS)
+            printf("  ! %s: chmod 0700 (%s)\n", h, strerror(errno));
 
         /* =====================================================================
          * ! I CONTI SI CREANO QUI, NON AL PRIMO AVVIO, dal 19 agosto 2026.
@@ -2473,6 +2477,9 @@ int main(int argc, char **argv)
                     if (chown(h, 1000, 1000) != 0 && errno != ENOSYS)
                         printf("  ! %s creata ma non consegnata (%s)\n",
                                h, strerror(errno));
+                    /* the home of one user is closed to the others (voce 111) */
+                    else if (chmod(h, 0700) != 0 && errno != ENOSYS)
+                        printf("  ! %s: chmod 0700 (%s)\n", h, strerror(errno));
 
                     printf("  + %s (uid 1000), casa in %s\n", nome, h);
 

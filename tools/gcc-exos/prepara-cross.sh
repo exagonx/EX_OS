@@ -70,6 +70,8 @@ if [ ! -f lib/libc.c ]; then
     echo "prepara-cross: va lanciato dalla radice del progetto EX-OS" >&2
     exit 1
 fi
+# cross_build e' un link a <home>/ex_os/cross_build (tools/fuori.sh)
+sh tools/fuori.sh > /dev/null
 
 echo "=== Preparo il cross i386-exos in $PREFISSO ==="
 

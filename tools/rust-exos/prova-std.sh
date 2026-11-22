@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/rust-exos/prova-std.sh — @RUST-STD: la std di Rust dentro EX-OS
 #
@@ -24,12 +26,12 @@
 cd "$(dirname "$0")/../.." || exit 1
 RADICE="$PWD"
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-B="$RADICE/cross_build/$MACCHINA"
+B="${EXOS_FUORI}/cross_build/$MACCHINA"
 CARGO="${CARGO:-$(command -v cargo || echo "$HOME/.cargo/bin/cargo")}"
 export RUSTUP_HOME="$B/rust-macchina/rustup" CARGO_HOME="$B/rust-macchina/cargo"
 export CARGO_TARGET_DIR="$B/costruzione-rust"
 export __CARGO_TESTS_ONLY_SRC_ROOT="$B/costruzione-std/library"
-export PATH="$B/exos-cross/bin:$RADICE/cross_build/exos-cross64/bin:$PATH"
+export PATH="$B/exos-cross/bin:${EXOS_FUORI}/cross_build/exos-cross64/bin:$PATH"
 BERSAGLIO=i686-unknown-exos
 [ "$EXOS_ARCH" = x86_64 ] && BERSAGLIO=x86_64-unknown-exos
 # ! IL BERSAGLIO PER NOME, non per percorso del .json (30 settembre 2026): una

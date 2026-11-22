@@ -1,4 +1,6 @@
 #!/bin/sh
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/ncurses-exos/su-cd.sh — ncurses on the tools CD
 #
@@ -29,10 +31,10 @@ CD="$1"
 BIT="$2"
 cd "$(dirname "$0")/../.." || exit 1
 . tools/mancanti.sh
-N=cross_build/ncurses-exos$BIT/exos
+N=${EXOS_FUORI}/cross_build/ncurses-exos$BIT/exos
 case "$BIT" in
-    64) STRIP=cross_build/nasi5deb/exos-cross64/bin/x86_64-exos-strip ;;
-    32) STRIP=cross_build/nasi5deb/exos-cross/bin/i386-exos-strip ;;
+    64) STRIP=${EXOS_FUORI}/cross_build/nasi5deb/exos-cross64/bin/x86_64-exos-strip ;;
+    32) STRIP=${EXOS_FUORI}/cross_build/nasi5deb/exos-cross/bin/i386-exos-strip ;;
     *) echo "uso: $0 <albero> 32|64" >&2; exit 2 ;;
 esac
 [ -x "$STRIP" ] || STRIP=strip
@@ -44,21 +46,23 @@ E="$CD/exos"
 mkdir -p "$E/lib" "$E/include" "$E/share" "$E/bin" "$E/src/ncurses"
 # the .a for -static, the .so.6 and their ld scripts for everybody else
 # (20 November 2026, voce 105 step 4: VLC's ncurses plugin needs them)
-cp -p "$N"/lib/*.a "$N"/lib/*.so* "$E/lib/"
-cp -rp "$N/include/." "$E/include/"
+# --remove-destination: plain cp writes THROUGH an old link and the link
+# stays (ncurses.h -> curses.h of 25/10 lived on in build-64/iso, 22/11)
+cp -p --remove-destination "$N"/lib/*.a "$N"/lib/*.so* "$E/lib/"
+cp -rp --remove-destination "$N/include/." "$E/include/"
 # the 32-bit gcc looks for headers in exos/i386-exos/include (where the
 # Makefile puts the libc's too); the catalogue names them with `file`
-[ -d "$E/i386-exos/include" ] && cp -rp "$N/include/." "$E/i386-exos/include/"
+[ -d "$E/i386-exos/include" ] && cp -rp --remove-destination "$N/include/." "$E/i386-exos/include/"
 rm -rf "$E/share/terminfo"
 cp -rp "$N/share/terminfo" "$E/share/"
 for b in "$N"/bin/*; do
     "$STRIP" -o "$E/bin/$(basename "$b")" "$b" && chmod 755 "$E/bin/$(basename "$b")"
 done
 VER=$(sed -n 's/^VER=//p' tools/ncurses-exos/costruisci.sh)
-cp -p cross_build/terze-parti/ncurses/ncurses-$VER.tar.gz \
-      cross_build/terze-parti/ncurses/ncurses-$VER.tar.gz.sig \
+cp -p ${EXOS_FUORI}/cross_build/terze-parti/ncurses/ncurses-$VER.tar.gz \
+      ${EXOS_FUORI}/cross_build/terze-parti/ncurses/ncurses-$VER.tar.gz.sig \
       tools/ncurses-exos/exos.ti tools/ncurses-exos/costruisci.sh "$E/src/ncurses/"
-[ -f cross_build/costruzione-ncurses/terminfo.src ] && \
-    cp -p cross_build/costruzione-ncurses/terminfo.src "$E/src/ncurses/"
+[ -f ${EXOS_FUORI}/cross_build/costruzione-ncurses/terminfo.src ] && \
+    cp -p ${EXOS_FUORI}/cross_build/costruzione-ncurses/terminfo.src "$E/src/ncurses/"
 cp tools/prove/cursesprova.c "$CD/prova-curses.c"
 echo "     ncurses $VER: $(ls "$N/lib" | tr '\n' ' ')+ $(find "$E/share/terminfo" -type f | wc -l) voci terminfo e i sorgenti"

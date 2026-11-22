@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_rdboot.sh — the base system archive reaches RAM, in QEMU (@RDBOOT)
 #
@@ -24,17 +26,17 @@ D="${1:-/tmp/exos-prove/rdboot-$ARCH}"
 rm -rf "$D"; mkdir -p "$D"
 IMG="$D/hd.img"
 SBIN=/usr/sbin
-X=cross_build/nasi5deb
+X=${EXOS_FUORI}/cross_build/nasi5deb
 P1_SETT=131072                                 # 64 MB
 
 if [ "$ARCH" = x86_64 ]; then
     ISO=dist/exos64.iso; GCC=$X/exos-cross64/bin/x86_64-exos-gcc
-    KERNEL=build-64/kernel-intero.bin; STAGE2=build-64/avvio/stage2-cd.bin
-    RD=build-64/rdboot.img; RDZ=build-64/rdboot.lz4
+    KERNEL=${EXOS_FUORI}/build-64/kernel-intero.bin; STAGE2=${EXOS_FUORI}/build-64/avvio/stage2-cd.bin
+    RD=${EXOS_FUORI}/build-64/rdboot.img; RDZ=${EXOS_FUORI}/build-64/rdboot.lz4
     export EXOS_QEMU=qemu-system-x86_64 EXOS_RAM=512M EXTRA="-cpu qemu64"
 else
     ISO=dist/exos.iso; GCC=$X/exos-cross/bin/i386-exos-gcc
-    KERNEL=build/kernel.bin; STAGE2=build/stage2.bin; RD=build/rdboot.img; RDZ=build/rdboot.lz4
+    KERNEL=${EXOS_FUORI}/build/kernel.bin; STAGE2=${EXOS_FUORI}/build/stage2.bin; RD=${EXOS_FUORI}/build/rdboot.img; RDZ=${EXOS_FUORI}/build/rdboot.lz4
     export EXOS_RAM=128M EXTRA=""
 fi
 for f in "$ISO" "$KERNEL" "$STAGE2" "$RD" "$RDZ"; do [ -f "$f" ] || { echo "manca $f" >&2; exit 1; }; done

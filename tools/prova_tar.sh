@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_tar.sh — tar, gzip e gunzip, nei due versi
 #
@@ -43,7 +45,7 @@ SFDISK=$(command -v sfdisk || echo /usr/sbin/sfdisk)
 DEBUGFS=$(command -v debugfs || echo /usr/sbin/debugfs)
 [ -x "$SFDISK" ]  || { echo "manca sfdisk (util-linux)" >&2; exit 1; }
 [ -x "$DEBUGFS" ] || { echo "manca debugfs (e2fsprogs)" >&2; exit 1; }
-[ -f build/bin-cd/tar ] || { echo "manca build/bin-cd/tar: lancia 'make tar_prog'" >&2; exit 1; }
+[ -f ${EXOS_FUORI}/build/bin-cd/tar ] || { echo "manca ${EXOS_FUORI}/build/bin-cd/tar: lancia 'make tar_prog'" >&2; exit 1; }
 TAR=/disk/bin/tar; GZIP=/disk/bin/gzip; GUNZIP=/disk/bin/gunzip
 
 export EXOS_ISTANZA=tar
@@ -72,7 +74,7 @@ timeout 400 python3 tools/qemu_drive.py \
     "cp /bin/ls /disk/albero/sub/binario@3" \
     "ls /disk/albero/sub@3" > "$D/1-disco.log" 2>&1
 
-for p in tar gzip gunzip; do entra "build/bin-cd/$p" "bin/$p"; done
+for p in tar gzip gunzip; do entra "${EXOS_FUORI}/build/bin-cd/$p" "bin/$p"; done
 
 grep -aq "binario" "$D/1-disco.log" || {
     echo "NON RIUSCITO: il disco non si e' popolato (vedi $D/1-disco.log)"

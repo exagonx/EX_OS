@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/libgit2-exos/prova.sh — libgit2 inside 64-bit EX-OS (QEMU)
 #
@@ -13,14 +15,14 @@ R=$PWD
 D=/tmp/exos-prove/git64
 T=$D/albero
 rm -rf "$D"; mkdir -p "$T/bin" "$T/w"
-export PATH="$R/cross_build/exos-cross64/bin:$PATH"
-O=$R/cross_build/openssl-build-exos64
+export PATH="${EXOS_FUORI}/cross_build/exos-cross64/bin:$PATH"
+O=${EXOS_FUORI}/cross_build/openssl-build-exos64
 # the headers and the library of costruisci.sh's output, not the sysroot's
 # copy: a toolchain copied before costruisci.sh ran has neither (20/11)
-G=$R/cross_build/libgit2-exos64
+G=${EXOS_FUORI}/cross_build/libgit2-exos64
 x86_64-exos-gcc -static -O2 -Wall -I "$G/include" -o "$T/bin/prova-git" tools/libgit2-exos/prova-git.c \
     "$G/lib/libgit2.a" "$O/libssl.a" "$O/libcrypto.a" || exit 1
-cp -p cross_build/libgit2-exos64/bin/git2 "$T/bin/git2"
+cp -p ${EXOS_FUORI}/cross_build/libgit2-exos64/bin/git2 "$T/bin/git2"
 x86_64-exos-strip "$T/bin/prova-git" "$T/bin/git2"
 printf 'ciao\n' > "$T/ciao.txt"
 

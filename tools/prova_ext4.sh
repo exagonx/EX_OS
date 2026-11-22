@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_ext4.sh — ext4 written by /dev/ext4.mod 0.004 (@EXT4-SCRITTURA),
 # in QEMU, booting from the CD
@@ -34,16 +36,16 @@ D="${1:-/tmp/exos-prove/ext4-$ARCH}"
 rm -rf "$D"; mkdir -p "$D"
 IMG="$D/hd.img"
 SBIN=/usr/sbin
-X=cross_build/nasi5deb
+X=${EXOS_FUORI}/cross_build/nasi5deb
 S1=196608; S2=131072; S3=65536; S4=131072       # sectors: 96, 64, 32, 64 MB
 O1=2048; O2=$((O1 + S1)); O3=$((O2 + S2)); O4=$((O3 + S3))
 N_EST=600
 
 if [ "$ARCH" = x86_64 ]; then
-    ISO=dist/exos64.iso; GCC=$X/exos-cross64/bin/x86_64-exos-gcc; LS=build-64/iso-exos/bin/ls
+    ISO=dist/exos64.iso; GCC=$X/exos-cross64/bin/x86_64-exos-gcc; LS=${EXOS_FUORI}/build-64/iso-exos/bin/ls
     export EXOS_QEMU=qemu-system-x86_64 EXOS_RAM=512M EXTRA="-cpu qemu64"
 else
-    ISO=dist/exos.iso; GCC=$X/exos-cross/bin/i386-exos-gcc; LS=build/iso-exos/bin/ls
+    ISO=dist/exos.iso; GCC=$X/exos-cross/bin/i386-exos-gcc; LS=${EXOS_FUORI}/build/iso-exos/bin/ls
     export EXOS_RAM=128M EXTRA=""
 fi
 [ -f "$ISO" ] || { echo "manca $ISO" >&2; exit 1; }

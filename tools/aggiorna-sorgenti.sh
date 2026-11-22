@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/aggiorna-sorgenti.sh — third-party sources against their official ones
 #
@@ -24,8 +26,8 @@
 set -u
 cd "$(dirname "$0")/.." || exit 1
 LISTA=tools/sorgenti-terzi.txt
-TP=cross_build/terze-parti
-LAVORO=cross_build/aggiorna
+TP=${EXOS_FUORI}/cross_build/terze-parti
+LAVORO=${EXOS_FUORI}/cross_build/aggiorna
 
 riga_di() { grep -v '^#' "$LISTA" | grep "^$1|"; }
 
@@ -164,6 +166,9 @@ clona() {
     [ -f "$dir/.verificata" ] || { echo "! prima: $0 -scarica $1 (con la firma buona)"; exit 1; }
     read -r v file < "$dir/.verificata"
     d=$CLONE
+    # a clone that came through MEGA: links, modes or .git missing would
+    # look like "modifiche non salvate" below (tools/ripara-cloni.sh)
+    if [ -e "$d" ]; then tools/ripara-cloni.sh "$1" || exit 1; fi
     if [ ! -d "$d/.git" ]; then
         [ -e "$d" ] && { echo "! $d c'e' ma non e' un clone git: non lo tocco"; exit 1; }
         echo "$1: clono $GIT in $d"
@@ -202,6 +207,8 @@ clona() {
         exit 1
     fi
     echo "$d: uguale all'archivio firmato $file ($solo file solo da una parte: i generati)"
+    # where it stands now, in tools/cloni.txt
+    tools/ripara-cloni.sh "$1" > /dev/null
 }
 
 prova() {

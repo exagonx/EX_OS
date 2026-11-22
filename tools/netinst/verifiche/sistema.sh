@@ -132,7 +132,55 @@ if [ -f /boot/netupdate.err ]; then
     echo "    netupdate -check -yes li riprende."
     exit 1
 fi
+# ! USERS REALLY APART (voce 111, kernel 0.355, ext4.mod 0.007, 22 November
+# 2026): /root 0700, /tmp 1777 (sticky: only the owner takes a name away),
+# the homes 0700. install up to 0.012 left /root 0755, and ext4.mod up to
+# 0.006 dropped the sticky bit from chmod, so /tmp came out 0777. /root and
+# /tmp belong to the system and are put right here; a home is its owner's
+# choice and is only said. The sticky bit holds only with ext4.mod 0.007
+# running, that is after the reboot of this update.
+RIPARATO=0
+# (on FAT there are no modes: ls writes ? and there is nothing to set)
+PROPRIETARI=1
+if [ -f /bin/grep ]; then
+    ls -l / | grep "^d[-r][-w][-x].* boot$" > /dev/null
+    if [ $? != 0 ]; then
+        PROPRIETARI=0
+    fi
+fi
+if [ $PROPRIETARI = 1 ]; then
+    ls -l / | grep "^drwx------ .* root$" > /dev/null
+    if [ $? != 0 ]; then
+        chmod 700 /root
+        ls -l / | grep "^drwx------ .* root$" > /dev/null
+        if [ $? = 0 ]; then
+            echo "  + /root ora e' 0700: gli altri utenti non lo leggono piu'."
+            RIPARATO=1
+        fi
+    fi
+    ls -l / | grep "^drwxrwxrwt .* tmp$" > /dev/null
+    if [ $? != 0 ]; then
+        chmod 1777 /tmp
+        ls -l / | grep "^drwxrwxrwt .* tmp$" > /dev/null
+        if [ $? = 0 ]; then
+            echo "  + /tmp ora e' 1777: ognuno cancella solo i suoi file."
+            RIPARATO=1
+        else
+            echo "  - /tmp non tiene ancora il bit sticky: dopo il riavvio (ext4.mod 0.007)"
+            echo "    netupdate -verifica lo rimette."
+        fi
+    fi
+    ls -l /home | grep "^d......r" > /dev/null
+    if [ $? = 0 ]; then
+        echo "  - Case che gli altri utenti possono leggere (dal kernel 0.355 basta il modo):"
+        ls -l /home | grep "^d......r"
+        echo "    se non le condividi apposta: chmod 700 /home/<nome>"
+    fi
+fi
 if [ "$NETUPDATE_RIAVVIO" = 1 ]; then
+    if [ $RIPARATO = 1 ]; then
+        exit 2
+    fi
     exit 0
 fi
 if [ "$NETUPDATE_KERNEL" != "$NETUPDATE_SISTEMA" ]; then
@@ -140,5 +188,8 @@ if [ "$NETUPDATE_KERNEL" != "$NETUPDATE_SISTEMA" ]; then
     echo "    Riavvia. Se dopo il riavvio gira ancora il $NETUPDATE_KERNEL, il settore"
     echo "    di avvio punta al kernel vecchio: netupdate -avvio, poi riavvia."
     exit 1
+fi
+if [ $RIPARATO = 1 ]; then
+    exit 2
 fi
 exit 0

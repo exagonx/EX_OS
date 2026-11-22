@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_mariadb.sh — MariaDB 11.8 in EX-OS
 #
@@ -35,7 +37,7 @@ rm -rf "$D"; mkdir -p "$D"
 IMG="$D/hd.img"
 OFF="$IMG?offset=1048576"
 SBIN=/usr/sbin
-X=cross_build/nasi5deb
+X=${EXOS_FUORI}/cross_build/nasi5deb
 if [ "$ARCH" = x86_64 ]; then
     ISO=dist/exos64.iso; BIT=64; TC=$X/exos-cross64; TT=x86_64-exos; RS=x86_64-unknown-exos
     export EXOS_QEMU=qemu-system-x86_64 EXOS_RAM=1024M EXTRA="-cpu qemu64"
@@ -43,7 +45,7 @@ else
     ISO=dist/exos.iso; BIT=32; TC=$X/exos-cross; TT=i386-exos; RS=i686-unknown-exos
     export EXOS_RAM=1024M EXTRA=""
 fi
-E=cross_build/mariadb-exos$BIT/exos
+E=${EXOS_FUORI}/cross_build/mariadb-exos$BIT/exos
 M=$E/mariadb
 [ -f "$ISO" ] || { echo "manca $ISO" >&2; exit 1; }
 [ -x "$M/bin/mariadbd" ] || { echo "manca $M: tools/mariadb-exos/costruisci.sh" >&2; exit 1; }
@@ -71,14 +73,14 @@ fi
 # fb-build-110, the build the Makefile puts on the CD (FB_NATIVO): the older
 # fb-build-exos has an fbextra.x without "INSERT AFTER .data", which then
 # replaces ld's script and links the program at address 0
-FB=cross_build/fb-build-110
+FB=${EXOS_FUORI}/cross_build/fb-build-110
 if [ "$BIT" = 32 ] && [ -f "$FB/libfb.a" ]; then
     P="$D/fb"; mkdir -p "$P/lib/freebasic/exos-x86" "$P/include" "$P/bin"
     cp "$FB/fbextra.x" "$FB/fbrt0.o" "$FB/libfb.a" "$TC/$TT/lib/crt0.o" "$P/lib/freebasic/exos-x86/"
-    ln -s "$PWD/cross_build/fb64/albero/inc" "$P/include/freebasic"
+    ln -s "${EXOS_FUORI}/cross_build/fb64/albero/inc" "$P/include/freebasic"
     for s in as ld gcc ar; do ln -s "$PWD/$TC/bin/$TT-$s" "$P/bin/exos-$s"; done
-    PATH="$P/bin:$PATH" cross_build/fb64/albero/bin/fbc -prefix "$P" -target exos tools/prove/connprova.bas \
-        -i "cross_build/mariadb-connector-c-exos$BIT/exos/include/freebasic" -x "$T/bin/connprovafb" -p "$TC/$TT/lib" \
+    PATH="$P/bin:$PATH" ${EXOS_FUORI}/cross_build/fb64/albero/bin/fbc -prefix "$P" -target exos tools/prove/connprova.bas \
+        -i "${EXOS_FUORI}/cross_build/mariadb-connector-c-exos$BIT/exos/include/freebasic" -x "$T/bin/connprovafb" -p "$TC/$TT/lib" \
         -p "$(dirname "$($TC/bin/$TT-gcc -print-libgcc-file-name)")" > "$D/fb.log" 2>&1 || { cat "$D/fb.log"; exit 1; }
     CONN="$CONN connprovafb"
 else
@@ -101,7 +103,7 @@ while [ -n "$nomi" ]; do
     for l in $nomi; do
         [ "$l" = ld-exos.so ] && continue
         [ -f "$T/lib/$l" ] && continue
-        f=$(ls cross_build/*-exos$BIT/exos/lib/"$l" 2>/dev/null | head -1)
+        f=$(ls ${EXOS_FUORI}/cross_build/*-exos$BIT/exos/lib/"$l" 2>/dev/null | head -1)
         [ -n "$f" ] || { echo "  manca $l (a $BIT bit)"; exit 1; }
         cp -L "$f" "$T/lib/"
         nuovi="$nuovi $(readelf -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')"

@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/prova_codec.sh - FFmpeg decodes inside EX-OS what it decodes on Linux
 #
@@ -23,15 +25,15 @@ if [ "$ARCH" = x86_64 ]; then
 else
     ISO=dist/exos.iso; BIT=32; export EXOS_RAM=512M; EXTRA=""
 fi
-FF=cross_build/ffmpeg-exos$BIT/exos/bin/ffmpeg
+FF=${EXOS_FUORI}/cross_build/ffmpeg-exos$BIT/exos/bin/ffmpeg
 [ -x "$FF" ] || { echo "manca $FF: tools/ffmpeg-exos/costruisci.sh" >&2; exit 1; }
 CAMPIONI="gizmo.mp4 gizmo.webm vp9cake.webm bipbop_short_vp8.webm av1.mp4 small-shot.flac small-shot.mp3 small-shot.m4a sound.ogg"
 
 # the same archive, for Linux
-H=$PWD/cross_build/costruzione-ffmpeg/host
+H=${EXOS_FUORI}/cross_build/costruzione-ffmpeg/host
 if [ ! -x "$H/ffmpeg" ]; then
     mkdir -p "$H"
-    tar -xf cross_build/terze-parti/ffmpeg/ffmpeg-9.0.2.tar.xz -C "$H"
+    tar -xf ${EXOS_FUORI}/cross_build/terze-parti/ffmpeg/ffmpeg-9.0.2.tar.xz -C "$H"
     ( cd "$H" && ffmpeg-9.0.2/configure --disable-asm --disable-doc --disable-autodetect \
         --disable-network --disable-ffplay --disable-ffprobe && make -j8 ) > "$H/costruisci.log" 2>&1 \
         || { tail -5 "$H/costruisci.log"; exit 1; }
@@ -58,7 +60,7 @@ while [ -n "$nomi" ]; do
     for l in $nomi; do
         [ -f "$D/albero/lib/$l" ] && continue
         [ "$l" = ld-exos.so ] && continue    # the system's, in /lib of the CD
-        f=$(ls cross_build/*-exos$BIT/exos/lib/"$l" 2>/dev/null | head -1)
+        f=$(ls ${EXOS_FUORI}/cross_build/*-exos$BIT/exos/lib/"$l" 2>/dev/null | head -1)
         [ -n "$f" ] || { echo "manca $l (a $BIT bit)" >&2; exit 1; }
         cp "$f" "$D/albero/lib/"
         nuovi="$nuovi $(readelf -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')"

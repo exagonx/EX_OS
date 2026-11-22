@@ -1,4 +1,6 @@
 #!/bin/bash
+# the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
+[ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
 # tools/librerie-exos/aggiorna-sysroot.sh - today's libc into the cross sysroots
 #
@@ -28,8 +30,8 @@ gcc $C64 -Ilib/include -c lib/libc.c -o "$W/libc64.o"; ar rcs "$W/libc64.a" "$W/
 GIORNO=$(date +%d-%m)
 # this machine's toolchains only: cross_build/salvati-* are kept copies
 M="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-for coppia in cross_build/exos-cross/i386-exos:32 cross_build/exos-cross64/x86_64-exos:64 \
-              cross_build/$M/exos-cross/i386-exos:32 cross_build/$M/exos-cross64/x86_64-exos:64; do
+for coppia in ${EXOS_FUORI}/cross_build/exos-cross/i386-exos:32 ${EXOS_FUORI}/cross_build/exos-cross64/x86_64-exos:64 \
+              ${EXOS_FUORI}/cross_build/$M/exos-cross/i386-exos:32 ${EXOS_FUORI}/cross_build/$M/exos-cross64/x86_64-exos:64; do
     S=${coppia%:*}; b=${coppia#*:}
     [ -d "$S/lib" ] || continue
     ls "$S"/lib/libc.a.prima-* > /dev/null 2>&1 || cp -p "$S/lib/libc.a" "$S/lib/libc.a.prima-$GIORNO" 2>/dev/null || true
