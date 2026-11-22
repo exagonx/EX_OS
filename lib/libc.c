@@ -11610,6 +11610,8 @@ void *dlopen(const char *nome, int flag)
                    "from before 19 November 2026)", nome);
     else if (!m && !g_dl_errore)
         dl_sbaglio("cannot open shared object file (missing, or not an ELF the kernel can map)", nome);
+    if (dl_debug()) dl_debug_dici("dlopen ", nome, m ? ": fatto" : ": FALLITO");
+    if (!m && dl_debug()) dl_debug_dici("  dlerror: ", g_dl_errore, 0);
     return (void *)m;
 }
 

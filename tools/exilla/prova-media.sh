@@ -79,7 +79,12 @@ EOF
 MB=$(( $(du -sm "$S" | cut -f1) * 13 / 10 + 128 ))
 IMG="$D/media-hd.img"; PART="$D/media-part.img"
 rm -f "$IMG" "$PART"
-/sbin/mke2fs -q -t ext2 -b 4096 -L media -d "$S" "$PART" "${MB}M" || exit 1
+# ! ROOT OWNS THE FILES, as on an installed system: since kernel 0.339 stat
+# gives the real owner, and Firefox run by root with $HOME owned by uid 1000
+# says "as root in a regular user's session is not supported" and exits 1.
+# fakeroot makes mke2fs -d see the host user's files as root's.
+command -v fakeroot > /dev/null || { echo "manca fakeroot sull'host (apt install fakeroot)" >&2; exit 1; }
+fakeroot /sbin/mke2fs -q -t ext2 -b 4096 -L media -d "$S" "$PART" "${MB}M" || exit 1
 qemu-img create -f raw "$IMG" "$((MB + 2))M" > /dev/null
 printf 'label: dos\nunit: sectors\n\nstart=2048, type=83, bootable\n' | /sbin/sfdisk "$IMG" > /dev/null 2>&1
 dd if="$PART" of="$IMG" bs=1M seek=1 conv=notrunc status=none; rm -f "$PART"
@@ -97,6 +102,8 @@ timeout "${ATTESA:-1500}" python3 tools/qemu_drive.py "mount hd0p1 /disk@5" "ech
 tr -d '\r' < "$SER" | sed 's/\x1b\[[0-9;]*m//g' > "$D/media-seriale.txt"
 grep -a -E "^audio|scheda|AC'97|ac97" "$D/media-seriale.txt" | head -6
 esito=0
+# Firefox that leaves at once says why on the console, not on the serial line
+grep -a -E "is not supported|Couldn't load XPCOM|Segmentation" "$D/media-1.log" | head -3 | sed 's/^/  [NO] firefox: /' | grep . && esito=1
 for f in $FILE; do
     r=$(grep -a "^MEDIA $f " "$D/media-seriale.txt" | tail -1)
     t=$(echo "$r" | sed -n 's/.*tempo=\([0-9.]*\).*/\1/p'); q=$(echo "$r" | sed -n 's/.*fotogrammi=\(-\?[0-9]*\).*/\1/p')

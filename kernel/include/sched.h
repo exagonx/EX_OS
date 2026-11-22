@@ -1106,7 +1106,8 @@ Process *proc_spazio_capo(Process *p);
  * process its first block and the limits of the system; fd_assicura makes
  * room up to number `fd` (0, or -EMFILE past the limit, -ENOMEM); fd_libero
  * finds the lowest free number from `da` up, growing the table, and never
- * gives FD_IPC; fd_rilasciato is called when a descriptor becomes
+ * gives FD_IPC; since 0.354 it also TAKES it (FD_SERVIZIO, flags 0) with
+ * interrupts off, so two threads never get the same one; fd_rilasciato is called when a descriptor becomes
  * FD_UNUSED, so that fd_libero finds it again. */
 int      fd_tabella_crea(FdTabella *t);
 void     fd_tabella_libera(FdTabella *t);

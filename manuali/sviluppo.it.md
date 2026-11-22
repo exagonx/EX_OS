@@ -565,6 +565,16 @@ l'interprete dice quale nome manca.
 librerie (prima quelle che servono): una libreria che ha bisogno di un'altra la nomina anche lei
 con `DT_NEEDED` (`exdlg.so` nomina `exwin.so`), non la apre a mano.
 
+! **`LD_DEBUG=libs` DICE DOVE CERCA** (dalla 22/11, come quello di glibc): ogni nome cercato, ogni
+percorso provato (`LD_LIBRARY_PATH`, `DT_RUNPATH`, `/lib`, `/exos/lib`, `/exwin/lib` e lo stesso sul
+CD) e com'e' andata, su stderr. Vale per i programmi su `/lib/ld-exos.so`; un programma collegato
+ancora alla `libc.a` statica ha dentro il suo caricatore, e non lo dice.
+
+```sh
+export LD_DEBUG=libs
+vlc -I dummy /root/Musica/brano.flac
+```
+
 ---
 
 ## La catena di compilazione dentro EX-OS

@@ -145,7 +145,9 @@ EOF
 MB=$(( $(du -sm "$S" | cut -f1) * 13 / 10 + 128 ))
 IMG="$D/webgl-hd.img"; PART="$D/webgl-part.img"
 rm -f "$IMG" "$PART"
-"$(command -v mke2fs || echo /sbin/mke2fs)" -q -t ext2 -b 4096 -L webgl -d "$S" "$PART" "${MB}M" || exit 1
+# ! fakeroot: root owns the files, as on an installed system (Firefox run by
+# root with $HOME owned by uid 1000 exits 1 since stat is true, kernel 0.339).
+fakeroot "$(command -v mke2fs || echo /sbin/mke2fs)" -q -t ext2 -b 4096 -L webgl -d "$S" "$PART" "${MB}M" || exit 1
 qemu-img create -f raw "$IMG" "$((MB + 2))M" > /dev/null
 printf 'label: dos\nunit: sectors\n\nstart=2048, type=83, bootable\n' \
     | "$(command -v sfdisk || echo /sbin/sfdisk)" "$IMG" > /dev/null 2>&1

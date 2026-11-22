@@ -633,37 +633,114 @@ void fd_tabella_libera(FdTabella *t)
     t->n_blocchi = 0;
 }
 
+/* ! THE KERNEL IS PREEMPTIBLE AND THE TABLE IS THE WHOLE PROCESS'S (22
+ * November 2026). The timer can hand the processor to another thread of the
+ * same program between "this slot is free" and "this slot is mine": both got
+ * the same number. tools/prova_sqlite_io.sh, 4 threads, six runs out of six
+ * with EBADF at 32 and 64 bit: one thread opened its -wal as 10 while another
+ * still held 10, and the failed open of a third put 10 back to FD_UNUSED under
+ * the first one's feet. The 0.294 fix (take the slot before vfs_open) closed
+ * only the window that sleeps, not this one. Now the look and the take go
+ * together with interrupts off: one processor in the kernel (the big lock)
+ * and nobody switched in between. kmalloc stays with interrupts as they were. */
+static uint32_t fd_spegni(void)
+{
+    uint32_t f = read_eflags();
+
+    interrupts_disable();
+    return f;
+}
+
+static void fd_riaccendi(uint32_t f)
+{
+    if (f & 0x200u) interrupts_enable();        /* IF was on */
+}
+
 int fd_assicura(Process *p, int fd)
 {
     FdTabella *t = p->fdt;
 
     if (fd < 0 || (uint32_t)fd >= t->limite) return -EMFILE;
     while (fd >= FD_N(p)) {
-        int r = fd_blocco_in_piu(t);
-        if (r < 0) return r;
+        /* the memory first, interrupts as they are; then a check that
+         * nobody grew the table meanwhile, and the swap with them off */
+        FileDescriptor *b = (FileDescriptor *)kmalloc(FD_BLOCCO * sizeof(FileDescriptor));
+        FdIndice       *nuovo = NULL;
+        uint32_t        f, i, serve;
+
+        if (b == NULL) return -ENOMEM;
+        {
+            uint8_t *z = (uint8_t *)b;
+            for (i = 0; i < FD_BLOCCO * sizeof(FileDescriptor); i++) z[i] = 0;
+        }
+        serve = t->ind ? t->ind->posti : 0u;
+        if (t->ind == NULL || t->n_blocchi >= serve) {
+            nuovo = fd_indice_nuovo(serve ? serve * 2u : 4u);
+            if (nuovo == NULL) { kfree(b); return -ENOMEM; }
+        }
+        f = fd_spegni();
+        if (fd < FD_N(p)) {                     /* another thread did it */
+            fd_riaccendi(f);
+            kfree(b);
+            if (nuovo) kfree(nuovo);
+            break;
+        }
+        if (t->ind == NULL || t->n_blocchi == t->ind->posti) {
+            if (nuovo == NULL || nuovo->posti <= t->n_blocchi) {
+                fd_riaccendi(f);                /* the directory grew under us: again */
+                kfree(b);
+                if (nuovo) kfree(nuovo);
+                continue;
+            }
+            for (i = 0; i < t->n_blocchi; i++) nuovo->blocco[i] = t->ind->blocco[i];
+            nuovo->prima = t->ind;              /* kept until the process ends */
+            t->ind = nuovo;
+            nuovo  = NULL;
+        }
+        t->ind->blocco[t->n_blocchi] = b;
+        t->n_blocchi++;
+        fd_riaccendi(f);
+        if (nuovo) kfree(nuovo);                /* not needed after all */
     }
     return 0;
 }
 
+/* The lowest free number from `da` up, ALREADY TAKEN: FD_SERVIZIO, flags 0,
+ * until the caller writes what it is. A caller that then fails gives it back
+ * with FD_UNUSED and fd_rilasciato, as before. */
 int fd_libero(Process *p, int da)
 {
     FdTabella *t = p->fdt;
-    int        i;
+    int        i, inizio;
+    uint32_t   f;
 
     if (da < 0) da = 0;
-    if ((uint32_t)da < t->libero_da) da = (int)t->libero_da;
-    for (i = da; ; i++) {
-        /* ! the limit holds inside the blocks already there too: a limit
-         * of 40 lowered by setrlimit is under the first block of 128 */
-        if ((uint32_t)i >= t->limite) return -EMFILE;
-        if (i == FD_IPC) continue;          /* the mailbox's number, see MAX_FD */
-        if (i >= FD_N(p)) {
-            int r = fd_assicura(p, i);
-            if (r < 0) return r;
+    for (;;) {
+        int cresci = -1;
+
+        f = fd_spegni();
+        inizio = ((uint32_t)da < t->libero_da) ? (int)t->libero_da : da;
+        for (i = inizio; ; i++) {
+            /* ! the limit holds inside the blocks already there too: a limit
+             * of 40 lowered by setrlimit is under the first block of 128 */
+            if ((uint32_t)i >= t->limite) { fd_riaccendi(f); return -EMFILE; }
+            if (i == FD_IPC) continue;          /* the mailbox's number, see MAX_FD */
+            if (i >= FD_N(p)) { cresci = i; break; }
+            if (FDV(p, i).type == FD_UNUSED) {
+                FDV(p, i).type        = FD_SERVIZIO;
+                FDV(p, i).flags       = 0;
+                FDV(p, i).offset      = 0;
+                FDV(p, i).inode       = 0;
+                FDV(p, i).driver_data = NULL;
+                if (inizio == (int)t->libero_da) t->libero_da = (uint32_t)i;
+                fd_riaccendi(f);
+                return i;
+            }
         }
-        if (FDV(p, i).type == FD_UNUSED) {
-            if (da == (int)t->libero_da) t->libero_da = (uint32_t)i;
-            return i;
+        fd_riaccendi(f);
+        {
+            int r = fd_assicura(p, cresci);    /* kmalloc: not with interrupts off */
+            if (r < 0) return r;
         }
     }
 }

@@ -1040,7 +1040,13 @@
 /* 0.352 -> 0.353: the line of a pty grows up to PTY_RIGA_MAX (32768, a
  * spawn), its input ring takes a whole line: a command pasted over telnet
  * or ssh stopped at 255 characters. */
-#define EXOS_VERSION    "0.353"
+/* 0.353 -> 0.354: fd_libero takes the number it finds (FD_SERVIZIO) with
+ * interrupts off, and the table grows the same way: the timer could switch
+ * to another thread between the look and the take, two threads got one
+ * descriptor and SQLite said "disk I/O error" (EBADF). At 64 bit the window
+ * is open since 0.352, when system calls started running with interrupts
+ * on. */
+#define EXOS_VERSION    "0.354"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

@@ -10980,18 +10980,65 @@ tools/netinst/velocita tolto da netinst.
          VLC del passo 4 (quello sul server locale, 20/11): provato il
          21/11. prova.sh non lo conta come [NO]: andrebbe contato.
          IL GIRO DI PROVE DEL 21/11 SERA (clone, wserver 0.016, exwin
-         0.023), cio' che non passa, NON GUARDATO ANCORA:
-         - exilla-media 32/64: Firefox --headless (senza ExWin) esce
-           subito col codice 1, nessun file suonato; sulla seriale un
-           "ATA: timeout BSY sul canale 0 ... dopo 30000 ms". Da capire se
-           e' il Firefox sul disco della prova contro la libc condivisa.
-         - exilla-lampi 32/64: 0 foto su 150 con un lampo (voce 95: in
-           QEMU i lampi non si riproducono, forse e' lo stesso Firefox).
+         0.023), cio' che non passava. GUARDATO IL 22/11 NOTTE:
+         - exilla-media e exilla-lampi 32/64: NON ERA Firefox ne' la libc.
+           Firefox scriveva "Running Nightly as root in a regular user's
+           session is not supported ($HOME is /disk/casa which is owned by
+           utente)" ed usciva con 1: dalla 0.339 stat da' il padrone vero e
+           mke2fs -d copia l'uid 1000 dell'host. Le prove fanno il disco
+           con fakeroot (come prova-riapertura): media, lampi, gecko,
+           webgl, primotab, aggiornamento. Con la 0.354: lampi 32 e 64 a
+           posto; media 6 su 8 (ogg, flac, mp3, VP8, VP9, AV1).
+           ! RESTANO small-shot.m4a e gizmo.mp4 "Failed to open media":
+           AAC e H.264 arrivano dall'FFmpeg di sistema con dlopen
+           (libavcodec.so.63). Il 3/11 AAC suonava. MISURATO (22/11):
+           MOZ_LOG=FFmpegVideo:5 dice "H264/AAC codecs unsupported without
+           [libavcodec.so.63 ...]" e nessun "Failed to link": il dlopen
+           stesso fallisce. Fuori da Firefox, stesse librerie e stesso
+           LD_LIBRARY_PATH, dlopen("libavcodec.so.63") riesce e trova
+           avcodec_version (programmino in QEMU 64). IL PERCHE': il firefox
+           della prova (cross_build/exilla-obj/gecko64, 16/11) ha PT_INTERP
+           ld-exos.so ma DENTRO la libc.a di allora: dlopen, dl_carica e
+           getenv sono suoi (readelf -s), col caricatore di prima del
+           19/11, mentre le .so di FFmpeg sono rifatte il 19/11 sulla libc
+           condivisa. LD_DEBUG=libs (nuovo, vedi sotto) in Firefox non
+           scrive niente: conferma che non passa da ld-exos.so.
+           DA FARE: ricollegare Firefox su ld-exos.so a 32 e 64 bit come
+           gli altri porting della voce 105 (mozconfig senza la libc.a,
+           circa 100 minuti per architettura; prima write_vars per il
+           config.statusd azzerato), poi prova-media 8 su 8. Da guardare se
+           il Firefox pubblicato sul server e' lo stesso: non controllato.
+         - LD_DEBUG=libs NUOVO nel caricatore (lib/libc_dl.c, lib/libc.c):
+           ogni nome cercato, ogni percorso provato e l'esito, e il
+           dlerror di un dlopen fallito, su stderr. Provato in QEMU 64
+           (libvorbis.so.0 con la sua libogg e libm, un nome che non c'e').
+           Era cieco: dl_carica rimette g_dl_errore = 0 a ogni livello di
+           DT_NEEDED e un motivo interno si perdeva.
+         - sqlite_io: la prova girava a 64 bit anche nella riga "32" (senza
+           EXOS_ARCH=i386 lo script prende x86_64). Rilanciata 6 volte (3
+           a 32, 3 a 64) col kernel 0.353: 6 su 6 con EBADF e "disk I/O
+           error". Una copia della prova con open/close di SQLite avvolti
+           (xSetSystemCall) ha fatto vedere che due fili ricevevano LO
+           STESSO numero: il kernel si puo' interrompere e il timer passava
+           a un altro filo fra fd_libero (il posto e' libero) e
+           l'assegnazione di FD_SERVIZIO; una open fallita dell'altro filo
+           rimetteva poi il posto a FD_UNUSED sotto il primo. FATTO KERNEL
+           0.354: fd_libero prende il numero (FD_SERVIZIO) con gli
+           interrupt spenti, fd_assicura fa crescere la tabella allo stesso
+           modo (kmalloc fuori), dup e F_DUPFD rendono il numero se
+           falliscono. Con la 0.354: 6 su 6 senza EBADF; fd, epoll, fili,
+           moltifili, filimorti, sistema (32 e 64), segnali, shm, annulla,
+           eintr, sottofondo, telnet_piu a posto. A 64 bit la finestra era
+           aperta dalla 0.352 (syscall con gli interrupt accesi); a 32 bit
+           da sempre. Candidato per i profili di Firefox rovinati (voce 38).
+           Resta il NO noto delle due mmap MAP_SHARED dello stesso file.
          - exilla-riapertura, primotab, webgl: "mach package fallito"
            (config.statusd azzerato, gia' noto); ar5k: manca libc.h nella
            riga di compilazione della prova.
-         - sorgenti 32/64: "l'albero sul disco e' diverso" (A e B);
-           sqlite_io 32: mmap condivisa errno 2, poi "no such table: t".
+         - sorgenti 32/64: era la prova. L'albero dei sorgenti ha passato
+           i 16 MB e il repository A, che deve essere intero, veniva
+           spezzato: tar non trovava l'archivio. A ora con SRC_PEZZO di 1
+           GB. Con la 0.354: 17 su 17 a 32 e 64 bit.
          - palla 32/64: 127 giri al secondo (almeno 1000): uguale gia' il
            20/11, prima di questi cambi. telnet_fine: porta 2323 di sbbs.
       Ogni passo: 32 e 64 bit, prove in QEMU, sysroot e porting dipendenti

@@ -563,6 +563,16 @@ and the interpreter says which name is missing.
 (the ones it needs first): a library that needs another names it with `DT_NEEDED` too (`exdlg.so`
 names `exwin.so`), it does not open it by hand.
 
+! **`LD_DEBUG=libs` SAYS WHERE IT LOOKS** (since 22/11, like glibc's): every name looked for, every
+path tried (`LD_LIBRARY_PATH`, `DT_RUNPATH`, `/lib`, `/exos/lib`, `/exwin/lib` and the same on the
+CD) and how it went, on stderr. It holds for programs on `/lib/ld-exos.so`; a program still linked
+to the static `libc.a` has its own loader inside, and does not say it.
+
+```sh
+export LD_DEBUG=libs
+vlc -I dummy /root/Musica/brano.flac
+```
+
 ---
 
 ## The compilation chain inside EX-OS

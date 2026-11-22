@@ -770,6 +770,25 @@ static int dl_finisci(int da, DlModulo *dopo, const DlRel *drel, size_t dreln,
     return 0;
 }
 
+/* ! LD_DEBUG=libs (22 November 2026), as glibc's: every name looked for,
+ * every path tried and how it went, on stderr. Firefox said only "H264/AAC
+ * codecs unsupported" while the same dlopen worked outside it, and the
+ * reason was lost: dl_carica clears g_dl_errore at each level of DT_NEEDED. */
+static int dl_debug(void)
+{
+    const char *v = getenv("LD_DEBUG");
+    return v && (strstr(v, "libs") || strstr(v, "all"));
+}
+
+static void dl_debug_dici(const char *a, const char *b, const char *c)
+{
+    char r[512];
+    int  n = snprintf(r, sizeof r, "ld-exos[%d]: %s%s%s\n", (int)getpid(), a ? a : "",
+                      b ? b : "", c ? c : "");
+    if (n > (int)sizeof r - 1) n = (int)sizeof r - 1;
+    if (n > 0) write(2, r, (size_t)n);
+}
+
 /* one path from a search list, with $ORIGIN */
 static DlModulo *dl_prova_dir(const char *dir, size_t dn, const char *nome, const char *origine)
 {
@@ -788,6 +807,10 @@ static DlModulo *dl_prova_dir(const char *dir, size_t dn, const char *nome, cons
     if (k && p[k - 1] != '/') p[k++] = '/';
     strcpy(p + k, nome);
     m = dl_da_file(p);
+    if (dl_debug())
+        dl_debug_dici("  provo ", p, m == (DlModulo *)-1 ? (g_dl_errore ? " -> errore" : " -> errore ?")
+                                    : m ? " -> preso" : " -> non c'e'");
+    if (m == (DlModulo *)-1 && g_dl_errore && dl_debug()) dl_debug_dici("    ", g_dl_errore, 0);
     free(p);
     return m;
 }
@@ -842,14 +865,19 @@ static DlModulo *dl_carica(const char *nome, const char *runpath, const char *or
     }
 #endif
     g_dl_errore = 0;
+    if (dl_debug()) dl_debug_dici("cerco ", nome, base ? "" : " (LD_LIBRARY_PATH, DT_RUNPATH, /lib...)");
     if (base) m = dl_da_file(nome);
     else {
         m = dl_lista(getenv("LD_LIBRARY_PATH"), nome, origine);
         if (!m) m = dl_lista(runpath, nome, origine);
         if (!m) m = dl_lista(dove, nome, origine);
     }
-    if (m == (DlModulo *)-1) return 0;
+    if (m == (DlModulo *)-1) {
+        if (dl_debug()) dl_debug_dici("non caricato ", nome, g_dl_errore ? ": errore sopra" : "");
+        return 0;
+    }
     if (!m && !g_dl_errore) dl_dici("cannot open shared object file: not found", nome);
+    if (!m && dl_debug()) dl_debug_dici(g_dl_errore, 0, 0);
     return m;
 }
 

@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.353
+**Version:** 0.354
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -120,6 +120,7 @@ Inside EX-OS the same manuals are in `/doc/manuali` (from the CD:
 
 ## Latest changes
 
+- [Two threads no longer get the same descriptor, SQLite no longer says disk I/O error (kernel 0.354)](manuali/novita.md#two-threads-no-longer-get-the-same-descriptor-sqlite-no-longer-says-disk-io-error-kernel-0354--tested-in-qemu) — *tested in QEMU*
 - [Impostazioni > Applicazioni: the program of every type of file and address (pm 0.029, exwin 0.023, voce 109)](manuali/novita.md#impostazioni--applicazioni-the-program-of-every-type-of-file-and-address-pm-0029-exwin-0023-voce-109--tested-in-qemu) — *tested in QEMU*
 - [VLC plays the video inside its window: child windows in ExWin (wserver 0.016, voce 105 step 5)](manuali/novita.md#vlc-plays-the-video-inside-its-window-child-windows-in-exwin-wserver-0016-voce-105-step-5--tested-in-qemu) — *tested in QEMU*
 - [A command line up to 32 KB, at the console and over telnet (kernel 0.353, sh 0.014, kbd.drv)](manuali/novita.md#a-command-line-up-to-32-kb-at-the-console-and-over-telnet-kernel-0353-sh-0014-kbddrv--tested-in-qemu-and-on-the-test-pc) — *tested in QEMU and on the test PC*
@@ -127,7 +128,6 @@ Inside EX-OS the same manuals are in `/doc/manuali` (from the CD:
 - [Kernel 0.352: at 64 bit the system calls run with interrupts on](manuali/novita.md#kernel-0352-at-64-bit-the-system-calls-run-with-interrupts-on--tested-in-qemu-and-on-the-test-pc) — *tested in QEMU and on the test PC*
 - [exide compiles at 64 bit too (exide 0.027)](manuali/novita.md#exide-compiles-at-64-bit-too-exide-0027--tested-in-qemu-and-on-the-test-pc) — *tested in QEMU and on the test PC*
 - [VLC as on Linux: libvlc.so, libvlccore.so and every plugin a .so opened with dlopen (voce 105, step 4)](manuali/novita.md#vlc-as-on-linux-libvlcso-libvlccoreso-and-every-plugin-a-so-opened-with-dlopen-voce-105-step-4--tested-in-qemu-and-on-the-test-pc) — *tested in QEMU and on the test PC*
-- [The archive by application: netupdate brings only what changed, ExPackage has Update and Upgrade (netupdate 0.050, expackage 0.002, voci 106 and 107)](manuali/novita.md#the-archive-by-application-netupdate-brings-only-what-changed-expackage-has-update-and-upgrade-netupdate-0050-expackage-0002-voci-106-and-107--tested-in-qemu-and-on-the-test-pc) — *tested in QEMU and on the test PC*
 
 All the others, newest first: [What's new](manuali/novita.md).
 

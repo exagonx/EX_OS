@@ -816,6 +816,8 @@ int32_t sys_open(InterruptFrame *frame)
     free_fd = find_free_fd(proc);
     if (free_fd < 0) return ERR(EMFILE);
 
+    /* ! find_free_fd ALREADY TOOK IT (22/11, see fd_libero): the lines below
+     * only say it again. */
     /* ! THE NUMBER IS TAKEN NOW, BEFORE vfs_open (kernel 0.294). vfs_open can
      * sleep on the filesystem lock, the descriptor table belongs to the whole
      * process, and a slot still FD_UNUSED was handed to a second thread. Two
@@ -1087,7 +1089,15 @@ int32_t sys_dup(InterruptFrame *frame)
     libero = find_free_fd(proc);
     if (libero < 0) return ERR(EMFILE);
 
-    return fd_duplica(proc, fd, libero);
+    {
+        /* find_free_fd took it (FD_SERVIZIO, 22/11): back if dup fails */
+        int32_t n = fd_duplica(proc, fd, libero);
+        if (n < 0 && FDV(proc, libero).type == FD_SERVIZIO) {
+            FDV(proc, libero).type = FD_UNUSED;
+            fd_rilasciato(proc, libero);
+        }
+        return n;
+    }
 }
 
 int32_t sys_dup2(InterruptFrame *frame)
@@ -1246,6 +1256,10 @@ int32_t sys_fcntl(InterruptFrame *frame)
         i = fd_libero(proc, (int)arg);
         if (i < 0) return ERR(EMFILE);
         n = fd_duplica(proc, fd, i);
+        if (n < 0 && FDV(proc, i).type == FD_SERVIZIO) {   /* taken by fd_libero */
+            FDV(proc, i).type = FD_UNUSED;
+            fd_rilasciato(proc, i);
+        }
         if (n >= 0 && cmd == F_DUPFD_CLOEXEC) FDV(proc, n).flags |= O_CLOEXEC;
         return n;
     }

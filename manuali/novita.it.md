@@ -6,6 +6,7 @@
 
 **Indice**
 
+- [Due fili non ricevono piu' lo stesso descrittore, SQLite non dice piu' disk I/O error (kernel 0.354) — testato in QEMU](#due-fili-non-ricevono-piu-lo-stesso-descrittore-sqlite-non-dice-piu-disk-io-error-kernel-0354--testato-in-qemu)
 - [Impostazioni > Applicazioni: il programma di ogni tipo di file e di indirizzo (pm 0.029, exwin 0.023, voce 109) — testato in QEMU](#impostazioni--applicazioni-il-programma-di-ogni-tipo-di-file-e-di-indirizzo-pm-0029-exwin-0023-voce-109--testato-in-qemu)
 - [VLC suona il video dentro la sua finestra: le finestre figlie in ExWin (wserver 0.016, voce 105 passo 5) — testato in QEMU](#vlc-suona-il-video-dentro-la-sua-finestra-le-finestre-figlie-in-exwin-wserver-0016-voce-105-passo-5--testato-in-qemu)
 - [Una riga di comando fino a 32 KB, alla console e da telnet (kernel 0.353, sh 0.014, kbd.drv) — testato in QEMU e sul PC di prova](#una-riga-di-comando-fino-a-32-kb-alla-console-e-da-telnet-kernel-0353-sh-0014-kbddrv--testato-in-qemu-e-sul-pc-di-prova)
@@ -238,6 +239,30 @@
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### Due fili non ricevono piu' lo stesso descrittore, SQLite non dice piu' disk I/O error (kernel 0.354) — testato in QEMU
+
+- **Il kernel si puo' interrompere, e la tabella dei descrittori e' di tutto il programma.** Fra
+  "questo posto e' libero" e "questo posto e' mio" il timer poteva passare a un altro filo dello
+  stesso programma, che sceglieva lo stesso numero. Una `open` fallita del secondo rimetteva poi
+  libero il posto sotto il primo: `close` e `fstat` rispondevano EBADF e SQLite diceva
+  `disk I/O error` (`tools/prova_sqlite_io.sh`, 4 fili: 6 prove su 6 con la 0.353).
+- **Ora `fd_libero` sceglie e prende il numero insieme, con gli interrupt spenti**, e la tabella
+  cresce allo stesso modo. `open`, `pipe`, `dup`, `F_DUPFD`, la pty e i socket passano tutti di li'.
+  Con la 0.354: 6 prove su 6 senza nessun errore, a 32 e a 64 bit.
+- **A 64 bit la finestra era aperta dalla 0.352**, da quando le chiamate di sistema girano con gli
+  interrupt accesi; a 32 bit da sempre.
+- **Le prove di Exilla con un disco fatto sull'host** (`prova-media`, `prova-lampi`, `prova-gecko`,
+  `prova-webgl`, `prova-primotab`, `prova-aggiornamento`) fanno i file di root con `fakeroot`:
+  dalla 0.339 `stat` dice il padrone vero, e Firefox lanciato da root con la `$HOME` dell'uid 1000
+  dell'host usciva subito ("as root in a regular user's session is not supported").
+- **`tools/prova_sorgenti.sh`**: il repository A resta intero anche ora che l'archivio dei sorgenti
+  supera i 16 MB.
+- **`LD_DEBUG=libs`** nel caricatore: ogni nome cercato, ogni percorso provato e l'esito, e il
+  `dlerror` di un `dlopen` fallito, su stderr (vedi [Scrivere una libreria condivisa](sviluppo.it.md#le-regole)).
+- ! **AAC e H.264 in Firefox non vanno**: il Firefox della prova ha ancora dentro la `libc.a` del
+  16/11, con il caricatore di prima, e non apre le `.so` di FFmpeg rifatte sulla libc condivisa.
+  Va ricollegato su `ld-exos.so`.
 
 ### Impostazioni > Applicazioni: il programma di ogni tipo di file e di indirizzo (pm 0.029, exwin 0.023, voce 109) — testato in QEMU
 

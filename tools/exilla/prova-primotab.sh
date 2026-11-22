@@ -46,7 +46,9 @@ echo 'pref("datareporting.policy.firstRunURL", "");' > "$G/firefox/defaults/pref
 printf '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Seconda</title></head><body style="background:#fff3c4"><h1>SECONDA PAGINA</h1></body></html>' > "$G/seconda.html"
 MB=$(( $(du -sm "$G" | cut -f1) * 13 / 10 + 128 ))
 rm -f "$IMG" "$PART"
-/sbin/mke2fs -q -t ext2 -b 4096 -L gecko -d "$G" "$PART" "${MB}M" || exit 1
+# ! fakeroot: root owns the files, as on an installed system (Firefox run by
+# root with $HOME owned by uid 1000 exits 1 since stat is true, kernel 0.339).
+fakeroot /sbin/mke2fs -q -t ext2 -b 4096 -L gecko -d "$G" "$PART" "${MB}M" || exit 1
 qemu-img create -f raw "$IMG" "$((MB + 2))M" > /dev/null
 printf 'label: dos\nunit: sectors\n\nstart=2048, type=83, bootable\n' | /sbin/sfdisk "$IMG" > /dev/null 2>&1
 dd if="$PART" of="$IMG" bs=1M seek=1 conv=notrunc status=none; rm -f "$PART"

@@ -6,6 +6,7 @@
 
 **Contents**
 
+- [Two threads no longer get the same descriptor, SQLite no longer says disk I/O error (kernel 0.354) — tested in QEMU](#two-threads-no-longer-get-the-same-descriptor-sqlite-no-longer-says-disk-io-error-kernel-0354--tested-in-qemu)
 - [Impostazioni > Applicazioni: the program of every type of file and address (pm 0.029, exwin 0.023, voce 109) — tested in QEMU](#impostazioni--applicazioni-the-program-of-every-type-of-file-and-address-pm-0029-exwin-0023-voce-109--tested-in-qemu)
 - [VLC plays the video inside its window: child windows in ExWin (wserver 0.016, voce 105 step 5) — tested in QEMU](#vlc-plays-the-video-inside-its-window-child-windows-in-exwin-wserver-0016-voce-105-step-5--tested-in-qemu)
 - [A command line up to 32 KB, at the console and over telnet (kernel 0.353, sh 0.014, kbd.drv) — tested in QEMU and on the test PC](#a-command-line-up-to-32-kb-at-the-console-and-over-telnet-kernel-0353-sh-0014-kbddrv--tested-in-qemu-and-on-the-test-pc)
@@ -238,6 +239,30 @@
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### Two threads no longer get the same descriptor, SQLite no longer says disk I/O error (kernel 0.354) — tested in QEMU
+
+- **The kernel is preemptible, and the descriptor table belongs to the whole program.** Between
+  "this slot is free" and "this slot is mine" the timer could switch to another thread of the same
+  program, which chose the same number. A failed `open` of the second then freed the slot under the
+  first: `close` and `fstat` answered EBADF and SQLite said `disk I/O error`
+  (`tools/prova_sqlite_io.sh`, 4 threads: 6 runs out of 6 with 0.353).
+- **Now `fd_libero` chooses and takes the number together, with interrupts off**, and the table
+  grows the same way. `open`, `pipe`, `dup`, `F_DUPFD`, the pty and the sockets all go through it.
+  With 0.354: 6 runs out of 6 without a single error, at 32 and 64 bit.
+- **At 64 bit the window was open since 0.352**, when system calls started running with interrupts
+  on; at 32 bit always.
+- **The Exilla tests with a disk made on the host** (`prova-media`, `prova-lampi`, `prova-gecko`,
+  `prova-webgl`, `prova-primotab`, `prova-aggiornamento`) make root's files with `fakeroot`: since
+  0.339 `stat` tells the real owner, and Firefox run by root with a `$HOME` of the host's uid 1000
+  left at once ("as root in a regular user's session is not supported").
+- **`tools/prova_sorgenti.sh`**: repository A stays whole now that the sources archive is over
+  16 MB.
+- **`LD_DEBUG=libs`** in the loader: every name looked for, every path tried and how it went, and
+  the `dlerror` of a failed `dlopen`, on stderr (see [Writing a shared library](sviluppo.md#the-rules)).
+- ! **AAC and H.264 in Firefox do not work**: the Firefox of the test still has inside it the
+  `libc.a` of 16/11, with the loader of before, and does not open the FFmpeg `.so` rebuilt on the
+  shared libc. It has to be relinked on `ld-exos.so`.
 
 ### Impostazioni > Applicazioni: the program of every type of file and address (pm 0.029, exwin 0.023, voce 109) — tested in QEMU
 

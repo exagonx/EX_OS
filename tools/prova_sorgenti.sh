@@ -38,7 +38,11 @@ partizione() { dd if="$1" of="$2" bs=512 skip=2048 status=none; }
 
 # --- the two repositories ------------------------------------------------------
 echo "=== 0. i repository dei sorgenti ==="
-SRC_FUORI="$D/srv-a/netinst_src" sh tools/mknetinstsrc.sh > "$D/mknetinstsrc-a.log" || exit 1
+# ! A STAYS WHOLE ON PURPOSE: since the tree passed 16 MB (21/11, 0.353) the
+# default piece size split A too, and the tar below found no file.
+SRC_FUORI="$D/srv-a/netinst_src" SRC_PEZZO=1073741824 sh tools/mknetinstsrc.sh > "$D/mknetinstsrc-a.log" || exit 1
+[ -f "$D/srv-a/netinst_src/file/src/exos-$(sed -n 's/^versione *= *//p' "$D/srv-a/netinst_src/versione.txt").tar_gz" ] \
+    || { echo "  [NO] l'albero A non e' intero"; exit 1; }
 SRC_FUORI="$D/srv-b/netinst_src" SRC_PEZZO=4194304 sh tools/mknetinstsrc.sh > "$D/mknetinstsrc-b.log" || exit 1
 VER=$(sed -n 's/^versione *= *//p' "$D/srv-a/netinst_src/versione.txt")
 NOME="exos-$VER"
