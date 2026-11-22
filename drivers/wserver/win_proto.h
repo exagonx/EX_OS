@@ -232,6 +232,44 @@ static inline void win_nome_servizio(char *out, unsigned int max)
  * that sent the request: with a name chosen by the client, "win5" would have
  * the server write over somebody else's window.
  * ============================================================================= */
+/* =============================================================================
+ * A CHILD WINDOW (wserver 0.016, 21 November 2026, voce 105 step 5)
+ *
+ * A rectangle of pixels of its own INSIDE another window, at x, y of the
+ * parent's client area: what X calls a subwindow and Windows a child HWND.
+ * It is for a program that draws part of its window from somewhere else -
+ * VLC's video thread inside the Qt interface - without the two painting the
+ * same zone. The answer is WIN_MSG_CREATA, as for WIN_MSG_CREA, with x, y
+ * relative to the parent; the zone, WIN_MSG_AGGIORNA, WIN_MSG_MISURA and
+ * WIN_MSG_DISTRUGGI work as for any window, WIN_MSG_SPOSTA takes x, y in
+ * the parent too. A child of a child is allowed.
+ *
+ *   - it has no frame, no title, no place in the taskbar list, no focus;
+ *   - it is drawn right over its parent, cut to the parent's client area,
+ *     and follows it: moved, minimized, covered or closed with it;
+ *   - ! IT TAKES NO INPUT: a click or a key on it goes to the top-level
+ *     window under it, as it would without the child. The toolkit of the
+ *     parent decides what the click means (for VLC: Qt's video widget).
+ *   - only the parent's owner (the same process group) can make one.
+ *
+ * WIN_MSG_ATTIVA, WIN_MSG_RIDUCI and WIN_MSG_PRIMO on a child act on its
+ * top-level window.
+ *
+ * ! HIDDEN, NOT CLOSED: WIN_MSG_MOSTRA (WinRegione: id, x = 1 shown / 0
+ * hidden) hides a child and shows it again with the SAME id. Its id is
+ * handed to somebody else - Qt gives VLC the id of its video widget - and Qt
+ * hides and shows a widget while it lays the window out: closed and made
+ * again, the child had a new id and VLC's was nobody's.
+ * ============================================================================= */
+#define WIN_MSG_CREA_FIGLIA 0x5711  /* WinCreaFiglia -> risponde WIN_MSG_CREATA */
+#define WIN_MSG_MOSTRA      0x5712  /* WinRegione: id, x = 1 shown / 0 hidden (children) */
+
+typedef struct {
+    unsigned int padre;         /* the id of the parent window */
+    unsigned int x, y;          /* inside the parent's client area */
+    unsigned int larghezza, altezza;
+} WinCreaFiglia;
+
 #define WIN_MSG_FOTO        0x5710  /* WinFoto -> risponde WIN_MSG_FOTATA */
 #define WIN_FOTO_FUOCO      0x0001u /* only the window with the focus */
 

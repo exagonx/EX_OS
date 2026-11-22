@@ -75,7 +75,7 @@
 
 /* +0.001 a ogni modifica: `wserver -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("wserver", "0.015");
+EX_VERSIONE("wserver", "0.016");
 
 /* ! NO FIXED NUMBER OF WINDOWS (wserver 0.013, the user's rule: only the
  * configuration and the hardware set limits). Up to 0.012 there were 16
@@ -192,12 +192,28 @@ typedef struct {
      * vedi metti_evento. */
     WinEvento   *coda;              /* malloc'd, kept when the slot is reused */
     unsigned int n_coda, coda_posti;
+    /* A CHILD (WIN_MSG_CREA_FIGLIA, wserver 0.016): the parent's id, 0 for a
+     * top-level window, and where it sits in the parent's client area. x, y
+     * above stay the place on the screen, worked out from the parent by
+     * segui_madri(). A child is not in g_ordine: no focus, no input, no
+     * taskbar; componi_rett() draws it right after its parent. */
+    unsigned int padre;
+    unsigned int rx, ry;
+    /* WIN_MSG_MISURATA / WIN_MSG_POSTA not delivered yet: the client's
+     * mailbox was full. svuota_code() says them again (wserver 0.016) */
+    unsigned char da_misurare, da_postare;
 } Finestra;
 
 static Finestra     *g_fin = 0;
 static unsigned int *g_ordine = 0;      /* dal fondo alla cima */
 static unsigned int *g_ordine_tmp = 0;  /* for in_cima(): as big as g_ordine */
 static unsigned int  g_fin_posti = 0;   /* slots in g_fin, g_ordine, g_ordine_tmp */
+
+/* ! A CHAIN OF CHILDREN HAS A BOTTOM (wserver 0.016). A child of a child is
+ * allowed - VLC's video inside Qt's native widget inside Qt's window - but
+ * not a chain without end to walk at every composition. */
+#define FIGLIE_PROF 8
+static unsigned int  g_n_figlie = 0;    /* how many child windows there are */
 static unsigned int g_n_ordine = 0;
 static unsigned int g_prossimo_id = 1;
 static unsigned int g_verboso = 0;
@@ -1186,6 +1202,37 @@ static void disegna_finestra(int idx)
     if (f->stile & WIN_ST_RIDIM) presa(f);
 }
 
+/* The children of a window, inside `pezzo` (a piece of the parent nothing
+ * covers) and inside the parent's client area: the frame is the server's. */
+static void disegna_figlie(int idx, const Rett *pezzo, unsigned int prof)
+{
+    const Finestra *m = &g_fin[idx];
+    Rett dentro;
+    unsigned int j;
+
+    if (!g_n_figlie || prof >= FIGLIE_PROF) return;
+    dentro.x0 = (int)m->x;
+    dentro.y0 = (int)m->y;
+    dentro.x1 = (int)(m->x + m->w);
+    dentro.y1 = (int)(m->y + m->h);
+    if (!rett_interseca(&dentro, pezzo)) return;
+
+    for (j = 0; j < g_fin_posti; j++) {
+        const Finestra *f = &g_fin[j];
+        Rett c;
+
+        if (!f->usata || f->padre != m->id || !(f->stile & WIN_ST_VISIBILE)) continue;
+        c.x0 = (int)f->x;
+        c.y0 = (int)f->y;
+        c.x1 = (int)(f->x + f->w);
+        c.y1 = (int)(f->y + f->h);
+        if (!rett_interseca(&c, &dentro)) continue;
+        clip_rett(&c);
+        disegna_finestra((int)j);
+        disegna_figlie((int)j, &c, prof + 1);
+    }
+}
+
 /* Everything inside one dirty rectangle. */
 static void componi_rett(const Rett *r)
 {
@@ -1222,6 +1269,7 @@ static void componi_rett(const Rett *r)
         for (i = 0; i < n; i++) {
             clip_rett(&pezzi[i]);
             disegna_finestra(idx);
+            disegna_figlie(idx, &pezzi[i], 0);
         }
     }
 
@@ -1300,6 +1348,7 @@ static void mostra(const Rett *r)
 
 static void componi(void);
 static int  fuoco_per_tasti(void);
+static void segui_madri(void);
 static unsigned int g_visibile;
 
 /* =============================================================================
@@ -1386,6 +1435,7 @@ static void componi(void)
 {
     unsigned int i;
 
+    segui_madri();
     if (g_sp_tutto) {
         Rett r;
 
@@ -1439,6 +1489,42 @@ static int trova_id(unsigned int id)
     for (i = 0; i < (int)g_fin_posti; i++)
         if (g_fin[i].usata && g_fin[i].id == id) return i;
     return -1;
+}
+
+/* the top-level window a child belongs to; itself for a top-level */
+static int radice(int idx)
+{
+    int k;
+
+    for (k = 0; idx >= 0 && g_fin[idx].padre && k <= FIGLIE_PROF; k++)
+        idx = trova_id(g_fin[idx].padre);
+    return idx;
+}
+
+/* every child at its parent's place on the screen, parents first */
+static void segui_madri(void)
+{
+    unsigned int giro, i;
+
+    if (!g_n_figlie) return;
+    for (giro = 0; giro <= FIGLIE_PROF; giro++) {
+        unsigned int cambiate = 0;
+
+        for (i = 0; i < g_fin_posti; i++) {
+            Finestra *f = &g_fin[i];
+            int m;
+
+            if (!f->usata || !f->padre) continue;
+            m = trova_id(f->padre);
+            if (m < 0) continue;
+            if (f->x != g_fin[m].x + f->rx || f->y != g_fin[m].y + f->ry) {
+                f->x = g_fin[m].x + f->rx;
+                f->y = g_fin[m].y + f->ry;
+                cambiate++;
+            }
+        }
+        if (!cambiate) break;
+    }
 }
 
 /* =============================================================================
@@ -1678,6 +1764,9 @@ static void metti_evento(Finestra *f, const WinEvento *e)
     f->coda[f->n_coda++] = *e;
 }
 
+static void dire_misura(Finestra *f);
+static void dire_posta(Finestra *f);
+
 static void svuota_code(void)
 {
     int i;
@@ -1686,7 +1775,10 @@ static void svuota_code(void)
         Finestra    *f = &g_fin[i];
         unsigned int fatti = 0;
 
-        if (!f->usata || f->n_coda == 0) continue;
+        if (!f->usata) continue;
+        if (f->da_misurare) dire_misura(f);
+        if (f->da_postare) dire_posta(f);
+        if (f->n_coda == 0) continue;
         while (fatti < f->n_coda && prova_evento(f, &f->coda[fatti])) fatti++;
         if (fatti) {
             unsigned int k;
@@ -2268,8 +2360,6 @@ static void mouse_agisci(void)
             /* ! LA POSIZIONE NUOVA SI DICE AL CLIENT, UNA VOLTA, AL RILASCIO.
              * Dirla a ogni pixel sarebbe un messaggio per movimento del mouse,
              * per una cosa che serve solo quando ci si e' fermati. */
-            WinRegione w;
-
             if (g_tr_contorno) {
                 Finestra *f = &g_fin[g_trascino];
                 unsigned int alta = (f->stile & WIN_ST_TITOLO) ? BARRA_H : 0;
@@ -2283,11 +2373,7 @@ static void mouse_agisci(void)
                 sporca_finestra(f, f->x, f->y);
             }
 
-            memset(&w, 0, sizeof(w));
-            w.id = g_fin[g_trascino].id;
-            w.x  = g_fin[g_trascino].x;
-            w.y  = g_fin[g_trascino].y;
-            (void)ipc_send(g_fin[g_trascino].pid, WIN_MSG_POSTA, &w, sizeof(w));
+            dire_posta(&g_fin[g_trascino]);
             g_trascino = -1;
         } else {
             Finestra *f = &g_fin[g_trascino];
@@ -2515,6 +2601,102 @@ static int titolo_metti(Finestra *f, const char *s, unsigned int n)
     return 0;
 }
 
+/* A child window (WIN_MSG_CREA_FIGLIA): a zone like any window, a place in the
+ * parent, nothing in g_ordine. Refused (id 0) if the parent is not there or
+ * is somebody else's. */
+static void crea_figlia(unsigned int pid, const WinCreaFiglia *c)
+{
+    WinCreata r;
+    ShmZona   z;
+    int i, m;
+
+    memset(&r, 0, sizeof(r));
+    m = trova_id(c->padre);
+    if (m < 0 || !suo(g_fin[m].pid, pid)) {
+        (void)ipc_send(pid, WIN_MSG_CREATA, &r, sizeof(r));
+        return;
+    }
+    {
+        unsigned int prof = 0;
+        int k = m;
+
+        while (k >= 0 && g_fin[k].padre && prof <= FIGLIE_PROF) {
+            k = trova_id(g_fin[k].padre);
+            prof++;
+        }
+        if (prof >= FIGLIE_PROF) {
+            (void)ipc_send(pid, WIN_MSG_CREATA, &r, sizeof(r));
+            return;
+        }
+    }
+
+    for (i = 0; i < (int)g_fin_posti; i++) if (!g_fin[i].usata) break;
+    if (i == (int)g_fin_posti && fin_cresci() != 0) {
+        log_seriale("wserver: niente memoria per un'altra finestra");
+        (void)ipc_send(pid, WIN_MSG_CREATA, &r, sizeof(r));
+        return;
+    }
+    if (titolo_metti(&g_fin[i], "", 0) != 0) {
+        (void)ipc_send(pid, WIN_MSG_CREATA, &r, sizeof(r));
+        return;
+    }
+
+    /* the same rule as crea(): the size is narrowed, not refused */
+    r.larghezza = c->larghezza ? c->larghezza : 1;
+    r.altezza   = c->altezza   ? c->altezza   : 1;
+    if (r.larghezza > g_fb_w) r.larghezza = g_fb_w;
+    if (r.altezza   > g_fb_h) r.altezza   = g_fb_h;
+
+    memset(&z, 0, sizeof(z));
+    win_nome_zona(z.nome, g_prossimo_id, 0);
+    z.byte = r.larghezza * r.altezza * 4;
+    z.flag = SHM_CREA;
+    if (shm_apri(&z) != 0) {
+        (void)ipc_send(pid, WIN_MSG_CREATA, &r, sizeof(r));
+        return;
+    }
+    m = trova_id(c->padre);     /* fin_cresci() may have moved the table */
+
+    g_fin[i].usata     = 1;
+    g_fin[i].passaggio = 0;
+    g_fin[i].tasti     = 0;
+    g_fin[i].chiusa_chiesta = 0;
+    g_fin[i].n_coda    = 0;
+    g_fin[i].da_misurare = g_fin[i].da_postare = 0;
+    g_fin[i].id        = g_prossimo_id++;
+    g_fin[i].pid       = pid;
+    g_fin[i].padre     = g_fin[m].id;
+    g_fin[i].rx        = c->x;
+    g_fin[i].ry        = c->y;
+    g_fin[i].x         = g_fin[m].x + c->x;
+    g_fin[i].y         = g_fin[m].y + c->y;
+    g_fin[i].w         = r.larghezza;
+    g_fin[i].h         = r.altezza;
+    g_fin[i].stile     = WIN_ST_VISIBILE;
+    g_fin[i].zona_virt = z.virt;
+    g_fin[i].zona_byte = z.byte;
+    g_n_figlie++;
+    {
+        unsigned int *p = (unsigned int *)z.virt;
+        unsigned int n = r.larghezza * r.altezza, k;
+        for (k = 0; k < n; k++) p[k] = C_CLIENT;
+    }
+    sporca((int)g_fin[i].x, (int)g_fin[i].y, (int)g_fin[i].w, (int)g_fin[i].h);
+
+    r.id    = g_fin[i].id;
+    r.byte  = z.byte;
+    r.passo = r.larghezza * 4;
+    r.giro  = 0;
+    r.x     = c->x;
+    r.y     = c->y;
+
+    if (g_verboso)
+        printf("wserver: finestra figlia %u di %u per il PID %u, %ux%u a %u,%u\n",
+               r.id, c->padre, pid, r.larghezza, r.altezza, c->x, c->y);
+
+    (void)ipc_send(pid, WIN_MSG_CREATA, &r, sizeof(r));
+}
+
 static void crea(unsigned int pid, const WinCrea *c, unsigned int len)
 {
     WinCreata r;
@@ -2560,6 +2742,7 @@ static void crea(unsigned int pid, const WinCrea *c, unsigned int len)
     g_fin[i].tasti     = 0;
     g_fin[i].chiusa_chiesta = 0;
     g_fin[i].n_coda    = 0;
+    g_fin[i].da_misurare = g_fin[i].da_postare = 0;
     g_fin[i].id        = g_prossimo_id++;
     g_fin[i].pid       = pid;
     g_fin[i].x         = c->x;
@@ -2651,6 +2834,29 @@ static void crea(unsigned int pid, const WinCrea *c, unsigned int len)
  * tasti, cioe' il difetto piu' difficile da leggere che ci sia. E la mailbox e'
  * profonda quattro messaggi: perderlo non e' un'ipotesi teorica.
  * ============================================================================= */
+/* =============================================================================
+ * ! NOT EVEN A NEW SIZE WAITS FOR A CLIENT (wserver 0.016, 21 November 2026).
+ *
+ * The rule of wserver 0.010 was only for the events: WIN_MSG_MISURATA and
+ * WIN_MSG_POSTA went with an ipc_send that, on a full mailbox (four
+ * messages), tries again for ten seconds. VLC's Qt interface, laying its
+ * window out with the video inside, resized a dozen child windows without
+ * reading in between: its mailbox filled with MISURATA, the server stood ten
+ * seconds on each, every message of Qt to the server waited as long, and VLC
+ * never got to show the video. Shitty lock-step, minutes long.
+ * Now they go WITHOUT WAITING; if the mailbox is full the window is marked
+ * and svuota_code() says it again at every turn. Only the last one counts
+ * (the zone and the place as they are now), so nothing piles up.
+ * ============================================================================= */
+static void dire_posta(Finestra *f)
+{
+    WinRegione w;
+
+    memset(&w, 0, sizeof(w));
+    w.id = f->id; w.x = f->x; w.y = f->y;
+    f->da_postare = ipc_send(f->pid, WIN_MSG_POSTA | IPC_SENZA_ATTESA, &w, sizeof(w)) != 0;
+}
+
 static void dire_misura(Finestra *f)
 {
     WinCreata r;
@@ -2665,7 +2871,7 @@ static void dire_misura(Finestra *f)
     r.x         = f->x;
     r.y         = f->y;
 
-    (void)ipc_send(f->pid, WIN_MSG_MISURATA, &r, sizeof(r));
+    f->da_misurare = ipc_send(f->pid, WIN_MSG_MISURATA | IPC_SENZA_ATTESA, &r, sizeof(r)) != 0;
 }
 
 static void ridimensiona(int idx, unsigned int nw, unsigned int nh)
@@ -2760,17 +2966,13 @@ static void metti_e_misura(int idx, unsigned int nx, unsigned int ny,
                            unsigned int nw, unsigned int nh)
 {
     Finestra  *f = &g_fin[idx];
-    WinRegione w;
 
     sporca_finestra(f, f->x, f->y);         /* dove stava */
     f->x = nx;
     f->y = ny;
     ridimensiona(idx, nw, nh);              /* dice anche la posizione nuova */
     sporca_finestra(f, f->x, f->y);
-
-    memset(&w, 0, sizeof(w));
-    w.id = f->id; w.x = f->x; w.y = f->y;
-    (void)ipc_send(f->pid, WIN_MSG_POSTA, &w, sizeof(w));
+    dire_posta(f);
 }
 
 static void massimizza(int idx)
@@ -2802,6 +3004,16 @@ static void distruggi(int idx)
     unsigned int k, j = 0;
 
     if (idx < 0) return;
+
+    /* ! THE CHILDREN GO WITH THE PARENT (wserver 0.016): left behind they
+     * would follow a parent that is not there, at its last place. */
+    if (g_n_figlie && g_fin[idx].usata) {
+        unsigned int id = g_fin[idx].id;
+
+        for (k = 0; k < g_fin_posti; k++)
+            if (g_fin[k].usata && g_fin[k].padre == id) distruggi((int)k);
+        if (g_fin[idx].padre && g_n_figlie) g_n_figlie--;
+    }
 
     /* What it covered is what changes — declared while it still exists. */
     if (g_fin[idx].usata && (g_fin[idx].stile & WIN_ST_VISIBILE))
@@ -3188,6 +3400,26 @@ static int servi_messaggio(unsigned int ms)
         if (meta.len >= sizeof(WinCrea)) crea(meta.sender_pid, (WinCrea *)buf, meta.len);
         break;
 
+    case WIN_MSG_CREA_FIGLIA:
+        if (meta.len >= sizeof(WinCreaFiglia))
+            crea_figlia(meta.sender_pid, (const WinCreaFiglia *)buf);
+        break;
+
+    case WIN_MSG_MOSTRA: {
+        /* a child hidden or shown again, its id kept (win_proto.h) */
+        const WinRegione *w = (const WinRegione *)buf;
+        int idx;
+
+        if (meta.len < sizeof(WinRegione)) break;
+        idx = trova_id(w->id);
+        if (idx < 0 || !g_fin[idx].padre || !suo(g_fin[idx].pid, meta.sender_pid)) break;
+        segui_madri();
+        if (w->x) g_fin[idx].stile |= WIN_ST_VISIBILE;
+        else      g_fin[idx].stile &= ~WIN_ST_VISIBILE;
+        sporca((int)g_fin[idx].x, (int)g_fin[idx].y, (int)g_fin[idx].w, (int)g_fin[idx].h);
+        break;
+    }
+
     /* =====================================================================
      * ! SI SPEGNE LA SCRIVANIA, e non e' la crocetta di una finestra.
      *
@@ -3216,7 +3448,7 @@ static int servi_messaggio(unsigned int ms)
          * controlli del toolkit vivono dentro il client e non si registrano
          * qui. Quindi ognuna di queste e' un'applicazione da avvisare. */
         for (n = 0; n < (int)g_fin_posti; n++)
-            if (g_fin[n].usata)
+            if (g_fin[n].usata && !g_fin[n].padre)
                 manda_evento(&g_fin[n], WIN_EV_CHIUDI, 0, 0, 0, 0);
 
         for (giri = 0; giri < 100; giri++) {
@@ -3276,8 +3508,15 @@ static int servi_messaggio(unsigned int ms)
             /* Where it was and where it is: nothing else changed. The old
              * one first, or the old frame stays painted (see the drag). */
             sporca_finestra(&g_fin[idx], g_fin[idx].x, g_fin[idx].y);
-            g_fin[idx].x = w->x;
-            g_fin[idx].y = w->y;
+            if (g_fin[idx].padre) {
+                /* a child: x, y in the parent, the screen follows */
+                g_fin[idx].rx = w->x;
+                g_fin[idx].ry = w->y;
+                segui_madri();
+            } else {
+                g_fin[idx].x = w->x;
+                g_fin[idx].y = w->y;
+            }
             sporca_finestra(&g_fin[idx], g_fin[idx].x, g_fin[idx].y);
         }
         break;
@@ -3321,7 +3560,7 @@ static int servi_messaggio(unsigned int ms)
 
         log_seriale("wserver: chiudo le applicazioni degli altri");
         for (n = 0; n < (int)g_fin_posti; n++) {
-            if (!g_fin[n].usata || suo(g_fin[n].pid, meta.sender_pid)) continue;
+            if (!g_fin[n].usata || g_fin[n].padre || suo(g_fin[n].pid, meta.sender_pid)) continue;
             if (g_fin[n].ridotta) ripristina(n);
             manda_evento(&g_fin[n], WIN_EV_CHIUDI, 0, 0, 0, 0);
         }
@@ -3343,7 +3582,7 @@ static int servi_messaggio(unsigned int ms)
         WinRegione *w = (WinRegione *)buf;
         int idx;
         if (meta.len < sizeof(WinRegione)) break;
-        idx = trova_id(w->id);
+        idx = radice(trova_id(w->id));     /* a child: its top-level */
         if (idx < 0) break;
         /* ! A WINDOW BLOCKED BY ITS MODAL IS ACTIVATED BY SHOWING THE
          * MODAL, as a click on it does: restoring the owner and leaving the
@@ -3386,7 +3625,7 @@ static int servi_messaggio(unsigned int ms)
         WinRegione *w = (WinRegione *)buf;
         int idx;
         if (meta.len < sizeof(WinRegione)) break;
-        idx = trova_id(w->id);
+        idx = radice(trova_id(w->id));     /* a child: its top-level */
         if (idx >= 0 && suo(g_fin[idx].pid, meta.sender_pid)) porta_su(idx);
         break;
     }

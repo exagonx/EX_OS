@@ -12,8 +12,35 @@
 # ! IL PROGRAMMA SI SCRIVE COME STA SU UN SISTEMA INSTALLATO (/exwin/bin/...):
 # avviando dal CD chi legge questo file lo cerca anche sotto /cdrom.
 
+# ! I GRUPPI E GLI INDIRIZZI (voce 109, 21 novembre 2026): una riga "[Nome]"
+# apre un gruppo, che Impostazioni > Applicazioni mostra come scelta; un tipo
+# che finisce coi due punti e' un indirizzo (http: vuol dire http://...); un
+# programma vuoto vuol dire nessuno, per ora. Chi legge con exwin prima della
+# 0.023 salta le righe senza barra e non chiede mai "http:": non si rompe.
+#
+# ! LE SCELTE DELL'UTENTE NON STANNO QUI: questo file lo riscrive netupdate.
+# Impostazioni le scrive in /boot/tipi.cfg, che si legge prima di questo.
+
+[Immagini]
 bmp png jpg jpeg gif ico webp | /exwin/bin/immagini
-zip tar gz tgz            | /exwin/bin/archivi
+
+[Testi e documenti]
+txt rtf doc odt           | /exwin/bin/exeditor
+
+[Pagine web]
 html htm                  | /exwin/bin/exbrowser
+
+[Audio]
 wav mp3                   | /exwin/bin/explayer
-rtf doc                   | /exwin/bin/exeditor
+flac ogg opus             | /exos/bin/vlcapri
+
+[Video]
+mp4 mkv webm avi mov      | /exos/bin/vlcapri
+
+[Archivi]
+zip tar gz tgz            | /exwin/bin/archivi
+
+[Indirizzi]
+http: https:              | /exwin/bin/exbrowser
+ftp: ftps:                |
+smb:                      |

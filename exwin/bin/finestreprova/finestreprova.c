@@ -53,10 +53,27 @@
  * and at the end what the two controls hold, in hex, to see the UTF-8:
  *
  *     TASTI casella <hex>  /  TASTI area <hex>  /  TASTI fine
+ *
+ *     finestreprova -f [secondi]
+ *
+ * Child windows (wserver 0.016, WIN_MSG_CREA_FIGLIA), straight on the
+ * protocol: a grey window 300x200 at 100,100 with a red child 120x80 at
+ * 20,30, a blue child of the child 40x30 at 10,10, and a green child 100x100
+ * at 250,150 that only half fits. A child of a window that does not exist
+ * must be refused. Then, `secondi` apart (3 if not said):
+ *
+ *     FIGLIE passo 1      as made
+ *     FIGLIE passo 2      the window moved to 300,150: the children follow
+ *     FIGLIE passo 3      the red one 200x60 at 50,100 (MISURA, SPOSTA)
+ *     FIGLIE passo 4      the window closed: the children go with it
+ *     FIGLIE fine 0       every answer as expected (1 otherwise)
+ *
+ * The colours on the screen are tools/prova_figlie.sh's to check.
  * ============================================================================= */
 
 #include "libc.h"
 #include "exwin.h"
+#include "win_proto.h"     /* -f: the protocol itself */
 
 #define VERSIONE_APP "0.003"
 EX_VERSIONE("finestreprova", VERSIONE_APP);
@@ -338,12 +355,160 @@ static int tasti(int tieni_ms)
     return 0;
 }
 
+/* --- -f: child windows, on the protocol ------------------------------------ */
+static unsigned int g_f_server = 0;
+
+static int f_dal_server(const IpcMessage *m, void *dato)
+{
+    (void)dato;
+    if (m->sender_pid != g_f_server) return IPC_ALTRUI;
+    return m->tipo == WIN_MSG_CREATA ? IPC_MIO : IPC_ALTRUI;
+}
+
+/* the answer to a CREA or a CREA_FIGLIA, its zone painted one colour */
+static unsigned int f_risposta(unsigned int colore, unsigned int *w, unsigned int *h)
+{
+    IpcMessage    meta;
+    unsigned char buf[IPC_MSG_MAX_DATA];
+    WinCreata     c;
+    ShmZona       z;
+    unsigned int  k;
+
+    if (ipc_scegli(f_dal_server, 0, &meta, buf, sizeof(buf), 10000) < 0 ||
+        meta.len < sizeof(WinCreata))
+        return 0;
+    memcpy(&c, buf, sizeof(c));
+    if (c.id == 0) return 0;
+    memset(&z, 0, sizeof(z));
+    win_nome_zona(z.nome, c.id, c.giro);
+    z.byte = c.byte;
+    if (shm_apri(&z) != 0 || !z.virt) return 0;
+    for (k = 0; k < c.larghezza * c.altezza; k++)
+        ((unsigned int *)z.virt)[k] = colore;
+    if (w) *w = c.larghezza;
+    if (h) *h = c.altezza;
+    {
+        WinRegione u = { c.id, 0, 0, c.larghezza, c.altezza };
+        ipc_send(g_f_server, WIN_MSG_AGGIORNA, &u, sizeof(u));
+    }
+    return c.id;
+}
+
+static unsigned int f_figlia(unsigned int padre, unsigned int x, unsigned int y,
+                             unsigned int w, unsigned int h, unsigned int colore)
+{
+    WinCreaFiglia c;
+
+    c.padre = padre; c.x = x; c.y = y; c.larghezza = w; c.altezza = h;
+    if (ipc_send(g_f_server, WIN_MSG_CREA_FIGLIA, &c, sizeof(c)) < 0) return 0;
+    return f_risposta(colore, 0, 0);
+}
+
+static int f_solo_misurata(const IpcMessage *m, void *dato)
+{
+    (void)dato;
+    if (m->sender_pid != g_f_server) return IPC_ALTRUI;
+    return m->tipo == WIN_MSG_MISURATA ? IPC_MIO : IPC_ALTRUI;
+}
+
+/* the zone of a window after MISURA: WIN_MSG_MISURATA, painted again */
+static int f_misurata(unsigned int id, unsigned int colore)
+{
+    IpcMessage    meta;
+    unsigned char buf[IPC_MSG_MAX_DATA];
+    unsigned int  t0 = uptime_ms();
+
+    while (uptime_ms() - t0 < 10000) {
+        if (ipc_scegli(f_solo_misurata, 0, &meta, buf, sizeof(buf), 500) < 0) continue;
+        if (meta.len >= sizeof(WinCreata)) {
+            WinCreata c;
+            ShmZona   z;
+            unsigned int k;
+
+            memcpy(&c, buf, sizeof(c));
+            if (c.id != id) continue;
+            memset(&z, 0, sizeof(z));
+            win_nome_zona(z.nome, c.id, c.giro);
+            z.byte = c.byte;
+            if (shm_apri(&z) != 0 || !z.virt) return -1;
+            for (k = 0; k < c.larghezza * c.altezza; k++)
+                ((unsigned int *)z.virt)[k] = colore;
+            {
+                WinRegione u = { c.id, 0, 0, c.larghezza, c.altezza };
+                ipc_send(g_f_server, WIN_MSG_AGGIORNA, &u, sizeof(u));
+            }
+            return 0;
+        }
+    }
+    return -1;
+}
+
+static int figlie(int tieni_ms)
+{
+    char         nome[32];
+    WinCrea      c;
+    unsigned int madre, rossa, blu, verde, falsa;
+    int          errori = 0;
+
+    win_nome_servizio(nome, sizeof(nome));
+    g_f_server = (unsigned int)ipc_lookup(nome);
+    if ((int)g_f_server <= 0) {
+        printf("finestreprova: il server a finestre non risponde (exwin).\n");
+        return 1;
+    }
+    memset(&c, 0, sizeof(c));
+    c.x = 100; c.y = 100; c.larghezza = 300; c.altezza = 200;
+    c.stile = WIN_ST_VISIBILE | WIN_ST_TITOLO | WIN_ST_BORDO | WIN_ST_CHIUDI;
+    strcpy(c.titolo, "Finestre figlie");
+    if (ipc_send(g_f_server, WIN_MSG_CREA, &c, sizeof(c)) < 0) return 1;
+    madre = f_risposta(0xFF808080u, 0, 0);
+    rossa = madre ? f_figlia(madre, 20, 30, 120, 80, 0xFFFF0000u) : 0;
+    blu   = rossa ? f_figlia(rossa, 10, 10, 40, 30, 0xFF0000FFu) : 0;
+    verde = madre ? f_figlia(madre, 250, 150, 100, 100, 0xFF00FF00u) : 0;
+    falsa = f_figlia(0x7FFFFFF0u, 0, 0, 10, 10, 0xFFFFFFFFu);
+    riga("FIGLIE madre %d rossa %d", (int)madre, (int)rossa);
+    riga("FIGLIE blu %d verde %d", (int)blu, (int)verde);
+    riga("FIGLIE di nessuno %d (0 = rifiutata)", (int)falsa, 0);
+    if (!madre || !rossa || !blu || !verde || falsa) errori++;
+    riga("FIGLIE passo %d", 1, 0);
+    usleep((unsigned int)tieni_ms * 1000u);
+
+    {
+        WinRegione p = { madre, 300, 150, 0, 0 };
+        ipc_send(g_f_server, WIN_MSG_SPOSTA, &p, sizeof(p));
+    }
+    riga("FIGLIE passo %d", 2, 0);
+    usleep((unsigned int)tieni_ms * 1000u);
+
+    {
+        WinRegione m = { rossa, 0, 0, 200, 60 };
+        WinRegione p = { rossa, 50, 100, 0, 0 };
+        ipc_send(g_f_server, WIN_MSG_MISURA, &m, sizeof(m));
+        if (f_misurata(rossa, 0xFFFF0000u) != 0) errori++;
+        ipc_send(g_f_server, WIN_MSG_SPOSTA, &p, sizeof(p));
+    }
+    riga("FIGLIE passo %d", 3, 0);
+    usleep((unsigned int)tieni_ms * 1000u);
+
+    {
+        WinRegione d = { madre, 0, 0, 0, 0 };
+        ipc_send(g_f_server, WIN_MSG_DISTRUGGI, &d, sizeof(d));
+    }
+    riga("FIGLIE passo %d", 4, 0);
+    usleep((unsigned int)tieni_ms * 1000u);
+    riga("FIGLIE fine %d", errori ? 1 : 0, 0);
+    return errori ? 1 : 0;
+}
+
 int main(int argc, char **argv)
 {
     ExMsg        m;
     unsigned int sw = 0, sh = 0;
     int          i;
     char         titolo[160];
+
+    if (argc > 1 && strcmp(argv[1], "-f") == 0)
+        return figlie((argc > 2 && atoi(argv[2]) > 0) ? atoi(argv[2]) * 1000 : 3000);
 
     if (argc > 1 && (strcmp(argv[1], "-c") == 0 || strcmp(argv[1], "-t") == 0)) {
         unsigned int w0 = 0, h0 = 0;

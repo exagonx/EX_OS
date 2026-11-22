@@ -25,7 +25,11 @@
 # good for the Vorbis decoder and useless for the ear. At the end the Qt interface
 # (vlc -I qt, same day): its window on the screen, VLC's own log (-vv, on
 # the disk, read back with debugfs) says the "qt" interface module is in
-# use, and the cone is in the middle of the window.
+# use. (voce 105 step 5, 21 November 2026) The video plays INSIDE it: the log
+# says vout_exos made a child window of the video widget and no window of
+# its own, and two screenshots 2 s apart differ in the middle of VLC's
+# window (the video moves there). When the video is over, the same window
+# shows the cone in its middle again: the child window went with it.
 # What is [OK]: each audio file, recorded alone from the card (QEMU's
 # wavcapture around it), is what FFmpeg on this machine decodes from it: as
 # long, as many seconds of sound, the same peak (19 November 2026: one WAV of
@@ -157,11 +161,16 @@ T=/tmp/exos/foto-vlc$BIT; rm -rf "$T"; mkdir -p "$T"
         echo "foto:$T/${f%%.*}.ppm@${PAUSA_VIDEO:-20}"
         echo "key:alt-f1@2"
     done
-    # the Qt interface, with a video it plays in its own window
+    # the Qt interface, with a video it plays inside its window
     echo "echo VLC-QT@1"
-    echo "/disk/vlc -I qt -vv --aout exos --vout exos --input-repeat=8 /disk/m/gizmo.mp4 > /disk/casa/qt.log 2>&1 &@1"
+    # (--no-qt-privacy-ask: the first start's dialog covered the window).
+    # gizmo.mp4 lasts 5.6 s: nine times is about 50 s of video, then the
+    # window shows the cone again
+    echo "/disk/vlc -I qt -vv --no-qt-privacy-ask --aout exos --vout exos --input-repeat=8 /disk/m/gizmo.mp4 > /disk/casa/qt.log 2>&1 &@1"
     echo "key:alt-f5@${PAUSA_QT:-30}"
     echo "foto:$T/qt.ppm@2"
+    echo "foto:$T/qt2.ppm@${PAUSA_CONO:-60}"
+    echo "foto:$T/cono.ppm@2"
     echo "key:alt-f1@2"
     echo "sync@3"
     echo "echo FINE-VLC@2"
@@ -314,10 +323,43 @@ E
     else
         echo "  [NO] vlc -I qt: in uso ma ${c:-0}% dello schermo cambiato, $D/foto/qt.png"; esito=1
     fi
-    # the cone in the middle of VLC's window: orange pixels. A child widget
-    # repainting alone (the cone fades in) never reached the screen while
-    # the exwin plugin's winId() was 0 (19 November 2026)
-    n=$(python3 - "$T/qt.ppm" <<'E'
+    # ! THE VIDEO INSIDE THE INTERFACE (voce 105 step 5): vout_exos says
+    # "child window N of M" when it is a child of Qt's video widget, and
+    # "window N, WxH" when it made a window of its own
+    if grep -aq 'child window [0-9]* of [0-9]' "$D/qt.log"; then
+        echo "  [OK] vlc -I qt: il video in una finestra figlia dell'interfaccia ($(grep -a -o 'child window [0-9]* of [0-9]*, [0-9x]*' "$D/qt.log" | head -1))"
+    else
+        echo "  [NO] vlc -I qt: il registro non dice 'child window' ($D/qt.log)"; esito=1
+        grep -a -i "exwin\|embedded\|vout window\|window" "$D/qt.log" | head -8 | sed 's/^/        /'
+    fi
+    if grep -aq 'debug: window [0-9]*, [0-9]*x[0-9]*, picture' "$D/qt.log"; then
+        echo "  [NO] vlc -I qt: il video ha aperto anche una finestra sua"; esito=1
+    fi
+    # the video moves in the middle of VLC's window: two pictures 2 s apart
+    m=$(python3 - "$T/qt.ppm" "$T/qt2.ppm" <<'E'
+import re, sys
+def leggi(n):
+    t = open(n, 'rb').read()
+    return int(t.split()[1]), t[re.match(rb'P6\s+\d+\s+\d+\s+\d+\s', t).end():]
+try:
+    w, a = leggi(sys.argv[1]); _, b = leggi(sys.argv[2])
+except (OSError, AttributeError, IndexError, ValueError):
+    print(0); sys.exit()
+print(sum(1 for y in range(200, 360, 2) for x in range(300, 500, 2)
+          if abs(a[3 * (y * w + x)] - b[3 * (y * w + x)]) > 24))
+E
+)
+    python3 tools/ppm2png.py "$T/qt2.ppm" "$D/foto/qt2.png" > /dev/null 2>&1
+    if [ "${m:-0}" -ge 200 ]; then
+        echo "  [OK] vlc -I qt: il video si muove al centro della finestra di VLC ($m punti cambiati in 2 s)"
+    else
+        echo "  [NO] vlc -I qt: al centro della finestra niente si muove (${m:-0} punti), $D/foto/qt.png e qt2.png"; esito=1
+    fi
+    # the cone in the middle of VLC's window, the video over: orange
+    # pixels. A child widget repainting alone (the cone fades in) never
+    # reached the screen while the exwin plugin's winId() was 0 (19 November 2026)
+    python3 tools/ppm2png.py "$T/cono.ppm" "$D/foto/cono.png" > /dev/null 2>&1
+    n=$(python3 - "$T/cono.ppm" <<'E'
 import re, sys
 # ! THE HEADER BY ITS GRAMMAR: split() also ate the first bytes of the
 # picture when they look like blanks, and the colours came out shifted
@@ -335,7 +377,7 @@ E
     if [ "${n:-0}" -ge 1000 ]; then
         echo "  [OK] vlc -I qt: il cono al centro della finestra ($n pixel arancioni)"
     else
-        echo "  [NO] vlc -I qt: il cono non si vede (${n:-0} pixel arancioni), $D/foto/qt.png"; esito=1
+        echo "  [NO] vlc -I qt: il cono non si vede (${n:-0} pixel arancioni), $D/foto/cono.png"; esito=1
     fi
 else
     echo "  [NO] vlc -I qt: il registro non dice 'using interface module \"qt\"' ($D/qt.log)"; esito=1

@@ -6,6 +6,8 @@
 
 **Indice**
 
+- [Impostazioni > Applicazioni: il programma di ogni tipo di file e di indirizzo (pm 0.029, exwin 0.023, voce 109) — testato in QEMU](#impostazioni--applicazioni-il-programma-di-ogni-tipo-di-file-e-di-indirizzo-pm-0029-exwin-0023-voce-109--testato-in-qemu)
+- [VLC suona il video dentro la sua finestra: le finestre figlie in ExWin (wserver 0.016, voce 105 passo 5) — testato in QEMU](#vlc-suona-il-video-dentro-la-sua-finestra-le-finestre-figlie-in-exwin-wserver-0016-voce-105-passo-5--testato-in-qemu)
 - [Una riga di comando fino a 32 KB, alla console e da telnet (kernel 0.353, sh 0.014, kbd.drv) — testato in QEMU e sul PC di prova](#una-riga-di-comando-fino-a-32-kb-alla-console-e-da-telnet-kernel-0353-sh-0014-kbddrv--testato-in-qemu-e-sul-pc-di-prova)
 - [netupdate 0.051 e 0.052: avvio e sistema si guardano sempre — testato in QEMU e sul PC di prova](#netupdate-0051-e-0052-avvio-e-sistema-si-guardano-sempre--testato-in-qemu-e-sul-pc-di-prova)
 - [Kernel 0.352: a 64 bit le chiamate di sistema girano con gli interrupt accesi — testato in QEMU e sul PC di prova](#kernel-0352-a-64-bit-le-chiamate-di-sistema-girano-con-gli-interrupt-accesi--testato-in-qemu-e-sul-pc-di-prova)
@@ -236,6 +238,47 @@
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### Impostazioni > Applicazioni: il programma di ogni tipo di file e di indirizzo (pm 0.029, exwin 0.023, voce 109) — testato in QEMU
+
+- **Una quarta scheda in Impostazioni**: **Applicazioni**. Un gruppo (Immagini, Testi e
+  documenti, Pagine web, Audio, Video, Archivi, Indirizzi), una riga per tipo, `.png  immagini`,
+  `http://  exbrowser`; **Scegli il programma...** e **Predefinito**. La scelta vale dal doppio
+  clic dopo, nel file manager e sulla scrivania. Vedi
+  [il manuale della scrivania](scrivania.it.md#con-che-programma-si-apre-un-file-impostazioni--applicazioni-pm-0029).
+- **Le scelte vanno in `/boot/tipi.cfg`**, letto prima di `/exwin/lib/tipi.txt`: quello è un file
+  di sistema, e netupdate lo riscrive. `tipi.txt` prende i gruppi (`[Immagini]`) e gli
+  indirizzi (`http:`, `ftp:`, `smb:`), più `.txt`, `.odt`, FLAC, Ogg e i video (VLC); un toolkit
+  più vecchio della 0.023 salta le righe nuove.
+- **Un lettore solo, nel toolkit**: `ex_types`, `ex_type_set`, `ex_type_program` accanto a
+  `ex_open_file`. Via il buffer da 4 KB che tagliava un `tipi.txt` più lungo.
+- **Non ancora** (voce 109): i programmi non aprono ancora gli indirizzi, Firefox non si propone
+  come navigatore predefinito, e un'applicazione installata non si prende da sola i suoi tipi.
+- **Testato** con `tools/prova_applicazioni.sh` a 32 e 64 bit, su un disco installato dal CD:
+  la scheda, un programma scelto per `.bmp` scritto in `/boot/tipi.cfg` e tolto da Predefinito,
+  il gruppo Indirizzi. Dal CD la scheda dice che `/boot` non si scrive.
+
+### VLC suona il video dentro la sua finestra: le finestre figlie in ExWin (wserver 0.016, voce 105 passo 5) — testato in QEMU
+
+- **Prima** il video aveva una finestra sua, accanto a quella di VLC: VLC 3 lo mette dentro
+  l'interfaccia Qt solo su X11, Windows, macOS e Wayland, e `embedded-video` era messo a 0 con `sed`.
+- **Le finestre figlie in ExWin** (`WIN_MSG_CREA_FIGLIA`, wserver 0.016): una zona di pixel
+  dentro una finestra, disegnata sopra di lei e tagliata ai suoi bordi. Si sposta, si nasconde e
+  si chiude con la madre, non prende input, e `WIN_MSG_MOSTRA` la nasconde e la rimostra con lo
+  stesso numero. Vedi [il manuale della scrivania](scrivania.it.md#finestre-dentro-una-finestra-le-finestre-figlie-wserver-0016).
+- **Qt**: un widget figlio nativo è una finestra figlia, non più una seconda finestra di primo
+  livello. La risorsa `exwin` di `QPlatformNativeInterface` dà il numero di un widget. Corretto
+  per strada: il `flush` di una finestra figlia usava lo spostamento di Qt al contrario.
+- **VLC** impara il tipo di finestra di ExWin (`tools/vlc-exos/applica.py`:
+  `VOUT_WINDOW_TYPE_EXWIN`, la piattaforma Qt `exwin`). `vout_exos` fa una finestra figlia del
+  widget video e VLC ci mette l'immagine al suo posto. Via la `sed`. Con `-I dummy` o
+  `-I ncurses` il video tiene una finestra sua.
+- **Il server non aspetta nessun client, nemmeno per una misura nuova**: `WIN_MSG_MISURATA` e
+  `WIN_MSG_POSTA` aspettavano fino a dieci secondi a casella piena. Mentre VLC disponeva la sua
+  finestra il server restava fermo per minuti. Ora partono senza attesa e si ridicono a ogni giro.
+- **Testato** con `tools/prova_figlie.sh` a 32 e 64 bit (una finestra con tre figlie,
+  fotografata mentre si sposta, cresce e si chiude) e con `tools/vlc-exos/prova.sh`: il video si
+  muove al centro della finestra di VLC, e a fine video torna il cono.
 
 ### Una riga di comando fino a 32 KB, alla console e da telnet (kernel 0.353, sh 0.014, kbd.drv) — testato in QEMU e sul PC di prova
 

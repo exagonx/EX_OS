@@ -111,7 +111,8 @@ Scrolling list, **directories first**, `Up` and `Open` buttons, a status line
 with the path. Arrows and Enter as well as the mouse. "Open" on a file opens it
 with the program it belongs to (`/exwin/lib/tipi.txt`: images with Immagini,
 archives with Archivi, pages with EXBrowser, everything else with the editor),
-looked for in `/exwin/bin` and then in `/cdrom/exwin/bin`.
+looked for in `/exwin/bin` and then in `/cdrom/exwin/bin`. The program of each
+type is chosen in [Impostazioni > Applicazioni](#which-program-opens-which-file-impostazioni--applicazioni-pm-0029).
 
 The **right button** opens a menu: Open, New folder, New file, Rename, Copy,
 Cut, Paste, Delete. **Several rows** are chosen with Ctrl+click and
@@ -156,6 +157,35 @@ sort by name, which is the only thing on show.
 carry. Here the price can be paid: a directory is read when somebody enters it,
 not in a loop. It is the same date as `ls`, the **modification** one: the
 filesystems do not keep a creation date.
+
+### Which program opens which file: Impostazioni > Applicazioni (pm 0.029)
+
+The tab **Applicazioni** of Impostazioni (Avvio > Impostazioni...) says which
+program opens every type of file and of address. **Tipo** chooses the group
+(Immagini, Testi e documenti, Pagine web, Audio, Video, Archivi, Indirizzi);
+the list has one row per type, `.png  immagini`, `http://  exbrowser`, and says
+`(scelto)` for a choice of the user's, `(non installato)` for a program that is
+not on the disk, `(nessun programma)` for a type nobody opens yet. **Scegli il
+programma...** opens the Open dialog on the program of the row; **Predefinito**
+goes back to the system's. The choice counts at the next double click, in the
+file manager and on the desktop, without restarting anything.
+
+| File | What it holds | Who writes it |
+|---|---|---|
+| `/exwin/lib/tipi.txt` | the defaults: `[Group]` lines, then `ext ext \| program`; a type ending in `:` is an address (`http:`), an empty program means none | the system: netupdate rewrites it |
+| `/boot/tipi.cfg` | the user's choices, `type \| program`, read **first** | the tab |
+
+! **The choices are not in `tipi.txt`**: netupdate rewrites it, and a choice
+written there would go with the next update. Choices need a disk: from the CD
+`/boot` cannot be written, and the tab says so.
+
+The rule is read in one place, the toolkit (`exwin.so` 0.023): `ex_open_file`
+for the file manager and the desktop, and `ex_types`, `ex_type_set`,
+`ex_type_program` for whoever needs the list. **Not yet** (voce 109): the
+programs do not open addresses yet (`http://`, `ftp://`, `smb://` can be
+chosen, nothing uses them), Firefox does not offer itself as the default
+browser, and an application installed by netupdate or ExPackage does not take
+its types by itself.
 
 ### The terminal in a window
 
@@ -247,3 +277,45 @@ would be a stopped clock.
 
 ! **THE TIME IS LOCAL TIME**, in the zone of `/boot/fuso.cfg` (kernel 0.340):
 until 0.339 the libc had no zones and `localtime()` was identical to `gmtime()`.
+
+### Windows inside a window: child windows (wserver 0.016)
+
+A program can put a rectangle of pixels of its own **inside** one of its
+windows: a child window (`WIN_MSG_CREA_FIGLIA` in
+`drivers/wserver/win_proto.h`), what X calls a subwindow and Windows a child
+HWND. It is a shared memory zone like any window, at x, y of the parent's
+client area, and it is drawn right over the parent, cut to the parent's
+edges. It follows the parent: moved, covered, minimized and closed with it. A
+child of a child is allowed (eight levels).
+
+! **A CHILD TAKES NO INPUT:** a click or a key on it goes to the top-level
+window under it, as if the child were not there. The program of the parent
+decides what the click means. A child has no frame, no title, no place in the
+taskbar, and only the parent's owner can make one.
+
+! **HIDDEN, NOT CLOSED:** `WIN_MSG_MOSTRA` hides a child and shows it again
+with the **same id**. Qt hides and shows widgets while it lays a window out.
+When that closed and remade the child, the id VLC had been given belonged to
+nobody any more.
+
+! **THE SERVER WAITS FOR NO CLIENT, NOT EVEN FOR A NEW SIZE:** a mailbox
+holds four messages. `WIN_MSG_MISURATA` (the new zone) and `WIN_MSG_POSTA`
+(the new place) went with a send that, on a full mailbox, tried again for ten
+seconds. VLC's interface resizes a dozen child windows at once without
+reading in between, so the server stood still for minutes. Now they go
+without waiting, like the events since wserver 0.010. If the mailbox is full,
+the server tries again at every turn, and only the last size and place count.
+
+**What uses it:** Qt programs and VLC.
+- Qt's native child widgets (`WA_NativeWindow`) are child windows; until
+  then each one became a second window, with its own title bar.
+- VLC plays its video **inside its window**, as on Linux: the Qt interface
+  gives the id of its video widget (the `exwin` resource of
+  `QPlatformNativeInterface`), and the video output of EX-OS
+  (`tools/vlc-exos/src/vout_exos.c`) makes a child window of it. VLC places
+  the picture in it, with black around it.
+- With `vlc -I dummy` or `-I ncurses` there is no interface to give a
+  window, and the video has a window of its own, as before.
+
+The test is `tools/prova_figlie.sh 32|64` (`finestreprova -f`). It
+photographs a window with three children while it moves, grows and closes.

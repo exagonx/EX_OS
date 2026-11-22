@@ -1386,43 +1386,213 @@ void ex_track_mouse_hover(ExWindow f, int si)
  * questa, e chi verra' dopo pure. Cio' che tipi.txt non elenca si apre con
  * l'editor. Dal CD i programmi si cercano anche sotto /cdrom.
  * ============================================================================= */
-static int tipi_programma(const char *e, char *out, unsigned int max)
+/* ! THE USER'S CHOICES WIN, AND THEY LIVE OUTSIDE tipi.txt (voce 109, 21
+ * November 2026). tipi.txt is a system file: netupdate rewrites it, and a
+ * choice written there would die with the next update. Impostazioni >
+ * Applicazioni writes /boot/tipi.cfg, beside the other system settings, in
+ * the same syntax; it is read first.
+ *
+ * The syntax, for both: "ext ext | program". A "[Name]" line opens a group
+ * (the tab of the settings shows them), a type ending in ':' is an address
+ * (http:), an empty program means none yet. A reader older than this skips
+ * the "[...]" lines (no bar) and never asks for "http:" - nothing breaks.
+ * The whole file is read, however long: no 4 KB buffer any more. */
+static const char *const TIPI_DEF[2] = { "/exwin/lib/tipi.txt", "/cdrom/exwin/lib/tipi.txt" };
+static const char *const TIPI_CFG    = "/boot/tipi.cfg";
+
+static char *tipi_leggi(const char *a, const char *b)
 {
-    static const char *const dove[2] = { "/exwin/lib/tipi.txt", "/cdrom/exwin/lib/tipi.txt" };
-    static char buf[4096];
-    char       *riga, *fine;
-    int         fd = -1, n, i;
-    size_t      le = strlen(e);
+    size_t cap = 4096, n = 0;
+    char  *buf, *nb;
+    int    fd = open(a, O_RDONLY, 0), r;
 
-    if (!e[0]) return 0;
-    for (i = 0; i < 2 && fd < 0; i++) fd = open(dove[i], O_RDONLY, 0);
+    if (fd < 0 && b) fd = open(b, O_RDONLY, 0);
     if (fd < 0) return 0;
-    n = (int)read(fd, buf, sizeof(buf) - 1);
+    buf = (char *)malloc(cap);
+    while (buf) {
+        if (n + 1 >= cap) {
+            nb = (char *)realloc(buf, cap * 2);
+            if (!nb) { free(buf); buf = 0; break; }
+            buf = nb; cap *= 2;
+        }
+        r = (int)read(fd, buf + n, (unsigned int)(cap - 1 - n));
+        if (r <= 0) { buf[n] = '\0'; break; }
+        n += (size_t)r;
+    }
     close(fd);
-    if (n <= 0) return 0;
-    buf[n] = '\0';
+    return buf;
+}
 
+typedef void (*TipoFn)(const char *gruppo, const char *tipo, const char *prog, void *u);
+
+/* Every type of every line, with its group and program; buf is cut up. */
+static void tipi_scorri(char *buf, TipoFn fn, void *u)
+{
+    char   *riga, *fine, gruppo[32];
+    size_t  k;
+
+    gruppo[0] = '\0';
     for (riga = buf; riga && *riga; riga = fine) {
-        char *barra, *p;
+        char *barra, *p, *q;
 
         fine = strchr(riga, '\n');
         if (fine) *fine++ = '\0';
-        if (riga[0] == '#' || !(barra = strchr(riga, '|'))) continue;
+        while (*riga == ' ' || *riga == '\t') riga++;
+        k = strlen(riga);
+        while (k && (riga[k - 1] == ' ' || riga[k - 1] == '\t' || riga[k - 1] == '\r')) riga[--k] = '\0';
+        if (riga[0] == '#') continue;
+        if (riga[0] == '[') {
+            if ((q = strchr(riga, ']')) != 0) { *q = '\0'; snprintf(gruppo, sizeof(gruppo), "%s", riga + 1); }
+            continue;
+        }
+        if (!(barra = strchr(riga, '|'))) continue;
         *barra = '\0';
+        for (q = barra + 1; *q == ' ' || *q == '\t'; q++) ;
         for (p = riga; *p; ) {
+            char *t;
+
             while (*p == ' ' || *p == '\t') p++;
-            if (!strncmp(p, e, le) && (p[le] == ' ' || p[le] == '\t' || p[le] == '\0')) {
-                char *q = barra + 1;
-                while (*q == ' ' || *q == '\t') q++;
-                snprintf(out, max, "%s", q);
-                for (i = (int)strlen(out); i > 0 && (out[i - 1] == ' ' || out[i - 1] == '\r' || out[i - 1] == '\t'); i--)
-                    out[i - 1] = '\0';
-                return out[0] != '\0';
-            }
+            if (!*p) break;
+            t = p;
             while (*p && *p != ' ' && *p != '\t') p++;
+            if (*p) *p++ = '\0';
+            fn(gruppo, t, q, u);
         }
     }
+}
+
+typedef struct { const char *tipo; char *out; unsigned int max; int trovato; } TipoCerca;
+
+static void tipo_cerca(const char *gruppo, const char *tipo, const char *prog, void *u)
+{
+    TipoCerca *c = (TipoCerca *)u;
+
+    (void)gruppo;
+    if (c->trovato || strcmp(tipo, c->tipo)) return;
+    c->trovato = 1;                       /* the first line that names it decides */
+    snprintf(c->out, c->max, "%s", prog);
+}
+
+static int tipi_cerca_in(const char *a, const char *b, const char *tipo, char *out, unsigned int max)
+{
+    TipoCerca c;
+    char     *buf = tipi_leggi(a, b);
+
+    if (!buf) return 0;
+    c.tipo = tipo; c.out = out; c.max = max; c.trovato = 0;
+    tipi_scorri(buf, tipo_cerca, &c);
+    free(buf);
+    return c.trovato;
+}
+
+int ex_type_program(const char *tipo, char *prog, unsigned int max)
+{
+    char t[200];
+
+    if (!tipo || !tipo[0]) return 0;
+    if (!tipi_cerca_in(TIPI_CFG, 0, tipo, t, sizeof(t)) &&
+        !tipi_cerca_in(TIPI_DEF[0], TIPI_DEF[1], tipo, t, sizeof(t))) return 0;
+    if (prog && max) snprintf(prog, max, "%s", t);
+    return t[0] != '\0';
+}
+
+static int tipi_programma(const char *e, char *out, unsigned int max)
+{
+    return ex_type_program(e, out, max);
+}
+
+/* --- the list for Impostazioni > Applicazioni ------------------------------ */
+typedef struct { ExTipo *v; int n, cap, scelte; } TipiTutti;
+
+static ExTipo *tipi_trova(TipiTutti *T, const char *tipo)
+{
+    int i;
+
+    for (i = 0; i < T->n; i++) if (!strcmp(T->v[i].tipo, tipo)) return &T->v[i];
     return 0;
+}
+
+static void tipo_aggiungi(const char *gruppo, const char *tipo, const char *prog, void *u)
+{
+    TipiTutti *T = (TipiTutti *)u;
+    ExTipo    *t = tipi_trova(T, tipo);
+
+    if (T->scelte) {                       /* /boot/tipi.cfg: the user's */
+        if (t) { if (!t->scelto[0]) snprintf(t->scelto, sizeof(t->scelto), "%s", prog); return; }
+    } else if (t) return;
+    if (T->n == T->cap) {
+        int     c = T->cap ? T->cap * 2 : 32;
+        ExTipo *nv = (ExTipo *)realloc(T->v, (size_t)c * sizeof(ExTipo));
+
+        if (!nv) return;
+        T->v = nv; T->cap = c;
+    }
+    t = &T->v[T->n++];
+    memset(t, 0, sizeof(*t));
+    snprintf(t->gruppo, sizeof(t->gruppo), "%s", T->scelte || !gruppo[0] ? "Altri" : gruppo);
+    snprintf(t->tipo, sizeof(t->tipo), "%s", tipo);
+    snprintf(T->scelte ? t->scelto : t->predefinito, sizeof(t->scelto), "%s", prog);
+}
+
+int ex_types(ExTipo *v, int max)
+{
+    TipiTutti T;
+    char     *buf;
+    int       i;
+
+    memset(&T, 0, sizeof(T));
+    if ((buf = tipi_leggi(TIPI_DEF[0], TIPI_DEF[1])) != 0) { tipi_scorri(buf, tipo_aggiungi, &T); free(buf); }
+    T.scelte = 1;
+    if ((buf = tipi_leggi(TIPI_CFG, 0)) != 0) { tipi_scorri(buf, tipo_aggiungi, &T); free(buf); }
+    for (i = 0; v && i < T.n && i < max; i++) v[i] = T.v[i];
+    free(T.v);
+    return T.n;
+}
+
+/* The choices file rewritten whole: every other choice kept, this one
+ * changed, or dropped when prog is empty (back to tipi.txt). */
+typedef struct { const char *tipo; char *testo; size_t n, cap; } TipiScrivi;
+
+static void tipo_tieni(const char *gruppo, const char *tipo, const char *prog, void *u)
+{
+    TipiScrivi *S = (TipiScrivi *)u;
+    size_t      l = strlen(tipo) + strlen(prog) + 8;
+
+    (void)gruppo;
+    if (!strcmp(tipo, S->tipo) || !S->testo) return;
+    if (S->n + l >= S->cap) {
+        char *nt = (char *)realloc(S->testo, S->cap * 2 + l);
+
+        if (!nt) { free(S->testo); S->testo = 0; return; }
+        S->testo = nt; S->cap = S->cap * 2 + l;
+    }
+    S->n += (size_t)snprintf(S->testo + S->n, S->cap - S->n, "%s | %s\n", tipo, prog);
+}
+
+int ex_type_set(const char *tipo, const char *prog)
+{
+    static const char testa[] =
+        "# /boot/tipi.cfg - the programs chosen in Impostazioni > Applicazioni.\n"
+        "# Rewritten by it; read before /exwin/lib/tipi.txt. \"type | program\".\n";
+    TipiScrivi S;
+    char      *buf;
+    int        fd, ok;
+
+    if (!tipo || !tipo[0] || strchr(tipo, '|') || strchr(tipo, ' ') || (prog && strchr(prog, '\n'))) return 0;
+    S.tipo = tipo; S.cap = 1024; S.n = 0;
+    if (!(S.testo = (char *)malloc(S.cap))) return 0;
+    S.n = (size_t)snprintf(S.testo, S.cap, "%s", testa);
+    if ((buf = tipi_leggi(TIPI_CFG, 0)) != 0) { tipi_scorri(buf, tipo_tieni, &S); free(buf); }
+    if (S.testo && prog && prog[0]) {
+        S.tipo = "";                       /* so that tipo_tieni writes it */
+        tipo_tieni("", tipo, prog, &S);
+    }
+    if (!S.testo) return 0;
+    fd = open(TIPI_CFG, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    ok = fd >= 0 && write(fd, S.testo, (unsigned int)S.n) == (int)S.n;
+    if (fd >= 0) close(fd);
+    free(S.testo);
+    return ok;
 }
 
 /* =============================================================================
@@ -9235,7 +9405,7 @@ void ex_item_rename(ExWindow c, unsigned int i, const char *testo)
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
  * 0.002 = ex_enable() ed EX_DISABLED; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.022"   /* 0.022: tabulazioni nelle aree (ex_textarea_set_tab, ex_textarea_get_column), voci di menu spente (ex_menu_enable) */
+#define EXWIN_VERSIONE "0.023"   /* 0.023: i programmi per tipo scelti in Impostazioni (ex_types, ex_type_set, ex_type_program, /boot/tipi.cfg); 0.022: tabulazioni nelle aree (ex_textarea_set_tab, ex_textarea_get_column), voci di menu spente (ex_menu_enable) */
 
 const char *ex_version(void) { return EXWIN_VERSIONE; }
 

@@ -6,6 +6,8 @@
 
 **Contents**
 
+- [Impostazioni > Applicazioni: the program of every type of file and address (pm 0.029, exwin 0.023, voce 109) — tested in QEMU](#impostazioni--applicazioni-the-program-of-every-type-of-file-and-address-pm-0029-exwin-0023-voce-109--tested-in-qemu)
+- [VLC plays the video inside its window: child windows in ExWin (wserver 0.016, voce 105 step 5) — tested in QEMU](#vlc-plays-the-video-inside-its-window-child-windows-in-exwin-wserver-0016-voce-105-step-5--tested-in-qemu)
 - [A command line up to 32 KB, at the console and over telnet (kernel 0.353, sh 0.014, kbd.drv) — tested in QEMU and on the test PC](#a-command-line-up-to-32-kb-at-the-console-and-over-telnet-kernel-0353-sh-0014-kbddrv--tested-in-qemu-and-on-the-test-pc)
 - [netupdate 0.051 and 0.052: avvio and sistema are always looked at — tested in QEMU and on the test PC](#netupdate-0051-and-0052-avvio-and-sistema-are-always-looked-at--tested-in-qemu-and-on-the-test-pc)
 - [Kernel 0.352: at 64 bit the system calls run with interrupts on — tested in QEMU and on the test PC](#kernel-0352-at-64-bit-the-system-calls-run-with-interrupts-on--tested-in-qemu-and-on-the-test-pc)
@@ -236,6 +238,47 @@
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### Impostazioni > Applicazioni: the program of every type of file and address (pm 0.029, exwin 0.023, voce 109) — tested in QEMU
+
+- **A fourth tab in Impostazioni**: **Applicazioni**. A group (Immagini, Testi e documenti,
+  Pagine web, Audio, Video, Archivi, Indirizzi), one row per type, `.png  immagini`,
+  `http://  exbrowser`; **Scegli il programma...** and **Predefinito**. The choice counts at the
+  next double click in the file manager and on the desktop. See
+  [the desktop manual](scrivania.md#which-program-opens-which-file-impostazioni--applicazioni-pm-0029).
+- **The choices go to `/boot/tipi.cfg`**, read before `/exwin/lib/tipi.txt`: that one is a system
+  file, and netupdate rewrites it. `tipi.txt` gains groups (`[Immagini]`) and addresses (`http:`,
+  `ftp:`, `smb:`), plus `.txt`, `.odt`, FLAC, Ogg and video files (VLC); a toolkit older than
+  0.023 skips the new lines.
+- **One reader, in the toolkit**: `ex_types`, `ex_type_set`, `ex_type_program` beside
+  `ex_open_file`. The 4 KB buffer that cut a longer `tipi.txt` is gone.
+- **Not yet** (voce 109): programs do not open addresses yet, Firefox does not offer itself as
+  the default browser, and an installed application does not take its types by itself.
+- **Tested** with `tools/prova_applicazioni.sh` at 32 and 64 bit, on a disk installed from the
+  CD: the tab, a program chosen for `.bmp` written to `/boot/tipi.cfg` and gone after
+  Predefinito, the group Indirizzi. From the CD the tab says that `/boot` cannot be written.
+
+### VLC plays the video inside its window: child windows in ExWin (wserver 0.016, voce 105 step 5) — tested in QEMU
+
+- **Before**, the video had a window of its own, next to VLC's: VLC 3 puts it inside its Qt
+  interface only on X11, Windows, macOS and Wayland, and `embedded-video` was set to 0 by `sed`.
+- **Child windows in ExWin** (`WIN_MSG_CREA_FIGLIA`, wserver 0.016): a zone of pixels inside a
+  window, drawn over it and cut to its edges. It moves, hides and closes with the parent, takes
+  no input, and `WIN_MSG_MOSTRA` hides it and shows it again with the same id. See
+  [the desktop manual](scrivania.md#windows-inside-a-window-child-windows-wserver-0016).
+- **Qt**: a native child widget is a child window, no longer a second top-level window. The
+  `exwin` resource of `QPlatformNativeInterface` gives a widget's id. Corrected on the way: the
+  flush of a child window used Qt's offset the wrong way round.
+- **VLC** learns the ExWin window type (`tools/vlc-exos/applica.py`: `VOUT_WINDOW_TYPE_EXWIN`,
+  the Qt platform `exwin`). `vout_exos` makes a child window of the video widget and VLC places
+  the picture in it. The `sed` is gone. With `-I dummy` or `-I ncurses` the video keeps a
+  window of its own.
+- **The server waits for no client, not even for a new size**: `WIN_MSG_MISURATA` and
+  `WIN_MSG_POSTA` waited up to ten seconds on a full mailbox. While VLC laid its window out the
+  server stood still for minutes. Now they go without waiting and are said again at every turn.
+- **Tested** with `tools/prova_figlie.sh` at 32 and 64 bit (a window with three children,
+  photographed while it moves, grows and closes) and with `tools/vlc-exos/prova.sh`: the video
+  moves in the middle of VLC's window, and the cone comes back when it ends.
 
 ### A command line up to 32 KB, at the console and over telnet (kernel 0.353, sh 0.014, kbd.drv) — tested in QEMU and on the test PC
 

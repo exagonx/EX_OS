@@ -41,6 +41,20 @@ static QExwinIntegration *g_integrazione = nullptr;
  * handed to (the way tools/qt5-exos/prova.sh found out what a click did) */
 static bool g_racconta = qEnvironmentVariableIntValue("QT_EXWIN_DEBUG") != 0;
 
+/* every message to the server: with QT_EXWIN_DEBUG, the ones refused or slow
+ * (a full mailbox makes ipc_send wait, then give up with -EBUSY) */
+static int manda(unsigned int dest, unsigned int tipo, const void *dati, unsigned int n)
+{
+    if (!g_racconta)
+        return ipc_send(dest, tipo, dati, n);
+    const unsigned int t0 = uptime_ms();
+    const int r = ipc_send(dest, tipo, dati, n);
+    const unsigned int dt = uptime_ms() - t0;
+    if (r < 0 || dt > 100)
+        fprintf(stderr, "exwin: ipc_send 0x%x -> %d in %u ms\n", tipo, r, dt);
+    return r;
+}
+
 /* the mouse buttons of the server (MOUSE_BTN_* of the mouse service) */
 static Qt::MouseButtons bottoni_qt(unsigned int b)
 {
@@ -108,6 +122,7 @@ QExwinIntegration::~QExwinIntegration()
     if (m_schermo)
         QWindowSystemInterface::handleScreenRemoved(m_schermo);
     delete m_caratteri;
+    delete m_nativa;
     if (g_integrazione == this)
         g_integrazione = nullptr;
 }
@@ -142,6 +157,23 @@ QPlatformWindow *QExwinIntegration::createPlatformWindow(QWindow *window) const
         fprintf(stderr, "exwin: finestra %p padre %p %s %dx%d\n", (void *)window, (void *)window->parent(),
                 window->objectName().toLocal8Bit().constData(), window->width(), window->height());
     return new QExwinWindow(window);
+}
+
+QPlatformNativeInterface *QExwinIntegration::nativeInterface() const
+{
+    if (!m_nativa)
+        m_nativa = new QExwinNative;
+    return m_nativa;
+}
+
+void *QExwinNative::nativeResourceForWindow(const QByteArray &resource, QWindow *window)
+{
+    if (!window || resource != "exwin")
+        return nullptr;
+    if (!window->handle())
+        window->create();
+    QExwinWindow *w = static_cast<QExwinWindow *>(window->handle());
+    return w ? reinterpret_cast<void *>(uintptr_t(w->serverIdOra())) : nullptr;
 }
 
 QPlatformBackingStore *QExwinIntegration::createPlatformBackingStore(QWindow *window) const
@@ -186,6 +218,8 @@ void QExwinIntegration::posta()
     unsigned char buf[IPC_MSG_MAX_DATA];
     unsigned int s = m_server;
 
+    if (g_racconta)
+        fprintf(stderr, "exwin: posta\n");
     for (int giri = 0; giri < 256; giri++) {
         if (ipc_scegli(dal_server, &s, &meta, buf, sizeof(buf), IPC_SUBITO) < 0)
             break;
@@ -297,11 +331,108 @@ bool QExwinWindow::attacca(const void *p)
     return true;
 }
 
+/* ! A QWINDOW WITH A PARENT IS NOT A WINDOW OF ITS OWN (wserver 0.016). Every
+ * QWindow used to become a top-level window of the server: a native child
+ * widget - VLC's video with WA_NativeWindow - came out as a second window
+ * with a title bar of its own, somewhere on the screen. Now it is a child
+ * window (WIN_MSG_CREA_FIGLIA), drawn inside the parent and moved with it. */
+QExwinWindow *QExwinWindow::madre() const
+{
+    QWindow *p = window()->parent();
+    return p ? static_cast<QExwinWindow *>(p->handle()) : nullptr;
+}
+
+bool QExwinWindow::creaFiglia()
+{
+    QExwinIntegration *i = QExwinIntegration::qui();
+    QExwinWindow *m = madre();
+    if (!m || !m->m_id)
+        return false;           /* made when the parent is: see figlie() */
+
+    const QRect g = geometry();
+    WinCreaFiglia c;
+    if (g_racconta)
+        fprintf(stderr, "exwin: chiedo una figlia di %u per %p, %dx%d a %d,%d\n", m->m_id,
+                (void *)window(), g.width(), g.height(), g.x(), g.y());
+    c.padre = m->m_id;
+    c.x = unsigned(qMax(0, g.x()));
+    c.y = unsigned(qMax(0, g.y()));
+    c.larghezza = unsigned(qMax(1, g.width()));
+    c.altezza = unsigned(qMax(1, g.height()));
+    unsigned int s = i->server();
+    if (manda(s, WIN_MSG_CREA_FIGLIA, &c, sizeof(c)) < 0)
+        return false;
+    IpcMessage meta;
+    unsigned char buf[IPC_MSG_MAX_DATA];
+    if (ipc_scegli(solo_creata, &s, &meta, buf, sizeof(buf), ATTESA_MS) < 0
+        || meta.len < sizeof(WinCreata)) {
+        qWarning("exwin: the window server did not answer WIN_MSG_CREA_FIGLIA");
+        return false;
+    }
+    WinCreata r;
+    memcpy(&r, buf, sizeof(r));
+    if (g_racconta)
+        fprintf(stderr, "exwin: figlia %u di %u\n", r.id, m->m_id);
+    if (r.id == 0)
+        return false;           /* an old wserver, or not our parent */
+    m_id = r.id;
+    if (!attacca(&r)) {
+        WinRegione d = { r.id, 0, 0, 0, 0 };
+        manda(s, WIN_MSG_DISTRUGGI, &d, sizeof(d));
+        m_id = 0;
+        return false;
+    }
+    i->registra(m_id, this);
+    const QRect nuova(g.topLeft(), QSize(int(r.larghezza), int(r.altezza)));
+    QPlatformWindow::setGeometry(nuova);
+    QWindowSystemInterface::handleGeometryChange(window(), nuova);
+    QWindowSystemInterface::handleExposeEvent(window(), QRect(QPoint(), nuova.size()));
+    QTimer::singleShot(0, i, &QExwinIntegration::posta);
+    return true;
+}
+
+/* the native children follow the server window of their parent: made after
+ * it, and forgotten with it (the server closes them together) */
+void QExwinWindow::figlie(bool fai)
+{
+    const QObjectList &l = window()->children();
+    for (QObject *o : l) {
+        QWindow *f = qobject_cast<QWindow *>(o);
+        QExwinWindow *pf = f ? static_cast<QExwinWindow *>(f->handle()) : nullptr;
+        if (!pf)
+            continue;
+        if (fai) {
+            if (f->isVisible())
+                pf->crea();
+        } else {
+            pf->distruggi();
+        }
+    }
+}
+
+unsigned int QExwinWindow::serverIdOra()
+{
+    if (!m_id) {
+        QExwinWindow *m = madre();
+        if (m)
+            m->serverIdOra();
+        crea();
+    }
+    if (!m_id && g_racconta)
+        fprintf(stderr, "exwin: nessun id per %p (padre %p)\n", (void *)window(), (void *)window()->parent());
+    return m_id;
+}
+
 void QExwinWindow::crea()
 {
     QExwinIntegration *i = QExwinIntegration::qui();
     if (m_id || !i)
         return;
+    if (window()->parent()) {
+        if (creaFiglia())
+            figlie(true);
+        return;
+    }
 
     const QRect g = geometry();
     WinCrea c;
@@ -330,7 +461,7 @@ void QExwinWindow::crea()
     strncpy(c.titolo, t.isEmpty() ? "Qt" : t.constData(), WIN_TITOLO_LEN - 1);
 
     unsigned int s = i->server();
-    if (ipc_send(s, WIN_MSG_CREA, &c, sizeof(c)) < 0)
+    if (manda(s, WIN_MSG_CREA, &c, sizeof(c)) < 0)
         return;
     IpcMessage meta;
     unsigned char buf[IPC_MSG_MAX_DATA];
@@ -346,15 +477,15 @@ void QExwinWindow::crea()
     m_id = r.id;
     if (!attacca(&r)) {
         WinRegione d = { r.id, 0, 0, 0, 0 };
-        ipc_send(s, WIN_MSG_DISTRUGGI, &d, sizeof(d));
+        manda(s, WIN_MSG_DISTRUGGI, &d, sizeof(d));
         m_id = 0;
         return;
     }
     i->registra(m_id, this);
     /* presses and releases, and the pointer moving over it */
     WinRegione on = { m_id, 1, 0, 0, 0 };
-    ipc_send(s, WIN_MSG_TASTI, &on, sizeof(on));
-    ipc_send(s, WIN_MSG_PASSAGGIO, &on, sizeof(on));
+    manda(s, WIN_MSG_TASTI, &on, sizeof(on));
+    manda(s, WIN_MSG_PASSAGGIO, &on, sizeof(on));
 
     const QRect nuova(int(r.x), int(r.y), int(r.larghezza), int(r.altezza));
     QPlatformWindow::setGeometry(nuova);
@@ -362,6 +493,7 @@ void QExwinWindow::crea()
     QWindowSystemInterface::handleExposeEvent(window(), QRect(QPoint(), nuova.size()));
     if (!comparsa())
         QWindowSystemInterface::handleWindowActivated(window());
+    figlie(true);
     /* what was put on the shelf while waiting */
     QTimer::singleShot(0, i, &QExwinIntegration::posta);
 }
@@ -369,9 +501,11 @@ void QExwinWindow::crea()
 void QExwinWindow::distruggi()
 {
     QExwinIntegration *i = QExwinIntegration::qui();
+    if (m_id)
+        figlie(false);
     if (m_id && i) {
         WinRegione d = { m_id, 0, 0, 0, 0 };
-        ipc_send(i->server(), WIN_MSG_DISTRUGGI, &d, sizeof(d));
+        manda(i->server(), WIN_MSG_DISTRUGGI, &d, sizeof(d));
         i->dimentica(m_id);
     }
     m_id = 0;
@@ -383,6 +517,22 @@ void QExwinWindow::distruggi()
 
 void QExwinWindow::setVisible(bool visible)
 {
+    /* ! A CHILD IS HIDDEN, NOT CLOSED (WIN_MSG_MOSTRA): its id may be in
+     * somebody else's hands - VLC's video output has the video widget's -
+     * and Qt hides and shows widgets while it lays a window out */
+    QExwinIntegration *i = QExwinIntegration::qui();
+    if (window()->parent() && m_id && i) {
+        WinRegione v = { m_id, visible ? 1u : 0u, 0, 0, 0 };
+        manda(i->server(), WIN_MSG_MOSTRA, &v, sizeof(v));
+        if (g_racconta)
+            fprintf(stderr, "exwin: figlia %u %s\n", m_id, visible ? "mostrata" : "nascosta");
+        if (!visible)
+            QWindowSystemInterface::handleExposeEvent(window(), QRegion());
+        else
+            QWindowSystemInterface::handleExposeEvent(window(), QRect(QPoint(), geometry().size()));
+        QPlatformWindow::setVisible(visible);
+        return;
+    }
     if (visible) {
         crea();
     } else {
@@ -395,6 +545,9 @@ void QExwinWindow::setVisible(bool visible)
 void QExwinWindow::setGeometry(const QRect &rect)
 {
     const QRect prima = geometry();
+    if (g_racconta)
+        fprintf(stderr, "exwin: geometria %u %p %dx%d a %d,%d (era %dx%d a %d,%d)\n", m_id, (void *)window(),
+                rect.width(), rect.height(), rect.x(), rect.y(), prima.width(), prima.height(), prima.x(), prima.y());
     QPlatformWindow::setGeometry(rect);
     QExwinIntegration *i = QExwinIntegration::qui();
     if (!m_id || !i) {
@@ -402,14 +555,16 @@ void QExwinWindow::setGeometry(const QRect &rect)
         return;
     }
     if (rect.topLeft() != prima.topLeft()) {
-        const QPoint qui = dentro(rect);
+        /* a child: where Qt says inside the parent, no title bar to keep */
+        const QPoint qui = window()->parent() ? QPoint(qMax(0, rect.x()), qMax(0, rect.y()))
+                                              : dentro(rect);
         WinRegione p = { m_id, unsigned(qui.x()), unsigned(qui.y()), 0, 0 };
-        ipc_send(i->server(), WIN_MSG_SPOSTA, &p, sizeof(p));
+        manda(i->server(), WIN_MSG_SPOSTA, &p, sizeof(p));
     }
     if (rect.size() != prima.size()) {
         /* the zone comes back with WIN_MSG_MISURATA (misurata) */
         WinRegione m = { m_id, 0, 0, unsigned(qMax(1, rect.width())), unsigned(qMax(1, rect.height())) };
-        ipc_send(i->server(), WIN_MSG_MISURA, &m, sizeof(m));
+        manda(i->server(), WIN_MSG_MISURA, &m, sizeof(m));
     }
     QWindowSystemInterface::handleGeometryChange(window(), rect);
 }
@@ -417,13 +572,13 @@ void QExwinWindow::setGeometry(const QRect &rect)
 void QExwinWindow::setWindowTitle(const QString &title)
 {
     QExwinIntegration *i = QExwinIntegration::qui();
-    if (!m_id || !i)
+    if (!m_id || !i || window()->parent())
         return;
     WinTitolo t;
     memset(&t, 0, sizeof(t));
     t.id = m_id;
     strncpy(t.titolo, title.toLocal8Bit().constData(), WIN_TITOLO_LEN - 1);
-    ipc_send(i->server(), WIN_MSG_TITOLO, &t, sizeof(t));
+    manda(i->server(), WIN_MSG_TITOLO, &t, sizeof(t));
 }
 
 void QExwinWindow::raise()
@@ -431,7 +586,7 @@ void QExwinWindow::raise()
     QExwinIntegration *i = QExwinIntegration::qui();
     if (m_id && i) {
         WinRegione r = { m_id, 0, 0, 0, 0 };
-        ipc_send(i->server(), WIN_MSG_PRIMO, &r, sizeof(r));
+        manda(i->server(), WIN_MSG_PRIMO, &r, sizeof(r));
     }
 }
 
@@ -440,9 +595,11 @@ void QExwinWindow::requestActivateWindow()
     QExwinIntegration *i = QExwinIntegration::qui();
     if (m_id && i) {
         WinRegione r = { m_id, 0, 0, 0, 0 };
-        ipc_send(i->server(), WIN_MSG_ATTIVA, &r, sizeof(r));
+        manda(i->server(), WIN_MSG_ATTIVA, &r, sizeof(r));
     }
-    QWindowSystemInterface::handleWindowActivated(window());
+    /* a child is never the active window: its top-level is */
+    if (!window()->parent())
+        QWindowSystemInterface::handleWindowActivated(window());
 }
 
 void QExwinWindow::setWindowState(Qt::WindowStates state)
@@ -451,7 +608,7 @@ void QExwinWindow::setWindowState(Qt::WindowStates state)
     QPlatformWindow::setWindowState(state);
     if (m_id && i && (state & Qt::WindowMinimized)) {
         WinRegione r = { m_id, 0, 0, 0, 0 };
-        ipc_send(i->server(), WIN_MSG_RIDUCI, &r, sizeof(r));
+        manda(i->server(), WIN_MSG_RIDUCI, &r, sizeof(r));
     } else if (state & (Qt::WindowMaximized | Qt::WindowFullScreen)) {
         setGeometry(screen()->availableGeometry());
     }
@@ -485,7 +642,7 @@ void QExwinWindow::aggiorna(const QRect &r)
     if (!m_id || !i)
         return;
     WinRegione u = { m_id, unsigned(r.x()), unsigned(r.y()), unsigned(r.width()), unsigned(r.height()) };
-    ipc_send(i->server(), WIN_MSG_AGGIORNA, &u, sizeof(u));
+    manda(i->server(), WIN_MSG_AGGIORNA, &u, sizeof(u));
 }
 
 /* KBD_K_* and the control characters as Qt keys; 0 for a character */
@@ -695,15 +852,21 @@ void QExwinBackingStore::flush(QWindow *window, const QRegion &region, const QPo
     const QSize z = w->misuraZona();
     const QRect tutto(QPoint(), z);
     QRect fatto;
+    /* ! THE REGION IS THE WINDOW'S, THE OFFSET IS WHERE THE WINDOW IS IN THE
+     * IMAGE (as QXcbBackingStore::flush): the pixels are read at region +
+     * offset, written at region. It was the other way round, and nobody saw
+     * it while every window was a top-level (offset 0); a native child -
+     * VLC's widgets with the video inside - had the top of the image in it,
+     * the menu bar twice. */
     for (const QRect &r0 : region) {
-        const QRect r = r0.translated(offset).intersected(tutto).intersected(
-                            QRect(offset, m_immagine.size()));
+        const QRect r = r0.intersected(tutto).intersected(
+                            QRect(-offset, m_immagine.size()));
         if (r.isEmpty())
             continue;
         const int bpl = m_immagine.bytesPerLine();
         for (int y = r.top(); y <= r.bottom(); y++) {
             const uint *s = reinterpret_cast<const uint *>(m_immagine.constBits()
-                            + (y - offset.y()) * bpl) + (r.left() - offset.x());
+                            + (y + offset.y()) * bpl) + (r.left() + offset.x());
             uint *d = reinterpret_cast<uint *>(w->zona() + y * w->passo()) + r.left();
             for (int x = 0; x < r.width(); x++)
                 d[x] = s[x] | 0xFF000000u;

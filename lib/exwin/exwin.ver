@@ -102,6 +102,9 @@
         ex_draw_text_buffer;
         ex_popup_menu;
         ex_open_file;
+        ex_type_program;
+        ex_types;
+        ex_type_set;
         ex_list_set_multiselect;
         ex_list_get_selection;
         ex_list_row_at;

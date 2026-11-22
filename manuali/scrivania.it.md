@@ -112,7 +112,8 @@ Elenco che scorre, **directory in cima**, pulsanti `Su` e `Apri`, riga di
 stato col percorso. Frecce e Invio oltre al mouse. «Apri» su un file lo apre
 col programma che gli spetta (`/exwin/lib/tipi.txt`: le immagini con
 Immagini, gli archivi con Archivi, le pagine con EXBrowser, il resto con
-l'editor), cercandolo in `/exwin/bin` e poi in `/cdrom/exwin/bin`.
+l'editor), cercandolo in `/exwin/bin` e poi in `/cdrom/exwin/bin`. Il programma
+di ogni tipo si sceglie in [Impostazioni > Applicazioni](#con-che-programma-si-apre-un-file-impostazioni--applicazioni-pm-0029).
 
 Il **tasto destro** apre un menu: Apri, Nuova cartella, Nuovo file,
 Rinomina, Copia, Taglia, Incolla, Cancella. Si scelgono **più righe** con
@@ -158,6 +159,36 @@ due trattini si ordina per nome, che è l'unica cosa che si vede.
 Qui il prezzo si può pagare: una directory si legge quando qualcuno ci entra,
 non in un ciclo. È la stessa data di `ls`, cioè quella di **modifica**: quella
 di creazione i filesystem non la tengono.
+
+### Con che programma si apre un file: Impostazioni > Applicazioni (pm 0.029)
+
+La scheda **Applicazioni** di Impostazioni (Avvio > Impostazioni...) dice con
+che programma si apre ogni tipo di file e di indirizzo. **Tipo** sceglie il
+gruppo (Immagini, Testi e documenti, Pagine web, Audio, Video, Archivi,
+Indirizzi); la lista ha una riga per tipo, `.png  immagini`, `http://
+exbrowser`, e dice `(scelto)` per una scelta dell'utente, `(non installato)`
+per un programma che sul disco non c'è, `(nessun programma)` per un tipo che
+ancora nessuno apre. **Scegli il programma...** apre il dialogo Apri sul
+programma della riga; **Predefinito** torna a quello del sistema. La scelta
+vale dal doppio clic dopo, nel file manager e sulla scrivania, senza
+riavviare niente.
+
+| File | Che cosa tiene | Chi lo scrive |
+|---|---|---|
+| `/exwin/lib/tipi.txt` | i predefiniti: righe `[Gruppo]`, poi `est est \| programma`; un tipo che finisce coi due punti è un indirizzo (`http:`), un programma vuoto vuol dire nessuno | il sistema: lo riscrive netupdate |
+| `/boot/tipi.cfg` | le scelte dell'utente, `tipo \| programma`, lette **prima** | la scheda |
+
+! **Le scelte non stanno in `tipi.txt`**: lo riscrive netupdate, e una scelta
+scritta lì se ne andrebbe al primo aggiornamento. Le scelte vogliono un disco:
+dal CD `/boot` non si scrive, e la scheda lo dice.
+
+La regola si legge in un posto solo, il toolkit (`exwin.so` 0.023):
+`ex_open_file` per il file manager e la scrivania, e `ex_types`, `ex_type_set`,
+`ex_type_program` per chi vuole la lista. **Non ancora** (voce 109): i
+programmi non aprono ancora gli indirizzi (`http://`, `ftp://`, `smb://` si
+scelgono, nessuno li usa), Firefox non si propone come navigatore
+predefinito, e un'applicazione installata da netupdate o ExPackage non si
+prende da sola i suoi tipi.
 
 ### Il terminale in finestra
 
@@ -249,3 +280,47 @@ occupato sarebbe un orologio fermo.
 
 ! **L'ORA È QUELLA LOCALE**, del fuso di `/boot/fuso.cfg` (kernel 0.340): fino
 alla 0.339 la libc non aveva fusi e `localtime()` era identica a `gmtime()`.
+
+### Finestre dentro una finestra: le finestre figlie (wserver 0.016)
+
+Un programma può mettere un rettangolo di pixel suo **dentro** una delle sue
+finestre: una finestra figlia (`WIN_MSG_CREA_FIGLIA` in
+`drivers/wserver/win_proto.h`), quella che X chiama subwindow e Windows HWND
+figlio. È una zona di memoria condivisa come ogni finestra, a x, y dell'area
+utile della madre, e si disegna subito sopra la madre, tagliata ai suoi bordi.
+Segue la madre: si sposta, si copre, si riduce e si chiude con lei. Una figlia
+di una figlia si può fare (otto livelli).
+
+! **UNA FIGLIA NON PRENDE INPUT:** un clic o un tasto sopra di lei va alla
+finestra di primo livello che c'è sotto, come se la figlia non ci fosse. Che
+cosa vuol dire il clic lo decide il programma della madre. Una figlia non ha
+cornice, titolo né posto nella barra, e la può fare solo il padrone della
+madre.
+
+! **NASCOSTA, NON CHIUSA:** `WIN_MSG_MOSTRA` nasconde una figlia e la
+rimostra con lo **stesso numero**. Qt nasconde e rimostra i widget mentre
+dispone una finestra. Quando questo chiudeva e rifaceva la figlia, il numero
+dato a VLC non era più di nessuno.
+
+! **IL SERVER NON ASPETTA NESSUN CLIENT, NEMMENO PER UNA MISURA NUOVA:** una
+casella tiene quattro messaggi. `WIN_MSG_MISURATA` (la zona nuova) e
+`WIN_MSG_POSTA` (il posto nuovo) partivano con un invio che, a casella piena,
+riprovava per dieci secondi. L'interfaccia di VLC ridimensiona una dozzina di
+finestre figlie di fila senza leggere nel frattempo, e il server restava fermo
+per minuti. Ora partono senza attesa, come gli eventi da wserver 0.010. Se la
+casella è piena il server riprova a ogni giro, e contano solo l'ultima misura
+e l'ultimo posto.
+
+**Chi la usa:** i programmi Qt e VLC.
+- I widget figli nativi di Qt (`WA_NativeWindow`) sono finestre figlie;
+  prima ognuno diventava una seconda finestra, con una barra del titolo sua.
+- VLC suona il video **dentro la sua finestra**, come su Linux: l'interfaccia
+  Qt dà il numero del suo widget video (la risorsa `exwin` di
+  `QPlatformNativeInterface`), e l'uscita video di EX-OS
+  (`tools/vlc-exos/src/vout_exos.c`) ne fa una finestra figlia. VLC ci mette
+  l'immagine al suo posto, con il nero intorno.
+- Con `vlc -I dummy` o `-I ncurses` non c'è un'interfaccia che dia una
+  finestra, e il video ha una finestra sua, come prima.
+
+La prova è `tools/prova_figlie.sh 32|64` (`finestreprova -f`). Fotografa una
+finestra con tre figlie mentre si sposta, cresce e si chiude.

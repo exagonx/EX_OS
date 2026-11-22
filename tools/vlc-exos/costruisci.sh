@@ -14,8 +14,8 @@
 # VLC decodes through tools/ffmpeg-exos.
 # (18 November 2026, voce 85) The Qt interface: Qt 5 from tools/qt5-exos
 # (cross_build/qt5-exos<bit>, built first), shared, linked to bin/vlc. The
-# video keeps its own ExWin window (vout_exos): VLC 3 puts it inside the
-# interface only on X11, Windows and macOS.
+# video plays inside it, in a child window of ExWin (applica.py, voce 105
+# step 5); with -I dummy or ncurses vout_exos makes a window of its own.
 # ! VLC AS ON LINUX (voce 105, step 4, 20 November 2026): bin/vlc on
 # lib/libvlc.so.5 and lib/libvlccore.so.9, and every plugin a .so in
 # lib/vlc/plugins/<kind>/, opened with dlopen. Until then EX-OS had no
@@ -116,11 +116,16 @@ costruisci() {
     # dlsym(RTLD_NEXT), now that the libc is /lib/ld-exos.so. With libc.a
     # inside they were two definitions of one name, and override.c was
     # replaced by an empty vlc_enable_override.
-    # ! THE VIDEO IN ITS OWN WINDOW (18 November 2026): VLC 3 puts it inside
-    # the Qt interface only on X11, Windows and macOS; here the interface
-    # kept an empty black box for it. embedded-video defaults to off
-    sed -i 's/^    add_bool( "embedded-video", 1, EMBEDDED_TEXT, EMBEDDED_LONGTEXT,/    add_bool( "embedded-video", 0, EMBEDDED_TEXT, EMBEDDED_LONGTEXT,/' "$SRC/src/libvlc-module.c"
-    grep -q 'add_bool( "embedded-video", 0' "$SRC/src/libvlc-module.c" || { echo "libvlc-module.c: embedded-video non trovato"; exit 1; }
+    # ! THE VIDEO INSIDE THE INTERFACE (voce 105 step 5, 21 November 2026):
+    # VLC learns the windows of ExWin (applica.py: VOUT_WINDOW_TYPE_EXWIN,
+    # the Qt platform "exwin"), vout_exos makes a child window in the Qt
+    # video widget. Until then embedded-video was set to 0 by sed and the
+    # video had a window of its own.
+    python3 "$R/tools/vlc-exos/applica.py" "$SRC" || exit 1
+    # QPlatformNativeInterface, for the id of the video widget's window:
+    # Qt 5 keeps qpa/ under the version (VLC finds it with qmake only for Qt 6)
+    QPA=$(ls -d "$Q"/include/QtGui/5.*/QtGui | head -1)
+    [ -f "$QPA/qpa/qplatformnativeinterface.h" ] || { echo "vlc: manca qpa/qplatformnativeinterface.h in $Q"; exit 1; }
     mkdir -p "$B/obj" "$B/pc"
     S=$CROSS/$T
     pc() { printf 'Name: %s\nDescription: %s\nVersion: %s\nLibs: %s\nCflags:\n' "$1" "$1" "$2" "$3" > "$B/pc/$1.pc"; }
@@ -147,7 +152,7 @@ costruisci() {
     ( cd "$B/obj" && PKG_CONFIG_LIBDIR="$B/pc:$Q/lib/pkgconfig" "$SRC/configure" --host=$T --build=x86_64-pc-linux-gnu \
         --prefix=/exos CC=$CC CXX=$CXX AR=$AR RANLIB=$RANLIB \
         CFLAGS="$CFLAGS -I$B/libc/include -D__unix__ -DEXOS_SOLO_POSIX -D_GNU_SOURCE -std=gnu11 -Wno-error=incompatible-pointer-types" \
-        CXXFLAGS="$CFLAGS -fPIC -D__unix__ -DEXOS_SOLO_POSIX -D_GNU_SOURCE" LDFLAGS="-L$B/libc $NONSHARED -Wl,-rpath,/exos/qt5/lib -Wl,-rpath-link,$Q/lib -Wl,-rpath-link,$CROSS/$T/lib -Wl,-rpath-link,$B/obj/src/.libs" \
+        CXXFLAGS="$CFLAGS -fPIC -D__unix__ -DEXOS_SOLO_POSIX -D_GNU_SOURCE -I$QPA" LDFLAGS="-L$B/libc $NONSHARED -Wl,-rpath,/exos/qt5/lib -Wl,-rpath-link,$Q/lib -Wl,-rpath-link,$CROSS/$T/lib -Wl,-rpath-link,$B/obj/src/.libs" \
         --enable-shared --disable-static --disable-nls --disable-lua --enable-qt --disable-skins2 \
         --disable-xcb --disable-xvideo --disable-alsa --disable-pulse --disable-jack --disable-oss \
         --disable-dbus --disable-a52 --disable-mad --disable-libgcrypt --disable-gnutls --disable-vlm \

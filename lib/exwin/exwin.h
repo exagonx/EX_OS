@@ -558,6 +558,26 @@ int         ex_popup_menu(ExWindow f, int x, int y,
  * optional in the stub: -1 over an older exwin.so.) */
 int         ex_open_file(const char *percorso, char *prog, unsigned int max);
 
+/* WHICH PROGRAM FOR WHICH TYPE (voce 109, 21 November 2026, exwin 0.023). A
+ * type is an extension without the dot ("png") or an address scheme with its
+ * colon ("http:"). The user's choice in /boot/tipi.cfg (Impostazioni >
+ * Applicazioni) wins over the default of /exwin/lib/tipi.txt.
+ *   ex_type_program  the program for a type: 1 and `prog` filled, 0 if none
+ *   ex_types         every type known, with its group, its default and the
+ *                    user's choice: fills at most `max`, returns how many
+ *                    there are (call it with 0, 0 to know how many to make)
+ *   ex_type_set      chooses `prog` for a type; 0 or "" back to the default.
+ *                    1 if /boot/tipi.cfg was written */
+typedef struct {
+    char gruppo[32];          /* "Immagini", "Indirizzi"...: the [..] of tipi.txt */
+    char tipo[16];            /* "png", "http:" */
+    char predefinito[200];    /* from tipi.txt, "" = none */
+    char scelto[200];         /* from /boot/tipi.cfg, "" = the default */
+} ExTipo;
+int         ex_type_program(const char *tipo, char *prog, unsigned int max);
+int         ex_types(ExTipo *v, int max);
+int         ex_type_set(const char *tipo, const char *prog);
+
 /* MULTIPLE CHOICE in a list (29 September 2026, @LISTA-MULTI): switched on
  * per list. Ctrl+click adds or removes a row, Shift+click takes the range
  * from the last click, a plain click takes one row - unless it is already

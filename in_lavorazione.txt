@@ -207,6 +207,10 @@ GRUPPO  VOCI             COSA
  --     61 76            solo se ricompare (76: orologio in FAULT, 3/11)
  --     77               seguiti del 3-4/11: H.264 Firefox, Firefox 32, repo 64 da
                          pubblicare, ExPackage sul portatile, statici rimasti
+ --     109              (21/11) Impostazioni > Applicazioni: programma per ogni tipo di
+                         file e indirizzo (http, ftp, smb), Firefox browser predefinito,
+                         ogni app installata si prende i suoi tipi. Scheda FATTA, provata (pm 0.029)
+ --     108              (21/11) icone della scrivania lente al clic; file manager a icone
  --     107              (20/11) netupdate nuovo: archivio per app con versione+build,
                          -list, -install con menu, file non scaricati ritentati; SUBITO dopo il .253
  --     106              (20/11) ExPackage: Update (elenco e versioni) e Upgrade
@@ -10527,6 +10531,60 @@ tools/netinst/velocita tolto da netinst.
       17/11, DOPO IL RIAVVIO NELLA 0.343: il telnetd 0.015 dell'avvio, porta
       23, telnet_piu_prova.py 6 su 6.
 
+  109. IMPOSTAZIONI > APPLICAZIONI: CON CHE COSA SI APRE OGNI TIPO DI FILE E
+      DI INDIRIZZO (l'utente, 21/11: "Nella finestra di impostazioni del
+      program manager va aggiunto un nuovo tab "Applicazioni" in questa area
+      ci sara' la gestione delle estenzioni e applicazioni di default per
+      ogni tipologia di compito e file, bisognera' anche aggiungere
+      l'esecuzione di vari protocolli ad esempio HTTP:// HTTPS:// sono
+      gestiti dal browser di default ( e dovra' essere implementato anche la
+      procedura da parte di firefox di essere impostato come browser di
+      default rilasciando anche la stringa durante il riconoscimento) ftp: e
+      ftps: (applicazione che gestisce protocolli FTP), lo stesso per SMB: e
+      poi le estensioni come .bmp .jpg .jpeg .png associate come immaggini
+      al visualizzatore di default, .rtf .doc .txt ecc all'editor di testo o
+      all'app designata, ad esempio .txt e exeditor e .doc .odt a
+      libreoffice quando sara' portato , .htm e .html al browser exbrowser o
+      firefox ogni tipo di file sara' assegnata una app inizialmente ce ne
+      sara' una di default ma successivamente durante l'installazione ogni
+      app nuova si prendera' il dominio di quella tipologia. questo se e'
+      fattibile nel frattempo puoi procedere direttamente almeno per
+      aggiungere il tab e le vari voci nella schermata di configurazione").
+      a) LA SCHEDA, FATTA 21/11 (pm 0.029, exwin 0.023), PROVATA in QEMU a
+         32 e 64 bit su un disco installato dal CD (tools/
+         prova_applicazioni.sh, 10 su 10): la scelta per .bmp scritta in
+         /boot/tipi.cfg e tolta da Predefinito, il gruppo Indirizzi. Dal CD
+         /boot non si scrive: la scheda lo dice ("Non riesco a scrivere
+         /boot/tipi.cfg"). La riga scelta della lista e' testo chiaro su
+         grigio e trova_testo non la legge: la prova conta le altre. Impostazioni > Applicazioni: Tipo (Immagini,
+         Testi e documenti, Pagine web, Audio, Video, Archivi, Indirizzi),
+         la lista ".png  immagini", "http://  exbrowser", con "(scelto)",
+         "(non installato)", "(nessun programma)"; Scegli il programma...
+         (ex_dlg_apri) e Predefinito. La regola resta UNA nel toolkit:
+         ex_types, ex_type_set, ex_type_program; ex_open_file (file manager,
+         scrivania) guarda prima /boot/tipi.cfg, le scelte, poi
+         /exwin/lib/tipi.txt, i predefiniti con i gruppi "[Nome]" e gli
+         indirizzi "http:". Le scelte NON in tipi.txt: e' un file sistema di
+         netupdate, le riscriverebbe. Letti interi, via il buffer da 4 KB.
+         Provato sull'host il lettore e lo scrittore (scratchpad t109).
+      b) Aprire gli indirizzi: ex_open_url(url) nel toolkit (lo schema ->
+         ex_type_program), usato da exbrowser, exeditor, filemgr, dal clic su
+         un collegamento; un comando "apri <file|url>" per gli script.
+      c) Firefox (Exilla) browser predefinito: nsIShellService per exos
+         (isDefaultBrowser / setDefaultBrowser scrivono http: https: html htm
+         con ex_type_set), la domanda all'avvio come su Linux; gli url di
+         ex_open_url passati come argomento. Da chiarire con l'utente
+         "rilasciando anche la stringa durante il riconoscimento": la stringa
+         con cui Firefox si fa riconoscere (nome/percorso nella lista)?
+      d) Ogni app installata si prende i suoi tipi: in app.txt un campo
+         "tipi = png jpg http:" letto da netupdate ed ExPackage
+         all'installazione, che scrivono la scelta; alla rimozione si torna
+         al predefinito. Da decidere con l'utente: l'app nuova passa sopra
+         una scelta fatta a mano in Impostazioni, o solo sopra i predefiniti?
+      e) ftp:, ftps:, smb: senza programma finche' non c'e' un client (un
+         client FTP a finestre; SMB vuole un client CIFS); .doc .odt a
+         LibreOffice quando sara' portato.
+
   108. LE ICONE DELLA SCRIVANIA LENTE AL CLIC, E UN FILE MANAGER A ICONE COME
       EXPLORER (l'utente, 21/11: "nel program manager quando faccio un click su
       una icona del desktop o il doppio click e' lentissimo da l'impressione
@@ -10893,6 +10951,49 @@ tools/netinst/velocita tolto da netinst.
       5. Il video dentro la finestra di VLC: una finestra figlia in ExWin,
          un modulo finestra di VLC per ExWin, la piattaforma exwin
          nell'interfaccia Qt. Via la sed su embedded-video.
+         FATTO 21/11 pomeriggio (nel clone ~/exa_os_libc), provato in QEMU:
+         - wserver 0.016: WIN_MSG_CREA_FIGLIA (figlia dentro la madre,
+           tagliata ai bordi, la segue, niente input, otto livelli) e
+           WIN_MSG_MOSTRA (nascosta e rimostrata con lo stesso numero).
+           tools/prova_figlie.sh 32|64 (finestreprova -f): passa a 32 e 64.
+         - Il server non aspetta piu' un client nemmeno per MISURATA e
+           POSTA: a casella piena (4 messaggi) aspettava 10 s ciascuno, e
+           VLC che ridimensiona una dozzina di figlie restava fermo minuti
+           (misurato con QT_EXWIN_DEBUG: ogni ipc_send di Qt 10000 ms).
+           Ora senza attesa, ridetti da svuota_code() a ogni giro.
+         - Plugin Qt: un QWindow con padre e' una figlia (prima una seconda
+           finestra di primo livello); nascosto da Qt -> WIN_MSG_MOSTRA;
+           QPlatformNativeInterface "exwin" da' il numero, creando prima gli
+           antenati nativi; il flush di una figlia usava l'offset al
+           contrario (la barra dei menu due volte).
+         - VLC: tools/vlc-exos/applica.py (VOUT_WINDOW_TYPE_EXWIN, handle
+           exwin, piattaforma Qt "exwin", request() in interface_widgets),
+           -I qpa di QtGui per Qt 5; vout_exos fa una figlia grande quanto
+           il widget e mette l'immagine dove dice vout_display_PlacePicture.
+           Via la sed. -I dummy e ncurses: finestra sua come prima.
+         - tools/vlc-exos/prova.sh: -I qt con --no-qt-privacy-ask, il video
+           che si muove al centro della finestra, "child window" nel
+           registro, il cono a fine video.
+         DA GUARDARE A PARTE, NON E' DEL PASSO 5: [FAULT] all'uscita di
+         vlc -I dummy --play-and-exit dopo av1.mp4 (EIP nello heap sotto
+         heap_end, 0x093a34f0 a 64 bit, 0x0932582c a 32). C'e' identico col
+         VLC del passo 4 (quello sul server locale, 20/11): provato il
+         21/11. prova.sh non lo conta come [NO]: andrebbe contato.
+         IL GIRO DI PROVE DEL 21/11 SERA (clone, wserver 0.016, exwin
+         0.023), cio' che non passa, NON GUARDATO ANCORA:
+         - exilla-media 32/64: Firefox --headless (senza ExWin) esce
+           subito col codice 1, nessun file suonato; sulla seriale un
+           "ATA: timeout BSY sul canale 0 ... dopo 30000 ms". Da capire se
+           e' il Firefox sul disco della prova contro la libc condivisa.
+         - exilla-lampi 32/64: 0 foto su 150 con un lampo (voce 95: in
+           QEMU i lampi non si riproducono, forse e' lo stesso Firefox).
+         - exilla-riapertura, primotab, webgl: "mach package fallito"
+           (config.statusd azzerato, gia' noto); ar5k: manca libc.h nella
+           riga di compilazione della prova.
+         - sorgenti 32/64: "l'albero sul disco e' diverso" (A e B);
+           sqlite_io 32: mmap condivisa errno 2, poi "no such table: t".
+         - palla 32/64: 127 giri al secondo (almeno 1000): uguale gia' il
+           20/11, prima di questi cambi. telnet_fine: porta 2323 di sbbs.
       Ogni passo: 32 e 64 bit, prove in QEMU, sysroot e porting dipendenti
       ricostruiti, manuali.
 

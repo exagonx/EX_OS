@@ -14,6 +14,14 @@
  * WIN_MSG_AGGIORNA says it is ready. The events of the window come to the
  * thread that created it, the video output thread, and are read without
  * waiting before each picture.
+ *
+ * ! INSIDE THE INTERFACE (voce 105 step 5, 21 November 2026): with the Qt
+ * interface the window is a CHILD of its video widget (VOUT_WINDOW_TYPE_EXWIN,
+ * tools/vlc-exos/applica.py; WIN_MSG_CREA_FIGLIA, wserver 0.016), as big as
+ * the widget, the picture placed in it by VLC (vout_display_PlacePicture)
+ * with black round it. It takes no input: clicks and keys go to Qt's widget,
+ * as on X11. Without an interface that gives a window (-I dummy, ncurses)
+ * the video has a window of its own, as before.
  *****************************************************************************/
 #ifdef HAVE_CONFIG_H
 # include "config.h"
@@ -41,7 +49,20 @@ struct vout_display_sys_t
     unsigned int zona_w, zona_h, passo;
     unsigned int x, y;          /* where the picture goes in the zone */
     picture_pool_t *pool;
+    vout_window_t *finestra;    /* the interface's, NULL: a window of its own */
 };
+
+/* the zone all black, opaque: the server shows what is under a pixel of
+ * alpha 0, and under a child is the widget's window */
+static void Nera(vout_display_sys_t *sys)
+{
+    for (unsigned int r = 0; r < sys->zona_h; r++)
+    {
+        uint32_t *d = (uint32_t *)((uint8_t *)sys->zona + (size_t)r * sys->passo);
+        for (unsigned int c = 0; c < sys->zona_w; c++)
+            d[c] = 0xFF000000u;
+    }
+}
 
 static int SoloCreata(const IpcMessage *m, void *dato)
 {
@@ -73,13 +94,22 @@ static int Attacca(vout_display_sys_t *sys, const WinCreata *r)
     sys->zona_h = r->altezza;
     sys->passo = r->passo ? r->passo : r->larghezza * 4;
     sys->giro = r->giro;
-    memset(sys->zona, 0, (size_t)sys->passo * sys->zona_h);
+    Nera(sys);
     return 0;
 }
 
 static void Centra(vout_display_t *vd)
 {
     vout_display_sys_t *sys = vd->sys;
+    if (sys->finestra != NULL)
+    {
+        /* VLC says where: alignment, zoom, aspect of the interface */
+        vout_display_place_t place;
+        vout_display_PlacePicture(&place, &vd->source, vd->cfg, false);
+        sys->x = place.x > 0 ? (unsigned int)place.x : 0;
+        sys->y = place.y > 0 ? (unsigned int)place.y : 0;
+        return;
+    }
     sys->x = sys->zona_w > vd->fmt.i_visible_width
            ? (sys->zona_w - vd->fmt.i_visible_width) / 2 : 0;
     sys->y = sys->zona_h > vd->fmt.i_visible_height
@@ -191,6 +221,8 @@ static void Display(vout_display_t *vd, picture_t *pic, subpicture_t *sub)
     {
         const plane_t *p = &pic->p[0];
         unsigned int w = vd->fmt.i_visible_width, h = vd->fmt.i_visible_height;
+        if (sys->x >= sys->zona_w || sys->y >= sys->zona_h)
+            w = h = 0;          /* the zone shrank under the picture */
         if (sys->x + w > sys->zona_w) w = sys->zona_w - sys->x;
         if (sys->y + h > sys->zona_h) h = sys->zona_h - sys->y;
         const uint8_t *src = p->p_pixels
@@ -219,9 +251,85 @@ static void Manage(vout_display_t *vd)
     Posta(vd);
 }
 
+static void ResetPictures(vout_display_t *vd)
+{
+    vout_display_sys_t *sys = vd->sys;
+
+    if (sys->pool != NULL)
+    {
+        picture_pool_Release(sys->pool);
+        sys->pool = NULL;
+    }
+}
+
+/* Inside the interface: the window as big as the widget, the picture where
+ * VLC places it (as modules/video_output/xcb/x11.c) */
+static int ControlDentro(vout_display_t *vd, int query, va_list args)
+{
+    vout_display_sys_t *sys = vd->sys;
+
+    switch (query)
+    {
+        case VOUT_DISPLAY_CHANGE_DISPLAY_SIZE:
+        {
+            const vout_display_cfg_t *cfg = va_arg(args, const vout_display_cfg_t *);
+            vout_display_place_t place;
+
+            if (cfg->display.width && cfg->display.height &&
+                (cfg->display.width != sys->zona_w || cfg->display.height != sys->zona_h))
+            {
+                /* the zone comes back with WIN_MSG_MISURATA (Posta) */
+                WinRegione m = { sys->id, 0, 0, cfg->display.width, cfg->display.height };
+                ipc_send(sys->server, WIN_MSG_MISURA, &m, sizeof (m));
+            }
+            vout_display_PlacePicture(&place, &vd->source, cfg, false);
+            if (place.width != vd->fmt.i_visible_width ||
+                place.height != vd->fmt.i_visible_height)
+            {
+                vout_display_SendEventPicturesInvalid(vd);
+                return VLC_SUCCESS;
+            }
+            sys->x = place.x > 0 ? (unsigned int)place.x : 0;
+            sys->y = place.y > 0 ? (unsigned int)place.y : 0;
+            Nera(sys);
+            return VLC_SUCCESS;
+        }
+        case VOUT_DISPLAY_CHANGE_DISPLAY_FILLED:
+        case VOUT_DISPLAY_CHANGE_ZOOM:
+        case VOUT_DISPLAY_CHANGE_SOURCE_ASPECT:
+        case VOUT_DISPLAY_CHANGE_SOURCE_CROP:
+            vout_display_SendEventPicturesInvalid(vd);
+            return VLC_SUCCESS;
+        case VOUT_DISPLAY_RESET_PICTURES:
+        {
+            vout_display_place_t place;
+            video_format_t src;
+
+            ResetPictures(vd);
+            vout_display_PlacePicture(&place, &vd->source, vd->cfg, false);
+            video_format_ApplyRotation(&src, &vd->source);
+            vd->fmt.i_width  = src.i_width  * place.width / src.i_visible_width;
+            vd->fmt.i_height = src.i_height * place.height / src.i_visible_height;
+            vd->fmt.i_visible_width  = place.width;
+            vd->fmt.i_visible_height = place.height;
+            vd->fmt.i_x_offset = src.i_x_offset * place.width / src.i_visible_width;
+            vd->fmt.i_y_offset = src.i_y_offset * place.height / src.i_visible_height;
+            sys->x = place.x > 0 ? (unsigned int)place.x : 0;
+            sys->y = place.y > 0 ? (unsigned int)place.y : 0;
+            if (sys->zona != NULL)
+                Nera(sys);
+            return VLC_SUCCESS;
+        }
+        default:
+            return VLC_EGENERIC;
+    }
+}
+
 static int Control(vout_display_t *vd, int query, va_list args)
 {
-    VLC_UNUSED(vd); VLC_UNUSED(args);
+    VLC_UNUSED(args);
+    if (vd->sys->finestra != NULL)
+        return ControlDentro(vd, query, args);
     switch (query)
     {
         case VOUT_DISPLAY_CHANGE_DISPLAY_SIZE:
@@ -233,6 +341,76 @@ static int Control(vout_display_t *vd, int query, va_list args)
         default:
             return VLC_EGENERIC;
     }
+}
+
+static int Pool_callbacks(vout_display_t *vd)
+{
+    vd->pool = Pool;
+    vd->prepare = NULL;
+    vd->display = Display;
+    vd->control = Control;
+    vd->manage = Manage;
+    return VLC_SUCCESS;
+}
+
+/* A child window of the interface's video widget, as big as the widget */
+static int ApriDentro(vout_display_t *vd, unsigned int w0, unsigned int h0)
+{
+    vout_display_sys_t *sys = vd->sys;
+    WinCreaFiglia c;
+    IpcMessage meta;
+    unsigned char buf[IPC_MSG_MAX_DATA];
+    WinCreata r;
+
+    c.padre = sys->finestra->handle.exwin;
+    c.x = c.y = 0;
+    c.larghezza = vd->cfg->display.width ? vd->cfg->display.width : w0;
+    c.altezza = vd->cfg->display.height ? vd->cfg->display.height : h0;
+    if (ipc_send(sys->server, WIN_MSG_CREA_FIGLIA, &c, sizeof (c)) < 0)
+        return VLC_EGENERIC;
+    if (ipc_scegli(SoloCreata, &sys->server, &meta, buf, sizeof (buf),
+                   ATTESA_MS) < 0 || meta.len < sizeof (WinCreata))
+        return VLC_EGENERIC;
+    memcpy(&r, buf, sizeof (r));
+    if (r.id == 0)
+    {
+        msg_Warn(vd, "the window server made no child of window %u", c.padre);
+        return VLC_EGENERIC;
+    }
+    sys->id = r.id;
+    if (Attacca(sys, &r) != 0)
+    {
+        WinRegione d = { r.id, 0, 0, 0, 0 };
+        ipc_send(sys->server, WIN_MSG_DISTRUGGI, &d, sizeof (d));
+        sys->id = 0;
+        return VLC_EGENERIC;
+    }
+
+    vout_display_place_t place;
+    video_format_t src, fmt = vd->fmt;
+    vout_display_PlacePicture(&place, &vd->source, vd->cfg, false);
+    if (place.width == 0 || place.height == 0)
+    {
+        place.width = w0; place.height = h0; place.x = place.y = 0;
+    }
+    video_format_ApplyRotation(&src, &vd->source);
+    fmt.i_chroma = VLC_CODEC_RGB32;
+    fmt.i_rmask = 0x00ff0000;
+    fmt.i_gmask = 0x0000ff00;
+    fmt.i_bmask = 0x000000ff;
+    fmt.i_width  = src.i_width  * place.width / src.i_visible_width;
+    fmt.i_height = src.i_height * place.height / src.i_visible_height;
+    fmt.i_visible_width  = place.width;
+    fmt.i_visible_height = place.height;
+    fmt.i_x_offset = src.i_x_offset * place.width / src.i_visible_width;
+    fmt.i_y_offset = src.i_y_offset * place.height / src.i_visible_height;
+    vd->fmt = fmt;
+    sys->x = place.x > 0 ? (unsigned int)place.x : 0;
+    sys->y = place.y > 0 ? (unsigned int)place.y : 0;
+    Pool_callbacks(vd);
+    msg_Dbg(vd, "child window %u of %u, %ux%u, picture %ux%u at %u,%u", sys->id,
+            c.padre, sys->zona_w, sys->zona_h, place.width, place.height, sys->x, sys->y);
+    return VLC_SUCCESS;
 }
 
 static int Open(vlc_object_t *obj)
@@ -262,6 +440,21 @@ static int Open(vlc_object_t *obj)
         w = (unsigned int)((uint64_t)w * src.i_sar_num / src.i_sar_den);
     if (w == 0 || h == 0)
         goto fallito;
+
+    /* the interface's video widget, if it gives one */
+    sys->finestra = vout_display_NewWindow(vd, VOUT_WINDOW_TYPE_EXWIN);
+    if (sys->finestra != NULL && sys->finestra->handle.exwin == 0)
+    {
+        vout_display_DeleteWindow(vd, sys->finestra);
+        sys->finestra = NULL;
+    }
+    if (sys->finestra != NULL)
+    {
+        if (ApriDentro(vd, w, h) == VLC_SUCCESS)
+            return VLC_SUCCESS;
+        vout_display_DeleteWindow(vd, sys->finestra);
+        sys->finestra = NULL;
+    }
 
     WinCrea c;
     memset(&c, 0, sizeof (c));
@@ -326,11 +519,7 @@ static int Open(vlc_object_t *obj)
     vd->fmt = fmt;
     Centra(vd);
 
-    vd->pool = Pool;
-    vd->prepare = NULL;
-    vd->display = Display;
-    vd->control = Control;
-    vd->manage = Manage;
+    Pool_callbacks(vd);
     vout_display_DeleteWindow(vd, NULL);
     msg_Dbg(vd, "window %u, %ux%u, picture %ux%u", sys->id, sys->zona_w,
             sys->zona_h, w, h);
@@ -338,6 +527,8 @@ static int Open(vlc_object_t *obj)
 
 fallito:
     msg_Err(vd, "the window server did not give a window");
+    if (sys->finestra != NULL)
+        vout_display_DeleteWindow(vd, sys->finestra);
     free(sys);
     return VLC_EGENERIC;
 }
@@ -356,6 +547,8 @@ static void Close(vlc_object_t *obj)
     }
     if (sys->zona != NULL)
         shm_chiudi(sys->zona);
+    if (sys->finestra != NULL)
+        vout_display_DeleteWindow(vd, sys->finestra);
     free(sys);
 }
 

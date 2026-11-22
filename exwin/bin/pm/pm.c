@@ -40,7 +40,7 @@
 #include "wifid_proto.h"      /* the WiFi icon (@WIFI) */
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.028"
+#define VERSIONE_APP "0.029"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -83,6 +83,10 @@ EX_VERSIONE("pm", VERSIONE_APP);
 #define ID_V_LISTA       131
 #define ID_V_PROVA       132
 #define ID_V_APPLICA     133
+#define ID_A_GRUPPO      150     /* Applicazioni: the group of types */
+#define ID_A_LISTA       151
+#define ID_A_SCEGLI      152
+#define ID_A_PREDEF      153
 /* the question after a trial reboot */
 #define ID_P_TIENI       140
 #define ID_P_TORNA       141
@@ -1312,8 +1316,9 @@ static ExWindow g_barra_f = 0;      /* la barra, per ridisegnarla da qui */
 #define PROVA_F "/boot/svgaprov.cfg"
 #define VISTA_F "/boot/svgavist.cfg"
 
-static ExWindow g_sch[3][SCH_MAX];
-static int      g_sch_n[3];
+#define SCHEDE 4
+static ExWindow g_sch[SCHEDE][SCH_MAX];
+static int      g_sch_n[SCHEDE];
 static ExWindow g_v_lista = 0;
 static VideoModo g_v[64];
 static int      g_v_n = 0, g_v_da_scheda = 0;
@@ -1327,9 +1332,126 @@ static void scheda_mostra(int n)
 {
     int k, i;
 
-    for (k = 0; k < 3; k++)
+    for (k = 0; k < SCHEDE; k++)
         for (i = 0; i < g_sch_n[k]; i++) ex_set_visible(g_sch[k][i], k == n);
     if (g_impost) ex_default_proc(g_impost, EXM_PAINT, 0, 0);
+}
+
+/* =============================================================================
+ * Applicazioni: which program opens which type of file or address (voce 109,
+ * 21 November 2026). The user: a tab in Impostazioni where every type of file
+ * and every protocol has its program, one by default, which the user changes.
+ *
+ * ! THE RULE STAYS IN THE TOOLKIT (ex_types, ex_type_set): the file manager
+ * and the desktop open files with ex_open_file, which reads the same two
+ * files. This tab only shows them and writes the choice, which counts at the
+ * next double click, with no restart.
+ * ============================================================================= */
+static ExWindow g_a_gruppo = 0, g_a_lista = 0, g_a_avviso = 0;
+static ExTipo  *g_tipi = 0;
+static int      g_tipi_n = 0;
+static int     *g_a_riga = 0;          /* row of the list -> index in g_tipi */
+static int      g_a_righe = 0;
+
+static void app_tipi_leggi(void)
+{
+    int n = ex_types(0, 0);
+
+    free(g_tipi); free(g_a_riga);
+    g_tipi = 0; g_a_riga = 0; g_tipi_n = g_a_righe = 0;
+    if (n <= 0) return;
+    g_tipi   = (ExTipo *)malloc((size_t)n * sizeof(ExTipo));
+    g_a_riga = (int *)malloc((size_t)n * sizeof(int));
+    if (!g_tipi || !g_a_riga) { free(g_tipi); free(g_a_riga); g_tipi = 0; g_a_riga = 0; return; }
+    g_tipi_n = ex_types(g_tipi, n);
+    if (g_tipi_n > n) g_tipi_n = n;       /* a type added in between: next time */
+}
+
+/* the program file is there, on the disk or on the CD */
+static int app_c_e(const char *p)
+{
+    struct stat st;
+    char        c[220];
+
+    if (!p[0]) return 0;
+    if (stat(p, &st) == 0 && S_ISREG(st.st_mode)) return 1;
+    snprintf(c, sizeof(c), "/cdrom%s", p);
+    return stat(c, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+static void app_riga_testo(const ExTipo *t, char *r, unsigned int max)
+{
+    const char *p = t->scelto[0] ? t->scelto : t->predefinito, *b = strrchr(p, '/');
+    size_t      l = strlen(t->tipo);
+    char        nome[24];
+
+    if (l && t->tipo[l - 1] == ':') snprintf(nome, sizeof(nome), "%s//", t->tipo);
+    else snprintf(nome, sizeof(nome), ".%s", t->tipo);
+    snprintf(r, max, "%-10s %s%s", nome, !p[0] ? "(nessun programma)" : b ? b + 1 : p,
+             !p[0] ? "" : !app_c_e(p) ? "  (non installato)" : t->scelto[0] ? "  (scelto)" : "");
+}
+
+static void app_lista_fai(unsigned int tieni)
+{
+    const char *g;
+    char        r[200];
+    int         i;
+
+    if (!g_a_lista || !g_a_gruppo) return;
+    ex_list_clear(g_a_lista);
+    g_a_righe = 0;
+    g = ex_item_text(g_a_gruppo, ex_item_get_selected(g_a_gruppo));
+    for (i = 0; g && i < g_tipi_n; i++) {
+        if (strcmp(g_tipi[i].gruppo, g)) continue;
+        app_riga_testo(&g_tipi[i], r, sizeof(r));
+        ex_list_add(g_a_lista, r);
+        g_a_riga[g_a_righe++] = i;
+    }
+    if (g_a_righe) ex_list_select(g_a_lista, tieni < (unsigned int)g_a_righe ? tieni : 0);
+    ex_default_proc(g_impost, EXM_PAINT, 0, 0);
+}
+
+static void app_gruppi_fai(void)
+{
+    int i, j;
+
+    ex_items_clear(g_a_gruppo);
+    for (i = 0; i < g_tipi_n; i++) {
+        for (j = 0; j < i && strcmp(g_tipi[j].gruppo, g_tipi[i].gruppo); j++) ;
+        if (j == i) ex_item_add(g_a_gruppo, g_tipi[i].gruppo);
+    }
+    ex_item_select(g_a_gruppo, 0);
+}
+
+static void app_dico(const char *t)
+{
+    if (g_a_avviso) ex_set_text(g_a_avviso, t);
+    ex_default_proc(g_impost, EXM_PAINT, 0, 0);
+}
+
+/* Scegli il programma... (scegli = 1) or Predefinito (scegli = 0) */
+static void app_cambia(int scegli)
+{
+    unsigned int s = ex_list_get_selected(g_a_lista);
+    ExTipo      *t;
+    char         perc[200], msg[160];
+
+    if (s >= (unsigned int)g_a_righe) { app_dico("Scegli prima una riga."); return; }
+    t = &g_tipi[g_a_riga[s]];
+    if (scegli) {
+        snprintf(perc, sizeof(perc), "%s", t->scelto[0] ? t->scelto : t->predefinito[0] ? t->predefinito : "/exwin/bin/");
+        if (!ex_dlg_apri(perc, sizeof(perc))) { app_dico("Nessun cambiamento."); return; }
+        if (!app_c_e(perc)) { app_dico("Quel programma non c'e'."); return; }
+    } else if (!t->scelto[0]) { app_dico("E' gia' il programma predefinito."); return; }
+    snprintf(msg, sizeof(msg), "%s%s: %s", t->tipo[strlen(t->tipo) - 1] == ':' ? "" : ".", t->tipo,
+             scegli ? perc : "torna il predefinito");
+    if (!ex_type_set(t->tipo, scegli ? perc : 0)) {
+        app_dico("Non riesco a scrivere /boot/tipi.cfg.");
+        return;
+    }
+    app_tipi_leggi();
+    app_lista_fai(s);
+    app_dico(msg);
 }
 
 /* The entries of the list: the card's modes, sorted, one per size and
@@ -1528,6 +1650,8 @@ static long impost_proc(ExWindow f, unsigned int msg,
         ex_destroy(f);
         g_impost = g_impost_sfondo = g_impost_suono = g_impost_orologio = g_impost_volume = 0;
         g_impost_icone = 0;
+        g_a_gruppo = g_a_lista = g_a_avviso = 0;
+        free(g_tipi); free(g_a_riga); g_tipi = 0; g_a_riga = 0; g_tipi_n = g_a_righe = 0;
         return 0;
     }
 
@@ -1563,6 +1687,11 @@ static long impost_proc(ExWindow f, unsigned int msg,
     }
 
     if (msg == EXM_COMMAND && wp == ID_IMP_SCHEDE) { scheda_mostra((int)lp); return 0; }
+    if (msg == EXM_COMMAND && wp == ID_A_GRUPPO) { app_lista_fai(0); return 0; }
+    if (msg == EXM_COMMAND && (wp == ID_A_SCEGLI || wp == ID_A_PREDEF)) {
+        app_cambia(wp == ID_A_SCEGLI);
+        return 0;
+    }
     if (msg == EXM_COMMAND && wp == ID_GESTISCI) { gest_apri(); return 0; }
     if (msg == EXM_COMMAND && (wp == ID_V_PROVA || wp == ID_V_APPLICA)) {
         video_scegli(wp == ID_V_PROVA);
@@ -1595,6 +1724,7 @@ static void impostazioni_apri(void)
     ex_item_add(c, "Video");
     ex_item_add(c, "Scrivania");
     ex_item_add(c, "Sistema");
+    ex_item_add(c, "Applicazioni");
 
     /* --- Video ------------------------------------------------------------ */
     ex_screen_size(&sw, &sh);
@@ -1706,6 +1836,29 @@ static void impostazioni_apri(void)
                        g_impost, ID_GESTISCI, 0));
     metti(2, ex_create("label", "Aggiungi e togli le voci del menu di avvio.", EX_CHILD,
                        12, 180, IMP_W - 24, 16, g_impost, 0, 0));
+
+    /* --- Applicazioni: the program of every type (voce 109) ----------------- */
+    metti(3, ex_create("label", "Con che programma si apre ogni tipo di file e indirizzo.",
+                       EX_CHILD, 12, 40, IMP_W - 24, 18, g_impost, 0, 0));
+    metti(3, ex_create("label", "Tipo:", EX_CHILD, 12, 66, 48, 18, g_impost, 0, 0));
+    g_a_gruppo = ex_create("combo", "", EX_CHILD, 64, 64, 220, 22, g_impost, ID_A_GRUPPO, 0);
+    metti(3, g_a_gruppo);
+    g_a_lista = ex_create("list", "", EX_CHILD, 12, 94, IMP_W - 24, 200, g_impost, ID_A_LISTA, 0);
+    metti(3, g_a_lista);
+    metti(3, ex_create("button", "Scegli il programma...", EX_CHILD, 12, 302, 200, 28,
+                       g_impost, ID_A_SCEGLI, 0));
+    metti(3, ex_create("button", "Predefinito", EX_CHILD, IMP_W - 162, 302, 150, 28,
+                       g_impost, ID_A_PREDEF, 0));
+    g_a_avviso = ex_create("label", "Vale subito, per il file manager e la scrivania.", EX_CHILD,
+                           12, 340, IMP_W - 24, 16, g_impost, 0, 0);
+    metti(3, g_a_avviso);
+    metti(3, ex_create("label", "Indirizzi (http, ftp, smb): per ora solo la scelta;", EX_CHILD,
+                       12, 360, IMP_W - 24, 16, g_impost, 0, 0));
+    metti(3, ex_create("label", "i programmi li apriranno in una prossima versione.", EX_CHILD,
+                       12, 376, IMP_W - 24, 16, g_impost, 0, 0));
+    app_tipi_leggi();
+    if (g_a_gruppo) app_gruppi_fai();
+    app_lista_fai(0);
 
     scheda_mostra(0);
     ex_default_proc(g_impost, EXM_PAINT, 0, 0);

@@ -22,6 +22,7 @@
 #include <qpa/qplatformscreen.h>
 #include <qpa/qplatformwindow.h>
 #include <qpa/qplatformbackingstore.h>
+#include <qpa/qplatformnativeinterface.h>
 #include <QtGui/QImage>
 #include <QtCore/QHash>
 #include <QtCore/QObject>
@@ -45,6 +46,16 @@ public:
     QRect m_geometria;
 };
 
+/* What a program asks the platform for a window (QGuiApplication::
+ * platformNativeInterface()): "exwin" is the id of its window in the server,
+ * made now if it is not there yet. VLC gives it to its video output, which
+ * makes a child window of it (voce 105 step 5, as "surface" on Wayland). */
+class QExwinNative : public QPlatformNativeInterface
+{
+public:
+    void *nativeResourceForWindow(const QByteArray &resource, QWindow *window) override;
+};
+
 class QExwinIntegration : public QObject, public QPlatformIntegration
 {
     Q_OBJECT
@@ -62,6 +73,7 @@ public:
     QAbstractEventDispatcher *createEventDispatcher() const override;
     QPlatformFontDatabase *fontDatabase() const override;
     QStringList themeNames() const override;
+    QPlatformNativeInterface *nativeInterface() const override;
 
     /* the windows of the server, by id: who an event is for */
     void registra(unsigned int id, QExwinWindow *w) { m_finestre.insert(id, w); }
@@ -77,6 +89,7 @@ private:
     QExwinScreen *m_schermo;
     QSocketNotifier *m_notifica;
     mutable QPlatformFontDatabase *m_caratteri;
+    mutable QExwinNative *m_nativa = nullptr;
     QHash<unsigned int, QExwinWindow *> m_finestre;
 };
 
@@ -100,6 +113,12 @@ public:
      * Unique per window; the server's id is serverId(). */
     WId winId() const override { return WId(this); }
     unsigned int serverId() const { return m_id; }
+    /* the server's id, the window made first if Qt has not shown it yet.
+     * ! THE NATIVE ANCESTORS FIRST: a native child widget makes its
+     * ancestors native too (Qt::AA_DontCreateNativeWidgetAncestors), and
+     * VLC's video widget asked its id while its parent, VideoWidget, was
+     * still hidden: no window in the server, no child, id 0. */
+    unsigned int serverIdOra();
 
     /* the server's zone: the backing store paints here */
     uchar *zona() const { return m_zona; }
@@ -114,7 +133,12 @@ public:
 
 private:
     void crea();
+    bool creaFiglia();
     void distruggi();
+    void figlie(bool fai);
+    /* a native child widget (VLC's video, WA_NativeWindow): a child window
+     * of the server inside its parent's, not a window of its own */
+    QExwinWindow *madre() const;
     bool attacca(const void *creata);
     bool comparsa() const;
     QPoint dentro(const QRect &g) const;  /* where it goes, title bar on the screen */
