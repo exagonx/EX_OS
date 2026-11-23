@@ -211,6 +211,12 @@ static void cfg_apply_key(KernelConfig *cfg, const char *section,
                 cfg->fd_max = (uint32_t)cfg_atoi(value);
             return;
         }
+        /* ipccoda = N: messages one mailbox may hold (cfg.h) */
+        if (cfg_strcmp(key, "ipccoda") == 0) {
+            if (value[0] >= '1' && value[0] <= '9')
+                cfg->ipc_coda = (uint32_t)cfg_atoi(value);
+            return;
+        }
         /* procmax = N: processes and threads together (cfg.h) */
         if (cfg_strcmp(key, "procmax") == 0) {
             if (value[0] >= '1' && value[0] <= '9')

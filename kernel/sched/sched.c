@@ -789,6 +789,10 @@ static void proc_chiudi_fd(Process *p)
             case FD_PTY_S:
                 pty_chiudi_locked((int)FDV(p, fd).inode, 0);
                 break;
+            case FD_UNIX:           /* its two pipes (0.358) */
+                pipe_chiudi_lettore_locked((int)FDV(p, fd).inode);
+                pipe_chiudi_scrittore_locked((int)FDV(p, fd).inode2);
+                break;
 
             default:
                 continue;   /* stdin/stdout/stderr e i driver: niente da fare */

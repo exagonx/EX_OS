@@ -488,6 +488,12 @@ int32_t sys_read(InterruptFrame *frame)
      * vuota e c'e' ancora uno scrittore, si aspetta. Ritorna 0 solo
      * quando non c'e' piu' nessuno che possa scrivere. Vedi
      * kernel/ipc/pipe.c. */
+    /* An end of a unix socket pair reads its incoming pipe (0.358) */
+    if (FDV(proc, fd).type == FD_UNIX) {
+        return pipe_leggi((int)FDV(proc, fd).inode, buf, count,
+                          (FDV(proc, fd).flags & O_NONBLOCK) != 0);
+    }
+
     if (FDV(proc, fd).type == FD_PIPE_R) {
         return pipe_leggi((int)FDV(proc, fd).inode, buf, count,
                           (FDV(proc, fd).flags & O_NONBLOCK) != 0);
@@ -725,6 +731,12 @@ int32_t sys_write(InterruptFrame *frame)
      * e' pieno, e ritorna -EPIPE se non c'e' piu' nessun lettore. La
      * scrittura puo' essere PARZIALE: il chiamante deve guardare il
      * valore di ritorno e richiamare. Vedi kernel/ipc/pipe.c. */
+    /* ... and writes the other one, the one the other end reads (0.358) */
+    if (FDV(proc, fd).type == FD_UNIX) {
+        return pipe_scrivi((int)FDV(proc, fd).inode2, buf, count,
+                           (FDV(proc, fd).flags & O_NONBLOCK) != 0);
+    }
+
     if (FDV(proc, fd).type == FD_PIPE_W) {
         return pipe_scrivi((int)FDV(proc, fd).inode, buf, count,
                            (FDV(proc, fd).flags & O_NONBLOCK) != 0);
@@ -897,9 +909,21 @@ int32_t sys_open(InterruptFrame *frame)
  * three std descriptors redirected while its own 2 is logs/error_log: one
  * reference more per request, and after `httpd -k stop` the disk would not
  * unmount ("in use"). */
+/* One more descriptor on an end of a unix pair (dup, fork, spawn): both of
+ * its pipes count it, or the first close would tell the other end «gone». */
+static void unix_conta(const FileDescriptor *d)
+{
+    pipe_apri_lettore((int)d->inode);
+    pipe_apri_scrittore((int)d->inode2);
+}
+
 static void fd_lascia(Process *p, int fd)
 {
     switch (FDV(p, fd).type) {
+    case FD_UNIX:
+        pipe_chiudi_lettore((int)FDV(p, fd).inode);
+        pipe_chiudi_scrittore((int)FDV(p, fd).inode2);
+        break;
     case FD_FILE:   vfs_close_di((int)FDV(p, fd).inode, p->fdt);  break;
     case FD_PIPE_R: pipe_chiudi_lettore((int)FDV(p, fd).inode);   break;
     case FD_PIPE_W: pipe_chiudi_scrittore((int)FDV(p, fd).inode); break;
@@ -999,6 +1023,7 @@ static int32_t fd_duplica(Process *proc, int vecchio, int nuovo)
         pipe_apri_lettore((int)FDV(proc, vecchio).inode);
     if (FDV(proc, vecchio).type == FD_PIPE_W)
         pipe_apri_scrittore((int)FDV(proc, vecchio).inode);
+    if (FDV(proc, vecchio).type == FD_UNIX) unix_conta(&FDV(proc, vecchio));
     /* and a pty counts its descriptors too (it was missing until 0.283) */
     if (FDV(proc, vecchio).type == FD_PTY_M)
         pty_apri_riferimento((int)FDV(proc, vecchio).inode, 1);
@@ -1075,6 +1100,68 @@ int32_t sys_pipe(InterruptFrame *frame)
     klog(LOG_DEBUG, "SYSCALL pipe: PID %u -> fd %d (lettura) e %d (scrittura), "
          "pipe %d", proc->pid, r, w, h);
     return 0;
+}
+
+/* =============================================================================
+ * SYS_SOCKETPAIR (276) - two connected ends of a unix socket (0.358, voce 115)
+ *
+ * Two pipes: `ab` carries what end A writes to B, `ba` the other way. Each
+ * pipe is born with one reader and one writer, which are exactly the two
+ * ends: A reads ba and writes ab, B reads ab and writes ba. See FD_UNIX in
+ * sched.h.
+ * ============================================================================= */
+int32_t sys_socketpair(InterruptFrame *frame)
+{
+    int32_t *ufd  = (int32_t *)FR_A1(frame);
+    uint32_t fl   = FR_A2(frame) & (O_NONBLOCK | O_CLOEXEC);
+    Process *proc = proc_get_current();
+    int      ab, ba, a, b;
+
+    if (!syscall_verify_ptr(ufd, 2 * sizeof(int32_t))) return ERR(EFAULT);
+
+    ab = pipe_crea();
+    if (ab < 0) return (int32_t)ab;
+    ba = pipe_crea();
+    if (ba < 0) {
+        pipe_chiudi_lettore(ab);
+        pipe_chiudi_scrittore(ab);
+        return (int32_t)ba;
+    }
+
+    a = find_free_fd(proc);
+    if (a < 0) goto senza_posto;
+    FDV(proc, a).type        = FD_UNIX;    /* taken now, or b would get it */
+    FDV(proc, a).flags       = O_RDWR | fl;
+    FDV(proc, a).offset      = 0;
+    FDV(proc, a).inode       = (uint32_t)ba;
+    FDV(proc, a).inode2      = (uint32_t)ab;
+    FDV(proc, a).driver_data = NULL;
+
+    b = find_free_fd(proc);
+    if (b < 0) {
+        FDV(proc, a).type = FD_UNUSED;
+        fd_rilasciato(proc, a);
+        goto senza_posto;
+    }
+    FDV(proc, b).type        = FD_UNIX;
+    FDV(proc, b).flags       = O_RDWR | fl;
+    FDV(proc, b).offset      = 0;
+    FDV(proc, b).inode       = (uint32_t)ab;
+    FDV(proc, b).inode2      = (uint32_t)ba;
+    FDV(proc, b).driver_data = NULL;
+
+    ufd[0] = a;
+    ufd[1] = b;
+    klog(LOG_DEBUG, "SYSCALL socketpair: PID %u -> fd %d e %d (pipe %d, %d)",
+         proc->pid, a, b, ab, ba);
+    return 0;
+
+senza_posto:
+    pipe_chiudi_lettore(ab);
+    pipe_chiudi_scrittore(ab);
+    pipe_chiudi_lettore(ba);
+    pipe_chiudi_scrittore(ba);
+    return ERR(EMFILE);
 }
 
 int32_t sys_dup(InterruptFrame *frame)
@@ -1527,6 +1614,7 @@ int32_t sys_fork(InterruptFrame *frame)
         if (d.type == FD_FILE && vfs_dup((int)d.inode) < 0) continue;   /* lost: closed */
         if (d.type == FD_PIPE_R) pipe_apri_lettore((int)d.inode);
         if (d.type == FD_PIPE_W) pipe_apri_scrittore((int)d.inode);
+        if (d.type == FD_UNIX)   unix_conta(&d);
         if (d.type == FD_PTY_M)  pty_apri_riferimento((int)d.inode, 1);
         if (d.type == FD_PTY_S)  pty_apri_riferimento((int)d.inode, 0);
         d.posizione_di = 0;
@@ -2909,6 +2997,7 @@ static int32_t exec_con_argv(const char *kpath, char **uargv, char **uenvp)
             FDV(proc, fd).flags       = 0;
             FDV(proc, fd).offset      = 0;
             FDV(proc, fd).inode       = 0;
+            FDV(proc, fd).inode2      = 0;
             FDV(proc, fd).driver_data = NULL;
             fd_rilasciato(proc, fd);
         }
@@ -3218,6 +3307,7 @@ return ERR(ENOMEM); }
             switch (FDV(parent, sfd).type) {
             case FD_PIPE_R: pipe_apri_lettore((int)FDV(parent, sfd).inode);   break;
             case FD_PIPE_W: pipe_apri_scrittore((int)FDV(parent, sfd).inode); break;
+            case FD_UNIX:   unix_conta(&FDV(parent, sfd));                    break;
             case FD_PTY_M:  pty_apri_riferimento((int)FDV(parent, sfd).inode, 1); break;
             case FD_PTY_S:  pty_apri_riferimento((int)FDV(parent, sfd).inode, 0); break;
 
@@ -3523,6 +3613,8 @@ uint32_t usp       = res.user_stack_top;
                     pipe_apri_lettore((int)FDV(parent, pf).inode);
                 } else if (FDV(parent, pf).type == FD_PIPE_W) {
                     pipe_apri_scrittore((int)FDV(parent, pf).inode);
+                } else if (FDV(parent, pf).type == FD_UNIX) {
+                    unix_conta(&FDV(parent, pf));
                 } else if (FDV(parent, pf).type == FD_PTY_M) {
                     pty_apri_riferimento((int)FDV(parent, pf).inode, 1);
                 } else if (FDV(parent, pf).type == FD_PTY_S) {
@@ -3903,6 +3995,8 @@ static void stat_da_vfs(const VfsStat *vs, Stat *st);
 #define STAT_ATTR_DISPOSITIVO  0x40
 #define STAT_S_IFCHR  0020000u
 #define STAT_S_IFDIR  0040000u
+#define STAT_S_IFIFO  0010000u
+#define STAT_S_IFSOCK 0140000u
 #define STAT_S_IFREG  0100000u
 #define STAT_S_IFMT   0170000u
 
@@ -3916,6 +4010,20 @@ static void stat_dispositivo(Stat *st, uint32_t ident)
     st->st_attr  = STAT_ATTR_DISPOSITIVO;
     st->st_mode  = STAT_S_IFCHR | 0620u;
     st->st_nlink = 1;
+}
+
+/* A pipe or a socket: no disk under it, one link, owned by who asks */
+static void stat_flusso(Stat *st, uint32_t ident, uint32_t modo)
+{
+    uint8_t *p = (uint8_t *)st;
+    uint32_t i;
+    Process *proc = proc_get_current();
+
+    for (i = 0; i < sizeof(Stat); i++) p[i] = 0;
+    st->st_ident = 0xFF000000u | ident;
+    st->st_mode  = modo;
+    st->st_nlink = 1;
+    if (proc) { st->st_uid = proc->uid; st->st_gid = proc->gid; }
 }
 
 /* SYS_STAT_VECCHIA, SYS_FSTAT_VECCHIA (106, 108): the 14-byte Stat of
@@ -4057,6 +4165,17 @@ int32_t sys_fstat(InterruptFrame *frame)
         return 0;
     }
     if (FDV(proc, fd).type == FD_NULL) { stat_dispositivo(st, 0); return 0; }
+    /* (0.358) a pipe is S_IFIFO, an end of a unix pair S_IFSOCK: until 0.357
+     * ENOSYS, and a program that checks what it was handed (Gecko's IPC
+     * does, for its channel) took it for broken */
+    if (FDV(proc, fd).type == FD_PIPE_R || FDV(proc, fd).type == FD_PIPE_W) {
+        stat_flusso(st, 0x200000u + FDV(proc, fd).inode, STAT_S_IFIFO | 0600u);
+        return 0;
+    }
+    if (FDV(proc, fd).type == FD_UNIX) {
+        stat_flusso(st, 0x400000u + FDV(proc, fd).inode, STAT_S_IFSOCK | 0777u);
+        return 0;
+    }
     if (FDV(proc, fd).type != FD_FILE)          return ERR(ENOSYS);
 
     r = vfs_fstat((int)FDV(proc, fd).inode, &vs);
@@ -5961,6 +6080,36 @@ int32_t sys_ipc_recv_tmo(InterruptFrame *frame)
 }
 
 /* =============================================================================
+ * SYS_IPC_RECV_CHI (275, kernel 0.356, voce 111) -- ipc_recv_timeout with the
+ * sender's uid and gid, stamped by the kernel at ipc_send
+ *
+ * ebx = IpcChi* (out, optional): sender_pid, tipo, len, uid, gid
+ * ecx = buf*, edx = buf_len, esi = timeout ms (0 = none)
+ * ============================================================================= */
+int32_t sys_ipc_recv_chi(InterruptFrame *frame)
+{
+    uint32_t   *out        = (uint32_t *)FR_A1(frame);
+    void       *buf        = (void *)FR_A2(frame);
+    uint32_t    buf_len    = FR_A3(frame);
+    uint32_t    timeout_ms = FR_A4(frame);
+    const uint32_t CHI_LEN = 5 * sizeof(uint32_t);
+
+    if (out != NULL && !syscall_verify_ptr(out, CHI_LEN)) return ERR(EFAULT);
+    if (buf != NULL && buf_len > 0 && !syscall_verify_ptr(buf, buf_len)) return ERR(EFAULT);
+
+    IpcMessage kmeta;
+    int32_t ret = ipc_recv_timeout(&kmeta, buf, buf_len, timeout_ms);
+    if (ret == 0 && out != NULL) {
+        out[0] = kmeta.sender_pid;
+        out[1] = kmeta.tipo;
+        out[2] = kmeta.len;
+        out[3] = kmeta.sender_uid;
+        out[4] = kmeta.sender_gid;
+    }
+    return ret;
+}
+
+/* =============================================================================
  * SYS_TIME (13) -- Data e ora dall'orologio CMOS
  *
  * ebx = RtcTime*
@@ -7236,6 +7385,24 @@ static int poll_guarda(Process *self, struct pollfd *v)
             pronto |= POLLOUT;
             break;
 
+        /* An end of a unix pair (0.358): data in from one pipe, room out in
+         * the other. The other end gone is POLLHUP, with POLLIN so that the
+         * read sees the end of data (what is left first), as on Linux. */
+        case FD_UNIX: {
+            uint32_t quanti = 0, scrittori = 0, spazio = 0, lettori = 0;
+            if (pipe_stato_locked((int)d->inode, &quanti, NULL, NULL,
+                                  &scrittori) != 0 ||
+                pipe_stato_locked((int)d->inode2, NULL, &spazio, &lettori,
+                                  NULL) != 0) {
+                v->revents = POLLNVAL;
+                return 1;
+            }
+            if (quanti > 0)                    pronto |= POLLIN;
+            if (spazio > 0 && lettori > 0)     pronto |= POLLOUT;
+            if (scrittori == 0 || lettori == 0) pronto |= POLLIN | POLLHUP;
+            break;
+        }
+
         default:
             /* File normali, stdout, stderr, driver: sempre pronti. Non e' una
              * scorciatoia, e' quello che dice POSIX — una read su un file non
@@ -7289,6 +7456,14 @@ static int poll_registra(Process *self, struct pollfd *v, uint32_t n)
         } else if (d->type == FD_PTY_S && (v[i].events & POLLIN)) {
             if (!pty_attesa_registra_locked((int)d->inode, 0, self->pid))
                 tutte = 0;
+        } else if (d->type == FD_UNIX) {
+            /* ! ALWAYS ON THE INCOMING PIPE, even for POLLOUT alone: that is
+             * where the other end closing is heard (its writer goes) */
+            if (!pipe_attesa_registra_locked((int)d->inode, 1, self->pid))
+                tutte = 0;
+            if ((v[i].events & POLLOUT) &&
+                !pipe_attesa_registra_locked((int)d->inode2, 0, self->pid))
+                tutte = 0;
         }
     }
 
@@ -7311,6 +7486,10 @@ static void poll_disregistra(Process *self, struct pollfd *v, uint32_t n)
         else if (d->type == FD_STDIN)  tty_attesa_togli_locked(self->pid);
         else if (d->type == FD_PTY_M)  pty_attesa_togli_locked((int)d->inode, 1, self->pid);
         else if (d->type == FD_PTY_S)  pty_attesa_togli_locked((int)d->inode, 0, self->pid);
+        else if (d->type == FD_UNIX) {
+            pipe_attesa_togli_locked((int)d->inode,  1, self->pid);
+            pipe_attesa_togli_locked((int)d->inode2, 0, self->pid);
+        }
     }
 }
 

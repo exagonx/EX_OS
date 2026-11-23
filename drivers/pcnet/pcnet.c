@@ -105,6 +105,8 @@
 
 #include "libc.h"
 #include "net_proto.h"
+/* voce 111: every receive goes through net_ricevi (net_proto.h) */
+#define ipc_recv_timeout(m, b, l, t) net_ricevi((m), (b), (l), (t))
 #include "pci_proto.h"
 #include "net_anelli.h"
 

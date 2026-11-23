@@ -2444,17 +2444,26 @@ void page_fault_handler(InterruptFrame *frame)
 
             /* ! WHO CALLED (kernel 0.282, Apache's crash at -k stop): the
              * words on the user stack that point into the program's
-             * segments, the first 16 of 512. Most are return addresses;
-             * `addr2line -e <program>` turns them into the chain of calls
-             * even for code built without frame pointers. Only pages that
-             * are there are read: this is the faulting process's CR3. */
+             * segments. Most are return addresses; `addr2line -e <program>`
+             * turns them into the chain of calls even for code built without
+             * frame pointers. Only pages that are there are read: this is the
+             * faulting process's CR3.
+             *
+             * ! 0.357: 16 of 512 words was ONE caller of Firefox (23/11/2026,
+             * nsDocShellLoadState::Serialize): its frames are big and half of
+             * the hits are .rodata in the same segment, and the single line
+             * was cut by klog after 9. Now up to 48 hits in 64 KB of stack,
+             * lines that fit the 120 of klog, the same value twice in a row once, the whole address
+             * (a 64-bit library above 4 GB was printed cut to 32 bits). Only
+             * values inside the program's own segments go out: code
+             * addresses, never data of the stack. */
             {
-                uintptr_t sp = (uintptr_t)FR_SP(frame), a;
-                uint32_t  n = 0, k, j;
-                char      riga[16 * 11 + 1];
+                uintptr_t sp = (uintptr_t)FR_SP(frame), a, prima = 0;
+                uint32_t  n = 0, k, j, nr = 0, nl = 0;
+                char      riga[8 * 19 + 1];     /* klog keeps 120 (PROB_LEN) */
 
                 riga[0] = 0;
-                for (k = 0; k < 512 && n < 16; k++) {
+                for (k = 0; k < 8192 && n < 48; k++) {
                     a = sp + k * sizeof(uintptr_t);
                     if ((a & (PAGE_SIZE - 1)) == 0 || k == 0) {
                         if (a >= USER_SPACE_END ||
@@ -2463,21 +2472,30 @@ void page_fault_handler(InterruptFrame *frame)
                     {
                         uintptr_t v = *(volatile uintptr_t *)a;
 
+                        if (v == prima) continue;
                         for (j = 0; j < mappa->n_vma; j++)
                             if (v >= mappa->vma[j].vstart && v < mappa->vma[j].vend) {
-                                uint32_t x = (uint32_t)v, d;
-                                char *q = riga + n * 11;
+                                uint64_t x = (uint64_t)v;
+                                int      cifre = (x >> 32) ? 16 : 8, d;
+                                char    *q = riga + nr;
 
                                 q[0] = ' '; q[1] = '0'; q[2] = 'x';
-                                for (d = 0; d < 8; d++)
-                                    q[3 + d] = "0123456789abcdef"[(x >> (28 - 4 * d)) & 15];
-                                q[11] = 0;
+                                for (d = 0; d < cifre; d++)
+                                    q[3 + d] = "0123456789abcdef"[(x >> (4 * (cifre - 1 - d))) & 15];
+                                nr += 3 + (uint32_t)cifre;
+                                riga[nr] = 0;
+                                prima = v;
                                 n++;
+                                if (nr + 19 > 88) {
+                                    klog(LOG_ERROR, "PF:   sulla pila %u:%s", ++nl, riga);
+                                    nr = 0;
+                                    riga[0] = 0;
+                                }
                                 break;
                             }
                     }
                 }
-                if (n) klog(LOG_ERROR, "PF:   sulla pila:%s", riga);
+                if (nr) klog(LOG_ERROR, "PF:   sulla pila %u:%s", ++nl, riga);
             }
 
             if (fault_addr >= p->heap_start && fault_addr < p->heap_max) {

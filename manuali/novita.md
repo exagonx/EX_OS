@@ -6,7 +6,10 @@
 
 **Contents**
 
-- [Users really apart: a closed folder is closed, /tmp has the sticky bit (kernel 0.355, voce 111) — tested in QEMU](#users-really-apart-a-closed-folder-is-closed-tmp-has-the-sticky-bit-kernel-0355-voce-111--tested-in-qemu)
+- [At a crash the kernel writes who called: up to 48 callers from the stack (kernel 0.357) — tested in QEMU](#at-a-crash-the-kernel-writes-who-called-up-to-48-callers-from-the-stack-kernel-0357--tested-in-qemu)
+- [Firefox no longer closes on pages full of images: fcntl F_DUPFD_CLOEXEC copies a shared memory descriptor — to be tested on the test PC](#firefox-no-longer-closes-on-pages-full-of-images-fcntl-f_dupfd_cloexec-copies-a-shared-memory-descriptor--to-be-tested-on-the-test-pc)
+- [The sender of every message is stamped by the kernel; only root uses the network card (kernel 0.356, voce 111 step 4) — tested in QEMU and on the test PC](#the-sender-of-every-message-is-stamped-by-the-kernel-only-root-uses-the-network-card-kernel-0356-voce-111-step-4--tested-in-qemu-and-on-the-test-pc)
+- [Users really apart: a closed folder is closed, /tmp has the sticky bit (kernel 0.355, voce 111) — tested in QEMU and on the test PC](#users-really-apart-a-closed-folder-is-closed-tmp-has-the-sticky-bit-kernel-0355-voce-111--tested-in-qemu-and-on-the-test-pc)
 - [The third-party clones stay in MEGA and are put back by the scripts (tools/ripara-cloni.sh) — tested on this PC](#the-third-party-clones-stay-in-mega-and-are-put-back-by-the-scripts-toolsripara-clonish--tested-on-this-pc)
 - [The build's own trees live outside the source tree, in ~/ex_os (tools/fuori.sh) — tested on this PC](#the-builds-own-trees-live-outside-the-source-tree-in-ex_os-toolsfuorish--tested-on-this-pc)
 - [Firefox on /lib/ld-exos.so: AAC and H.264 play again (voce 105) — tested in QEMU](#firefox-on-libld-exosso-aac-and-h264-play-again-voce-105--tested-in-qemu)
@@ -244,7 +247,56 @@ Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
 
-### Users really apart: a closed folder is closed, /tmp has the sticky bit (kernel 0.355, voce 111) — tested in QEMU
+### At a crash the kernel writes who called: up to 48 callers from the stack (kernel 0.357) — tested in QEMU
+
+- **Why**: Firefox on the test PC fell with a page fault at 0x28, and the kernel gave one caller
+  out of the stack: its frames are big, half of the words it found were constants in the same
+  segment, and the line was cut at 120 characters after nine values.
+- **Kernel 0.357**: up to 48 values in 64 KB of stack, the ones that point into the program's own
+  segments (code addresses, never data), on lines that fit the log, whole addresses at 64 bit.
+  `addr2line -f -e <program> <addresses>` turns them into the chain of calls.
+- Tested: `tools/prove/pilaprova.c` falls after five calls with 6 KB frames; step 8 of
+  `tools/prova_permessi.sh` finds its four callers and main, at 32 and 64 bit.
+
+### Firefox no longer closes on pages full of images: fcntl F_DUPFD_CLOEXEC copies a shared memory descriptor — to be tested on the test PC
+
+- **On the test PC Firefox closed by itself on unsplash.com**. Its last line: `IPDL protocol error:
+  Shared memory PlatformHandle is not safe to map`. Gecko checks with `fstat` that a shared memory
+  handle is as long as it says, and it was not.
+- **The cause, measured on the test PC**: Gecko clones a handle with `fcntl(fd, F_DUPFD_CLOEXEC,
+  0)`. For a descriptor of `shm_open` the libc made a copy only for `F_DUPFD`, and to every other
+  command it answered 0, "fine": the "copy" was descriptor 0, the standard input. `fstat` of it said
+  the wrong size, and closing the copy closed the standard input. `tools/prove/shmfili.c`, which now
+  copies half of its handles the same way: `la copia di 3 e' 0`, 20 of 20.
+- **The fix**: `F_DUPFD_CLOEXEC` on a zone is a real copy, as `F_DUPFD` was.
+- **Found on the way, not the cause**: the libc's table of `shm_open` zones had no lock. When it
+  grew while other threads used it, one descriptor could end up on a zone of another thread
+  (`fstat dice 53248, chiesti 57344` with 8 threads keeping 64 zones each). Now every function of
+  those descriptors is under one lock; the table grows outside it.
+- Tested: `shmfili` in QEMU at 32 and 64 bit on 4 processors (step 7 of `tools/prova_permessi.sh`).
+  Firefox on unsplash.com on the test PC: still to do.
+
+### The sender of every message is stamped by the kernel; only root uses the network card (kernel 0.356, voce 111 step 4) — tested in QEMU and on the test PC
+
+- **Measured on the test PC first** (`tools/prove/reteprova.c`, kernel 0.355, as uid 1000): an
+  ordinary user sent a raw frame on the wire (INVIA) and took the next frame of somebody else
+  (RICEVI). REFERTO made the driver, which is root, write a file where the request said.
+- **Kernel 0.356**: every message carries the uid and gid of its sender, stamped at `ipc_send`;
+  `ipc_recv_chi` (SYS_IPC_RECV_CHI, 275) gives them with the header. `IpcMessage` is unchanged.
+  No more asking the uid of a PID afterwards, when it may belong to someone else.
+- **The card drivers** (e1000, ne2k, pcnet, rtl8169, sis900, nforce, ar5k, wifisim) take INVIA,
+  RICEVI, ANNULLA and REFERTO only from root (-EPERM); INFO and the counters stay open, like
+  `/sys` on Linux. **ip.drv**: the address and the card (IP_MSG_CONFIG, IP_MSG_LINK) only from
+  root: dhcp, ipcfg and wifid. **pci.drv**: switching a device on or off only from root.
+- **No fixed ceilings in the IPC**: a mailbox grows past its 4 slots when a sender finds it full,
+  up to `ipccoda` in `kernel.cfg` or 1/1024 of the RAM, all of them together under 1/16; the names
+  table grows past 128, up to one name per 4 KB of RAM.
+- Tested: `tools/prova_permessi.sh` 11 of 11 at 32 bit (ne2k) and 64 bit (e1000): the card as
+  uid 1000 with 0 holes, root still downloads from the host, the stamp, 60 senders that no longer
+  wait, 200 names of one user. On the test PC at 0.356: reteprova 0 holes of 8 (2 with 0.355),
+  codaprova 4 of 4.
+
+### Users really apart: a closed folder is closed, /tmp has the sticky bit (kernel 0.355, voce 111) — tested in QEMU and on the test PC
 
 - **Measured on the test PC first** (`tools/prove/permprova.c`, as root going down to uid 1000):
   inside `/root/privata` 0700 an ordinary user listed, stat-ed, read a 0644 file and cd-ed. The

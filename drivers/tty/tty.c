@@ -742,8 +742,9 @@ static int tty_chiedi_kbd(char *dst, uint32_t n, uint32_t modi, uint32_t min)
      *
      * Al PASSO 15 il kernel avvia UNA SHELL PER CONSOLE VIRTUALE — cinque —
      * e ognuna chiama read(0), cioe' manda una KBD_MSG_READLINE a kbd.drv.
-     * La sua mailbox e' profonda QUATTRO (IPC_MAILBOX_DEPTH). La quinta
-     * richiesta trova pieno, ipc_send ritenta e alla fine rende -EBUSY.
+     * La sua mailbox era profonda QUATTRO (fino al kernel 0.355; dalla 0.356
+     * cresce). La quinta richiesta trovava pieno, ipc_send ritentava e alla
+     * fine rendeva -EBUSY.
      *
      * Il codice di prima trattava qualunque valore negativo come «il driver
      * e' morto» e ripiegava sul gestore interno — per sempre, perche' quel

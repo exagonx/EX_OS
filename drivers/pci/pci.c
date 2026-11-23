@@ -445,7 +445,28 @@ static void servi(void)
     unsigned char payload[IPC_MSG_MAX_DATA];
 
     for (;;) {
-        if (ipc_recv(&meta, payload, sizeof(payload)) < 0) continue;
+        IpcChi chi;
+
+        if (ipc_recv_chi(&chi, payload, sizeof(payload), 0) < 0) continue;
+        meta.sender_pid = chi.sender_pid;
+        meta.tipo       = chi.tipo;
+        meta.len        = chi.len;
+
+        /* ! TURNING A DEVICE ON OR OFF IS ROOT'S (kernel 0.356, voce 111):
+         * until then any process switched off bus mastering of the disk
+         * controller or the network card. Reading the list and the config
+         * space stays open, like lspci on Linux. The uid is the kernel's
+         * stamp, not asked afterwards for a PID. */
+        if (chi.uid != 0 && (meta.tipo == PCI_MSG_ABILITA ||
+                             meta.tipo == PCI_MSG_DISABILITA ||
+                             meta.tipo == PCI_MSG_RISCANSIONE)) {
+            PciEsito e;
+
+            e.codice  = -EPERM;
+            e.comando = 0;
+            ipc_send(meta.sender_pid, PCI_MSG_ESITO, &e, sizeof(e));
+            continue;
+        }
 
         switch (meta.tipo) {
 

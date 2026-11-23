@@ -121,6 +121,12 @@ typedef struct {
      * it to ip.drv (cfg_get_option). Empty = ip.drv decides from the RAM. */
     char        tcp_max[16];
 
+    /* ipccoda: how many messages one mailbox may hold before its senders
+     * wait in line (kernel 0.356). 0, the default, means 1/1024 of the RAM
+     * per mailbox (about 170 on 256 MB). The first 4 are in the process,
+     * the rest is allocated only when a sender finds it full. */
+    uint32_t    ipc_coda;
+
     /* netrx / nettx: the receive and send descriptors of every network
      * card's rings (kernel 0.287, voce 41). Text for SYS_GETENV, like
      * tcp_max; empty = each driver decides from the RAM, within what its

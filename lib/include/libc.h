@@ -3206,6 +3206,34 @@ int     ipc_recv_timeout(IpcMessage *out_meta, void *buf, unsigned int buf_len,
                          unsigned int timeout_ms);
 
 /* =============================================================================
+ * ipc_recv_chi — ricevere sapendo CHI ha scritto (kernel 0.356, voce 111)
+ *
+ * Come ipc_recv_timeout, e in piu' l'uid e il gid del mittente, TIMBRATI DAL
+ * KERNEL quando il messaggio e' partito. Un driver che deve dire «questo solo
+ * root» (la rete: trasmettere, ricevere i frame, scrivere un referto) decide
+ * su quelli, senza chiedere l'uid del PID con una seconda chiamata: in mezzo il
+ * PID poteva morire e passare a un altro.
+ *
+ * ! UN MESSAGGIO GIA' SULLO SCAFFALE (ipc_rimetti, ipc_scegli) NON HA TIMBRO:
+ * arriva con uid e gid IPC_CHI_IGNOTO, che non e' root. Chi controlla i
+ * permessi legge con questa e non mette niente sullo scaffale.
+ *
+ * Su un kernel prima della 0.356 rende -ENOSYS.
+ * ============================================================================= */
+typedef struct {
+    unsigned int  sender_pid;
+    unsigned int  tipo;
+    unsigned int  len;
+    unsigned int  uid;
+    unsigned int  gid;
+} IpcChi;
+
+#define IPC_CHI_IGNOTO  0xFFFFFFFFu
+
+int     ipc_recv_chi(IpcChi *out, void *buf, unsigned int buf_len,
+                     unsigned int timeout_ms);
+
+/* =============================================================================
  * ipc_scegli — aspettare il PROPRIO messaggio quando la cassetta e' di due
  *
  * ! LA MAILBOX E' UNA SOLA E I CONSUMATORI SONO PIU' D'UNO. Un'applicazione

@@ -23,8 +23,9 @@
  * Un messaggio IPC porta 1536 byte. Un flusso a 44100 Hz, 16 bit, stereo
  * sono 176400 byte al secondo: 115 messaggi al secondo solo per non
  * balbettare, ognuno con una syscall, una copia nella mailbox del driver e
- * un cambio di contesto. E la mailbox e' profonda QUATTRO messaggi
- * (IPC_MAILBOX_DEPTH): al quinto il mittente aspetta. Il suono sarebbe
+ * un cambio di contesto. E la mailbox fino al kernel 0.355 era profonda
+ * QUATTRO messaggi: al quinto il mittente aspettava (dalla 0.356 cresce, ma
+ * ogni messaggio resta una copia nel kernel). Il suono sarebbe
  * scandito dallo scheduler invece che dal quarzo della scheda.
  *
  * Quindi i campioni stanno in una zona di MEMORIA CONDIVISA — un anello che

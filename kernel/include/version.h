@@ -1052,7 +1052,16 @@
  * owner of a file, of the folder or root take its name away. Until 0.354
  * only the final file was looked at: /root/privata 0700 listed, stat-ed,
  * read and entered by any user (permprova on the .253). */
-#define EXOS_VERSION    "0.355"
+/* 0.355 -> 0.356 (voce 111, step 4): every message carries the sender's uid
+ * and gid, stamped at ipc_send; SYS_IPC_RECV_CHI (275) hands them to the
+ * receiver with the header (IpcMessage of the user unchanged). The network
+ * card drivers take INVIA, RICEVI, ANNULLA and REFERTO only from root. The
+ * mailbox and the names table grow (ipccoda in kernel.cfg, or from the RAM)
+ * instead of the 4 and 128 written in the code. */
+/* 0.356 -> 0.357: at a page fault the callers on the user stack: up to 48
+ * code addresses in 64 KB, on lines that fit klog, whole 64-bit addresses
+ * (Firefox at nsDocShellLoadState::Serialize gave one caller, 23/11/2026). */
+#define EXOS_VERSION    "0.357"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

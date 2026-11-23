@@ -235,6 +235,12 @@ Dove punta un collegamento. Gli unici sono exe, cwd e fd/N di /proc.
 [netupdate frammentato]
 kernel.new frammentato, "NON RIAVVIARE"
 
+La scritta alla console "EXT2: /boot/kernel.new e' spezzato in piu' di 12
+intervalli" (e la stessa con INSTALL:) da sola NON e' un guasto: e' il primo
+controllo, poi netupdate riscrive il file e riprova. Se finisce con "IL
+KERNEL E' CAMBIATO: riavvia", dmesg | grep INSTALL deve chiudere con "avvio
+installato su ...": allora si riavvia tranquilli (cosi' sul PC di prova il
+23/11/2026, da piu' di 12 a 4 intervalli).
 Il settore di avvio regge un kernel in 12 pezzi al massimo. netupdate 0.039
 riscrive da solo kernel.new; se dice ancora NON RIAVVIARE non spegnere la
 macchina: il sistema di base puo' essersi spostato sotto la mappa vecchia.
@@ -900,6 +906,17 @@ sistema: `system -unload`, `chkdsk -r`, `system -load` - oppure
 l'avvio, prima di montarla.
 
 [problemi guasti]
+FIREFOX SI CHIUDE DA SOLO SU UNA PAGINA PIENA DI IMMAGINI (unsplash.com),
+  e l'ultima riga di ~/.exilla/firefox.log.1 e' "IPDL protocol error:
+  Shared memory PlatformHandle is not safe to map": e' la libc fino al
+  23/11/2026. La copia di una memoria condivisa fatta come la fa Firefox
+  (fcntl F_DUPFD_CLOEXEC) rendeva il descrittore 0 invece di una copia.
+  netupdate (libc nuova in /lib/ld-exos.so), poi riapri Firefox. Non
+  dipende dalla RAM ne' dalla memoria virtuale.
+"PERMESSO NEGATO" (-1) DA UN DRIVER DI RETE, DA ip O DA pci COME UTENTE:
+  dal kernel 0.356 mandare e ricevere frame grezzi, cambiare indirizzo o
+  scheda (ipcfg, dhcp) e accendere o spegnere un dispositivo PCI sono di
+  root, come su Linux: sudo ipcfg ... I socket restano di tutti.
 "PERMESSO NEGATO" DAL KERNEL 0.355 IN UNA CARTELLA DOVE PRIMA SI ENTRAVA:
   ora conta la x di OGNI cartella del percorso, la r per elencarne una e
   la x per entrarci con cd, come su Linux. Fino alla 0.354 il kernel

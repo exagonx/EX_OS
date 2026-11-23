@@ -22,6 +22,9 @@
 #include "ipc.h"
 #include "sched.h"
 #include "syscall.h"
+#include "kmalloc.h"
+#include "pmm.h"
+#include "cfg.h"
 
 /* How long a sender waits in line for room before giving up with EBUSY:
  * the ten seconds of the old 2000 x 5 ms retries. */
@@ -39,6 +42,75 @@ static inline unsigned long if_salva(void)
 static inline void if_ripristina(unsigned long f)
 {
     if (f & 0x200) __asm__ volatile("sti" : : : "memory");
+}
+
+/* =============================================================================
+ * THE MAILBOX THAT GROWS (kernel 0.356, voce 111)
+ *
+ * ! FOUR SLOTS WERE A CEILING WRITTEN IN THE CODE: with many users on one
+ * machine ip.drv, wserver or kbd have a line of senders in front of four
+ * slots. Now the first four stay in the PCB and a full mailbox is doubled
+ * (casella_cresci) up to `ipccoda` or 1/1024 of the RAM; all the grown ones
+ * together under 1/16 of the RAM, so nobody fills the kernel by sending to a
+ * process that does not read: past that the sender waits in line as before.
+ * ============================================================================= */
+static uint32_t g_ipc_extra;        /* bytes of the grown mailboxes, together */
+
+static inline uint32_t posti(const Process *p)
+{
+    return p->ipc_posti ? p->ipc_posti : IPC_CASELLA_INIZIO;
+}
+
+static inline IpcMessage *casella(Process *p)
+{
+    return p->ipc_casella ? p->ipc_casella : p->ipc_mailbox;
+}
+
+static uint32_t posti_max(void)
+{
+    KernelConfig *cfg = cfg_get();
+    uint32_t      n;
+
+    if (cfg != NULL && cfg->ipc_coda != 0) n = cfg->ipc_coda;
+    else n = (pmm_get_total_pages() * 4u) / (uint32_t)sizeof(IpcMessage);  /* no 64-bit divide at 32 */
+    return n < IPC_CASELLA_INIZIO ? IPC_CASELLA_INIZIO : n;
+}
+
+/* With interrupts ON (kmalloc). Returns 1 if d has more room now or changed
+ * under us (look again), 0 if it cannot grow: then wait as always. */
+static int casella_cresci(Process *d, uint32_t pid)
+{
+    uint32_t    vecchi = posti(d), nuovi = vecchi * 2u, max = posti_max(), i, byte;
+    uint64_t    tetto  = (uint64_t)pmm_get_total_pages() * (PAGE_SIZE / 16u);
+    IpcMessage *n, *v, *vecchia;
+    unsigned long f;
+
+    if (nuovi > max) nuovi = max;
+    if (nuovi <= vecchi) return 0;
+    byte = nuovi * (uint32_t)sizeof(IpcMessage);
+    if ((uint64_t)g_ipc_extra + byte > tetto) return 0;
+    n = (IpcMessage *)kmalloc(byte);
+    if (n == NULL) return 0;
+
+    f = if_salva();
+    if (d->pid != pid || d->state == PROC_UNUSED || d->state == PROC_ZOMBIE ||
+        posti(d) != vecchi) {
+        if_ripristina(f);
+        kfree(n);
+        return 1;
+    }
+    v = casella(d);
+    for (i = 0; i < d->ipc_count; i++) n[i] = v[(d->ipc_head + i) % vecchi];
+    vecchia        = d->ipc_casella;
+    d->ipc_casella = n;
+    d->ipc_posti   = nuovi;
+    d->ipc_head    = 0;
+    d->ipc_tail    = d->ipc_count % nuovi;
+    g_ipc_extra   += byte;
+    if (vecchia != NULL) g_ipc_extra -= vecchi * (uint32_t)sizeof(IpcMessage);
+    if_ripristina(f);
+    if (vecchia != NULL) kfree(vecchia);
+    return 1;
 }
 
 /* =============================================================================
@@ -76,14 +148,14 @@ static void fila_metti(Process *d, Process *w)
 
 /* Room in d's mailbox: promise the free slots to the line, oldest first,
  * and wake whoever holds a promise. The promised ones are always at the
- * front, at most IPC_MAILBOX_DEPTH of them, so the walk is short. */
+ * front, at most posti(d) of them, so the walk is short. */
 static void fila_avanza(Process *d)
 {
     Process *w;
 
     for (w = d->ipc_fila_testa; w != NULL; w = w->ipc_fila_dopo) {
         if (!w->ipc_fila_concesso) {
-            if (d->ipc_count + d->ipc_riservati >= IPC_MAILBOX_DEPTH) break;
+            if (d->ipc_count + d->ipc_riservati >= posti(d)) break;
             w->ipc_fila_concesso = 1;
             d->ipc_riservati++;
         }
@@ -145,13 +217,15 @@ int ipc_notify_irq(uint32_t dest_pid, uint8_t irq_num)
      * l'iret finale in irq_common. Chiamare interrupts_enable() (sti) in
      * questo punto riabiliterebbe gli interrupt PRIMA di quell'iret,
      * rendendo rientrante un dispatcher che non è scritto per esserlo. */
-    if (dest->ipc_count < IPC_MAILBOX_DEPTH) {
-        IpcMessage *slot = &dest->ipc_mailbox[dest->ipc_tail];
+    if (dest->ipc_count < posti(dest)) {
+        IpcMessage *slot = &casella(dest)[dest->ipc_tail];
         slot->sender_pid = IPC_SENDER_KERNEL;
+        slot->sender_uid = 0;
+        slot->sender_gid = 0;
         slot->tipo       = IPC_TYPE_IRQ_NOTIFY;
         slot->len        = sizeof(uint32_t);
         *(uint32_t *)slot->data = (uint32_t)irq_num;
-        dest->ipc_tail   = (dest->ipc_tail + 1) % IPC_MAILBOX_DEPTH;
+        dest->ipc_tail   = (dest->ipc_tail + 1) % posti(dest);
         dest->ipc_count++;
 
         if (dest->state == PROC_BLOCKED) {
@@ -175,6 +249,7 @@ int32_t ipc_send(uint32_t dest_pid, uint32_t tipo,
 
     Process *self     = proc_get_current();
     uint32_t senza    = (tipo & IPC_SENZA_ATTESA) != 0;
+    int      cresce   = 1;      /* try to grow a full mailbox, once it fails no more */
     uint32_t scadenza = g_ticks + IPC_SEND_ATTESA_TICK;
 
     if (scadenza == 0) scadenza = 1;    /* 0 means "no deadline" */
@@ -205,25 +280,44 @@ int32_t ipc_send(uint32_t dest_pid, uint32_t tipo,
          *   - anybody else: only if nobody is waiting and the free slots are
          *     not all promised. Otherwise it joins the end of the line. */
         if (senza)
-            posto = dest->ipc_count < IPC_MAILBOX_DEPTH;
+            posto = dest->ipc_count < posti(dest);
         else if (self->ipc_fila_su == dest)
-            posto = self->ipc_fila_concesso && dest->ipc_count < IPC_MAILBOX_DEPTH;
+            posto = self->ipc_fila_concesso && dest->ipc_count < posti(dest);
         else
             posto = dest->ipc_fila_testa == NULL &&
-                    dest->ipc_count + dest->ipc_riservati < IPC_MAILBOX_DEPTH;
+                    dest->ipc_count + dest->ipc_riservati < posti(dest);
+
+        /* No free slot left (all taken or promised): the mailbox grows if it
+         * may, the line gets the new slots (fila_avanza) and the turn is
+         * looked at again. Only when it is really full: a line in front of
+         * free slots is served by the receiver, not by more memory. */
+        if (!posto && cresce && dest->ipc_count + dest->ipc_riservati >= posti(dest)) {
+            uint32_t pid = dest->pid;
+
+            interrupts_enable();
+            cresce = casella_cresci(dest, pid);
+            if (cresce) {
+                interrupts_disable();
+                if (dest->pid == pid && dest->ipc_fila_testa != NULL) fila_avanza(dest);
+                interrupts_enable();
+            }
+            continue;
+        }
 
         if (posto) {
-            IpcMessage *slot = &dest->ipc_mailbox[dest->ipc_tail];
+            IpcMessage *slot = &casella(dest)[dest->ipc_tail];
 
             if (self->ipc_fila_su == dest) fila_togli(self);
             slot->sender_pid = self->pid;
+            slot->sender_uid = self->uid;
+            slot->sender_gid = self->gid;
             slot->tipo       = tipo;
             slot->len        = len;
             if (len > 0 && data != NULL) {
                 const uint8_t *src = (const uint8_t *)data;
                 for (uint32_t i = 0; i < len; i++) slot->data[i] = src[i];
             }
-            dest->ipc_tail   = (dest->ipc_tail + 1) % IPC_MAILBOX_DEPTH;
+            dest->ipc_tail   = (dest->ipc_tail + 1) % posti(dest);
             dest->ipc_count++;
 
             int need_wake = (dest->state == PROC_BLOCKED);
@@ -263,6 +357,12 @@ int32_t ipc_send(uint32_t dest_pid, uint32_t tipo,
             fila_togli(self);
             if (d != NULL) fila_avanza(d);
             fila_metti(dest, self);
+            /* grown slots may be free and promised to nobody yet */
+            fila_avanza(dest);
+            if (self->ipc_fila_concesso) {
+                interrupts_enable();
+                continue;
+            }
         }
 
         /* Asleep until the receiver promises me a slot (fila_avanza), the
@@ -339,10 +439,12 @@ static int32_t ricevi(IpcMessage *out, void *buf, uint32_t buf_len,
         interrupts_disable();
 
         if (self->ipc_count > 0) {
-            IpcMessage *slot = &self->ipc_mailbox[self->ipc_head];
+            IpcMessage *slot = &casella(self)[self->ipc_head];
 
             if (out) {
                 out->sender_pid = slot->sender_pid;
+                out->sender_uid = slot->sender_uid;
+                out->sender_gid = slot->sender_gid;
                 out->tipo       = slot->tipo;
                 out->len        = slot->len;
             }
@@ -354,7 +456,7 @@ static int32_t ricevi(IpcMessage *out, void *buf, uint32_t buf_len,
                 for (uint32_t i = 0; i < copy_len; i++) dst[i] = slot->data[i];
             }
 
-            self->ipc_head = (self->ipc_head + 1) % IPC_MAILBOX_DEPTH;
+            self->ipc_head = (self->ipc_head + 1) % posti(self);
             self->ipc_count--;
             self->block_until = 0;
             if (self->ipc_fila_testa != NULL) fila_avanza(self);
@@ -407,13 +509,49 @@ static int32_t ricevi(IpcMessage *out, void *buf, uint32_t buf_len,
  * e ognuna può volere il suo nome: il limite giusto è sul totale, non sul
  * processo. 128 voci da 20 byte sono 2.5 KB; un campo per processo con lo
  * stesso margine occuperebbe quasi 200 volte tanto, quasi tutto vuoto.
+ *
+ * ! AND THE TABLE GROWS (0.356, voce 111): 128 was a ceiling written in the
+ * code, and with many users each one registers his own "uid:" names. The
+ * first 128 are static; a full table doubles with kmalloc, up to one name per
+ * 4 KB of RAM (65536 on 256 MB), so a program registering names in a loop
+ * stops there and not at the end of the kernel's memory.
  * ============================================================================= */
 typedef struct {
     uint32_t pid;                   /* 0 = voce libera */
     char     nome[IPC_NAME_LEN];
 } IpcNome;
 
-static IpcNome g_nomi[IPC_NOMI_MAX];
+#define IPC_NOMI_INIZIO 128
+static IpcNome  g_nomi_inizio[IPC_NOMI_INIZIO];
+static IpcNome *g_nomi   = g_nomi_inizio;
+static uint32_t g_nomi_n = IPC_NOMI_INIZIO;
+
+/* With interrupts ON. 1 = the table is bigger now (or changed: look again),
+ * 0 = it cannot grow. */
+static int nomi_cresci(uint32_t vecchi)
+{
+    uint32_t nuovi = vecchi * 2u, max = pmm_get_total_pages(), i;
+    IpcNome *n, *vecchia = NULL;
+    unsigned long f;
+
+    if (max < IPC_NOMI_INIZIO) max = IPC_NOMI_INIZIO;
+    if (nuovi > max) nuovi = max;
+    if (nuovi <= vecchi) return 0;
+    n = (IpcNome *)kmalloc(nuovi * (uint32_t)sizeof(IpcNome));
+    if (n == NULL) return 0;
+    f = if_salva();
+    if (g_nomi_n != vecchi) { if_ripristina(f); kfree(n); return 1; }
+    for (i = 0; i < nuovi; i++) {
+        if (i < vecchi) n[i] = g_nomi[i];
+        else            n[i].pid = 0;
+    }
+    if (g_nomi != g_nomi_inizio) vecchia = g_nomi;
+    g_nomi   = n;
+    g_nomi_n = nuovi;
+    if_ripristina(f);
+    if (vecchia != NULL) kfree(vecchia);
+    return 1;
+}
 
 static int nome_uguale(const char *a, const char *b)
 {
@@ -443,10 +581,11 @@ int32_t ipc_register(const char *name)
     while (name[len] && len < IPC_NAME_LEN - 1) len++;
     if (name[len] != '\0') return ERR(EINVAL);  /* nome troppo lungo */
 
+riprova:
     interrupts_disable();
 
     /* Rifiuta se il nome è già registrato da un processo vivo */
-    for (uint32_t i = 0; i < IPC_NOMI_MAX; i++) {
+    for (uint32_t i = 0; i < g_nomi_n; i++) {
         if (voce_viva(&g_nomi[i]) && nome_uguale(g_nomi[i].nome, name)) {
             interrupts_enable();
             return ERR(EEXIST);
@@ -494,12 +633,15 @@ int32_t ipc_register(const char *name)
 
     /* Una voce libera, o di un processo che non c'è più. */
     uint32_t i;
-    for (i = 0; i < IPC_NOMI_MAX; i++)
+    for (i = 0; i < g_nomi_n; i++)
         if (!voce_viva(&g_nomi[i])) break;
-    if (i == IPC_NOMI_MAX) {
+    if (i == g_nomi_n) {
+        uint32_t n = g_nomi_n;
+
         interrupts_enable();
+        if (nomi_cresci(n)) goto riprova;
         klog(LOG_WARN, "ipc_register('%s'): tabella dei nomi piena (%u)",
-             name, (unsigned)IPC_NOMI_MAX);
+             name, (unsigned)n);
         return ERR(ENOSPC);
     }
 
@@ -519,7 +661,7 @@ int32_t ipc_lookup(const char *name)
 
     interrupts_disable();
 
-    for (uint32_t i = 0; i < IPC_NOMI_MAX; i++) {
+    for (uint32_t i = 0; i < g_nomi_n; i++) {
         if (voce_viva(&g_nomi[i]) && nome_uguale(g_nomi[i].nome, name)) {
             uint32_t pid = g_nomi[i].pid;
             interrupts_enable();
@@ -544,17 +686,28 @@ void ipc_cleanup_process(uint32_t pid)
         }
     }
 
+    IpcMessage *cresciuta = NULL;
+
     interrupts_disable();
 
     for (uint32_t i = 0; i < g_proc_posti; i++) {
         Process *p = PROC_POSTO(i);
         if (p->pid == pid) {
             p->ipc_head = p->ipc_tail = p->ipc_count = 0;
+            /* a grown mailbox goes back to the kernel: the PCB is zeroed
+             * when the slot is taken again, and the pointer would be lost */
+            if (p->ipc_casella != NULL) {
+                cresciuta = p->ipc_casella;
+                g_ipc_extra -= posti(p) * (uint32_t)sizeof(IpcMessage);
+                p->ipc_casella = NULL;
+                p->ipc_posti   = 0;
+            }
             break;
         }
     }
-    for (uint32_t i = 0; i < IPC_NOMI_MAX; i++)
+    for (uint32_t i = 0; i < g_nomi_n; i++)
         if (g_nomi[i].pid == pid) g_nomi[i].pid = 0;
 
     interrupts_enable();
+    if (cresciuta != NULL) kfree(cresciuta);
 }

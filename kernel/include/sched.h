@@ -55,9 +55,15 @@
  * e non ha nessun data[] — vedi il commento lì.
  * ============================================================================= */
 #define IPC_MSG_MAX_DATA    1536    /* payload max — copre un frame Ethernet */
-#define IPC_MAILBOX_DEPTH   4       /* messaggi in coda per processo */
+/* ! THE MAILBOX GROWS (kernel 0.356, voce 111): the first IPC_CASELLA_INIZIO
+ * slots are in the PCB, as before, so a program that only gets answers costs
+ * nothing more. When a sender finds it full, ipc_send doubles it with kmalloc,
+ * up to `ipccoda` in kernel.cfg or 1/1024 of the RAM per mailbox, and all the
+ * grown mailboxes together stay under 1/16 of the RAM: past that the sender
+ * waits in line as it always did. The names table grows the same way
+ * (kernel/ipc/ipc.c), one name per 4 KB of RAM at most. */
+#define IPC_CASELLA_INIZIO  4       /* slots in the PCB */
 #define IPC_NAME_LEN        16      /* nome servizio, es. "tty", "floppy" */
-#define IPC_NOMI_MAX        128     /* nomi registrati in tutto il sistema */
 
 typedef struct IpcMessage {
     uint32_t sender_pid;
@@ -70,6 +76,14 @@ typedef struct IpcMessage {
      * in libc.h. */
     uint32_t tipo;                  /* significato definito dal servizio */
     uint32_t len;                   /* byte validi in data[] */
+    /* ! WHO SENT IT, STAMPED BY THE KERNEL WHEN IT WAS SENT (0.356, voce
+     * 111). Before, a driver had only the PID, and asking its uid was a
+     * second call: in between the PID could die and be given to someone
+     * else. These two are kernel-only: the user's IpcMessage (libc.h) stays
+     * the three fields it always was, SYS_IPC_RECV_CHI hands them out in an
+     * IpcChi. 0 and 0 for the kernel's IRQ notices. */
+    uint32_t sender_uid;
+    uint32_t sender_gid;
     uint8_t  data[IPC_MSG_MAX_DATA];
 } IpcMessage;
 
@@ -352,6 +366,16 @@ typedef enum {
      * `flags` says which kind (FD_SERV_*, syscall.h). Not inherited by a
      * spawn (its state is in the libc of the process). */
     FD_SERVIZIO = 11,
+
+    /* ! ONE END OF A UNIX SOCKET PAIR (0.358, voce 115): socketpair(AF_UNIX,
+     * SOCK_STREAM). Firefox with more processes talks over these, parent to
+     * child, and passes descriptors along them. An end is TWO PIPES, one for
+     * each direction: `inode` is the pipe it reads, `inode2` the one it
+     * writes, and the other end has the same two the other way round. So
+     * the waits, the end of data when the other side closes and EPIPE on a
+     * write nobody will read are those of the pipes, already proved. A
+     * kernel descriptor: inherited, dup'ed and closed like a pipe. */
+    FD_UNIX     = 12,
 } FDType;
 
 typedef struct {
@@ -359,6 +383,7 @@ typedef struct {
     uint32_t    flags;
     uint32_t    offset;         /* Posizione corrente nel file */
     uint32_t    inode;          /* Numero cluster FAT12 o ID device */
+    uint32_t    inode2;         /* FD_UNIX: the pipe this end writes into */
     void       *driver_data;    /* Dati privati del driver */
     /* ! WHO IS MOVING `offset` NOW (pid, 0 = nobody; 24 October 2026). The
      * table is the group's: every thread of a program reads and moves the
@@ -827,7 +852,9 @@ typedef struct Process {
     struct Process *prev;                   /* Precedente nella run queue */
 
     /* --- IPC: mailbox kernel-mediata --- */
-    IpcMessage      ipc_mailbox[IPC_MAILBOX_DEPTH];
+    IpcMessage      ipc_mailbox[IPC_CASELLA_INIZIO];
+    IpcMessage     *ipc_casella;            /* grown ring (kmalloc), NULL = ipc_mailbox */
+    uint32_t        ipc_posti;              /* its slots, 0 = IPC_CASELLA_INIZIO */
     uint32_t        ipc_head;               /* prossimo slot da leggere */
     uint32_t        ipc_tail;               /* prossimo slot da scrivere */
     uint32_t        ipc_count;              /* messaggi attualmente in coda */

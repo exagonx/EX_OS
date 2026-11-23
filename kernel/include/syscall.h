@@ -271,7 +271,7 @@ typedef struct {
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   275     /* la piu' alta e' SYS_SO_MAPPA = 274 */
+#define SYSCALL_COUNT   277     /* la piu' alta e' SYS_SOCKETPAIR = 276 */
 
 /* =============================================================================
  * Codici errno
@@ -405,6 +405,20 @@ typedef struct {
  * condivise.c: ebx = fd open for reading, ecx = SoEsito * (base, inizio,
  * misura, entry), edx = its path, for the log only. 0 or -errno. */
 #define SYS_SO_MAPPA       274
+
+/* (0.356, voce 111) ipc_recv with WHO sent it: ebx = IpcChi * (sender_pid,
+ * tipo, len, uid, gid: five uint32_t, 20 bytes), ecx = buf, edx = buf_len,
+ * esi = timeout ms (0 = none). The uid and gid were stamped by the kernel when
+ * the message was sent: a driver decides on them without asking anything
+ * else, so no PID reused in between can stand in for the sender. */
+#define SYS_IPC_RECV_CHI   275
+
+/* (0.358, voce 115) socketpair(AF_UNIX, SOCK_STREAM): ebx = int32_t[2], ecx =
+ * O_NONBLOCK | O_CLOEXEC (the same bits as SOCK_NONBLOCK and SOCK_CLOEXEC).
+ * Two connected ends (FD_UNIX, sched.h): what one writes the other reads,
+ * both ways. 0 or -errno (EMFILE, ENOMEM). The libc checks the domain and
+ * the type: the kernel makes only this. */
+#define SYS_SOCKETPAIR     276
 
 /* =============================================================================
  * Console virtuali (vedi kernel/arch/x86/vga.c)
@@ -1998,6 +2012,8 @@ int32_t sys_blk_espelli(InterruptFrame *f);
 int32_t sys_ipc_recv(InterruptFrame *f);
 int32_t sys_ipc_recv_tmo(InterruptFrame *f);
 int32_t sys_ipc_recv_seg(InterruptFrame *f);
+int32_t sys_ipc_recv_chi(InterruptFrame *f);
+int32_t sys_socketpair(InterruptFrame *f);
 int32_t sys_time(InterruptFrame *f);
 int32_t sys_time_set(InterruptFrame *f);
 int32_t sys_console_switch(InterruptFrame *f);

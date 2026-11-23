@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.355
+**Version:** 0.357
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -120,14 +120,14 @@ Inside EX-OS the same manuals are in `/doc/manuali` (from the CD:
 
 ## Latest changes
 
-- [Users really apart: a closed folder is closed, /tmp has the sticky bit (kernel 0.355, voce 111)](manuali/novita.md#users-really-apart-a-closed-folder-is-closed-tmp-has-the-sticky-bit-kernel-0355-voce-111--tested-in-qemu) — *tested in QEMU*
+- [At a crash the kernel writes who called: up to 48 callers from the stack (kernel 0.357)](manuali/novita.md#at-a-crash-the-kernel-writes-who-called-up-to-48-callers-from-the-stack-kernel-0357--tested-in-qemu) — *tested in QEMU*
+- [Firefox no longer closes on pages full of images: fcntl F_DUPFD_CLOEXEC copies a shared memory descriptor](manuali/novita.md#firefox-no-longer-closes-on-pages-full-of-images-fcntl-f_dupfd_cloexec-copies-a-shared-memory-descriptor--to-be-tested-on-the-test-pc) — *to be tested on the test PC*
+- [The sender of every message is stamped by the kernel; only root uses the network card (kernel 0.356, voce 111 step 4)](manuali/novita.md#the-sender-of-every-message-is-stamped-by-the-kernel-only-root-uses-the-network-card-kernel-0356-voce-111-step-4--tested-in-qemu-and-on-the-test-pc) — *tested in QEMU and on the test PC*
+- [Users really apart: a closed folder is closed, /tmp has the sticky bit (kernel 0.355, voce 111)](manuali/novita.md#users-really-apart-a-closed-folder-is-closed-tmp-has-the-sticky-bit-kernel-0355-voce-111--tested-in-qemu-and-on-the-test-pc) — *tested in QEMU and on the test PC*
 - [The third-party clones stay in MEGA and are put back by the scripts (tools/ripara-cloni.sh)](manuali/novita.md#the-third-party-clones-stay-in-mega-and-are-put-back-by-the-scripts-toolsripara-clonish--tested-on-this-pc) — *tested on this PC*
 - [The build's own trees live outside the source tree, in ~/ex_os (tools/fuori.sh)](manuali/novita.md#the-builds-own-trees-live-outside-the-source-tree-in-ex_os-toolsfuorish--tested-on-this-pc) — *tested on this PC*
 - [Firefox on /lib/ld-exos.so: AAC and H.264 play again (voce 105)](manuali/novita.md#firefox-on-libld-exosso-aac-and-h264-play-again-voce-105--tested-in-qemu) — *tested in QEMU*
 - [Two threads no longer get the same descriptor, SQLite no longer says disk I/O error (kernel 0.354)](manuali/novita.md#two-threads-no-longer-get-the-same-descriptor-sqlite-no-longer-says-disk-io-error-kernel-0354--tested-in-qemu) — *tested in QEMU*
-- [Impostazioni > Applicazioni: the program of every type of file and address (pm 0.029, exwin 0.023, voce 109)](manuali/novita.md#impostazioni--applicazioni-the-program-of-every-type-of-file-and-address-pm-0029-exwin-0023-voce-109--tested-in-qemu) — *tested in QEMU*
-- [VLC plays the video inside its window: child windows in ExWin (wserver 0.016, voce 105 step 5)](manuali/novita.md#vlc-plays-the-video-inside-its-window-child-windows-in-exwin-wserver-0016-voce-105-step-5--tested-in-qemu) — *tested in QEMU*
-- [A command line up to 32 KB, at the console and over telnet (kernel 0.353, sh 0.014, kbd.drv)](manuali/novita.md#a-command-line-up-to-32-kb-at-the-console-and-over-telnet-kernel-0353-sh-0014-kbddrv--tested-in-qemu-and-on-the-test-pc) — *tested in QEMU and on the test PC*
 
 All the others, newest first: [What's new](manuali/novita.md).
 

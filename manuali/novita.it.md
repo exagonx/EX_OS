@@ -6,7 +6,10 @@
 
 **Indice**
 
-- [Utenti separati davvero: una cartella chiusa e' chiusa, /tmp ha il bit sticky (kernel 0.355, voce 111) — testato in QEMU](#utenti-separati-davvero-una-cartella-chiusa-e-chiusa-tmp-ha-il-bit-sticky-kernel-0355-voce-111--testato-in-qemu)
+- [Quando un programma cade il kernel scrive chi l'ha chiamato: fino a 48 chiamanti dalla pila (kernel 0.357) — testato in QEMU](#quando-un-programma-cade-il-kernel-scrive-chi-lha-chiamato-fino-a-48-chiamanti-dalla-pila-kernel-0357--testato-in-qemu)
+- [Firefox non si chiude più sulle pagine piene di immagini: fcntl F_DUPFD_CLOEXEC copia un descrittore di memoria condivisa — da testare sul PC di prova](#firefox-non-si-chiude-più-sulle-pagine-piene-di-immagini-fcntl-f_dupfd_cloexec-copia-un-descrittore-di-memoria-condivisa--da-testare-sul-pc-di-prova)
+- [Il mittente di ogni messaggio timbrato dal kernel; la scheda di rete la usa solo root (kernel 0.356, voce 111 passo 4) — testato in QEMU e sul PC di prova](#il-mittente-di-ogni-messaggio-timbrato-dal-kernel-la-scheda-di-rete-la-usa-solo-root-kernel-0356-voce-111-passo-4--testato-in-qemu-e-sul-pc-di-prova)
+- [Utenti separati davvero: una cartella chiusa e' chiusa, /tmp ha il bit sticky (kernel 0.355, voce 111) — testato in QEMU e sul PC di prova](#utenti-separati-davvero-una-cartella-chiusa-e-chiusa-tmp-ha-il-bit-sticky-kernel-0355-voce-111--testato-in-qemu-e-sul-pc-di-prova)
 - [I cloni dei sorgenti di terzi restano su MEGA e li rimettono a posto gli script (tools/ripara-cloni.sh) — testato su questo PC](#i-cloni-dei-sorgenti-di-terzi-restano-su-mega-e-li-rimettono-a-posto-gli-script-toolsripara-clonish--testato-su-questo-pc)
 - [Cio' che la costruzione produce sta fuori dall'albero dei sorgenti, in ~/ex_os (tools/fuori.sh) — testato su questo PC](#cio-che-la-costruzione-produce-sta-fuori-dallalbero-dei-sorgenti-in-ex_os-toolsfuorish--testato-su-questo-pc)
 - [Firefox su /lib/ld-exos.so: AAC e H.264 suonano di nuovo (voce 105) — testato in QEMU](#firefox-su-libld-exosso-aac-e-h264-suonano-di-nuovo-voce-105--testato-in-qemu)
@@ -244,7 +247,57 @@ Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
 
-### Utenti separati davvero: una cartella chiusa e' chiusa, /tmp ha il bit sticky (kernel 0.355, voce 111) — testato in QEMU
+### Quando un programma cade il kernel scrive chi l'ha chiamato: fino a 48 chiamanti dalla pila (kernel 0.357) — testato in QEMU
+
+- **Perche'**: Firefox sul PC di prova cadeva con un page fault a 0x28, e il kernel dava un solo
+  chiamante dalla pila: i suoi frame sono grandi, meta' delle parole trovate erano costanti dello
+  stesso segmento, e la riga si fermava a 120 caratteri dopo nove valori.
+- **Kernel 0.357**: fino a 48 valori in 64 KB di pila, quelli che puntano nei segmenti del
+  programma (indirizzi di codice, mai dati), su righe che stanno nel registro, gli indirizzi interi
+  a 64 bit. `addr2line -f -e <programma> <indirizzi>` li trasforma nella catena delle chiamate.
+- Testato: `tools/prove/pilaprova.c` cade dopo cinque chiamate con frame da 6 KB; il passo 8 di
+  `tools/prova_permessi.sh` ritrova i quattro chiamanti e main, a 32 e 64 bit.
+
+### Firefox non si chiude più sulle pagine piene di immagini: fcntl F_DUPFD_CLOEXEC copia un descrittore di memoria condivisa — da testare sul PC di prova
+
+- **Sul PC di prova Firefox si chiudeva da solo su unsplash.com**. L'ultima riga: `IPDL protocol
+  error: Shared memory PlatformHandle is not safe to map`. Gecko controlla con `fstat` che una
+  memoria condivisa sia lunga quanto dice, e non lo era.
+- **La causa, misurata sul PC di prova**: Gecko copia un descrittore con `fcntl(fd,
+  F_DUPFD_CLOEXEC, 0)`. Per un descrittore di `shm_open` la libc faceva la copia solo con
+  `F_DUPFD`, e a ogni altro comando rispondeva 0, "va bene": la "copia" era il descrittore 0,
+  l'ingresso standard. Il suo `fstat` dava la misura sbagliata, e chiudere la copia chiudeva
+  l'ingresso standard. `tools/prove/shmfili.c`, che ora copia meta' dei descrittori allo stesso
+  modo: `la copia di 3 e' 0`, 20 su 20.
+- **La correzione**: `F_DUPFD_CLOEXEC` su una zona e' una copia vera, come `F_DUPFD`.
+- **Trovato per strada, non era la causa**: la tabella delle zone di `shm_open` della libc non
+  aveva lucchetto. Quando cresceva mentre altri fili la usavano, un descrittore poteva finire
+  sulla zona di un altro filo (`fstat dice 53248, chiesti 57344` con 8 fili che tengono 64 zone
+  ciascuno). Ora ogni funzione di quei descrittori sta sotto un lucchetto; la tabella cresce fuori.
+- Testato: `shmfili` in QEMU a 32 e 64 bit su 4 processori (passo 7 di `tools/prova_permessi.sh`).
+  Firefox su unsplash.com sul PC di prova: da fare.
+
+### Il mittente di ogni messaggio timbrato dal kernel; la scheda di rete la usa solo root (kernel 0.356, voce 111 passo 4) — testato in QEMU e sul PC di prova
+
+- **Misurato prima sul PC di prova** (`tools/prove/reteprova.c`, kernel 0.355, come uid 1000):
+  un utente normale mandava un frame grezzo sul cavo (INVIA) e si prendeva il frame successivo di
+  un altro (RICEVI). REFERTO faceva scrivere al driver, che è root, un file dove diceva la richiesta.
+- **Kernel 0.356**: ogni messaggio porta uid e gid di chi lo manda, timbrati in `ipc_send`;
+  `ipc_recv_chi` (SYS_IPC_RECV_CHI, 275) li dà con l'intestazione. `IpcMessage` non cambia. Non si
+  chiede più l'uid di un PID dopo, quando può essere già di un altro.
+- **I driver delle schede** (e1000, ne2k, pcnet, rtl8169, sis900, nforce, ar5k, wifisim) prendono
+  INVIA, RICEVI, ANNULLA e REFERTO solo da root (-EPERM); INFO e i contatori restano aperti, come
+  `/sys` su Linux. **ip.drv**: l'indirizzo e la scheda (IP_MSG_CONFIG, IP_MSG_LINK) solo da root:
+  dhcp, ipcfg e wifid. **pci.drv**: accendere o spegnere un dispositivo solo da root.
+- **Niente tetti fissi nell'IPC**: una casella cresce oltre i suoi 4 posti quando un mittente la
+  trova piena, fino a `ipccoda` in `kernel.cfg` o 1/1024 della RAM, tutte insieme sotto 1/16; la
+  tabella dei nomi cresce oltre 128, fino a un nome ogni 4 KB di RAM.
+- Testato: `tools/prova_permessi.sh` 11 su 11 a 32 bit (ne2k) e 64 bit (e1000): la scheda come uid
+  1000 con 0 falle, root scarica ancora dall'host, il timbro, 60 mittenti che non aspettano più,
+  200 nomi di un utente. Sul PC di prova a 0.356: reteprova 0 falle su 8 (2 con la 0.355),
+  codaprova 4 su 4.
+
+### Utenti separati davvero: una cartella chiusa e' chiusa, /tmp ha il bit sticky (kernel 0.355, voce 111) — testato in QEMU e sul PC di prova
 
 - **Misurato prima sul PC di prova** (`tools/prove/permprova.c`, da root sceso a uid 1000): dentro
   `/root/privata` 0700 un utente normale elencava, faceva stat, leggeva un file 0644 e ci entrava

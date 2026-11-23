@@ -279,6 +279,8 @@ void syscall_init(void)
     syscall_table[SYS_IPC_RECV_TMO] = sys_ipc_recv_tmo;
     syscall_table[SYS_IPC_RECV_SEG]   = sys_ipc_recv_seg;   /* voce 37 */
     syscall_table[SYS_IPC_RECV_SEG_R] = sys_ipc_recv_seg;
+    syscall_table[SYS_IPC_RECV_CHI]   = sys_ipc_recv_chi;   /* voce 111 */
+    syscall_table[SYS_SOCKETPAIR]     = sys_socketpair;     /* voce 115 */
     syscall_table[SYS_TIME]         = sys_time;
     syscall_table[SYS_TIME_SET]     = sys_time_set;
     syscall_table[SYS_CONSOLE_SWITCH] = sys_console_switch;

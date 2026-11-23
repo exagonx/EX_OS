@@ -56,6 +56,51 @@
 #include "net_proto.h"
 #include "ip_proto.h"
 
+/* =============================================================================
+ * ! ONLY ROOT CONFIGURES THE NETWORK (ip.drv, kernel 0.356, voce 111)
+ *
+ * IP_MSG_CONFIG (address, mask, gateway, DNS) and IP_MSG_LINK (which card)
+ * were taken from any process: an ordinary user moved the whole machine to
+ * another address or another card. Their senders are dhcp, ipcfg and wifid,
+ * all root, as on Linux (ip addr needs CAP_NET_ADMIN). The uid is the one the
+ * kernel stamped at ipc_send (ipc_recv_chi); a refused request gets
+ * IP_MSG_ESITO -EPERM and the wait goes on for its remaining time. Sockets
+ * stay open to everybody, each connection to its owner (tcp_da_id).
+ * ============================================================================= */
+#define IP_SOLO_ROOT(t) ((t) == IP_MSG_CONFIG || (t) == IP_MSG_LINK)
+
+static int ip_ricevi(IpcMessage *meta, void *buf, unsigned int len, unsigned int ms)
+{
+    unsigned int inizio = uptime_ms();
+
+    for (;;) {
+        IpcChi       c;
+        unsigned int resto = ms;
+        int          r;
+
+        if (ms != 0) {
+            unsigned int passati = uptime_ms() - inizio;
+
+            if (passati >= ms) return -ETIMEDOUT;
+            resto = ms - passati;
+        }
+        r = ipc_recv_chi(&c, buf, len, resto);
+        if (r < 0) return r;
+        if (meta) {
+            meta->sender_pid = c.sender_pid;
+            meta->tipo       = c.tipo;
+            meta->len        = c.len;
+        }
+        if (c.uid == 0 || !IP_SOLO_ROOT(c.tipo)) return r;
+        {
+            int no = -EPERM;    /* IpEsito: one int, codice */
+
+            ipc_send(c.sender_pid, IP_MSG_ESITO, &no, sizeof(no));
+        }
+    }
+}
+#define ipc_recv_timeout(m, b, l, t) ip_ricevi((m), (b), (l), (t))
+
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
 EX_VERSIONE("ip.drv", "0.027");

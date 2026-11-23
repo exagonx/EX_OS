@@ -285,6 +285,7 @@ typedef char stat_56_byte[sizeof(Stat) == 56 ? 1 : -1];
 #define SYS_MMAP        90
 #define SYS_MUNMAP      91
 #define SYS_SO_MAPPA   274   /* a shared object from the kernel's cache (0.351) */
+#define SYS_IPC_RECV_CHI 275 /* ipc_recv with the sender's uid/gid (0.356) */
 #define SYS_SBRK        45
 #define SYS_SCHED_YIELD 158
 #define SYS_SLEEP       162
@@ -909,6 +910,17 @@ typedef struct {
     unsigned int  tipo;      /* si chiama cosi' anche in libc.h: vedi li' */
     unsigned int  len;
 } IpcMessage;
+
+/* the header with the sender's uid/gid (SYS_IPC_RECV_CHI, 0.356): identical
+ * to lib/include/libc.h, where the reason is */
+typedef struct {
+    unsigned int  sender_pid;
+    unsigned int  tipo;
+    unsigned int  len;
+    unsigned int  uid;
+    unsigned int  gid;
+} IpcChi;
+#define IPC_CHI_IGNOTO  0xFFFFFFFFu
 
 /* Il filtro di ipc_scegli, e le tre risposte che puo' dare. Deve restare
  * identico a lib/include/libc.h, dove sta anche il perche'. */
@@ -5320,8 +5332,14 @@ int fcntl(int fd, int cmd, ...)
     /* Una zona di shm_open: F_DUPFD e' dup, il resto (close-on-exec, flag)
      * non ha niente da cambiare — EX-OS non ha exec che erediti descrittori
      * di memoria condivisa — e si risponde che va bene. */
+    /* ! F_DUPFD_CLOEXEC IS A COPY TOO (23/11/2026, voce 113). Only F_DUPFD
+     * was one here, and every other command got 0 "fine": Gecko clones a
+     * handle with fcntl(fd, F_DUPFD_CLOEXEC, 0) and took that 0 as the copy.
+     * fstat of stdin said the wrong size and Firefox closed itself ("Shared
+     * memory PlatformHandle is not safe to map"), and closing the "copy"
+     * closed stdin. Measured on the test PC with tools/prove/shmfili.c. */
     if (E_SHMFD(fd)) {
-        if (cmd == 0 /* F_DUPFD */) return dup(fd);
+        if (cmd == 0 /* F_DUPFD */ || cmd == 1030 /* F_DUPFD_CLOEXEC */) return dup(fd);
         if (!g_shm_dup || SHMFD_ZONA(fd) == 0) { errno = EBADF; return -1; }
         return (cmd == 3 /* F_GETFL */) ? 2 /* O_RDWR */ : 0;
     }
@@ -9700,6 +9718,28 @@ int ipc_recv_timeout(IpcMessage *out_meta, void *buf, unsigned int buf_len,
                            (uintptr_t)buf, buf_len, timeout_ms);
 }
 
+/* The shelf has no stamps: whatever is there comes as IPC_CHI_IGNOTO, which
+ * is not root (libc.h). */
+int ipc_recv_chi(IpcChi *out, void *buf, unsigned int buf_len,
+                 unsigned int timeout_ms)
+{
+    IpcMessage m;
+    int        r = scaffale_prendi(&m, buf, buf_len);
+
+    if (r >= 0) {
+        if (out) {
+            out->sender_pid = m.sender_pid;
+            out->tipo       = m.tipo;
+            out->len        = m.len;
+            out->uid        = IPC_CHI_IGNOTO;
+            out->gid        = IPC_CHI_IGNOTO;
+        }
+        return r;
+    }
+    return (int)_syscall4(SYS_IPC_RECV_CHI, (uintptr_t)out,
+                           (uintptr_t)buf, buf_len, timeout_ms);
+}
+
 /* =============================================================================
  * ipc_scegli — aspetta il PROPRIO messaggio senza toccare quelli degli altri
  *
@@ -11285,27 +11325,61 @@ typedef struct {
 static ShmZonaP **g_shmzona;
 static int        g_shm_n;
 
-/* a free zone's index, the table grown if needed; -1 = no memory */
+/* ! THE TABLE HAS A LOCK (23 November 2026). Firefox closed on unsplash.com
+ * with "IPDL protocol error: Shared memory PlatformHandle is not safe to
+ * map": fstat said fewer bytes than the zone had. Nothing here was locked,
+ * and Firefox opens zones from many threads: two threads growing the table
+ * together each built a new one, the second overwrote the first, and a
+ * descriptor handed out by the first pointed at a zone of somebody else
+ * (tools/prove/shmfili.c: "fstat dice 53248, chiesti 57344" on the .253).
+ * The counters descrittori and mappe were lost the same way. Every function
+ * of these descriptors runs under g_shm_m; the table grows OUTSIDE it,
+ * because malloc and free may call munmap, which takes it too. */
+static volatile int g_shm_m;
+
+/* a free zone's index, already taken (usato = 1), the table grown if needed;
+ * -1 = no memory. Called WITHOUT the lock, returns without it. */
 static int shm_posto(void)
 {
-    ShmZonaP **t;
-    int        i, n;
+    ShmZonaP **t, **vecchia;
+    int        i, n, n0;
 
-    for (i = 0; i < g_shm_n; i++) if (!g_shmzona[i]->usato) return i;
-    n = g_shm_n ? g_shm_n * 2 : 64;
-    t = (ShmZonaP **)malloc((size_t)n * sizeof(*t));
-    if (t == NULL) return -1;
-    for (i = 0; i < n; i++) {
-        if (i < g_shm_n) { t[i] = g_shmzona[i]; continue; }
-        t[i] = (ShmZonaP *)calloc(1, sizeof(ShmZonaP));
-        if (t[i] == NULL) { while (--i >= g_shm_n) free(t[i]); free(t); return -1; }
-        t[i]->indice = i;
+    for (;;) {
+        mutex_prendi(&g_shm_m);
+        for (i = 0; i < g_shm_n; i++)
+            if (!g_shmzona[i]->usato) {
+                g_shmzona[i]->usato = 1;
+                mutex_lascia(&g_shm_m);
+                return i;
+            }
+        n0 = g_shm_n;
+        mutex_lascia(&g_shm_m);
+
+        n = n0 ? n0 * 2 : 64;
+        t = (ShmZonaP **)malloc((size_t)n * sizeof(*t));
+        if (t == NULL) return -1;
+        for (i = n0; i < n; i++) {
+            t[i] = (ShmZonaP *)calloc(1, sizeof(ShmZonaP));
+            if (t[i] == NULL) { while (--i >= n0) free(t[i]); free(t); return -1; }
+            t[i]->indice = i;
+        }
+
+        mutex_prendi(&g_shm_m);
+        if (g_shm_n != n0) {            /* another thread grew it first */
+            mutex_lascia(&g_shm_m);
+            for (i = n0; i < n; i++) free(t[i]);
+            free(t);
+            continue;
+        }
+        for (i = 0; i < n0; i++) t[i] = g_shmzona[i];
+        vecchia   = g_shmzona;
+        g_shmzona = t;
+        g_shm_n   = n;
+        g_shmzona[n0]->usato = 1;
+        mutex_lascia(&g_shm_m);
+        free(vecchia);
+        return n0;
     }
-    free(g_shmzona);
-    g_shmzona = t;
-    i = g_shm_n;
-    g_shm_n = n;
-    return i;
 }
 #ifndef SHM_ANON
 #define SHM_ANON  ((char *)1)       /* come in <sys/mman.h> */
@@ -11399,32 +11473,50 @@ int shm_open(const char *nome, int flag, mode_t modo)
      * ftruncate, come per le altre. */
     if (nome == SHM_ANON) {
         if ((i = shm_posto()) < 0) { shmfd_finite(); errno = ENOMEM; return -1; }
+        mutex_prendi(&g_shm_m);
         memset(g_shmzona[i], 0, sizeof(ShmZonaP)); g_shmzona[i]->indice = i;
         g_shmzona[i]->usato   = 1;
         g_shmzona[i]->privata = 1;
         fd = shmfd_nuovo(i);
         if (fd < 0) { memset(g_shmzona[i], 0, sizeof(ShmZonaP)); g_shmzona[i]->indice = i; }
+        mutex_lascia(&g_shm_m);
         return fd;
     }
     shmfd_nome(nome, k);
 
     /* Gia' aperta da questo processo: un altro descrittore sulla stessa
      * (O_CREAT | O_EXCL: c'e' gia', EEXIST). */
+    mutex_prendi(&g_shm_m);
     for (i = 0; i < g_shm_n; i++)
         if (g_shmzona[i]->usato && strcmp(g_shmzona[i]->nome, k) == 0) {
-            if ((flag & (O_CREAT | 0x80)) == (O_CREAT | 0x80)) { errno = EEXIST; return -1; }
-            return shmfd_nuovo(i);
+            if ((flag & (O_CREAT | 0x80)) == (O_CREAT | 0x80)) {
+                mutex_lascia(&g_shm_m);
+                errno = EEXIST;
+                return -1;
+            }
+            fd = shmfd_nuovo(i);
+            mutex_lascia(&g_shm_m);
+            return fd;
         }
+    mutex_lascia(&g_shm_m);
 
     if ((i = shm_posto()) < 0) { shmfd_finite(); errno = ENOMEM; return -1; }
+    mutex_prendi(&g_shm_m);
     z = g_shmzona[i];
 
     memset(&q, 0, sizeof(q));
     strcpy(q.nome, k);
     r = shm_apri(&q);                 /* attach, if it is there */
-    if (r < 0 && (r != -ENOENT || !(flag & O_CREAT))) { errno = -r; return -1; }
+    if (r < 0 && (r != -ENOENT || !(flag & O_CREAT))) {
+        z->usato = 0;
+        mutex_lascia(&g_shm_m);
+        errno = -r;
+        return -1;
+    }
     if (r >= 0 && (flag & (O_CREAT | 0x80)) == (O_CREAT | 0x80)) {
         if (q.virt) shm_chiudi((void *)(uintptr_t)q.virt);   /* there already: not ours */
+        z->usato = 0;
+        mutex_lascia(&g_shm_m);
         errno = EEXIST;
         return -1;
     }
@@ -11436,6 +11528,7 @@ int shm_open(const char *nome, int flag, mode_t modo)
     if (r == 0) { z->byte = q.byte; z->virt = q.virt; }
     fd = shmfd_nuovo(i);
     if (fd < 0) shmfd_forse_libera(z);
+    mutex_lascia(&g_shm_m);
     return fd;
 }
 
@@ -11445,7 +11538,22 @@ int shm_unlink(const char *nome)
     return 0;
 }
 
+static int ftruncate_zona(int fd, off_t lung);
+
 int ftruncate(int fd, off_t lung)
+{
+    int r;
+
+    if (E_SHMFD(fd) && g_shm_fstat) {   /* a zone: under the table's lock */
+        mutex_prendi(&g_shm_m);
+        r = ftruncate_zona(fd, lung);
+        mutex_lascia(&g_shm_m);
+        return r;
+    }
+    return ftruncate_zona(fd, lung);
+}
+
+static int ftruncate_zona(int fd, off_t lung)
 {
     ShmZonaP *z = shmfd_zona(fd);
     ShmZona   q;
@@ -11487,49 +11595,66 @@ int ftruncate(int fd, off_t lung)
 
 static int shmfd_chiudi(int fd)
 {
-    ShmZonaP *z = shmfd_zona(fd);
+    ShmZonaP *z;
 
-    if (z == NULL) { errno = EBADF; return -1; }
+    mutex_prendi(&g_shm_m);
+    z = shmfd_zona(fd);
+    if (z == NULL) { mutex_lascia(&g_shm_m); errno = EBADF; return -1; }
     fdl_lascia(fd);
     z->descrittori--;
     shmfd_forse_libera(z);
+    mutex_lascia(&g_shm_m);
     return 0;
 }
 
 static int shmfd_dup(int fd)
 {
-    ShmZonaP *z = shmfd_zona(fd);
+    ShmZonaP *z;
+    int       r;
 
-    if (z == NULL) { errno = EBADF; return -1; }
-    return shmfd_nuovo(z->indice);
+    mutex_prendi(&g_shm_m);
+    z = shmfd_zona(fd);
+    if (z == NULL) { mutex_lascia(&g_shm_m); errno = EBADF; return -1; }
+    r = shmfd_nuovo(z->indice);
+    mutex_lascia(&g_shm_m);
+    return r;
 }
 
 static int shmfd_fstat(int fd, struct stat *st)
 {
-    ShmZonaP *z = shmfd_zona(fd);
+    ShmZonaP *z;
 
-    if (z == NULL) { errno = EBADF; return -1; }
+    mutex_prendi(&g_shm_m);
+    z = shmfd_zona(fd);
+    if (z == NULL) { mutex_lascia(&g_shm_m); errno = EBADF; return -1; }
     memset(st, 0, sizeof(*st));
     st->st_mode    = S_IFREG | 0600u;
     st->st_nlink   = 1;
     st->st_size    = z->byte;
     st->st_blksize = 4096;
+    mutex_lascia(&g_shm_m);
     return 0;
 }
 
 static long shmfd_mmap(size_t lung, int fd, long off)
 {
-    ShmZonaP *z = shmfd_zona(fd);
+    ShmZonaP *z;
+    long      v;
 
-    if (z == NULL) { errno = EBADF; return -1; }
-    if (!z->virt) { errno = ENXIO; return -1; }     /* no ftruncate yet */
+    mutex_prendi(&g_shm_m);
+    z = shmfd_zona(fd);
+    if (z == NULL) { mutex_lascia(&g_shm_m); errno = EBADF; return -1; }
+    if (!z->virt) { mutex_lascia(&g_shm_m); errno = ENXIO; return -1; }  /* no ftruncate yet */
     if (off < 0 || (off & 4095) ||
         (unsigned long)off + lung > ((z->byte + 4095u) & ~4095u)) {
+        mutex_lascia(&g_shm_m);
         errno = ENXIO;
         return -1;
     }
     z->mappe++;
-    return (long)(z->virt + (unsigned int)off);
+    v = (long)(z->virt + (unsigned int)off);
+    mutex_lascia(&g_shm_m);
+    return v;
 }
 
 /* 1: not a zone, go on with SYS_MUNMAP. 0: done. */
@@ -11538,6 +11663,7 @@ static int shmfd_munmap(void *addr)
     unsigned int a = (unsigned int)(uintptr_t)addr;
     int i;
 
+    mutex_prendi(&g_shm_m);
     for (i = 0; i < g_shm_n; i++) {
         ShmZonaP *z = g_shmzona[i];
 
@@ -11545,8 +11671,10 @@ static int shmfd_munmap(void *addr)
         if (a < z->virt || a >= z->virt + z->byte) continue;
         z->mappe--;
         shmfd_forse_libera(z);
+        mutex_lascia(&g_shm_m);
         return 0;
     }
+    mutex_lascia(&g_shm_m);
     return 1;
 }
 

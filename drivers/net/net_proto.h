@@ -157,4 +157,55 @@ typedef struct {
     int codice;
 } NetEsito;
 
+/* =============================================================================
+ * ! ONLY ROOT USES THE WIRE (kernel 0.356, voce 111)
+ *
+ * Until 0.355 a card driver took NET_MSG_RICEVI and NET_MSG_INVIA from ANY
+ * process: an ordinary user asking RICEVI became the reader of the card - the
+ * frames of everybody, and ip.drv left without - and with INVIA sent forged
+ * frames. NET_MSG_REFERTO was worse: the driver, which is root, writes a file
+ * where the request says. INFO and CONTATORI stay open, like /sys on Linux.
+ *
+ * Every receive of a card driver goes through net_ricevi (the file defines
+ * ipc_recv_timeout as it, right after including this header, so the loops
+ * waiting for pci.drv are covered too): a refused request gets NET_MSG_ESITO
+ * -EPERM, without waiting, and the wait goes on for its remaining time. The
+ * uid is the one the kernel stamped at ipc_send (ipc_recv_chi), never asked
+ * afterwards for a PID that may belong to someone else by then.
+ * ============================================================================= */
+#define NET_SOLO_ROOT(t) ((t) == NET_MSG_INVIA || (t) == NET_MSG_RICEVI || \
+                          (t) == NET_MSG_ANNULLA || (t) == NET_MSG_REFERTO)
+
+#if defined(IPC_CHI_IGNOTO)     /* lib/include/libc.h came first */
+static inline int net_ricevi(IpcMessage *meta, void *buf, unsigned int len,
+                             unsigned int ms)
+{
+    unsigned int inizio = uptime_ms();
+
+    for (;;) {
+        IpcChi       c;
+        NetEsito     e;
+        unsigned int resto = ms;
+        int          r;
+
+        if (ms != 0) {
+            unsigned int passati = uptime_ms() - inizio;
+
+            if (passati >= ms) return -ETIMEDOUT;
+            resto = ms - passati;
+        }
+        r = ipc_recv_chi(&c, buf, len, resto);
+        if (r < 0) return r;
+        if (meta) {
+            meta->sender_pid = c.sender_pid;
+            meta->tipo       = c.tipo;
+            meta->len        = c.len;
+        }
+        if (c.uid == 0 || !NET_SOLO_ROOT(c.tipo)) return r;
+        e.codice = -EPERM;
+        ipc_send(c.sender_pid, NET_MSG_ESITO | IPC_SENZA_ATTESA, &e, sizeof(e));
+    }
+}
+#endif
+
 #endif /* NET_PROTO_H */
