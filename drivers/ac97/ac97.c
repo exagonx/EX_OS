@@ -66,7 +66,7 @@
 #include "pci_proto.h"
 
 /* +0.001 a ogni modifica: `ac97.drv -version` la stampa. */
-EX_VERSIONE("ac97.drv", "0.004");
+EX_VERSIONE("ac97.drv", "0.005");
 
 /* =============================================================================
  * BAR0 — i registri del codec (spiazzamenti standard AC'97)

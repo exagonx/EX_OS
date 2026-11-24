@@ -60,6 +60,7 @@
 #include "power.h"      /* guardia_controlla */
 #include "isr.h"        /* the edge lines, for the lock's wait (0.324) */
 #include "kmalloc.h"    /* the list and the per-processor tables, as long as needed (0.319) */
+#include "tsc.h"        /* how long the lock was held (0.360) */
 
 /* ! UGUALE A SMP_TRAMP_BASE di smp_tramp.asm. E' la pagina 0x8000-0x8FFF, che
  * pmm_init tiene fuori dal giro perche' ci ha lavorato Stage 2: qui la si
@@ -573,6 +574,24 @@ static void bkl_aspetta_aperto(uint32_t mio)
     if (g_apic) apic_scrivi(APIC_PRIORITA, priorita);
 }
 
+/* ! WHO HOLDS THE LOCK LONG IS WRITTEN DOWN (kernel 0.360, voce 117): while
+ * Firefox started, every other program stood still 0.4 s with ticks still
+ * coming, i.e. one processor kept the kernel. The TSC when it was taken; at
+ * release, over BKL_TROPPO_MS, the longest so far is kept, and the clock's
+ * interrupt says it (bkl_dici_lungo, from sched.c: klog is not for here,
+ * interrupts off and the lock half given). */
+#define BKL_TROPPO_MS 100u
+static uint64_t          g_bkl_dal;
+static volatile uint32_t g_bkl_lungo_ms, g_bkl_lungo_pid, g_bkl_da_dire, g_bkl_lungo_cpu, g_bkl_lungo_sc;
+
+void bkl_dici_lungo(void)
+{
+    if (!g_bkl_da_dire) return;
+    g_bkl_da_dire = 0;
+    klog(LOG_WARN, "SMP: lucchetto del kernel tenuto %u ms dal processore %u (PID %u all'uscita, "
+         "ultima chiamata 0x%x)", g_bkl_lungo_ms, g_bkl_lungo_cpu, g_bkl_lungo_pid, g_bkl_lungo_sc);
+}
+
 void bkl_entra(void)
 {
     uintptr_t eflags;
@@ -598,6 +617,7 @@ void bkl_entra(void)
             guardia_controlla();    /* a kernel stuck on this lock stops the timer */
         }
         g_bkl_tiene[n] = 1;
+        if (tsc_c_e()) g_bkl_dal = tsc_leggi();
         irq_fronti_rimandati();     /* edges taken during the wait (0.324) */
     }
     if (eflags & 0x200u) __asm__ volatile ("sti");
@@ -612,6 +632,19 @@ void bkl_lascia(void)
     __asm__ volatile ("pushf; pop %0; cli" : "=r"(eflags));
     n = cpu_n();
     if (g_bkl_tiene[n]) {
+        if (g_bkl_dal && tsc_c_e()) {
+            uint32_t ms = tsc_ms(tsc_leggi() - g_bkl_dal);
+
+            if (ms > BKL_TROPPO_MS && ms > g_bkl_lungo_ms) {
+                Process *p = proc_get_current();
+
+                g_bkl_lungo_ms  = ms;
+                g_bkl_lungo_cpu = n;
+                g_bkl_lungo_pid = p != NULL ? p->pid : 0u;
+                g_bkl_lungo_sc  = p != NULL ? p->sc_ultima : 0u;
+                g_bkl_da_dire   = 1;
+            }
+        }
         g_bkl_tiene[n] = 0;
         g_bkl_turno++;                  /* lo scrive solo chi ce l'ha */
     }

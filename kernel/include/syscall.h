@@ -271,7 +271,7 @@ typedef struct {
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   277     /* la piu' alta e' SYS_SOCKETPAIR = 276 */
+#define SYSCALL_COUNT   282     /* la piu' alta e' SYS_CONSOLE_UTENTE = 281 */
 
 /* =============================================================================
  * Codici errno
@@ -291,6 +291,8 @@ typedef struct {
 #define EMFILE      24
 #define ENOSPC      28
 #define EPIPE       32
+#define ENOTSOCK    88      /* not a socket (0.358, unix pairs) */
+#define EOPNOTSUPP  95
 #define ENOSYS      38
 #define ESRCH       3       /* processo destinatario non esiste */
 #define ENOTDIR     20      /* atteso una directory, trovato altro */
@@ -419,6 +421,58 @@ typedef struct {
  * both ways. 0 or -errno (EMFILE, ENOMEM). The libc checks the domain and
  * the type: the kernel makes only this. */
 #define SYS_SOCKETPAIR     276
+
+/* (0.358, voce 115) send and recv on an end of a unix pair: ebx = fd, ecx =
+ * UnixMsg *. The bytes as write/read, but UNIX_NONBLOCCA asks this call not to
+ * wait even on a blocking descriptor (MSG_DONTWAIT: Gecko's IPC sends and
+ * receives so). `fds`/`nfds` are the descriptors that travel with the bytes
+ * (SCM_RIGHTS); `presi` says how many arrived. Returns the bytes, or -errno:
+ * ENOTSOCK on a descriptor that is not FD_UNIX. The same layout on 32 and 64
+ * bit: the pointers are 64-bit numbers. */
+#define SYS_UNIX_MANDA     277
+#define SYS_UNIX_RICEVI    278
+#define UNIX_NONBLOCCA     0x1      /* MSG_DONTWAIT */
+#define UNIX_CLOEXEC       0x2      /* MSG_CMSG_CLOEXEC: what arrives has it */
+#define UNIX_TRONCATI      0x100    /* RICEVI: more arrived than fds had room
+                                     * for, the rest closed (MSG_CTRUNC) */
+#define UNIX_FDS_MAX       253      /* SCM_MAX_FD of Linux */
+
+/* (0.358, voce 115) a descriptor of memory, empty (FD_SHM, shmfd.h): ebx =
+ * O_CLOEXEC or 0. The size comes with ftruncate, the memory with mmap(fd)
+ * MAP_SHARED, in this process or in any that has received the descriptor.
+ * fstat says st_size and STAT_ATTR_SHM in st_attr, which tells the libc that
+ * mmap of it goes to the kernel (a file it maps by copying). Returns the fd,
+ * or -errno. */
+#define SYS_SHMFD_CREA     279
+/* (0.359, voce 111 step 4b) WHO MAY WRITE TO MY MAILBOX: ebx = IPC_FILTRO_*.
+ * The kernel refuses the others at ipc_send with -EPERM, whatever the type,
+ * so no driver has to answer each protocol's refusal by itself:
+ *   IPC_FILTRO_CONSOLE  root and the users logged in at a physical console
+ *                       (keyboard, mouse, audio, screen: the user's choice of
+ *                       23/11/2026, as logind does on Linux);
+ *   IPC_FILTRO_MIO      root and my own uid (wserver: the desktop is of who
+ *                       started it).
+ * The mailbox owner sets it for itself, nobody else; exec puts it back to 0. */
+#define SYS_IPC_FILTRO     280
+#define IPC_FILTRO_APERTO  0
+#define IPC_FILTRO_CONSOLE 1
+#define IPC_FILTRO_MIO     2
+/* (0.359) who sits at a console: ebx = 0 asks (ecx = console, returns its uid
+ * or -1 if nobody logged in there), 1 sets the caller's console to uid ecx,
+ * 2 empties it. Setting and emptying are root's: login does it after the
+ * password, and empties it when the shell is gone. On a pty login does not
+ * call it: a session from the network does not sit at the machine. */
+#define SYS_CONSOLE_UTENTE 281
+#define CONSOLE_NESSUNO    0xFFFFFFFFu
+#define STAT_ATTR_SHM      0x80
+typedef struct {
+    uint64_t buf;
+    uint32_t lung;
+    uint32_t flags;                 /* UNIX_* */
+    uint64_t fds;                   /* int32_t[nfds] */
+    uint32_t nfds;
+    uint32_t presi;                 /* RICEVI: how many were written to fds */
+} UnixMsg;
 
 /* =============================================================================
  * Console virtuali (vedi kernel/arch/x86/vga.c)
@@ -976,6 +1030,8 @@ typedef struct {
  * di scegliere — ed e' cosi' che la grafica gira senza privilegi.
  * ========================================================================== */
 #define SYS_FB_MAP        249
+/* ! From 0.359 only root and the users logged in at a console (see
+ * SYS_CONSOLE_UTENTE): -EPERM to the others. */
 
 /* -----------------------------------------------------------------------------
  * SYS_INTERROMPI (250) — «smettila», detto da fuori
@@ -2013,7 +2069,12 @@ int32_t sys_ipc_recv(InterruptFrame *f);
 int32_t sys_ipc_recv_tmo(InterruptFrame *f);
 int32_t sys_ipc_recv_seg(InterruptFrame *f);
 int32_t sys_ipc_recv_chi(InterruptFrame *f);
+int32_t sys_ipc_filtro(InterruptFrame *f);
+int32_t sys_console_utente(InterruptFrame *f);
 int32_t sys_socketpair(InterruptFrame *f);
+int32_t sys_unix_manda(InterruptFrame *f);
+int32_t sys_unix_ricevi(InterruptFrame *f);
+int32_t sys_shmfd_crea(InterruptFrame *f);
 int32_t sys_time(InterruptFrame *f);
 int32_t sys_time_set(InterruptFrame *f);
 int32_t sys_console_switch(InterruptFrame *f);

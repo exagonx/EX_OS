@@ -56,6 +56,7 @@ void syscall_handler(InterruptFrame *frame)
      * picks the wait a signal cuts by it), and with the bit on they took
      * the one nothing cuts */
     FR_NUM(frame) = num;
+    if (proc_get_current() != NULL) proc_get_current()->sc_ultima = num;
     if (num >= SYSCALL_COUNT || syscall_table[num] == NULL) {
         klog(LOG_WARN, "SYSCALL: %u non implementata (PID %u)",
              num, proc_get_current() ? proc_get_current()->pid : 0);
@@ -280,7 +281,12 @@ void syscall_init(void)
     syscall_table[SYS_IPC_RECV_SEG]   = sys_ipc_recv_seg;   /* voce 37 */
     syscall_table[SYS_IPC_RECV_SEG_R] = sys_ipc_recv_seg;
     syscall_table[SYS_IPC_RECV_CHI]   = sys_ipc_recv_chi;   /* voce 111 */
+    syscall_table[SYS_IPC_FILTRO]     = sys_ipc_filtro;     /* voce 111, 4b */
+    syscall_table[SYS_CONSOLE_UTENTE] = sys_console_utente; /* voce 111, 4b */
     syscall_table[SYS_SOCKETPAIR]     = sys_socketpair;     /* voce 115 */
+    syscall_table[SYS_UNIX_MANDA]     = sys_unix_manda;
+    syscall_table[SYS_UNIX_RICEVI]    = sys_unix_ricevi;
+    syscall_table[SYS_SHMFD_CREA]     = sys_shmfd_crea;
     syscall_table[SYS_TIME]         = sys_time;
     syscall_table[SYS_TIME_SET]     = sys_time_set;
     syscall_table[SYS_CONSOLE_SWITCH] = sys_console_switch;

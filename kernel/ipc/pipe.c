@@ -103,8 +103,36 @@ typedef struct {
     uint32_t  scrittori;    /* estremita' di scrittura aperte */
     Attese    att_lettori;  /* chi aspetta dati */
     Attese    att_scrittori;/* chi aspetta spazio */
-    uint8_t   buf[PIPE_DIM];
+    uint32_t  scritti;      /* bytes ever written (wraps): see PipeAllegato */
+    PipeAllegato *all_testa, *all_coda;     /* in order of position */
+    uint8_t   buf[PIPE_DIM];                /* ! last: pipe_crea clears up to it */
 } Pipe;
+
+/* the attachments nobody will read, until the caller frees them (pipe.h) */
+static PipeAllegato *g_orfani;
+
+static void allegati_via_locked(Pipe *p)
+{
+    while (p->all_testa) {
+        PipeAllegato *a = p->all_testa;
+
+        p->all_testa = a->dopo;
+        a->dopo  = g_orfani;
+        g_orfani = a;
+    }
+    p->all_coda = NULL;
+}
+
+PipeAllegato *pipe_allegati_orfani(void)
+{
+    PipeAllegato *l;
+
+    interrupts_disable();
+    l = g_orfani;
+    g_orfani = NULL;
+    interrupts_enable();
+    return l;
+}
 
 /* THE PIPES ARE AS MANY AS ARE NEEDED (kernel 0.282). There were 16 in the
  * whole system: a web server running CGI programs (three pipes each) had
@@ -123,6 +151,7 @@ static volatile uint32_t g_pipe_n;
 static void pipe_libera_se_orfana(Pipe *p)
 {
     if (p->lettori == 0 && p->scrittori == 0) {
+        allegati_via_locked(p);
         p->usata  = 0;
         p->testa  = 0;
         p->quanti = 0;
@@ -154,6 +183,8 @@ int pipe_crea(void)
                 p->usata     = 1;
                 p->testa     = 0;
                 p->quanti    = 0;
+                p->scritti   = 0;
+                p->all_testa = p->all_coda = NULL;
                 /* Nasce con UN lettore e UNO scrittore: sono i due descrittori
                  * che sys_pipe sta per consegnare. Contarli dopo lascerebbe
                  * una finestra in cui la pipe sembra orfana. */
@@ -235,8 +266,10 @@ void pipe_chiudi_lettore_locked(int h)
     if (p == NULL) return;
 
     if (p->lettori > 0) p->lettori--;
-    if (p->lettori == 0)
+    if (p->lettori == 0) {
         attese_sveglia_locked(&p->att_scrittori);   /* si sveglieranno e prenderanno EPIPE */
+        allegati_via_locked(p);                     /* nobody will take them */
+    }
     pipe_libera_se_orfana(p);
 }
 
@@ -317,11 +350,19 @@ void pipe_attesa_togli_locked(int h, int per_lettura, uint32_t pid)
 
 int32_t pipe_leggi(int h, void *buf, uint32_t n, int nonblocca)
 {
+    return pipe_leggi_con(h, buf, n, nonblocca, NULL);
+}
+
+int32_t pipe_leggi_con(int h, void *buf, uint32_t n, int nonblocca,
+                       PipeAllegato **ap)
+{
     Pipe     *p;
     uint8_t  *dst = (uint8_t *)buf;
     uint8_t   appoggio[PIPE_TRANCHE];
     uint32_t  presi = 0, i;
+    PipeAllegato *preso = NULL;
 
+    if (ap) *ap = NULL;
     if (n == 0) return 0;
     if (n > PIPE_TRANCHE) n = PIPE_TRANCHE;
 
@@ -366,6 +407,28 @@ int32_t pipe_leggi(int h, void *buf, uint32_t n, int nonblocca)
     /* Qui: interrupt disabilitati, p valido, p->quanti > 0.
      * ! La copia dall'anello avviene ADESSO, non dopo: uno scrittore
      * potrebbe sovrascrivere questi byte appena rilasciamo il lucchetto. */
+    /* What travels with the bytes (pipe.h): the attachment of the first byte
+     * comes with this read, and the read stops before the next one. */
+    if (p->all_testa) {
+        uint32_t      letti = p->scritti - p->quanti;
+        PipeAllegato *a     = p->all_testa;
+
+        if (a->pos == letti) {
+            preso        = a;
+            p->all_testa = a->dopo;
+            if (p->all_testa == NULL) p->all_coda = NULL;
+            preso->dopo  = NULL;
+            a = p->all_testa;
+        }
+        if (a && a->pos - letti < n) n = a->pos - letti;
+    }
+    if (preso && ap == NULL) {          /* read() throws descriptors away */
+        preso->dopo = g_orfani;
+        g_orfani    = preso;
+        preso       = NULL;
+    }
+    if (ap) *ap = preso;
+
     presi = (n < p->quanti) ? n : p->quanti;
     for (i = 0; i < presi; i++) {
         appoggio[i] = p->buf[(p->testa + i) % PIPE_DIM];
@@ -384,6 +447,12 @@ int32_t pipe_leggi(int h, void *buf, uint32_t n, int nonblocca)
 }
 
 int32_t pipe_scrivi(int h, const void *buf, uint32_t n, int nonblocca)
+{
+    return pipe_scrivi_con(h, buf, n, nonblocca, NULL);
+}
+
+int32_t pipe_scrivi_con(int h, const void *buf, uint32_t n, int nonblocca,
+                        PipeAllegato *a)
 {
     Pipe          *p;
     const uint8_t *src = (const uint8_t *)buf;
@@ -443,7 +512,14 @@ int32_t pipe_scrivi(int h, const void *buf, uint32_t n, int nonblocca)
     for (i = 0; i < messi; i++) {
         p->buf[(inizio + i) % PIPE_DIM] = appoggio[i];
     }
-    p->quanti += messi;
+    if (a) {                            /* with the first byte (pipe.h) */
+        a->pos  = p->scritti;
+        a->dopo = NULL;
+        if (p->all_coda) p->all_coda->dopo = a; else p->all_testa = a;
+        p->all_coda = a;
+    }
+    p->scritti += messi;
+    p->quanti  += messi;
 
     attese_sveglia_locked(&p->att_lettori);     /* sono arrivati dati */
     interrupts_enable();

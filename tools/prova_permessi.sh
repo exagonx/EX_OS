@@ -29,6 +29,12 @@
 #   8  a program that falls after five calls with 6 KB frames
 #      (tools/prove/pilaprova.c): the "PF:   sulla pila" lines of kernel 0.357
 #      name its four callers and main with addr2line (giro5 is the EIP itself).
+#   9  socketpair(AF_UNIX) of kernel 0.358 (tools/prove/unixprova.c): bytes
+#      both ways, fork, dup, poll, MSG_DONTWAIT, end of data, EPIPE (voce 115)
+#  10  kernel 0.359, voce 111 step 4b (tools/prove/consoleprova.c): a mailbox
+#      for the console is closed to who does not sit there, open once root
+#      (login) says so; one for the owner is closed to others; kbd and fb_map
+#      refused to a user nobody logged in; ports below 1024 root's (ip.drv)
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1
 ARCH="${EXOS_ARCH:-i386}"
@@ -56,6 +62,8 @@ no() { echo "  [NO] $1"; no=$((no+1)); }
 "$GCC" -O2 -Wall -o "$D/codaprova" tools/prove/codaprova.c || { echo "codaprova non compila" >&2; exit 1; }
 "$GCC" -O2 -Wall -o "$D/shmfili" tools/prove/shmfili.c -lpthread || { echo "shmfili non compila" >&2; exit 1; }
 "$GCC" -O2 -Wall -o "$D/pilaprova" tools/prove/pilaprova.c || { echo "pilaprova non compila" >&2; exit 1; }
+"$GCC" -O2 -Wall -o "$D/unixprova" tools/prove/unixprova.c -lpthread || { echo "unixprova non compila" >&2; exit 1; }
+"$GCC" -O2 -Wall -o "$D/consoleprova" tools/prove/consoleprova.c || { echo "consoleprova non compila" >&2; exit 1; }
 NIC="${EXOS_NIC:-e1000}"
 
 # a file for root to download at step 5, from a server on the host
@@ -79,14 +87,14 @@ env -u EXOS_MARCA -u EXOS_NO_FLOPPY -u EXOS_QEMU_EXTRA -u EXOS_RAM \
 si "installato"
 
 # the two files on the installed partition (it starts at sector 2048)
-for f in "$D/permprova" "$D/reteprova" "$D/codaprova" "$D/shmfili" "$D/pilaprova" tools/netinst/verifiche/sistema.sh; do
+for f in "$D/permprova" "$D/reteprova" "$D/codaprova" "$D/shmfili" "$D/pilaprova" "$D/unixprova" "$D/consoleprova" tools/netinst/verifiche/sistema.sh; do
     "$DEBUGFS" -w -R "write $f $(basename "$f")" "$IMG?offset=1048576" > /dev/null 2>&1
 done
 
 echo "=== 2-4. dal disco ==="
 A=("root@2" "root@6" "keymap us@3"
    "echo MODI; ls -l /; ls -l /home; echo FINE-MODI@4"
-   "chmod 755 /permprova /reteprova /codaprova /shmfili /pilaprova@2"
+   "chmod 755 /permprova /reteprova /codaprova /shmfili /pilaprova /unixprova /consoleprova@2"
    "echo PROVA; /permprova; echo FINE-PROVA \$?@10"
    "rm -r /root/privata /permprova.p /tmp/permprova.d@3"
    "chmod 755 /root@2" "chmod 777 /tmp@2"
@@ -96,6 +104,8 @@ A=("root@2" "root@6" "keymap us@3"
    "echo CODA; /codaprova; echo FINE-CODA \$?@20"
    "echo SHM; /shmfili 8 600 64; /shmfili 8 600 64; /shmfili 8 600 64; echo FINE-SHM \$?@120"
    "echo PILA; /pilaprova; dmesg | grep -a 'sulla pila'; echo FINE-PILA@10"
+   "echo UNIX; /unixprova; echo FINE-UNIX \$?@20"
+   "echo CONSOLE; /consoleprova; echo FINE-CONSOLE \$?@25"
    "echo SCARICA; scarica http://10.0.2.2:$PORTA/ok.txt /tmp/ok.txt; cat /tmp/ok.txt; echo FINE-SCARICA@20"
    "sync@5")
 EXOS_QEMU=$Q EXOS_ISTANZA=pm$ARCH EXOS_NO_FLOPPY=1 EXOS_RAM=512M EXOS_MARCA="utente:" \
@@ -146,6 +156,16 @@ echo "      chiamanti: $CHI"
 [ "$CHI" = "giro1 giro2 giro3 giro4 main " ] \
     && si "al fault il kernel scrive tutta la catena delle chiamate" \
     || no "catena delle chiamate incompleta: $CHI ($(echo "$P" | wc -l) righe)"
+
+U=$(echo "$L" | sed -n '/^UNIX/,/^FINE-UNIX/p')
+echo "$U" | grep -a "NO:" | sed 's/^/      /'
+echo "$U" | grep -aq "^FINE-UNIX 0" && si "socket unix a coppie: $(echo "$U" | grep -ao 'unixprova: [0-9]* prove')" \
+    || no "socket unix: $(echo "$U" | grep -ao 'unixprova: .*' || echo 'non arrivata in fondo')"
+
+C=$(echo "$L" | sed -n '/^CONSOLE/,/^FINE-CONSOLE/p')
+echo "$C" | grep -a "\[NO\]" | sed 's/^/      /'
+echo "$C" | grep -aq "^FINE-CONSOLE 0" && si "console, wserver e porte basse: $(echo "$C" | grep -ao 'consoleprova: [0-9]* prove')" \
+    || no "console e porte: $(echo "$C" | grep -ao 'consoleprova: .*' || echo 'non arrivata in fondo')"
 
 echo "=== $ok riusciti, $no no ($ARCH, $NIC) ==="
 [ $no -eq 0 ]

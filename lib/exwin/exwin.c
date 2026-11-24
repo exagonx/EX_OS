@@ -1648,6 +1648,16 @@ int ex_open_file(const char *percorso, char *prog, unsigned int max)
     int         i, pid;
 
     if (!percorso || !percorso[0]) return -1;
+    /* ! A DIRECTORY IS THE TYPE "/" (exwin 0.024, voce 118): it went to the
+     * editor, having no extension. The file manager when tipi.txt is older. */
+    {
+        struct stat st;
+
+        if (stat(percorso, &st) == 0 && S_ISDIR(st.st_mode)) {
+            if (!tipi_programma("/", p, sizeof(p))) snprintf(p, sizeof(p), "/exwin/bin/filemgr");
+            goto lancia;
+        }
+    }
     nome  = strrchr(percorso, '/');
     nome  = nome ? nome + 1 : percorso;
     punto = strrchr(nome, '.');
@@ -1658,6 +1668,7 @@ int ex_open_file(const char *percorso, char *prog, unsigned int max)
         e[k] = '\0';
     }
     if (!tipi_programma(e, p, sizeof(p))) snprintf(p, sizeof(p), "/exwin/bin/exeditor");
+lancia:
     if (prog && max) snprintf(prog, max, "%s", p);
 
     snprintf(copia, sizeof(copia), "%s", percorso);
@@ -9405,7 +9416,7 @@ void ex_item_rename(ExWindow c, unsigned int i, const char *testo)
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
  * 0.002 = ex_enable() ed EX_DISABLED; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.023"   /* 0.023: i programmi per tipo scelti in Impostazioni (ex_types, ex_type_set, ex_type_program, /boot/tipi.cfg); 0.022: tabulazioni nelle aree (ex_textarea_set_tab, ex_textarea_get_column), voci di menu spente (ex_menu_enable) */
+#define EXWIN_VERSIONE "0.024"   /* 0.024: ex_open_file apre le cartelle col programma del tipo "/" (il file manager); 0.023: i programmi per tipo scelti in Impostazioni (ex_types, ex_type_set, ex_type_program, /boot/tipi.cfg); 0.022: tabulazioni nelle aree (ex_textarea_set_tab, ex_textarea_get_column), voci di menu spente (ex_menu_enable) */
 
 const char *ex_version(void) { return EXWIN_VERSIONE; }
 

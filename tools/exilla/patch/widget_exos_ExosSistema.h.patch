@@ -1,0 +1,30 @@
+--- a/widget/exos/ExosSistema.h
++++ b/widget/exos/ExosSistema.h
+@@ -0,0 +1,27 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* EX-OS (Exilla): the system's programs, behind the same service Firefox asks
++ * on Linux (nsIGIOService, @mozilla.org/gio-service;1). On Linux it is GIO:
++ * the .desktop files and mimeapps.list. On EX-OS the answer is the one the
++ * file manager and the desktop give: /exwin/lib/tipi.txt and the user's
++ * choices of Impostazioni > Applicazioni (/boot/tipi.cfg), read by exwin.so
++ * (ex_type_program, ex_types, ex_open_file). Downloads' "show in folder"
++ * opens the file manager, "open" the program of the type, and the dialog
++ * of an unknown type names the program the user chose. */
++
++#ifndef ExosSistema_h_
++#define ExosSistema_h_
++
++#include "nsIGIOService.h"
++
++class nsExosSistema final : public nsIGIOService {
++  ~nsExosSistema() = default;
++
++ public:
++  NS_DECL_ISUPPORTS
++  NS_DECL_NSIGIOSERVICE
++};
++
++#endif  // ExosSistema_h_

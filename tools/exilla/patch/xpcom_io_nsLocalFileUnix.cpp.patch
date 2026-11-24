@@ -1,6 +1,15 @@
 --- a/xpcom/io/nsLocalFileUnix.cpp
 +++ b/xpcom/io/nsLocalFileUnix.cpp
-@@ -1395,6 +1395,14 @@
+@@ -51,6 +51,8 @@
+ #    include "mozilla/WidgetUtilsGtk.h"
+ #    include "mozilla/widget/AsyncDBus.h"
+ #  endif
++#elif defined(XP_EXOS)
++#  include "nsIGIOService.h"
+ #endif
+ 
+ #ifdef MOZ_WIDGET_COCOA
+@@ -1395,6 +1397,14 @@
      return NSRESULT_FOR_ERRNO();
    }
  
@@ -15,7 +24,7 @@
    struct timespec* timespec;
    switch (aTimeField) {
      case TimeField::AccessedTime:
-@@ -1420,6 +1428,7 @@
+@@ -1420,6 +1430,7 @@
    *aTime = TimespecToMillis(*timespec);
  
    return NS_OK;
@@ -23,7 +32,7 @@
  }
  
  nsresult nsLocalFile::SetTimeImpl(PRTime aTime,
-@@ -1461,17 +1470,25 @@
+@@ -1461,17 +1472,25 @@
      return rv;
    }
  
@@ -52,3 +61,21 @@
  
    times[writeIndex].tv_sec = aTime / PR_MSEC_PER_SEC;
    times[writeIndex].tv_usec = (aTime % PR_MSEC_PER_SEC) * PR_USEC_PER_MSEC;
+@@ -2399,7 +2418,7 @@
+     return NS_ERROR_FILE_ACCESS_DENIED;
+   }
+ 
+-#ifdef MOZ_WIDGET_GTK
++#if defined(MOZ_WIDGET_GTK) || defined(XP_EXOS)
+   nsCOMPtr<nsIGIOService> giovfs = do_GetService(NS_GIOSERVICE_CONTRACTID);
+   if (!giovfs) {
+     return NS_ERROR_FAILURE;
+@@ -2424,7 +2443,7 @@
+     return NS_ERROR_FILE_ACCESS_DENIED;
+   }
+ 
+-#ifdef MOZ_WIDGET_GTK
++#if defined(MOZ_WIDGET_GTK) || defined(XP_EXOS)
+   nsCOMPtr<nsIGIOService> giovfs = do_GetService(NS_GIOSERVICE_CONTRACTID);
+   if (!giovfs) {
+     return NS_ERROR_FAILURE;

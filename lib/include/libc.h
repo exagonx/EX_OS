@@ -1190,7 +1190,9 @@ int        chown(const char *percorso, unsigned int uid, unsigned int gid);
 
 /* Il framebuffer, e SOLO quello. Non serve essere root ne' un driver: e' una
  * capacita' stretta al posto di mmio_map, che mappa un indirizzo qualunque ed
- * e' riservata. Rende 0 con errno se non c'e' un framebuffer. */
+ * e' riservata. Rende 0 con errno se non c'e' un framebuffer.
+ * ! Dal kernel 0.359 e' di root e di chi siede a una console (login): a un
+ * utente arrivato da telnet rende 0 con errno EPERM. */
 void      *fb_map(void);
 int        getuid(void);
 /* The uid of another process (kernel 0.250); -1 and ESRCH if there is none.
@@ -3234,6 +3236,27 @@ int     ipc_recv_chi(IpcChi *out, void *buf, unsigned int buf_len,
                      unsigned int timeout_ms);
 
 /* =============================================================================
+ * ipc_filtro — chi puo' scrivere nella mia cassetta (kernel 0.359, voce 111)
+ *
+ *   IPC_FILTRO_CONSOLE  root e chi ha fatto login a una console della
+ *                       macchina: tastiera, mouse, audio, schermo;
+ *   IPC_FILTRO_MIO      root e il mio utente: wserver.
+ *
+ * Gli altri ricevono -EPERM da ipc_send, qualunque tipo mandino: nessun
+ * protocollo deve inventarsi una risposta di rifiuto. Lo si chiama dopo
+ * ipc_register. Su un kernel prima della 0.359 rende -ENOSYS, e la cassetta
+ * resta aperta come prima.
+ *
+ * console_utente(0, n) dice chi siede alla console n (-1 nessuno);
+ * console_utente(1, uid) e console_utente(2, 0) li usa login (solo root).
+ * ============================================================================= */
+#define IPC_FILTRO_APERTO   0
+#define IPC_FILTRO_CONSOLE  1
+#define IPC_FILTRO_MIO      2
+int     ipc_filtro(unsigned int modo);
+int     console_utente(unsigned int azione, unsigned int arg);
+
+/* =============================================================================
  * ipc_scegli — aspettare il PROPRIO messaggio quando la cassetta e' di due
  *
  * ! LA MAILBOX E' UNA SOLA E I CONSUMATORI SONO PIU' D'UNO. Un'applicazione
@@ -3878,6 +3901,14 @@ int     shm_chiudi(void *p);
  * descriptors: files have truncate(path). */
 int     shm_open(const char *nome, int flag, mode_t modo);
 int     shm_unlink(const char *nome);
+/* (0.358, voce 115) shm_open(SHM_ANON) and memfd_create give memory that is
+ * a KERNEL descriptor (FD_SHM): it grows with ftruncate, maps MAP_SHARED with
+ * mmap, and goes to another process with fork, spawn or SCM_RIGHTS, the same
+ * memory there. MAP_PRIVATE of it is EINVAL. memfd_create: MFD_CLOEXEC only,
+ * no seals. */
+#define MFD_CLOEXEC        0x0001u
+#define MFD_ALLOW_SEALING  0x0002u
+int     memfd_create(const char *nome, unsigned int flag);
 int     ftruncate(int fd, off_t lung) EXOS_LFS(ftruncate);
 int     ftruncate64(int fd, off64_t lung);
 
@@ -4333,6 +4364,7 @@ typedef unsigned int    in_addr_t;
 #define MSG_DONTWAIT    0x40
 #define MSG_WAITALL     0x100
 #define MSG_NOSIGNAL    0x4000
+#define MSG_CMSG_CLOEXEC 0x40000000 /* what arrives by SCM_RIGHTS has FD_CLOEXEC */
 /* Nomi di Linux che il codice di terzi scrive (rustix): lo stack di EX-OS non
  * li guarda. */
 #define MSG_DONTROUTE   0x4
@@ -4450,10 +4482,10 @@ ssize_t sendto(int fd, const void *buf, size_t n, int flag,
                const struct sockaddr *a, socklen_t len);
 ssize_t recvfrom(int fd, void *buf, size_t n, int flag,
                  struct sockaddr *a, socklen_t *len);
-/* I dati di controllo (cmsg), con le macro di Linux. ! EX-OS non passa
- * descrittori fra processi (SCM_RIGHTS): sendmsg/recvmsg non guardano
- * msg_control. Ci sono perche' il codice di terzi li scrive (l'IPC di Gecko,
- * che su EX-OS non parte). */
+/* I dati di controllo (cmsg), con le macro di Linux. Dalla 0.358 (voce 115)
+ * socketpair(AF_UNIX, SOCK_STREAM) da' due capi del kernel, e sendmsg/recvmsg
+ * su un capo portano i descrittori di SCM_RIGHTS insieme ai byte; sui socket
+ * di rete msg_control non si guarda. */
 struct cmsghdr {
     socklen_t cmsg_len;
     int       cmsg_level;

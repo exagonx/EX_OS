@@ -1,0 +1,52 @@
+--- a/widget/exos/nsFilePickerExos.h
++++ b/widget/exos/nsFilePickerExos.h
+@@ -0,0 +1,49 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* EX-OS (Exilla): the file picker is the ExWin file dialog, shown by
++ * /exwin/bin/scegli in a process of its own; the path chosen comes back on
++ * its stdout. */
++
++#ifndef nsFilePickerExos_h_
++#define nsFilePickerExos_h_
++
++#include "nsBaseFilePicker.h"
++#include "nsCOMArray.h"
++#include "nsIFile.h"
++#include "nsString.h"
++
++class nsFilePickerExos final : public nsBaseFilePicker {
++ public:
++  NS_DECL_ISUPPORTS
++
++  nsFilePickerExos() = default;
++
++  MOZ_CAN_RUN_SCRIPT NS_IMETHOD Open(nsIFilePickerShownCallback* aCallback) override;
++  NS_IMETHOD AppendFilter(const nsAString& aTitle,
++                          const nsAString& aFilter) override;
++  NS_IMETHOD SetDefaultString(const nsAString& aString) override;
++  NS_IMETHOD GetDefaultString(nsAString& aString) override;
++  NS_IMETHOD SetDefaultExtension(const nsAString& aExtension) override;
++  NS_IMETHOD GetDefaultExtension(nsAString& aExtension) override;
++  NS_IMETHOD GetFile(nsIFile** aFile) override;
++  NS_IMETHOD GetFileURL(nsIURI** aFileURL) override;
++  NS_IMETHOD GetFiles(nsISimpleEnumerator** aFiles) override;
++
++  // Called on the main thread with scegli's answer ("" = cancelled).
++  void Finito(const nsACString& aPercorso,
++              nsIFilePickerShownCallback* aCallback);
++
++ private:
++  ~nsFilePickerExos() = default;
++  void InitNative(nsIWidget* aParent, const nsAString& aTitle) override;
++
++  nsString mTitolo;
++  nsString mDefault;
++  nsString mEstensione;
++  nsCString mScelto;
++  bool mAperto = false;
++};
++
++#endif  // nsFilePickerExos_h_

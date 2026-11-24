@@ -913,6 +913,44 @@ FIREFOX SI CHIUDE DA SOLO SU UNA PAGINA PIENA DI IMMAGINI (unsplash.com),
   (fcntl F_DUPFD_CLOEXEC) rendeva il descrittore 0 invece di una copia.
   netupdate (libc nuova in /lib/ld-exos.so), poi riapri Firefox. Non
   dipende dalla RAM ne' dalla memoria virtuale.
+FIREFOX SI CHIUDE CHIUDENDO UNA FOTO (unsplash.com), page fault a 0x28 in
+  ~/.exilla/firefox.log.1 o in dmesg: e' un difetto di Firefox del modo a
+  un processo solo (exilla 0.007 e prima). Dal kernel 0.358 ed exilla
+  0.008 Firefox gira a piu' processi come su Linux: netupdate -check -yes,
+  riavvia, riapri Exilla. ps mostra un firefox per ogni processo dei
+  contenuti. Se a piu' processi qualcosa non va, a un processo solo:
+  export EXILLA_UN_PROCESSO=1 prima di lanciare exilla, e scrivi il guasto.
+IL MOUSE VA A SCATTI E TUTTO SI FERMA MENTRE FIREFOX PARTE la prima volta:
+  e' il kernel fino alla 0.359, dove leggere un file grande (omni.ja di
+  Firefox) teneva fermi i file di tutti fino a 5 secondi, e caricare una
+  libreria fermava gli altri processori. Dal kernel 0.360 si legge a pezzi:
+  netupdate -check -yes e riavvia. dmesg scrive "VFS: lucchetto tenuto"
+  o "SMP: lucchetto del kernel tenuto" con il PID se succede ancora.
+FIREFOX: "MOSTRA NELLA CARTELLA" NON FA NIENTE, NESSUN PROGRAMMA PER UN TIPO
+  DI FILE, "SALVA CON NOME" O IL PULSANTE PER CARICARE UN FILE NON SI APRONO:
+  e' Exilla fino al 24/11/2026, che non chiedeva niente al sistema. Ora i
+  programmi vengono da Impostazioni > Applicazioni, la cartella si apre col
+  file manager e il dialogo dei file e' quello di ExWin (/exwin/bin/scegli,
+  exwin.so 0.024, kernel 0.361). netupdate -check -yes, riavvia, riapri
+  Exilla. Se il dialogo non compare: ls /exwin/bin/scegli.
+UN PROGRAMMA LANCIATO DA UN ALTRO PROGRAMMA MUORE SUBITO, [FAULT] in dmesg
+  appena dopo "SYSCALL exec: salto a entry": e' il kernel fino alla 0.360
+  quando chi lancia e' un filo secondario (pthread): il programma nuovo
+  partiva con i dati del filo del vecchio. Kernel 0.361: netupdate.
+TASTIERA, MOUSE, AUDIO O SCHERMO NON RISPONDONO A UN UTENTE (kernel 0.359),
+  e dmesg dice "IPC: PID n (uid u) non puo' scrivere a PID m (kbd): solo
+  root e chi siede alla console" o "fb_map ... non siede alla console":
+  i dispositivi della macchina sono di root e di chi ha fatto login a una
+  console, come su Linux. Da telnet un utente non legge la riga scritta alla
+  console ne' lo schermo. Si entra alla console col proprio utente (login),
+  oppure da root. Senza login alla console (kernel.cfg senza login) i
+  dispositivi sono solo di root.
+"wserver ... solo root e il suo utente": la scrivania e' di chi l'ha
+  avviata. Un programma di un altro utente non apre finestre su di lei.
+bind, listen o un server che non si mette in ascolto, EACCES, PORTA SOTTO
+  1024 (ip.drv 0.028): le porte basse sono di root, come su Linux. telnetd,
+  sshd, httpd si avviano da root (httpd poi passa all'uid 100 da solo).
+  Un utente usa una porta da 1024 in su (8080 invece di 80).
 "PERMESSO NEGATO" (-1) DA UN DRIVER DI RETE, DA ip O DA pci COME UTENTE:
   dal kernel 0.356 mandare e ricevere frame grezzi, cambiare indirizzo o
   scheda (ipcfg, dhcp) e accendere o spegnere un dispositivo PCI sono di

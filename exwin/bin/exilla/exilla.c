@@ -23,8 +23,12 @@
  * la stessa cosa, e una sola delle due la conosceva il registro.
  *
  * ! FIREFOX NON SI LANCIA DA SOLO, e sono quattro cose da ricordare:
- *   - MOZ_FORCE_DISABLE_E10S=1: tutto in un processo. I processi figli di
- *     Gecko vogliono una comunicazione fra processi che qui non e' portata;
+ *   - PIU' PROCESSI, COME SU LINUX (23 November 2026, 0.008, voce 115):
+ *     the kernel 0.358 has unix pairs, SCM_RIGHTS and memory that is a
+ *     descriptor, which is what Gecko's IPC asks. Until 0.007 this launcher
+ *     set MOZ_FORCE_DISABLE_E10S=1, and in one process Firefox closed on
+ *     unsplash.com (a Firefox bug of that mode, voce 113). EXILLA_UN_PROCESSO=1
+ *     goes back to one process, if something goes wrong;
  *   - un PROFILO scrivibile, che e' di chi usa la macchina: $HOME/.exilla;
  *   - EXILLA_FONTS: dove stanno i caratteri (quelli di ExWin);
  *   - -no-remote: non cercare un Firefox gia' aperto a cui passare la pagina.
@@ -54,7 +58,7 @@
 #include "exwin.h"
 #include "exdlg.h"
 
-#define VERSIONE_APP "0.007"
+#define VERSIONE_APP "0.008"
 EX_VERSIONE("exilla", VERSIONE_APP);
 
 #define PERC_MAX    512
@@ -206,7 +210,13 @@ static int avvia(int argc, char **argv)
     }
 
     setenv("EXILLA_DIAG", "1", 0);
-    setenv("MOZ_FORCE_DISABLE_E10S", "1", 1);
+    /* more processes unless asked otherwise (see the head of this file) */
+    {
+        const char *uno = getenv("EXILLA_UN_PROCESSO");
+
+        if (uno && strcmp(uno, "1") == 0) setenv("MOZ_FORCE_DISABLE_E10S", "1", 1);
+        else                              unsetenv("MOZ_FORCE_DISABLE_E10S");
+    }
     setenv("EXILLA_FONTS", "/exwin/font", 0);
     setenv("LANG", "it_IT.UTF-8", 0);
 

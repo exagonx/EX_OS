@@ -83,7 +83,7 @@
 #include "exuser.h"
 
 /* +0.001 a ogni modifica: `login -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("login", "0.006");
+EX_VERSIONE("login", "0.007");
 
 #define UTENTI     "/boot/utenti"    /* nome:uid:gid — pubblico */
 #define OMBRA      "/boot/ombra"     /* nome:sale:impronta — di root */
@@ -376,8 +376,15 @@ static void avvia_shell(const char *utente, unsigned int uid, unsigned int gid)
             if (stat(base, &st) == 0) argv[0] = base;
         }
     }
+    /* ! WHO SITS HERE, FOR THE KERNEL (0.007, kernel 0.359, voce 111 step 4b):
+     * keyboard, mouse, audio and screen take messages only from root and
+     * from the users logged in at a console of the machine. Not on a pty: a
+     * session from the network does not sit at the machine. Emptied when
+     * the shell is gone, below. */
+    if (!su_un_pty()) console_utente(1, (unsigned int)uid);
     pid = spawn_utente(argv[0], argv, environ, uid, gid);
     if (pid < 0) {
+        if (!su_un_pty()) console_utente(2, 0);
         printf("login: %s non si avvia come %s (%s)\n",
                g_shell, utente, strerror(errno));
         if (errno == EPERM) {
@@ -389,6 +396,7 @@ static void avvia_shell(const char *utente, unsigned int uid, unsigned int gid)
         return;
     }
     waitpid(pid, &stato, 0);
+    if (!su_un_pty()) console_utente(2, 0);
     console_mia();               /* la shell l'aveva presa: se la riprende login */
 }
 

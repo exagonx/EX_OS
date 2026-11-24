@@ -1,0 +1,177 @@
+--- a/widget/exos/nsFilePickerExos.cpp
++++ b/widget/exos/nsFilePickerExos.cpp
+@@ -0,0 +1,174 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "nsFilePickerExos.h"
++
++#include <spawn.h>
++#include <sys/wait.h>
++#include <unistd.h>
++
++#include "nsIURI.h"
++#include "nsNetUtil.h"
++#include "nsThreadUtils.h"
++#include "nsArrayEnumerator.h"
++
++extern char** environ;
++
++NS_IMPL_ISUPPORTS(nsFilePickerExos, nsIFilePicker)
++
++void nsFilePickerExos::InitNative(nsIWidget*, const nsAString& aTitle) {
++  mTitolo = aTitle;
++}
++
++NS_IMETHODIMP nsFilePickerExos::AppendFilter(const nsAString&,
++                                             const nsAString&) {
++  return NS_OK;
++}
++
++NS_IMETHODIMP nsFilePickerExos::SetDefaultString(const nsAString& aString) {
++  mDefault = aString;
++  return NS_OK;
++}
++
++NS_IMETHODIMP nsFilePickerExos::GetDefaultString(nsAString& aString) {
++  aString = mDefault;
++  return NS_OK;
++}
++
++NS_IMETHODIMP nsFilePickerExos::SetDefaultExtension(const nsAString& aExt) {
++  mEstensione = aExt;
++  return NS_OK;
++}
++
++NS_IMETHODIMP nsFilePickerExos::GetDefaultExtension(nsAString& aExt) {
++  aExt = mEstensione;
++  return NS_OK;
++}
++
++NS_IMETHODIMP nsFilePickerExos::GetFile(nsIFile** aFile) {
++  NS_ENSURE_ARG_POINTER(aFile);
++  *aFile = nullptr;
++  if (mScelto.IsEmpty()) return NS_OK;
++  return NS_NewNativeLocalFile(mScelto, aFile);
++}
++
++NS_IMETHODIMP nsFilePickerExos::GetFileURL(nsIURI** aFileURL) {
++  NS_ENSURE_ARG_POINTER(aFileURL);
++  *aFileURL = nullptr;
++  nsCOMPtr<nsIFile> file;
++  GetFile(getter_AddRefs(file));
++  if (!file) return NS_OK;
++  return NS_NewFileURI(aFileURL, file);
++}
++
++NS_IMETHODIMP nsFilePickerExos::GetFiles(nsISimpleEnumerator** aFiles) {
++  NS_ENSURE_ARG_POINTER(aFiles);
++  nsCOMArray<nsIFile> files;
++  nsCOMPtr<nsIFile> file;
++  GetFile(getter_AddRefs(file));
++  if (file) files.AppendObject(file);
++  return NS_NewArrayEnumerator(aFiles, files, NS_GET_IID(nsIFile));
++}
++
++// Runs scegli and returns what it printed, without the newline; "" when the
++// user cancelled or it could not start. Blocks: called off the main thread.
++static nsCString Chiedi(const nsCString& aModo, const nsCString& aTitolo,
++                        const nsCString& aProposta) {
++  nsCString esito;
++  int tubo[2];
++  if (pipe(tubo) != 0) return esito;
++  posix_spawn_file_actions_t azioni;
++  posix_spawn_file_actions_init(&azioni);
++  posix_spawn_file_actions_adddup2(&azioni, tubo[1], 1);
++  posix_spawn_file_actions_addclose(&azioni, tubo[0]);
++  nsCString prog("/exwin/bin/scegli");
++  if (access(prog.get(), X_OK) != 0) prog.AssignLiteral("/cdrom/exwin/bin/scegli");
++  nsCString t("-t");
++  char* argv[6];
++  int n = 0;
++  argv[n++] = prog.BeginWriting();
++  argv[n++] = const_cast<char*>(aModo.get());
++  if (!aTitolo.IsEmpty()) {
++    argv[n++] = t.BeginWriting();
++    argv[n++] = const_cast<char*>(aTitolo.get());
++  }
++  if (!aProposta.IsEmpty()) argv[n++] = const_cast<char*>(aProposta.get());
++  argv[n] = nullptr;
++  pid_t pid = -1;
++  int rc = posix_spawn(&pid, prog.get(), &azioni, nullptr, argv, environ);
++  posix_spawn_file_actions_destroy(&azioni);
++  close(tubo[1]);
++  if (rc == 0) {
++    char buf[512];
++    ssize_t r;
++    while ((r = read(tubo[0], buf, sizeof(buf))) > 0) esito.Append(buf, r);
++    int stato = 0;
++    waitpid(pid, &stato, 0);
++    if (!WIFEXITED(stato) || WEXITSTATUS(stato) != 0) esito.Truncate();
++  } else {
++    fprintf(stderr, "exilla: non parte %s (%d)\n", prog.get(), rc);
++  }
++  close(tubo[0]);
++  esito.Trim("\r\n", false, true);
++  return esito;
++}
++
++NS_IMETHODIMP nsFilePickerExos::Open(nsIFilePickerShownCallback* aCallback) {
++  if (mAperto) return NS_ERROR_NOT_AVAILABLE;
++  if (MaybeBlockFilePicker(aCallback)) return NS_OK;
++
++  nsCString modo;
++  switch (mMode) {
++    case nsIFilePicker::modeSave:
++      modo.AssignLiteral("salva");
++      break;
++    case nsIFilePicker::modeGetFolder:
++      modo.AssignLiteral("cartella");
++      break;
++    default:
++      modo.AssignLiteral("apri");
++  }
++  nsCString proposta;
++  if (mDisplayDirectory) {
++    mDisplayDirectory->GetNativePath(proposta);
++    if (!StringEndsWith(proposta, "/"_ns)) proposta.Append('/');
++  }
++  if (!mDefault.IsEmpty()) proposta.Append(NS_ConvertUTF16toUTF8(mDefault));
++  NS_ConvertUTF16toUTF8 titolo(mTitolo);
++
++  mAperto = true;
++  RefPtr<nsFilePickerExos> io = this;
++  nsCOMPtr<nsIFilePickerShownCallback> cb = aCallback;
++  nsresult rv = NS_DispatchBackgroundTask(
++      NS_NewRunnableFunction(
++          "nsFilePickerExos::Open",
++          [io, cb, modo, titolo = nsCString(titolo), proposta]() {
++            nsCString scelto = Chiedi(modo, titolo, proposta);
++            NS_DispatchToMainThread(NS_NewRunnableFunction(
++                "nsFilePickerExos::Finito",
++                [io, cb, scelto]() { io->Finito(scelto, cb); }));
++          }),
++      NS_DISPATCH_EVENT_MAY_BLOCK);
++  if (NS_FAILED(rv)) mAperto = false;
++  return rv;
++}
++
++void nsFilePickerExos::Finito(const nsACString& aPercorso,
++                              nsIFilePickerShownCallback* aCallback) {
++  mAperto = false;
++  mScelto = aPercorso;
++  ResultCode esito = nsIFilePicker::returnCancel;
++  if (!mScelto.IsEmpty()) {
++    esito = nsIFilePicker::returnOK;
++    if (mMode == nsIFilePicker::modeSave) {
++      nsCOMPtr<nsIFile> file;
++      GetFile(getter_AddRefs(file));
++      bool c_e = false;
++      if (file && NS_SUCCEEDED(file->Exists(&c_e)) && c_e) {
++        esito = nsIFilePicker::returnReplace;
++      }
++    }
++  }
++  if (aCallback) aCallback->Done(esito);
++}

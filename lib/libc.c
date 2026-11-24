@@ -286,6 +286,12 @@ typedef char stat_56_byte[sizeof(Stat) == 56 ? 1 : -1];
 #define SYS_MUNMAP      91
 #define SYS_SO_MAPPA   274   /* a shared object from the kernel's cache (0.351) */
 #define SYS_IPC_RECV_CHI 275 /* ipc_recv with the sender's uid/gid (0.356) */
+#define SYS_IPC_FILTRO   280 /* who may write to my mailbox (0.359) */
+#define SYS_CONSOLE_UTENTE 281 /* who sits at a console (0.359) */
+#define SYS_SOCKETPAIR   276 /* two ends of a unix socket (0.358) */
+#define SYS_UNIX_MANDA   277 /* send on an end, with descriptors */
+#define SYS_UNIX_RICEVI  278 /* receive on an end, with descriptors */
+#define SYS_SHMFD_CREA   279 /* memory that is a kernel descriptor (0.358) */
 #define SYS_SBRK        45
 #define SYS_SCHED_YIELD 158
 #define SYS_SLEEP       162
@@ -8723,6 +8729,29 @@ void *mmap(void *addr, size_t lung, int prot, int flags, int fd, long off)
     }
 #endif
 
+    /* ! MEMORY THAT IS A KERNEL DESCRIPTOR (FD_SHM, 0.358): the kernel maps
+     * its pages, the same in every process that holds it. fstat tells it
+     * from a file (STAT_ATTR_SHM); a kernel before 0.358 has none. */
+    if (fd != -1 && !(flags & MAP_ANONYMOUS)) {
+        Stat g;
+
+        if (_syscall2(SYS_FSTAT, (uint32_t)fd, (uintptr_t)&g) == 0 && (g.st_attr & 0x80)) {
+            p.addr   = (uint32_t)(uintptr_t)addr;
+            p.length = (uint32_t)lung;
+            p.prot   = (uint32_t)prot;
+            p.flags  = (uint32_t)flags;
+            p.fd     = fd;
+            p.offset = (uint32_t)off;
+            r = _syscall1(SYS_MMAP, (uintptr_t)&p);
+            mm_dice("mmap-shm", p.addr, p.length, p.prot | (p.flags << 8), r);
+            if (r == 0 || (uint32_t)r >= 0xFFFFF001u) {
+                errno = (r != 0) ? -r : ENOMEM;
+                return MAP_FAILED;
+            }
+            return (void *)(uintptr_t)(uint32_t)r;
+        }
+    }
+
 #ifndef EXOS_LIBC_SO
     /* =====================================================================
      * ! UN FILE SI MAPPA COPIANDOLO (1 ottobre 2026, tappa 6 di Exilla).
@@ -9720,6 +9749,17 @@ int ipc_recv_timeout(IpcMessage *out_meta, void *buf, unsigned int buf_len,
 
 /* The shelf has no stamps: whatever is there comes as IPC_CHI_IGNOTO, which
  * is not root (libc.h). */
+/* See libc.h. Raw values: the kernel's errno, -ENOSYS on a kernel before 0.359. */
+int ipc_filtro(unsigned int modo)
+{
+    return (int)_syscall1(SYS_IPC_FILTRO, (uintptr_t)modo);
+}
+
+int console_utente(unsigned int azione, unsigned int arg)
+{
+    return (int)_syscall2(SYS_CONSOLE_UTENTE, (uintptr_t)azione, (uintptr_t)arg);
+}
+
 int ipc_recv_chi(IpcChi *out, void *buf, unsigned int buf_len,
                  unsigned int timeout_ms)
 {
@@ -11469,8 +11509,16 @@ int shm_open(const char *nome, int flag, mode_t modo)
     g_shm_munmap = shmfd_munmap;
     g_shm_dup    = shmfd_dup;
 
-    /* SHM_ANON: una zona privata, senza nome; la memoria arriva con
-     * ftruncate, come per le altre. */
+    /* ! SHM_ANON IS THE KERNEL'S (0.358, voce 115): an FD_SHM, memory that
+     * is a descriptor - ftruncate, fstat, mmap, dup, close, fork, spawn and
+     * SCM_RIGHTS are all the kernel's, so a child of Firefox can map what
+     * the parent made. Below, the zone of the process alone, only for a
+     * kernel before 0.358 (ENOSYS). */
+    if (nome == SHM_ANON) {
+        int32_t k = _syscall1(SYS_SHMFD_CREA, (uint32_t)flag & 0x80000u /* O_CLOEXEC */);
+
+        if (k != -ENOSYS) return (int)err_posix(k);
+    }
     if (nome == SHM_ANON) {
         if ((i = shm_posto()) < 0) { shmfd_finite(); errno = ENOMEM; return -1; }
         mutex_prendi(&g_shm_m);
@@ -11539,6 +11587,17 @@ int shm_unlink(const char *nome)
 }
 
 static int ftruncate_zona(int fd, off_t lung);
+
+/* memfd_create (Linux): the same memory as shm_open(SHM_ANON), the name is
+ * only a label there and nobody reads it here. MFD_CLOEXEC = 1; sealing
+ * (MFD_ALLOW_SEALING) is not there: EINVAL, so a program that wants it
+ * knows. Needs kernel 0.358. */
+int memfd_create(const char *nome, unsigned int flag)
+{
+    (void)nome;
+    if (flag & ~1u) { errno = EINVAL; return -1; }
+    return (int)err_posix(_syscall1(SYS_SHMFD_CREA, (flag & 1u) ? 0x80000u /* O_CLOEXEC */ : 0u));
+}
 
 int ftruncate(int fd, off_t lung)
 {
@@ -16160,6 +16219,27 @@ struct msghdr {
     struct iovec *msg_iov; int msg_iovlen;
     void *msg_control; unsigned int msg_controllen; int msg_flags;
 };
+/* the control data, as libc.h has it (the same layout: Gecko is built with
+ * libc.h and fills these) */
+struct cmsghdr { unsigned int cmsg_len; int cmsg_level; int cmsg_type; };
+#define SCM_RIGHTS         1
+#define CMSG_ALIGN(len)    (((len) + sizeof(size_t) - 1) & ~(sizeof(size_t) - 1))
+#define CMSG_DATA(c)       ((unsigned char *)((struct cmsghdr *)(c) + 1))
+#define CMSG_SPACE(len)    (CMSG_ALIGN(len) + CMSG_ALIGN(sizeof(struct cmsghdr)))
+#define CMSG_LEN(len)      (CMSG_ALIGN(sizeof(struct cmsghdr)) + (len))
+#define CMSG_FIRSTHDR(m)   ((size_t)(m)->msg_controllen >= sizeof(struct cmsghdr) \
+                            ? (struct cmsghdr *)(m)->msg_control : (struct cmsghdr *)0)
+static struct cmsghdr *cmsg_dopo(const struct msghdr *m, struct cmsghdr *c)
+{
+    unsigned char *prossimo = (unsigned char *)c + CMSG_ALIGN(c->cmsg_len);
+    unsigned char *fine = (unsigned char *)m->msg_control + m->msg_controllen;
+
+    if (c->cmsg_len < sizeof(struct cmsghdr) ||
+        prossimo + sizeof(struct cmsghdr) > fine)
+        return (struct cmsghdr *)0;
+    return (struct cmsghdr *)prossimo;
+}
+#define CMSG_NXTHDR(m, c)  cmsg_dopo((m), (c))
 struct addrinfo {
     int ai_flags, ai_family, ai_socktype, ai_protocol;
     unsigned int ai_addrlen;
@@ -16593,10 +16673,49 @@ int socket(int dominio, int tipo, int protocollo)
     return fd;
 }
 
+/* ! A UNIX PAIR IS THE KERNEL'S (0.358, voce 115): two FD_UNIX ends, so they
+ * are inherited by fork and spawn, dup'ed, polled and closed like a pipe, and
+ * read/write work on them with nothing from the libc. Firefox with more
+ * processes talks parent to child over these. Only SOCK_STREAM so far. */
 int socketpair(int dominio, int tipo, int protocollo, int sv[2])
 {
-    (void)dominio; (void)tipo; (void)protocollo; (void)sv;
-    return presa_errore(E_AFNOSUPPORT);     /* niente AF_UNIX: vedi libc.h */
+    int base = tipo & ~(S_SOCK_NONBLOCK | 02000000);
+
+    if (!sv) return presa_errore(EFAULT);
+    if (dominio != 1 /* AF_UNIX */) return presa_errore(E_AFNOSUPPORT);
+    if (base != S_SOCK_STREAM || protocollo != 0) return presa_errore(E_PROTONOSUPP);
+    return (int)err_posix(_syscall2(SYS_SOCKETPAIR, (uintptr_t)sv,
+                                    (uint32_t)(tipo & (S_SOCK_NONBLOCK | 02000000))));
+}
+
+/* send and receive on an end of a unix pair (SYS_UNIX_MANDA / RICEVI). The
+ * kernel answers -ENOTSOCK when fd is not one: then it is not ours either. */
+typedef struct {
+    unsigned long long buf;
+    unsigned int       lung, flags;
+    unsigned long long fds;
+    unsigned int       nfds, presi;
+} UnixMsg;
+
+static long unix_io(int numero, int fd, void *buf, size_t n, int flag,
+                    int *fds, unsigned int nfds, unsigned int *presi)
+{
+    UnixMsg m;
+    long    r;
+
+    if (flag & S_MSG_PEEK) return -E_OPNOTSUPP;    /* nobody asks it yet */
+    m.buf   = (unsigned long long)(uintptr_t)buf;
+    m.lung  = n > 0x7FFFFFFFu ? 0x7FFFFFFFu : (unsigned int)n;
+    m.flags = ((flag & 0x40 /* MSG_DONTWAIT */) ? 1u : 0u) |
+              ((flag & 0x40000000 /* MSG_CMSG_CLOEXEC */) ? 2u : 0u);
+    m.fds   = (unsigned long long)(uintptr_t)fds;
+    m.nfds  = nfds;
+    m.presi = 0;
+    r = punto_eintr(_syscall2(pn((uint32_t)numero), (uint32_t)fd, (uintptr_t)&m));
+    /* presi: how many arrived; bit 31 = more came than fds had room for,
+     * the kernel closed the rest (UNIX_TRONCATI, MSG_CTRUNC) */
+    if (presi) *presi = m.presi | ((m.flags & 0x100u) ? 0x80000000u : 0u);
+    return r;
 }
 
 static int indirizzo_in(const struct sockaddr *a, unsigned int len,
@@ -16653,6 +16772,9 @@ int bind(int fd, const struct sockaddr *a, unsigned int len)
     r = indirizzo_in(a, len, ip, &porta);
     if (r < 0) return presa_errore(r);
     if (p->porta_loc != 0 || p->udp_aperta) return presa_errore(EINVAL);
+    /* ports below 1024 are root's (ip.drv 0.028 says it again at listen):
+     * here bind fails, as on Linux, not the listen() after it */
+    if (porta != 0 && porta < 1024 && getuid() != 0) return presa_errore(EACCES);
     p->porta_loc = porta;
     memcpy(p->ip_loc, ip, 4);
     if (p->tipo == S_SOCK_DGRAM) {
@@ -16897,7 +17019,12 @@ static ssize_t sendto_corpo(int fd, const void *buf, size_t n, int flag,
     unsigned char ip[4];
     unsigned int  porta;
 
-    if (!p) return presa_errore(EBADF);
+    if (!p) {                           /* an end of a unix pair? (0.358) */
+        long r = unix_io(SYS_UNIX_MANDA, fd, (void *)buf, n, flag, NULL, 0, NULL);
+
+        if (r == -E_NOTSOCK || r == -ENOSYS) return presa_errore(presa_non(fd));
+        return (ssize_t)err_posix(r);
+    }
     if (p->tipo == S_SOCK_STREAM) return tcp_manda(p, (const unsigned char *)buf, n, flag);
     if (a) {
         int r = indirizzo_in(a, len, ip, &porta);
@@ -17106,7 +17233,13 @@ static ssize_t recvfrom_corpo(int fd, void *buf, size_t n, int flag,
 {
     Presa *p = presa_di(fd);
 
-    if (!p) return presa_errore(EBADF);
+    if (!p) {                           /* an end of a unix pair? (0.358) */
+        long r = unix_io(SYS_UNIX_RICEVI, fd, buf, n, flag, NULL, 0, NULL);
+
+        if (r == -E_NOTSOCK || r == -ENOSYS) return presa_errore(presa_non(fd));
+        if (r >= 0 && a && len) *len = 0;      /* the other end has no name */
+        return (ssize_t)err_posix(r);
+    }
     if (p->tipo == S_SOCK_DGRAM) return udp_prendi(p, buf, n, flag, a, len);
     if (a && len) scrivi_in(a, len, p->ip_rem, p->porta_rem);
     return tcp_prendi(p, (unsigned char *)buf, n, flag);
@@ -17125,6 +17258,28 @@ ssize_t recv(int fd, void *buf, size_t n, int flag)
     return recvfrom(fd, buf, n, flag, NULL, NULL);
 }
 
+/* The descriptors of the SCM_RIGHTS in a msghdr, in order; -EINVAL if there
+ * are more than `max`. */
+static int cmsg_descrittori(const struct msghdr *m, int *fds, int max)
+{
+    struct cmsghdr *c;
+    int             n = 0;
+
+    if (!m->msg_control) return 0;
+    for (c = CMSG_FIRSTHDR(m); c; c = CMSG_NXTHDR(m, c)) {
+        int k, q;
+
+        if (c->cmsg_level != S_SOL_SOCKET || c->cmsg_type != SCM_RIGHTS) continue;
+        if (c->cmsg_len < CMSG_LEN(0)) return -EINVAL;
+        q = (int)((c->cmsg_len - CMSG_LEN(0)) / sizeof(int));
+        if (n + q > max) return -EINVAL;
+        for (k = 0; k < q; k++) memcpy(&fds[n++], CMSG_DATA(c) + k * sizeof(int), sizeof(int));
+    }
+    return n;
+}
+
+#define UNIX_FDS_MAX 253                /* SCM_MAX_FD of Linux */
+
 ssize_t sendmsg(int fd, const struct msghdr *m, int flag)
 {
     unsigned char *tutto;
@@ -17133,6 +17288,24 @@ ssize_t sendmsg(int fd, const struct msghdr *m, int flag)
     int            i;
 
     if (!m) return presa_errore(EINVAL);
+    if (!presa_di(fd)) {                /* an end of a unix pair (0.358) */
+        int  fds[UNIX_FDS_MAX];
+        int  nf = cmsg_descrittori(m, fds, UNIX_FDS_MAX);
+        long k;
+
+        if (nf < 0) return presa_errore(-nf);
+        for (i = 0; i < m->msg_iovlen; i++) tot += m->msg_iov[i].iov_len;
+        tutto = (unsigned char *)malloc(tot ? tot : 1);
+        if (!tutto) return presa_errore(ENOMEM);
+        for (i = 0; i < m->msg_iovlen; i++) {
+            memcpy(tutto + o, m->msg_iov[i].iov_base, m->msg_iov[i].iov_len);
+            o += m->msg_iov[i].iov_len;
+        }
+        k = unix_io(SYS_UNIX_MANDA, fd, tutto, tot, flag, fds, (unsigned int)nf, NULL);
+        free(tutto);
+        if (k == -E_NOTSOCK || k == -ENOSYS) return presa_errore(presa_non(fd));
+        return (ssize_t)err_posix(k);
+    }
     for (i = 0; i < m->msg_iovlen; i++) tot += m->msg_iov[i].iov_len;
     tutto = (unsigned char *)malloc(tot ? tot : 1);
     if (!tutto) return presa_errore(ENOMEM);
@@ -17153,6 +17326,43 @@ ssize_t recvmsg(int fd, struct msghdr *m, int flag)
     int            i;
 
     if (!m) return presa_errore(EINVAL);
+    if (!presa_di(fd)) {                /* an end of a unix pair (0.358) */
+        int            fds[UNIX_FDS_MAX];
+        unsigned int   presi = 0, posto = 0;
+        long           k;
+
+        if (m->msg_control && m->msg_controllen >= CMSG_LEN(sizeof(int)))
+            posto = (unsigned int)((m->msg_controllen - CMSG_LEN(0)) / sizeof(int));
+        if (posto > UNIX_FDS_MAX) posto = UNIX_FDS_MAX;
+        for (i = 0; i < m->msg_iovlen; i++) tot += m->msg_iov[i].iov_len;
+        tutto = (unsigned char *)malloc(tot ? tot : 1);
+        if (!tutto) return presa_errore(ENOMEM);
+        k = unix_io(SYS_UNIX_RICEVI, fd, tutto, tot, flag, fds, posto, &presi);
+        if (k == -E_NOTSOCK || k == -ENOSYS) { free(tutto); return presa_errore(presa_non(fd)); }
+        m->msg_flags = (presi & 0x80000000u) ? 0x8 /* MSG_CTRUNC */ : 0;
+        presi &= 0x7FFFFFFFu;
+        for (i = 0; k > 0 && i < m->msg_iovlen && o < (size_t)k; i++) {
+            size_t q = m->msg_iov[i].iov_len;
+
+            if (q > (size_t)k - o) q = (size_t)k - o;
+            memcpy(m->msg_iov[i].iov_base, tutto + o, q);
+            o += q;
+        }
+        free(tutto);
+        if (m->msg_name) m->msg_namelen = 0;
+        if (presi) {                    /* one SCM_RIGHTS with all of them */
+            struct cmsghdr *c = (struct cmsghdr *)m->msg_control;
+
+            c->cmsg_len   = CMSG_LEN(presi * sizeof(int));
+            c->cmsg_level = S_SOL_SOCKET;
+            c->cmsg_type  = SCM_RIGHTS;
+            memcpy(CMSG_DATA(c), fds, presi * sizeof(int));
+            /* what was used, never more than was given (as Linux) */
+            if (CMSG_SPACE(presi * sizeof(int)) < m->msg_controllen)
+                m->msg_controllen = CMSG_SPACE(presi * sizeof(int));
+        } else m->msg_controllen = 0;
+        return (ssize_t)err_posix(k);
+    }
     for (i = 0; i < m->msg_iovlen; i++) tot += m->msg_iov[i].iov_len;
     tutto = (unsigned char *)malloc(tot ? tot : 1);
     if (!tutto) return presa_errore(ENOMEM);

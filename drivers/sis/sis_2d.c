@@ -2166,6 +2166,8 @@ int sis2d_servizio(void)
                ACC_SERVIZIO);
         return 1;
     }
+    /* only root and who sits at a console (kernel 0.359, voce 111 4b) */
+    ipc_filtro(IPC_FILTRO_CONSOLE);
 
     printf("sis2d: servizio '%s' attivo - %ux%u a %u bit\n",
            ACC_SERVIZIO, g_larg, g_alt, g_bit);

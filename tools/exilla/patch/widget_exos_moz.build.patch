@@ -1,6 +1,6 @@
 --- a/widget/exos/moz.build
 +++ b/widget/exos/moz.build
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,44 @@
 +# This Source Code Form is subject to the terms of the Mozilla Public
 +# License, v. 2.0. If a copy of the MPL was not distributed with this
 +# file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -17,10 +17,12 @@
 +
 +UNIFIED_SOURCES += [
 +    "ExosPosta.cpp",
++    "ExosSistema.cpp",
 +    "GfxInfo.cpp",
 +    "MediaKeysEventSourceFactory.cpp",
 +    "nsAppShell.cpp",
 +    "nsBidiKeyboard.cpp",
++    "nsFilePickerExos.cpp",
 +    "nsLookAndFeel.cpp",
 +    "nsPrintSettingsExos.cpp",
 +    "nsUserIdleServiceExos.cpp",

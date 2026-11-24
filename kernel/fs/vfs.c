@@ -414,6 +414,12 @@ static uint32_t g_fs_n_attesa = 0;
  * lock was handed to; g_fs_detentore says it is his already. */
 static uint32_t g_fs_passato = 0;
 
+/* ! WHO KEEPS THE LOCK TOO LONG IS SAID (kernel 0.360, voce 117): a stat
+ * waited 5 s while Firefox started, and the mouse with it. The tick the lock
+ * was taken, and at release a line when it was held over FS_TROPPO_TICK. */
+static uint32_t g_fs_dal = 0;
+#define FS_TROPPO_TICK 50u      /* 500 ms */
+
 uint32_t vfs_stato_lucchetto(void) { return g_fs_detentore; }
 
 static void fs_prendi_n(const char *chi)
@@ -442,6 +448,7 @@ static void fs_prendi_n(const char *chi)
             g_fs_detentore = io;
             g_fs_passato   = 0;
             g_fs_chi       = chi;
+            g_fs_dal       = g_ticks;
             if (fl_if & 0x200u) interrupts_enable();
             return;
         }
@@ -502,7 +509,13 @@ static void fs_prendi_n(const char *chi)
 static void fs_rilascia(void)
 {
     uint32_t fl_if = read_eflags();   /* IF given back as found (voce 54) */
-    uint32_t i, n;
+    uint32_t i, n, tenuto = g_ticks - g_fs_dal;
+    uint32_t chi_era = g_fs_detentore;
+    const char *cosa = g_fs_chi;
+
+    if (tenuto > FS_TROPPO_TICK && chi_era != FS_SENZA_PROCESSO && proc_get_current() != NULL)
+        klog(LOG_WARN, "VFS: lucchetto tenuto %u ms dal PID %u (%s), %u in fila",
+             tenuto * 10u, chi_era, cosa, g_fs_n_attesa);
 
     interrupts_disable();
 
@@ -526,6 +539,7 @@ static void fs_rilascia(void)
         g_fs_detentore = chi_e;
         g_fs_passato   = chi_e;
         g_fs_chi       = "(passato)";
+        g_fs_dal       = g_ticks;
         sched_unblock_locked(chi_e);
     } else {
         g_fs_n_attesa = 0;
@@ -2972,9 +2986,29 @@ int vfs_open_autorita(const char *abs, uint32_t flags)
     int r; fs_prendi_n("open"); r = apri_nl(abs, flags, 1); fs_rilascia(); return r;
 }
 
+/* ! A BIG READ IS SEVERAL TURNS OF THE LOCK (kernel 0.360, voce 117). Firefox
+ * reads its omni.ja whole, tens of MB in one read(): at the 12 MB/s of a
+ * disk in PIO that is seconds with the lock held, and every other program
+ * that touched a file waited them out (a stat("/") 5.6 s, measured with
+ * tools/prova_ritardo.sh). Between two pieces the line moves. A short piece
+ * is the end of the file: no other is asked. */
+#define VFS_PEZZO (256u * 1024u)
+
 int vfs_read(int h, void *buf, uint32_t size, uint32_t offset)
 {
-    int r; fs_prendi_n("read"); r = vfs_read_nl(h, buf, size, offset); fs_rilascia(); return r;
+    uint32_t fatto = 0;
+
+    for (;;) {
+        uint32_t n = size - fatto > VFS_PEZZO ? VFS_PEZZO : size - fatto;
+        int      r;
+
+        fs_prendi_n("read");
+        r = vfs_read_nl(h, (uint8_t *)buf + fatto, n, offset + fatto);
+        fs_rilascia();
+        if (r < 0) return fatto ? (int)fatto : r;
+        fatto += (uint32_t)r;
+        if ((uint32_t)r < n || fatto >= size) return (int)fatto;
+    }
 }
 
 int vfs_write(int h, const void *buf, uint32_t size, uint32_t offset)

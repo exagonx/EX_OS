@@ -1,6 +1,6 @@
 --- a/widget/exos/components.conf
 +++ b/widget/exos/components.conf
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,92 @@
 +# This Source Code Form is subject to the terms of the Mozilla Public
 +# License, v. 2.0. If a copy of the MPL was not distributed with this
 +# file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -78,5 +78,18 @@
 +        'constructor': 'nsUserIdleServiceExos::GetInstance',
 +        'singleton': True,
 +        'processes': ProcessSelector.ALLOW_IN_GPU_RDD_VR_SOCKET_AND_UTILITY_PROCESS,
++    },
++    {
++        'cid': '{4f1c7a52-9d3e-4b8a-a1c6-5e2b7d90f3a4}',
++        'contract_ids': ['@mozilla.org/gio-service;1'],
++        'type': 'nsExosSistema',
++        'headers': ['/widget/exos/ExosSistema.h'],
++    },
++    {
++        'cid': '{7e2b4c1d-5a38-4f9e-b6d0-3c81a9f2e457}',
++        'contract_ids': ['@mozilla.org/parent/filepicker;1'],
++        'type': 'nsFilePickerExos',
++        'headers': ['/widget/exos/nsFilePickerExos.h'],
++        'processes': ProcessSelector.MAIN_PROCESS_ONLY,
 +    },
 +]

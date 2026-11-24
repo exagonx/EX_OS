@@ -34,7 +34,7 @@
 #include "accel_proto.h"
 
 /* +0.001 at every change: `nv40.drv -version` prints it. */
-EX_VERSIONE("nv40.drv", "0.005");
+EX_VERSIONE("nv40.drv", "0.006");
 
 #define NV_VENDITORE   0x10DE
 
@@ -1622,6 +1622,8 @@ static int servizio_2d(void)
         printf("nv40: il nome '%s' e' gia' preso\n", ACC_SERVIZIO);
         return 1;
     }
+    /* only root and who sits at a console (kernel 0.359, voce 111 4b) */
+    ipc_filtro(IPC_FILTRO_CONSOLE);
     printf("nv40: servizio '%s' attivo - %ux%u a 32 bit\n", ACC_SERVIZIO, g_w, g_h);
     for (;;) {
         int n = ipc_recv(&meta, buf, sizeof(buf));

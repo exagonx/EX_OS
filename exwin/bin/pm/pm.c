@@ -40,7 +40,7 @@
 #include "wifid_proto.h"      /* the WiFi icon (@WIFI) */
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.029"
+#define VERSIONE_APP "0.030"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -1386,6 +1386,7 @@ static void app_riga_testo(const ExTipo *t, char *r, unsigned int max)
     char        nome[24];
 
     if (l && t->tipo[l - 1] == ':') snprintf(nome, sizeof(nome), "%s//", t->tipo);
+    else if (!strcmp(t->tipo, "/")) snprintf(nome, sizeof(nome), "cartelle");   /* voce 118 */
     else snprintf(nome, sizeof(nome), ".%s", t->tipo);
     snprintf(r, max, "%-10s %s%s", nome, !p[0] ? "(nessun programma)" : b ? b + 1 : p,
              !p[0] ? "" : !app_c_e(p) ? "  (non installato)" : t->scelto[0] ? "  (scelto)" : "");
@@ -1443,7 +1444,8 @@ static void app_cambia(int scegli)
         if (!ex_dlg_apri(perc, sizeof(perc))) { app_dico("Nessun cambiamento."); return; }
         if (!app_c_e(perc)) { app_dico("Quel programma non c'e'."); return; }
     } else if (!t->scelto[0]) { app_dico("E' gia' il programma predefinito."); return; }
-    snprintf(msg, sizeof(msg), "%s%s: %s", t->tipo[strlen(t->tipo) - 1] == ':' ? "" : ".", t->tipo,
+    snprintf(msg, sizeof(msg), "%s%s: %s", t->tipo[strlen(t->tipo) - 1] == ':' || !strcmp(t->tipo, "/") ? "" : ".",
+             !strcmp(t->tipo, "/") ? "cartelle" : t->tipo,
              scegli ? perc : "torna il predefinito");
     if (!ex_type_set(t->tipo, scegli ? perc : 0)) {
         app_dico("Non riesco a scrivere /boot/tipi.cfg.");

@@ -57,7 +57,7 @@
 
 /* +0.001 a ogni modifica: `mouseser.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("mouseser.drv", "0.003");
+EX_VERSIONE("mouseser.drv", "0.004");
 
 /* --- UART 16550, spiazzamenti dalla base --------------------------------- */
 #define U_DATI      0   /* RBR/THR (e DLL quando DLAB e' acceso) */
@@ -281,6 +281,8 @@ int main(int argc, char **argv)
         printf("mouseser: ipc_register('mouse') fallita (%d) - esco\n", rc);
         return 1;
     }
+    /* only root and who sits at a console (kernel 0.359, voce 111 4b) */
+    ipc_filtro(IPC_FILTRO_CONSOLE);
 
     rc = irq_bind(g_irq);
     if (rc < 0) {

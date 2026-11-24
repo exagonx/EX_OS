@@ -49,7 +49,7 @@
 #include "libc.h"
 #include "pci_proto.h"
 
-EX_VERSIONE("dpms.drv", "0.002");
+EX_VERSIONE("dpms.drv", "0.003");
 
 #define SERVIZIO        "dpms"
 #define MSG_STATO       0xD901u     /* -> DpmsStato */
@@ -241,6 +241,8 @@ static int servizio(unsigned int minuti)
         printf("dpms: il nome '%s' e' gia' preso\n", SERVIZIO);
         return 1;
     }
+    /* only root and who sits at a console (kernel 0.359, voce 111 4b) */
+    ipc_filtro(IPC_FILTRO_CONSOLE);
     while (!fine) {
         int d, n = ipc_recv_timeout(&meta, buf, sizeof(buf), spento ? 100 : (tra ? 100 : 1000));
 

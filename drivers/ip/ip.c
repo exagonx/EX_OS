@@ -69,6 +69,25 @@
  * ============================================================================= */
 #define IP_SOLO_ROOT(t) ((t) == IP_MSG_CONFIG || (t) == IP_MSG_LINK)
 
+/* ! PORTS BELOW 1024 ARE ROOT'S (0.028, kernel 0.359, voce 111 step 4b), as
+ * on Linux: a user who takes 23, 25 or 80 before the server poses as it,
+ * and reads the passwords typed into it. Opening a UDP port and listening on
+ * a TCP one ask for the port; the rest works on what is already open (a UDP
+ * send checks that the port is the sender's, an accepted connection is of
+ * who accepted it). The servers that use them start as root: telnetd and
+ * dhcp from avvio.sh, sshd, httpd (it binds 80 as root, then its threads run
+ * as uid 100: tools/httpd-exos/conf). mariadb, valkey, php-fpm stay above.
+ * -EACCES, the errno of Linux's bind. */
+static int ip_porta_riservata(unsigned int tipo, const void *buf, unsigned int len)
+{
+    unsigned int porta;
+
+    if (tipo != IP_MSG_UDP_APRI && tipo != IP_MSG_TCP_ASCOLTA) return 0;
+    if (len < sizeof(porta)) return 0;
+    memcpy(&porta, buf, sizeof(porta));     /* IpUdpApri and IpTcpAscolta: porta first */
+    return porta != 0 && porta < 1024;
+}
+
 static int ip_ricevi(IpcMessage *meta, void *buf, unsigned int len, unsigned int ms)
 {
     unsigned int inizio = uptime_ms();
@@ -91,9 +110,11 @@ static int ip_ricevi(IpcMessage *meta, void *buf, unsigned int len, unsigned int
             meta->tipo       = c.tipo;
             meta->len        = c.len;
         }
-        if (c.uid == 0 || !IP_SOLO_ROOT(c.tipo)) return r;
+        if (c.uid == 0 || (!IP_SOLO_ROOT(c.tipo) &&
+                           !ip_porta_riservata(c.tipo, buf, c.len < len ? c.len : len)))
+            return r;
         {
-            int no = -EPERM;    /* IpEsito: one int, codice */
+            int no = IP_SOLO_ROOT(c.tipo) ? -EPERM : -EACCES;  /* IpEsito: one int */
 
             ipc_send(c.sender_pid, IP_MSG_ESITO, &no, sizeof(no));
         }
@@ -103,7 +124,7 @@ static int ip_ricevi(IpcMessage *meta, void *buf, unsigned int len, unsigned int
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.027");
+EX_VERSIONE("ip.drv", "0.028");
 
 /* =============================================================================
  * Costanti di protocollo

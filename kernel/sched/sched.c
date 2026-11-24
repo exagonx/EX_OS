@@ -19,6 +19,7 @@
 #include "shm.h"
 #include "pipe.h"
 #include "pty.h"
+#include "shmfd.h"     /* FD_SHM at exit (0.358) */
 #include "paging.h"
 #include "kmalloc.h"
 #include "gdt.h"
@@ -788,6 +789,9 @@ static void proc_chiudi_fd(Process *p)
                 break;
             case FD_PTY_S:
                 pty_chiudi_locked((int)FDV(p, fd).inode, 0);
+                break;
+            case FD_SHM:            /* memory that is a descriptor (0.358) */
+                shmfd_chiudi_locked((int)FDV(p, fd).inode);
                 break;
             case FD_UNIX:           /* its two pipes (0.358) */
                 pipe_chiudi_lettore_locked((int)FDV(p, fd).inode);
@@ -1715,6 +1719,7 @@ static void sched_switch_to(Process *next)
  * (sched_battito_cpu). */
 static void sched_battito_comune(void)
 {
+    bkl_dici_lungo();       /* 0.360: a long hold of the kernel's lock */
     /* Preemption: quantum esaurito o processo non più running.
      * L'idle task non ha mai un vero "quantum" da rispettare: se e' in
      * esecuzione, ad ogni tick verifichiamo se esiste un processo READY

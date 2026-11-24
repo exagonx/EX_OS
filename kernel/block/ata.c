@@ -768,6 +768,12 @@ int ata_attendi_drq_muto(int canale, uint32_t timeout_ms, uint8_t *stato_out)
 {
     uint16_t io   = base_io(canale);
     uint32_t scad = g_ticks + (timeout_ms + 9) / 10;
+    uint32_t giri = 0;
+    /* ! THE SEEK OF A PIO READ IS WAITED YIELDING (kernel 0.360, voce 117),
+     * as the end of a run already was: BSY stays up milliseconds per
+     * command, and spinning here kept the kernel's lock and the processor
+     * from everyone. Only with interrupts on (sched_yield turns them on). */
+    int      cede = (read_eflags() & 0x200u) != 0;
 
     for (;;) {
         uint8_t st = port_inb(io + ATA_REG_STATUS);
@@ -785,6 +791,7 @@ int ata_attendi_drq_muto(int canale, uint32_t timeout_ms, uint8_t *stato_out)
          * and a system installed on it found no root (14 October 2026). */
         if (st & ATA_SR_BSY) {
             if (g_ticks >= scad) return -1;
+            if (cede) ata_cedi(&giri);
             continue;
         }
 

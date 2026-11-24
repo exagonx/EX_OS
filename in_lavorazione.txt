@@ -226,6 +226,8 @@ GRUPPO  VOCI             COSA
  --     61 76            solo se ricompare (76: orologio in FAULT, 3/11)
  --     77               seguiti del 3-4/11: H.264 Firefox, Firefox 32, repo 64 da
                          pubblicare, ExPackage sul portatile, statici rimasti
+ --     116              (23/11) EXWIN SALVASCHERMO: Impostazioni > Scrivania, tempi,
+                         spegnimento schermo; due salvaschermi (scritta, cerchio)
  --     115              (23/11) FIREFOX IN PIU' PROCESSI: AF_UNIX + SCM_RIGHTS veri,
                          shm per descrittore fra processi, processi dei contenuti
  --     114              (23/11) FILE MANAGER: Opzioni > Visualizzazione (nascosti,
@@ -10567,6 +10569,163 @@ tools/netinst/velocita tolto da netinst.
       17/11, DOPO IL RIAVVIO NELLA 0.343: il telnetd 0.015 dell'avvio, porta
       23, telnet_piu_prova.py 6 su 6.
 
+  118. FIREFOX E LE APPLICAZIONI DEL SISTEMA (24/11/2026, appunto
+      dell'utente, in coda). L'utente: "firefox non ha applicazioni associate,
+      ad esempio al download quando scarica un file questo non riconosce il
+      file manager come gestore delle cartelle, firefox dovrebbe fare una
+      chiamata e questa il sistema program manager dovrebbe interpretarla come
+      apertura della cartella, inoltre dovrebbe fornire a firefox l'elenco
+      delle applicazioni secondo il suo metodo di api".
+      DA GUARDARE (senza toccare i sorgenti di Firefox):
+      - Su Linux "Mostra nella cartella" e "Apri con" passano da GIO
+        (nsGIOService: elenco delle applicazioni per tipo MIME dai file
+        .desktop e da mimeapps.list) e da D-Bus (org.freedesktop.FileManager1
+        ShowItems). Capire con quali opzioni e' costruito il nostro Firefox e
+        quale strada prende oggi su EX-OS (registro di Firefox al download).
+      - Da proporre all'utente con pro e contro: pm che risponde alla stessa
+        API (file .desktop e mimeapps.list prodotti da /boot/tipi.cfg, la
+        chiamata di apertura cartella girata a filemgr) oppure un'altra via.
+      - Provare: scaricare un file, "Mostra nella cartella" apre filemgr,
+        "Apri con" elenca le applicazioni di Impostazioni > Applicazioni.
+      24/11 NOTTE, TROVATO E SCRITTO (non ancora provato in QEMU):
+      - Le API che Firefox usa per il sistema, lette nei sorgenti:
+        nsLocalFile::Reveal/Launch (xpcom/io/nsLocalFileUnix.cpp) senza GTK
+        rendono errore; tutte le strade "programmi del sistema"
+        (nsGNOMERegistry, nsMIMEInfoUnix, DownloadIntegration
+        showContainingDirectory) chiedono UN servizio solo,
+        @mozilla.org/gio-service;1 (nsIGIOService, xpcom/system), che nel
+        nostro Firefox non c'era. Il file picker e' un altro servizio,
+        @mozilla.org/parent/filepicker;1 (nsIFilePicker), anch'esso assente:
+        "Salva con nome" e <input type=file> non potevano funzionare.
+      - SCELTA (le parole dell'utente: "il program manager dovrebbe
+        interpretarla ... fornire a firefox l'elenco delle applicazioni
+        secondo il suo metodo di api"): niente file .desktop finti ne'
+        D-Bus. widget/exos/ExosSistema.cpp risponde a nsIGIOService con le
+        funzioni di exwin.so (ex_type_program, ex_types, ex_type_set,
+        ex_open_file, ex_spawn_program), aperta con dlopen: i tipi sono
+        quelli di tipi.txt e /boot/tipi.cfg (Impostazioni > Applicazioni),
+        i nomi da applicazioni.txt. Una tabella MIME <-> estensione dentro
+        (da spostare in un mime.types di sistema).
+        - Reveal e Launch in nsLocalFileUnix.cpp anche per XP_EXOS (tocca.sh).
+        - exwin.so 0.024: ex_open_file di una cartella lancia il programma
+          del tipo "/" (tipi.txt [Cartelle], filemgr); pm 0.030 lo mostra
+          come "cartelle".
+      - FILE PICKER: widget/exos/nsFilePickerExos.cpp lancia
+        /exwin/bin/scegli (nuovo, 0.001: apri|salva|cartella, il percorso
+        scelto sull'uscita) e legge la risposta in un filo a parte. Un
+        processo suo e non exdlg.so dentro Firefox: exwin.so legge la
+        casella del processo, e dentro Firefox si mangerebbe i messaggi
+        delle sue finestre.
+      - Prova: tools/exilla/prova-sistema.sh (autoconfig: il servizio dice
+        Immagini per image/png, video/mp4 per mp4, reveal() apre filemgr; un
+        clic su <input type=file> apre il dialogo e il nome torna alla
+        pagina).
+      - GUASTO DELLA COSTRUZIONE trovato strada facendo: il crate mozbuild
+        conservava il vecchio percorso degli oggetti (prima di ~/ex_os), il
+        32 bit falliva con "Include not found: mozilla-config.h". Rimedio
+        scritto in testa a tools/exilla/gecko-costruisci.sh.
+      - Mancano: filemgr che seleziona il file mostrato (oggi apre solo la
+        cartella); i filtri del picker (AppendFilter non fa niente); piu'
+        file insieme (modeOpenMultiple ne rende uno).
+      - KERNEL 0.361, TROVATO CON LA PROVA: il dialogo moriva appena nato.
+        tools/prove/forkfilo.c (posix_spawn dal filo principale, posix_spawn
+        da un secondo filo, fork+execve a mano da un secondo filo) lo
+        riproduce senza Firefox: exec non caricava nel processore il nuovo
+        puntatore del filo (FS a 64 bit, il descrittore di GS a 32): solo al
+        prossimo cambio di contesto. Il figlio di un fork fatto da un filo
+        partiva con il TLS del programma vecchio, sparito, e moriva al primo
+        %fs:0. Dal filo principale andava per caso (stesso indirizzo).
+        Rimedio: gdt_set_tls_base(proc->tls_tp) prima di
+        sched_enter_usermode. Provato: 32 e 64 bit, posix_spawn da un filo
+        3 su 3.
+      - APERTO, NON RISOLTO (c'era gia' prima della 0.361): a 64 bit il
+        fork+execve A MANO da un secondo filo fa morire il programma nuovo
+        all'entrata di ld-exos.so: lettura a 0x8 (pagina del kernel, pte
+        0x63 senza U), RIP 0x080120f5 = _ld_avvio+7, a meta' di un'istruzione
+        che non legge la memoria. posix_spawn dallo stesso filo va; a 32 bit
+        va anche a mano. Firefox usa posix_spawn: non lo tocca. Da guardare:
+        cosa cambia fra il figlio di sp_fai (pipe2 O_CLOEXEC, sp_prepara) e
+        quello fatto a mano; il frame con cui il figlio riparte dopo fork
+        (proc_prepara_fork) quando il chiamante e' un filo.
+
+  117. IL SISTEMA RALLENTA QUANDO SI CARICA UN PROGRAMMA GROSSO (24/11/2026,
+      appunto dell'utente, in coda). L'utente: "quando viene letto un
+      programma grosso come firefox al primo caricamento riscontro un
+      rallentamento di tutto il sistema perfino il mouse inizia a muoversi a
+      scatti e a rallentare".
+      DA GUARDARE: misurare prima (certezze, non ipotesi). Piste: il lucchetto
+      del VFS tenuto durante la lettura dal disco (@CODA-20-10 p.5), il driver
+      del disco che attende a CPU occupata invece che con l'interrupt, la
+      priorita' di kbd/mouse/wserver rispetto al caricatore. Provare sul
+      portatile e sul .253: il mouse durante il primo avvio di Exilla.
+      24/11 NOTTE, MISURATO IN QEMU (kernel 0.360, NON committato):
+      - Strumento: tools/prove/ritardo.c (ogni 5 ms un sonno da 5 ms, uno
+        stat("/") e un byte in una pipe, ognuno nel suo filo; "persi" = ms
+        di orologio di sistema persi rispetto al TSC) e tools/prova_ritardo.sh
+        (64 bit, 2 processori, disco a 12 MB/s e 150 letture al secondo
+        come il .253 in PIO; A = un figlio legge il pacchetto di Firefox,
+        B = Firefox parte a freddo con la scrivania accesa).
+      - TROVATO 1, IL LUCCHETTO DEL VFS: in B uno stat("/") aspettava 5,6 s
+        (due volte, ai secondi 17 e 23). Firefox legge i suoi omni.ja
+        interi con UN read() (mmap di un file non c'e', ENODEV): decine di
+        MB a lucchetto preso, e chiunque tocchi un file (anche wserver e pm)
+        aspetta. RIMEDIO 0.360: vfs_read a pezzi da 256 KB, il lucchetto
+        passa fra un pezzo e l'altro; una riga nel log se un'operazione lo
+        tiene oltre 500 ms. Risultato: stat peggiore 5656 -> 49 ms, nessuna
+        riga oltre 500 ms.
+      - TROVATO 2, IL LUCCHETTO DEL KERNEL (un processore per volta nel
+        kernel, smp.h tappa 3): al secondo 6 di B tutto il resto fermo
+        335-521 ms con l'orologio che andava (persi 0). Riga nuova nel log
+        quando un processore tiene il kernel oltre 100 ms, con il PID e
+        l'ultima chiamata: PID 40 (Firefox), SYS_SO_MAPPA 274. La cache
+        delle .so (kernel/loader/condivise.c) legge tutto l'oggetto dentro
+        una sola chiamata, 4 KB alla volta: dalla cache del disco non si
+        aspetta mai, quindi non si cede mai. RIMEDIO 0.360: sched_yield
+        ogni 64 KB letti. Risultato: sonno peggiore 439-521 -> 56 ms, pipe
+        418 -> 69 ms, nessuna riga oltre 100 ms.
+      - In PIO (il .253) l'attesa di BSY dentro ata_attendi_drq girava senza
+        cedere per tutta la ricerca della testina: ora cede come le altre
+        attese (solo a interrupt accesi). Non provabile in QEMU (il disco di
+        QEMU fa DMA): da misurare sul .253.
+      - NON E' LA PRIORITA' (provato): le console (Alt+F1/F5) senza Firefox
+        non fermano niente (sonno 14-16 ms sempre). Resta da valutare con
+        l'utente: wserver gira a PRIO_NORMAL come ognuno dei ~100 fili di
+        Firefox, e un risveglio non toglie la CPU a chi gira (sched.c,
+        sched_unblock_locked fa solo runq_add): un processo che si sveglia
+        da un'attesa potrebbe passare davanti a quelli che consumano tutto
+        il loro quanto. In QEMU il ritardo che resta e' 50-70 ms al
+        peggio; sul ferro va misurato prima di cambiare lo scheduler.
+      - Il perche' in breve per l'utente: non era Firefox "che consuma",
+        erano due lucchetti globali tenuti a lungo dal caricamento (quello
+        dei file e quello del kernel); il mouse passa dal kernel (driver,
+        IPC verso wserver) e aspettava con tutti gli altri.
+      - Da fare: tools/prova_ritardo.sh anche a 32 bit; sul .253 la stessa
+        misura con ritardo64 mentre parte Exilla, prima e dopo la 0.360.
+
+  116. EXWIN: IL SALVASCHERMO (23/11/2026, appunto dell'utente, in coda).
+      L'utente: "su exwin su impostazioni in scrivania aggiungi la voce di
+      selezionare il salvaschermo e le tempistiche dell'attivazione con gestione
+      di spegnimento schermo, attivazione screen saver e altre impostazioni,
+      inoltre crea due screen saver, uno dove ce una scritta personalizzabile
+      che scorre random da una parte all'altra dello schermo di dimensioni
+      random, l'altra un cerchio che rimbalza cambiando dimensione da 200px a
+      2px(puntino) cosi che copre il 100% dello schermo".
+      DA FARE:
+      - Impostazioni > Scrivania: scelta del salvaschermo (nessuno, Scritta,
+        Cerchio), dopo quanti minuti senza tastiera e mouse parte, dopo quanti
+        si spegne lo schermo (DPMS, se la scheda lo sa fare), anteprima, chiedere
+        la password al ritorno (da decidere con l'utente), la scritta.
+      - Il conto del tempo fermo: in wserver (vede tutti gli eventi), che
+        lancia il salvaschermo come finestra a schermo intero sopra tutte.
+      - Salvaschermo SCRITTA: testo scelto dall'utente, scorre da un lato
+        all'altro con direzione, altezza e dimensione del carattere a caso a
+        ogni passata.
+      - Salvaschermo CERCHIO: rimbalza sui bordi, il raggio va da 200 px a 2 px
+        e torna, lascia la traccia finche' lo schermo e' coperto tutto, poi
+        ricomincia.
+      - Si ferma al primo tasto o movimento del mouse.
+      - Manuali, help, novita'; provato in QEMU a 1366x768.
+
   115. FIREFOX IN PIU' PROCESSI SU EX-OS, COME SU LINUX (proposta 2 del
       23/11/2026 dopo il fault in nsDocShellLoadState::Serialize; l'utente: "si
       sono d accordo con i tre passi procedi quando puoi anche con quelli").
@@ -10615,6 +10774,38 @@ tools/netinst/velocita tolto da netinst.
          la grafica dei figli verso il padre (widget exos solo nel padre),
          l'audio; niente sandbox per ora (MOZ_DISABLE_CONTENT_SANDBOX, da
          rivedere). Prova: unsplash e gmail sul .253.
+      23/11 notte: PASSI 1-3 e 5 PROVATI. prova_permessi.sh 13 su 13 a 32 e
+      64 (unixprova 70); tools/exilla/prova-processi.sh 3 su 3 a 32 e 64 (9
+      firefox in ps, la pagina si carica, nessun FAULT); prova-primotab.sh
+      8 su 8 a 32 e 64 (Firefox a un processo). exilla 0.008: piu' processi
+      di predefinito (scelta dell'utente), EXILLA_UN_PROCESSO=1 torna a uno.
+      Il .253 a 0.358 (netinst_64 pubblicato su ~/ftp/www): verifica tutto a
+      posto, unixprova 70 su 70. DA FARE: l'utente prova Firefox su
+      unsplash.com sul .253; poi passo 4 (shutdown, SEQPACKET, MSG_PEEK,
+      copia in sola lettura vera).
+      STATO (23/11 sera), KERNEL 0.358, NON COMMITTATO:
+      - PASSO 1 FATTO e PROVATO in QEMU 32 e 64 (prova_permessi.sh 13 su 13,
+        unixprova 27): FD_UNIX = due pipe (inode legge, inode2 scrive),
+        SYS_SOCKETPAIR 276, SYS_UNIX_MANDA 277 / RICEVI 278 (UnixMsg, flag
+        UNIX_NONBLOCCA = MSG_DONTWAIT); fstat: pipe S_IFIFO, capo S_IFSOCK;
+        libc: socketpair, send/recv/sendto/recvfrom/sendmsg/recvmsg sui capi.
+      - PASSO 2 SCRITTO (SCM_RIGHTS): PipeAllegato in pipe.c legato alla
+        posizione del primo byte, la lettura si ferma prima del prossimo;
+        UnixAllegato in syscall_impl.c (fd_riferimento / fd_riferimento_via);
+        orfani liberati con gli interrupt accesi (unix_orfani_via); read()
+        li butta; MSG_CTRUNC (UNIX_TRONCATI). FD_SERVIZIO e FD_DRIVER non
+        viaggiano (EOPNOTSUPP). Limite: un ciclo (capo mandato su se' stesso
+        e mai ricevuto) non si raccoglie.
+      - PASSO 3 SCRITTO: FD_SHM (kernel/mm/shmfd.c, shmfd.h), SYS_SHMFD_CREA
+        279; ftruncate, fstat (STAT_ATTR_SHM 0x80), mmap MAP_SHARED (pagine
+        con pmm_ref_inc, PG_CONDIVISA), MAP_PRIVATE = EINVAL; libc:
+        shm_open(SHM_ANON) e memfd_create al kernel (kernel vecchio: la zona
+        privata di prima), mmap riconosce FD_SHM da fstat.
+      - unixprova estesa (passi 2 e 3), toolchain di nasi5deb aggiornate
+        (cross64.sh sysroot, prepara-cross.sh): da provare in QEMU.
+      - DA FARE nel passo 4: shutdown su un capo, SOCK_SEQPACKET, MSG_PEEK,
+        posix_spawn con i descrittori scelti; sola lettura vera del
+        descrittore "congelato" di Gecko (oggi dup: conta con la sandbox).
       GUARDATO (23/11): libevent di Exilla usa poll, non epoll (exos/event2/
       event-config.h: EVENT__HAVE_POLL 1, niente EPOLL); l'epoll della libc
       vale solo per i socket di ip.drv. Basta FD_UNIX in sys_poll.
@@ -10913,6 +11104,38 @@ tools/netinst/velocita tolto da netinst.
         SYS_IPC_RECV_CHI), poi il filtro. Stesso per usb RIPROVA.
       - ip.drv: porte sotto 1024 solo root come su Linux? (telnetd e httpd
         girano da root?) Da chiedere.
+      PASSO 4b FATTO IN QEMU (23-24/11, kernel 0.359, NON committato):
+      - il filtro sta in sys_ipc_send, l'unica porta verso ipc_send da
+        utente (il kernel non chiama ipc_send altrove): SYS_IPC_FILTRO 280
+        (IPC_FILTRO_CONSOLE = root e gli uid seduti a una delle 5 console,
+        tutte e non solo quella visibile, cosi' Alt+F1 non toglie niente
+        alla scrivania; IPC_FILTRO_MIO = root e il padrone), EPERM e i primi
+        3 rifiuti nel log; SYS_CONSOLE_UTENTE 281 (lo scrive solo root:
+        login, non da pty); fb_map rifiuta chi non siede alla console.
+        Lo scaffale col timbro per wserver non e' servito: il filtro e' nel
+        kernel, prima della casella.
+      - driver della console: kbd, mouseser, sis, nv40, nv50, dpms, audio
+        (ac97, sb, es1371, hdaudio), uhci/xhci/ohci quando servono un mouse;
+        wserver IPC_FILTRO_MIO.
+      - porte: ip.drv 0.028 e bind() della libc, 1..1023 solo root. Server
+        controllati: httpd (80 da root, poi uid 100 da httpd-exos.conf),
+        telnetd e dhcp da avvio.sh (root), sshd da root; mariadb 3306,
+        valkey 6379, php-fpm sopra 1024.
+      - prove: consoleprova 15 (passo 10 di prova_permessi, 14 su 14 a 32 e
+        64); tools/prova_console_utente.sh 4 su 4 a 32 e 64 (mario alla
+        console, ExWin, nessun rifiuto, uscita); prova-processi 3 su 3.
+      - LIMITI: lpt e wifi non filtrati; un controller USB col mouse e'
+        filtrato intero (anche un disco USB sullo stesso controller); un
+        altro utente preso con su alla console viene rifiutato.
+      - DA DECIDERE CON L'UTENTE: mario esce dalla console 0 ma la sua
+        scrivania (wserver sulla console 4, partita con exwin) resta
+        accesa: si vede ancora sullo schermo, ma kbd e mouse la rifiutano
+        (3 righe "non puo' scrivere" nel log). Proposte: (a) all'uscita
+        login chiude i processi dell'utente nati dalla sessione della
+        console; (b) wserver si chiude da solo al primo EPERM da kbd; (c)
+        lasciare cosi'. Consiglio (a), come logind su Linux.
+      - Da fare sul .253: netupdate a 0.359, consoleprova64, l'utente
+        entra alla console con un utente normale e avvia ExWin.
       Poi passo 5 (shm con proprietario e modo).
 
   110. PIU' AGENTI SULLA CODA (l'utente, 22/11: "dato che il contesto cresce a

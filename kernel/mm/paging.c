@@ -2251,6 +2251,8 @@ void page_fault_handler(InterruptFrame *frame)
     vaddr_t  fault_addr = read_cr2();
     uint32_t err        = frame->err_code;
 
+    if (proc_get_current() != NULL) proc_get_current()->sc_ultima = 0x10000u;
+
     /* Decodifica error code:
      *   Bit 0: P — 0=not present, 1=protection violation
      *   Bit 1: W — 0=read, 1=write

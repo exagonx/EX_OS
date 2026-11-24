@@ -427,7 +427,7 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack ps_prog kill_
 # =============================================================================
 PROGRAMMI_CD := sync_prog guardia polltest modulo wifid extaskbar prova64 sha256sum cattura grep readlink aggiungi dmesg smpprova cpu ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror netspeed xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova finestreprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume exwifi expackage exilla vlcapri
+PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova finestreprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume exwifi expackage exilla vlcapri scegli
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -3012,6 +3012,29 @@ $(VLCAPRI_BIN): $(VLCAPRI_SRC) $(VLCAPRI_LD) $(EXWIN_SO) $(EXLIB_HDR) $(EXWIN_HD
 
 .PHONY: vlcapri
 vlcapri: dirs $(VLCAPRI_BIN)
+
+# --- /exwin/bin/scegli: the file dialog for Firefox (voce 118) ---------------
+# Firefox's file picker (widget/exos) starts it and reads the path chosen on
+# its stdout: a process of its own, because exwin.so inside Firefox would
+# share Firefox's mailbox. See the top of the source.
+SCEGLI_SRC := exwin/bin/scegli/scegli.c
+SCEGLI_BIN := $(BUILD_EXWIN_BIN)/scegli
+SCEGLI_LD  := exwin/bin/scegli/scegli.ld
+
+$(SCEGLI_BIN): $(SCEGLI_SRC) $(SCEGLI_LD) $(EXWIN_SO) $(EXLIB_HDR) $(EXWIN_HDR) \
+             $(EXDLG_SO) $(EXDLG_HDR) $(WIN_PROTO) $(LIBC_HDR) $(LIBC_DIN) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /exwin/bin/scegli ==="
+	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I drivers/wserver -I drivers/kbd -c $(SCEGLI_SRC) -o $(BUILD_OBJ)/scegli_main.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/scegli_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections $(LD_DIN) \
+	    $(BUILD_OBJ)/scegli_start.o $(BUILD_OBJ)/scegli_main.o \
+	    $(EXWIN_SO) $(EXDLG_SO) \
+	    $(LIBC_DIN) -o $@
+	@echo "[OK] scegli compilato: $@"
+
+.PHONY: scegli
+scegli: dirs $(SCEGLI_BIN)
 
 # --- /exwin/bin/exklondike, exspider, exmajong, exgo: i giochi (@GIOCHI, 3 ottobre 2026)
 #
@@ -5810,6 +5833,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/mm/paging.c \
                   $(KERNEL_DIR)/mm/kmalloc.c \
                   $(KERNEL_DIR)/mm/shm.c \
+                  $(KERNEL_DIR)/mm/shmfd.c \
                   $(KERNEL_DIR)/mm/swap.c \
                   $(KERNEL_DIR)/sched/sched.c \
                   $(KERNEL_DIR)/sched/segnali.c \

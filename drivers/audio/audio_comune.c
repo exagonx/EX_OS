@@ -982,6 +982,8 @@ int main(int argc, char **argv)
                D->nome);
         return 1;
     }
+    /* only root and who sits at a console (kernel 0.359, voce 111 4b) */
+    ipc_filtro(IPC_FILTRO_CONSOLE);
 
     D->volume(g_volume);
     printf("%s: servizio '%s' attivo\n", D->nome, AUDIO_SERVIZIO);

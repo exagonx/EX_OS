@@ -1061,7 +1061,31 @@
 /* 0.356 -> 0.357: at a page fault the callers on the user stack: up to 48
  * code addresses in 64 KB, on lines that fit klog, whole 64-bit addresses
  * (Firefox at nsDocShellLoadState::Serialize gave one caller, 23/11/2026). */
-#define EXOS_VERSION    "0.357"
+/* 0.357 -> 0.358: socketpair(AF_UNIX, SOCK_STREAM): FD_UNIX, an end made of
+ * two pipes, inherited, dup'ed, polled and closed like a pipe; SYS_UNIX_MANDA
+ * and SYS_UNIX_RICEVI for send/recv with MSG_DONTWAIT (voce 115, Firefox with
+ * more processes). fstat of a pipe says S_IFIFO, of an end S_IFSOCK.
+ * SCM_RIGHTS: descriptors travel with the byte they went with (PipeAllegato),
+ * orphans closed by the kernel. FD_SHM (mm/shmfd.c): memory that is a
+ * descriptor, ftruncate, mmap MAP_SHARED, SYS_SHMFD_CREA. mmap of another
+ * non-anonymous fd: ENODEV. */
+/* 0.358 -> 0.359: who may write to a mailbox (SYS_IPC_FILTRO 280, looked at
+ * in sys_ipc_send) and who sits at each console (SYS_CONSOLE_UTENTE 281,
+ * written by login): keyboard, mouse, audio, screen and fb_map are of root
+ * and of the console users, wserver of its own user and root (voce 111 4b,
+ * the user's choice of 23/11/2026). exec clears the filter. */
+/* 0.359 -> 0.360: vfs_read in pieces of 256 KB, the VFS lock let go between
+ * them (a stat waited 5.6 s while Firefox read its omni.ja whole); a line in
+ * the log when the lock is held over 500 ms (voce 117). The shared-object
+ * cache yields every 64 KB it reads inside SYS_SO_MAPPA (one call held the
+ * big kernel lock 335 ms, everything else stopped); a line in the log when a
+ * processor holds the kernel over 100 ms, with the PID and its last call;
+ * the PIO wait for BSY yields like the other waits. */
+/* 0.360 -> 0.361: exec loads the new thread pointer into the processor
+ * before jumping to the program (FS base at 64 bit, the GS descriptor at 32):
+ * a child forked from a thread started the new program with the TLS of the
+ * old one and died at its first %fs:0 (Firefox's file dialog, voce 118). */
+#define EXOS_VERSION    "0.361"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

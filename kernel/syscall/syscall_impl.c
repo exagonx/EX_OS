@@ -24,6 +24,7 @@
 #include "shm.h"
 #include "pipe.h"
 #include "pty.h"
+#include "shmfd.h"     /* FD_SHM (0.358) */
 #include "isr.h"
 
 /* Forward: funzioni VGA per sys_write su fd=1/2 */
@@ -429,6 +430,8 @@ static void fd_posizione_lascia(FileDescriptor *d, int era_mio)
     if (!era_mio) *fd_pos_di(d) = 0;
 }
 
+static void unix_orfani_via(void);     /* SCM_RIGHTS, see UnixAllegato */
+
 int32_t sys_read(InterruptFrame *frame)
 {
     int32_t   fd    = (int32_t)FR_A1(frame);
@@ -490,8 +493,10 @@ int32_t sys_read(InterruptFrame *frame)
      * kernel/ipc/pipe.c. */
     /* An end of a unix socket pair reads its incoming pipe (0.358) */
     if (FDV(proc, fd).type == FD_UNIX) {
-        return pipe_leggi((int)FDV(proc, fd).inode, buf, count,
-                          (FDV(proc, fd).flags & O_NONBLOCK) != 0);
+        int32_t r = pipe_leggi((int)FDV(proc, fd).inode, buf, count,
+                               (FDV(proc, fd).flags & O_NONBLOCK) != 0);
+        unix_orfani_via();          /* read() closes what came with the bytes */
+        return r;
     }
 
     if (FDV(proc, fd).type == FD_PIPE_R) {
@@ -917,13 +922,94 @@ static void unix_conta(const FileDescriptor *d)
     pipe_apri_scrittore((int)d->inode2);
 }
 
+/* =============================================================================
+ * ! DESCRIPTORS ON THE WAY (SCM_RIGHTS, 0.358, voce 115)
+ *
+ * sendmsg on a unix end copies the descriptors into an attachment of the
+ * pipe (pipe.h, PipeAllegato) with one more reference each, as dup would
+ * take: from that moment the sender may close its own, and what it points to
+ * stays alive until the receiver has it, or until nobody can receive it any
+ * more. recvmsg puts them into the receiver's table, numbers of its own.
+ *
+ * Only what the kernel holds can travel. A socket of ip.drv, an epoll set, a
+ * zone of the libc (FD_SERVIZIO) are tables of the sender's libc: in another
+ * process the number would mean nothing. Those give EOPNOTSUPP, said in the
+ * log, not a number that points nowhere.
+ *
+ * ! A cycle (an end sent over itself and never received) is not collected,
+ * as Linux does with its garbage collector: those pipes stay until reboot.
+ * ============================================================================= */
+typedef struct {
+    PipeAllegato   t;               /* t.n descriptors follow */
+    FileDescriptor d[];
+} UnixAllegato;
+
+/* one more reference to what d points to; 0 or -errno */
+static int32_t fd_riferimento(const FileDescriptor *d)
+{
+    switch (d->type) {
+    case FD_FILE:   { int r = vfs_dup((int)d->inode); return r < 0 ? r : 0; }
+    case FD_PIPE_R: pipe_apri_lettore((int)d->inode);          return 0;
+    case FD_PIPE_W: pipe_apri_scrittore((int)d->inode);        return 0;
+    case FD_UNIX:   unix_conta(d);                             return 0;
+    case FD_SHM:    shmfd_apri((int)d->inode);                 return 0;
+    case FD_PTY_M:  pty_apri_riferimento((int)d->inode, 1);    return 0;
+    case FD_PTY_S:  pty_apri_riferimento((int)d->inode, 0);    return 0;
+    case FD_NULL: case FD_STDIN: case FD_STDOUT: case FD_STDERR: return 0;
+    default:        return ERR(EOPNOTSUPP);    /* FD_SERVIZIO, FD_DRIVER */
+    }
+}
+
+/* ... and that reference given back, with no process to give it back for */
+static void fd_riferimento_via(const FileDescriptor *d)
+{
+    switch (d->type) {
+    case FD_FILE:   vfs_close((int)d->inode);                  break;
+    case FD_PIPE_R: pipe_chiudi_lettore((int)d->inode);        break;
+    case FD_PIPE_W: pipe_chiudi_scrittore((int)d->inode);      break;
+    case FD_UNIX:   pipe_chiudi_lettore((int)d->inode);
+                    pipe_chiudi_scrittore((int)d->inode2);     break;
+    case FD_SHM:    shmfd_chiudi((int)d->inode);               break;
+    case FD_PTY_M:  pty_chiudi((int)d->inode, 1);              break;
+    case FD_PTY_S:  pty_chiudi((int)d->inode, 0);              break;
+    default:        break;
+    }
+}
+
+static void unix_allegato_via(UnixAllegato *a)
+{
+    uint32_t i;
+
+    for (i = 0; i < a->t.n; i++) fd_riferimento_via(&a->d[i]);
+    kfree(a);
+}
+
+/* The attachments nobody will receive (pipe_allegati_orfani). Interrupts
+ * on: closing them takes other locks, and may make new orphans (an end that
+ * travelled was the last reader of another pipe), hence the loop. */
+static void unix_orfani_via(void)
+{
+    PipeAllegato *l;
+
+    while ((l = pipe_allegati_orfani()) != NULL) {
+        while (l) {
+            PipeAllegato *dopo = l->dopo;
+
+            unix_allegato_via((UnixAllegato *)l);
+            l = dopo;
+        }
+    }
+}
+
 static void fd_lascia(Process *p, int fd)
 {
     switch (FDV(p, fd).type) {
     case FD_UNIX:
         pipe_chiudi_lettore((int)FDV(p, fd).inode);
         pipe_chiudi_scrittore((int)FDV(p, fd).inode2);
+        unix_orfani_via();          /* what was on its way to this end */
         break;
+    case FD_SHM:    shmfd_chiudi((int)FDV(p, fd).inode);          break;
     case FD_FILE:   vfs_close_di((int)FDV(p, fd).inode, p->fdt);  break;
     case FD_PIPE_R: pipe_chiudi_lettore((int)FDV(p, fd).inode);   break;
     case FD_PIPE_W: pipe_chiudi_scrittore((int)FDV(p, fd).inode); break;
@@ -1024,6 +1110,7 @@ static int32_t fd_duplica(Process *proc, int vecchio, int nuovo)
     if (FDV(proc, vecchio).type == FD_PIPE_W)
         pipe_apri_scrittore((int)FDV(proc, vecchio).inode);
     if (FDV(proc, vecchio).type == FD_UNIX) unix_conta(&FDV(proc, vecchio));
+    if (FDV(proc, vecchio).type == FD_SHM)  shmfd_apri((int)FDV(proc, vecchio).inode);
     /* and a pty counts its descriptors too (it was missing until 0.283) */
     if (FDV(proc, vecchio).type == FD_PTY_M)
         pty_apri_riferimento((int)FDV(proc, vecchio).inode, 1);
@@ -1162,6 +1249,133 @@ senza_posto:
     pipe_chiudi_lettore(ba);
     pipe_chiudi_scrittore(ba);
     return ERR(EMFILE);
+}
+
+/* SYS_SHMFD_CREA (279): an empty FD_SHM, see syscall.h and shmfd.h */
+int32_t sys_shmfd_crea(InterruptFrame *frame)
+{
+    Process *proc = proc_get_current();
+    int      h    = shmfd_crea();
+    int      fd;
+
+    if (h < 0) return (int32_t)h;
+    fd = find_free_fd(proc);
+    if (fd < 0) { shmfd_chiudi(h); return ERR(EMFILE); }
+    FDV(proc, fd).type        = FD_SHM;
+    FDV(proc, fd).flags       = O_RDWR | (FR_A1(frame) & O_CLOEXEC);
+    FDV(proc, fd).offset      = 0;
+    FDV(proc, fd).inode       = (uint32_t)h;
+    FDV(proc, fd).inode2      = 0;
+    FDV(proc, fd).driver_data = NULL;
+    return fd;
+}
+
+/* SYS_UNIX_MANDA, SYS_UNIX_RICEVI (277, 278): see syscall.h. The UnixMsg is
+ * copied in first: the program may change it while we sleep. */
+static int32_t unix_msg_prendi(InterruptFrame *frame, UnixMsg *m, FileDescriptor **d)
+{
+    Process *proc = proc_get_current();
+    int      fd   = (int)FR_A1(frame);
+    UnixMsg *um   = (UnixMsg *)FR_A2(frame);
+
+    if (!syscall_verify_ptr(um, sizeof(UnixMsg))) return ERR(EFAULT);
+    *m = *um;
+    if (fd < 0 || fd >= FD_N(proc) || FDV(proc, fd).type == FD_UNUSED)
+        return ERR(EBADF);
+    if (FDV(proc, fd).type != FD_UNIX) return ERR(ENOTSOCK);
+    if (m->lung && !syscall_verify_ptr((void *)(uintptr_t)m->buf, m->lung))
+        return ERR(EFAULT);
+    *d = &FDV(proc, fd);
+    return 0;
+}
+
+int32_t sys_unix_manda(InterruptFrame *frame)
+{
+    UnixMsg         m;
+    FileDescriptor *d;
+    UnixAllegato   *a = NULL;
+    int32_t         r = unix_msg_prendi(frame, &m, &d);
+
+    if (r < 0) return r;
+    if (m.nfds) {                       /* SCM_RIGHTS: see UnixAllegato */
+        Process *proc = proc_get_current();
+        int32_t  k[UNIX_FDS_MAX];
+        uint32_t i;
+
+        if (m.nfds > UNIX_FDS_MAX) return ERR(EINVAL);
+        if (!syscall_verify_ptr((void *)(uintptr_t)m.fds, m.nfds * sizeof(int32_t)))
+            return ERR(EFAULT);
+        for (i = 0; i < m.nfds; i++) k[i] = ((const int32_t *)(uintptr_t)m.fds)[i];
+        a = (UnixAllegato *)kmalloc(sizeof(UnixAllegato) +
+                                    m.nfds * sizeof(FileDescriptor));
+        if (a == NULL) return ERR(ENOMEM);
+        a->t.n = 0;
+        for (i = 0; i < m.nfds; i++) {
+            if (k[i] < 0 || k[i] >= FD_N(proc) || FDV(proc, k[i]).type == FD_UNUSED) {
+                r = ERR(EBADF);
+                break;
+            }
+            r = fd_riferimento(&FDV(proc, k[i]));
+            if (r < 0) {
+                klog(LOG_WARN, "SYSCALL sendmsg: PID %u, il fd %d (tipo %d) non "
+                     "puo' viaggiare: e' della libc o di un driver", proc->pid,
+                     k[i], (int)FDV(proc, k[i]).type);
+                break;
+            }
+            a->d[i] = FDV(proc, k[i]);
+            a->d[i].flags       &= ~(uint32_t)O_CLOEXEC;   /* per number */
+            a->d[i].posizione_di = 0;
+            a->t.n = i + 1;
+        }
+        if (r < 0) { unix_allegato_via(a); return r; }
+    }
+    r = pipe_scrivi_con((int)d->inode2, (const void *)(uintptr_t)m.buf, m.lung,
+                        (m.flags & UNIX_NONBLOCCA) || (d->flags & O_NONBLOCK),
+                        a ? &a->t : NULL);
+    if (r <= 0 && a) unix_allegato_via(a);     /* not taken: still ours */
+    unix_orfani_via();
+    return r;
+}
+
+int32_t sys_unix_ricevi(InterruptFrame *frame)
+{
+    UnixMsg         m;
+    PipeAllegato   *pa = NULL;
+    FileDescriptor *d;
+    UnixMsg        *um = (UnixMsg *)FR_A2(frame);
+    int32_t         r  = unix_msg_prendi(frame, &m, &d);
+
+    if (r < 0) return r;
+    if (m.nfds > UNIX_FDS_MAX) m.nfds = UNIX_FDS_MAX;
+    if (m.nfds && !syscall_verify_ptr((void *)(uintptr_t)m.fds, m.nfds * sizeof(int32_t)))
+        return ERR(EFAULT);
+    r = pipe_leggi_con((int)d->inode, (void *)(uintptr_t)m.buf, m.lung,
+                       (m.flags & UNIX_NONBLOCCA) || (d->flags & O_NONBLOCK), &pa);
+    um->presi = 0;
+    if (pa) {                           /* SCM_RIGHTS: numbers of its own */
+        Process      *proc = proc_get_current();
+        UnixAllegato *a    = (UnixAllegato *)pa;
+        uint32_t      i, presi = 0;
+        int           troncati = 0;
+
+        for (i = 0; i < a->t.n; i++) {
+            int nfd = presi < m.nfds ? find_free_fd(proc) : -1;
+
+            if (nfd < 0) {              /* no room in fds, or in the table */
+                fd_riferimento_via(&a->d[i]);
+                troncati = 1;
+                continue;
+            }
+            FDV(proc, nfd) = a->d[i];
+            if (m.flags & UNIX_CLOEXEC) FDV(proc, nfd).flags |= O_CLOEXEC;
+            ((int32_t *)(uintptr_t)m.fds)[presi++] = nfd;
+        }
+        kfree(a);
+        um->presi = presi;
+        if (troncati) um->flags |= UNIX_TRONCATI;
+    }
+    unix_orfani_via();
+    return r;
 }
 
 int32_t sys_dup(InterruptFrame *frame)
@@ -1615,6 +1829,7 @@ int32_t sys_fork(InterruptFrame *frame)
         if (d.type == FD_PIPE_R) pipe_apri_lettore((int)d.inode);
         if (d.type == FD_PIPE_W) pipe_apri_scrittore((int)d.inode);
         if (d.type == FD_UNIX)   unix_conta(&d);
+        if (d.type == FD_SHM)    shmfd_apri((int)d.inode);
         if (d.type == FD_PTY_M)  pty_apri_riferimento((int)d.inode, 1);
         if (d.type == FD_PTY_S)  pty_apri_riferimento((int)d.inode, 0);
         d.posizione_di = 0;
@@ -2206,6 +2421,34 @@ int32_t sys_mmap(InterruptFrame *frame)
             paging_unmap_page(proc->page_directory, va);
         }
     }
+
+    /* =====================================================================
+     * ! MEMORY THAT IS A DESCRIPTOR (FD_SHM, 0.358, voce 115): its pages, the
+     * same ones every process that holds it maps (shmfd.h). Only MAP_SHARED:
+     * MAP_PRIVATE of it would want copy on write of shared pages, and nobody
+     * asks it (Gecko maps its zones shared) - EINVAL, said in the log. A
+     * read-only descriptor does not map for writing (EACCES, as POSIX says).
+     * ===================================================================== */
+    if (!(p->flags & MAP_ANONYMOUS) && p->fd >= 0 && p->fd < FD_N(proc) &&
+        FDV(proc, p->fd).type == FD_SHM) {
+        int32_t r;
+
+        if (!(p->flags & MAP_SHARED)) {
+            klog(LOG_WARN, "SYSCALL mmap: PID %u, MAP_PRIVATE di una memoria "
+                 "condivisa (fd %d): non c'e'", proc->pid, p->fd);
+            return ERR(EINVAL);
+        }
+        if ((p->prot & PROT_WRITE) && (FDV(proc, p->fd).flags & 3u) == O_RDONLY)
+            return ERR(EACCES);
+        if (p->offset & (PAGE_SIZE - 1)) return ERR(EINVAL);
+        r = shmfd_mappa((int)FDV(proc, p->fd).inode, proc, vaddr, pages,
+                        p->offset / PAGE_SIZE, pg_flags);
+        if (r < 0) return r;
+        if (vaddr + pages * PAGE_SIZE > proc->heap_end)
+            proc->heap_end = vaddr + pages * PAGE_SIZE;
+        return (int32_t)vaddr;
+    }
+    if (!(p->flags & MAP_ANONYMOUS) && p->fd >= 0) return ERR(ENODEV);
 
     /* ! PROT_NONE SI RISERVA SOLTANTO (0.230; anche con MAP_FIXED dal 0.234,
      * ed e' il «decommit» del JIT): lo spazio e' del processo, le pagine
@@ -3003,6 +3246,8 @@ static int32_t exec_con_argv(const char *kpath, char **uargv, char **uenvp)
         }
     }
 
+    proc->ipc_filtro = 0;   /* the new program says for itself who may write (0.359) */
+
 #define PAROLA  sizeof(uintptr_t)
     usp = res.user_stack_top;
     for (i = 0; i < envc; i++) {
@@ -3049,6 +3294,13 @@ static int32_t exec_con_argv(const char *kpath, char **uargv, char **uenvp)
     kfree(sb);
 
     klog(LOG_INFO, "SYSCALL exec: salto a entry=0x%08x stack=0x%08x", res.entry_point, usp);
+    /* ! THE NEW THREAD POINTER INTO THE PROCESSOR NOW (0.361). The scheduler
+     * loads tls_tp at a context switch only, and this CPU still had the one
+     * of the thread that called exec: in a child forked from a thread, the
+     * first %fs:0 / %gs:0 of the new program read the old program's TLS,
+     * gone with its address space - Firefox's file dialog died at birth. */
+    interrupts_disable();
+    gdt_set_tls_base(proc->tls_tp);
     sched_enter_usermode(res.entry_point, usp);
     return 0;
 }
@@ -3308,6 +3560,7 @@ return ERR(ENOMEM); }
             case FD_PIPE_R: pipe_apri_lettore((int)FDV(parent, sfd).inode);   break;
             case FD_PIPE_W: pipe_apri_scrittore((int)FDV(parent, sfd).inode); break;
             case FD_UNIX:   unix_conta(&FDV(parent, sfd));                    break;
+            case FD_SHM:    shmfd_apri((int)FDV(parent, sfd).inode);          break;
             case FD_PTY_M:  pty_apri_riferimento((int)FDV(parent, sfd).inode, 1); break;
             case FD_PTY_S:  pty_apri_riferimento((int)FDV(parent, sfd).inode, 0); break;
 
@@ -3615,6 +3868,8 @@ uint32_t usp       = res.user_stack_top;
                     pipe_apri_scrittore((int)FDV(parent, pf).inode);
                 } else if (FDV(parent, pf).type == FD_UNIX) {
                     unix_conta(&FDV(parent, pf));
+                } else if (FDV(parent, pf).type == FD_SHM) {
+                    shmfd_apri((int)FDV(parent, pf).inode);
                 } else if (FDV(parent, pf).type == FD_PTY_M) {
                     pty_apri_riferimento((int)FDV(parent, pf).inode, 1);
                 } else if (FDV(parent, pf).type == FD_PTY_S) {
@@ -4176,6 +4431,12 @@ int32_t sys_fstat(InterruptFrame *frame)
         stat_flusso(st, 0x400000u + FDV(proc, fd).inode, STAT_S_IFSOCK | 0777u);
         return 0;
     }
+    if (FDV(proc, fd).type == FD_SHM) {         /* a regular file of memory */
+        stat_flusso(st, 0x600000u + FDV(proc, fd).inode, 0100000u | 0600u);
+        st->st_size = shmfd_byte((int)FDV(proc, fd).inode);
+        st->st_attr = STAT_ATTR_SHM;
+        return 0;
+    }
     if (FDV(proc, fd).type != FD_FILE)          return ERR(ENOSYS);
 
     r = vfs_fstat((int)FDV(proc, fd).inode, &vs);
@@ -4203,6 +4464,10 @@ int32_t sys_ftruncate(InterruptFrame *frame)
 
     if (fd < 0 || fd >= FD_N(proc))             return ERR(EBADF);
     if (FDV(proc, fd).type == FD_UNUSED)        return ERR(EBADF);
+    if (FDV(proc, fd).type == FD_SHM) {         /* memory: its size (0.358) */
+        if ((FDV(proc, fd).flags & 3u) == O_RDONLY) return ERR(EINVAL);
+        return shmfd_misura((int)FDV(proc, fd).inode, dim);
+    }
     if (FDV(proc, fd).type != FD_FILE)          return ERR(EINVAL);
     if ((FDV(proc, fd).flags & 3u) == O_RDONLY) return ERR(EINVAL);   /* POSIX: EINVAL or EBADF */
     return (int32_t)vfs_ftruncate((int)FDV(proc, fd).inode, dim);
@@ -5965,6 +6230,79 @@ int32_t sys_reboot(InterruptFrame *frame)
  * qualunque operazione — mai un puntatore utente attraversa il confine
  * di processo. Ritorna 0 su successo, <0 su errore.
  * ============================================================================= */
+/* =============================================================================
+ * WHO SITS AT THE CONSOLES (0.359, voce 111 step 4b)
+ *
+ * One uid per console, CONSOLE_NESSUNO when nobody logged in there. login
+ * writes it (root only) after the password and empties it when the shell is
+ * gone; a session from telnet never writes it. The devices of the machine -
+ * keyboard, mouse, audio, screen - take messages from root and from these
+ * users only (IPC_FILTRO_CONSOLE): a user from the network does not read the
+ * line typed at the console, nor the sudo password in it.
+ *
+ * ! EVERY CONSOLE COUNTS, NOT ONLY THE VISIBLE ONE: ExWin keeps its mouse and
+ * screen while its user looks at a text console with Alt+F1.
+ * ============================================================================= */
+static uint32_t g_console_utente[VGA_N_CONSOLE] = {
+    CONSOLE_NESSUNO, CONSOLE_NESSUNO, CONSOLE_NESSUNO, CONSOLE_NESSUNO, CONSOLE_NESSUNO
+};
+
+/* root, or a user logged in at one of the consoles */
+static int console_ammette(uint32_t uid)
+{
+    uint32_t i;
+
+    if (uid == 0) return 1;
+    for (i = 0; i < VGA_N_CONSOLE; i++)
+        if (g_console_utente[i] == uid) return 1;
+    return 0;
+}
+
+static int ipc_filtro_ammette(const Process *dest, const Process *self)
+{
+    if (dest->ipc_filtro == IPC_FILTRO_MIO) return self->uid == dest->uid;
+    return console_ammette(self->uid);
+}
+
+/* SYS_IPC_FILTRO (280): ebx = IPC_FILTRO_*, for the caller's own mailbox. */
+int32_t sys_ipc_filtro(InterruptFrame *frame)
+{
+    uint32_t modo = FR_A1(frame);
+    Process *proc = proc_get_current();
+
+    if (modo > IPC_FILTRO_MIO) return ERR(EINVAL);
+    proc->ipc_filtro = modo;
+    return 0;
+}
+
+/* SYS_CONSOLE_UTENTE (281): see syscall.h. */
+int32_t sys_console_utente(InterruptFrame *frame)
+{
+    uint32_t azione = FR_A1(frame);
+    uint32_t arg    = FR_A2(frame);
+    Process *proc   = proc_get_current();
+
+    if (azione == 0) {
+        if (arg >= VGA_N_CONSOLE) return ERR(EINVAL);
+        return g_console_utente[arg] == CONSOLE_NESSUNO ? -1 : (int32_t)g_console_utente[arg];
+    }
+    if (proc->uid != 0) return ERR(EPERM);
+    if (proc->console >= VGA_N_CONSOLE) return ERR(EINVAL);
+    if (azione == 1) {
+        g_console_utente[proc->console] = arg;
+        klog(LOG_INFO, "CONSOLE %u: entra l'uid %u", proc->console, arg);
+        return 0;
+    }
+    if (azione == 2) {
+        if (g_console_utente[proc->console] != CONSOLE_NESSUNO)
+            klog(LOG_INFO, "CONSOLE %u: esce l'uid %u", proc->console,
+                 g_console_utente[proc->console]);
+        g_console_utente[proc->console] = CONSOLE_NESSUNO;
+        return 0;
+    }
+    return ERR(EINVAL);
+}
+
 int32_t sys_ipc_send(InterruptFrame *frame)
 {
     uint32_t    dest_pid = FR_A1(frame);
@@ -5976,6 +6314,26 @@ int32_t sys_ipc_send(InterruptFrame *frame)
 
     if (data != NULL && len > 0 && !syscall_verify_ptr(data, len)) {
         return ERR(EFAULT);
+    }
+
+    /* ! THE FILTER IS LOOKED AT HERE, NOT IN ipc_send (0.359, voce 111 4b):
+     * this is the only door from user space, and there the current process
+     * IS the sender. ipc_send is also called by the kernel on behalf of
+     * nobody in particular. */
+    {
+        Process *self = proc_get_current();
+        Process *dest = proc_get_by_pid(dest_pid);
+
+        if (dest != NULL && dest->ipc_filtro != IPC_FILTRO_APERTO &&
+            self->uid != 0 && !ipc_filtro_ammette(dest, self)) {
+            if (self->ipc_rifiuti++ < 3)
+                klog(LOG_WARN, "IPC: PID %u (uid %u) non puo' scrivere a PID %u (%s): %s",
+                     self->pid, self->uid, dest->pid, dest->name,
+                     dest->ipc_filtro == IPC_FILTRO_CONSOLE
+                         ? "solo root e chi siede alla console"
+                         : "solo root e il suo utente");
+            return ERR(EPERM);
+        }
     }
 
     int32_t ret = ipc_send(dest_pid, type, data, len);
@@ -6986,6 +7344,14 @@ int32_t sys_fb_map(InterruptFrame *frame)
 
     (void)frame;
     if (proc == NULL) return ERR(ESRCH);
+    /* ! THE SCREEN IS OF WHO SITS AT THE MACHINE (0.359, voce 111 step 4b):
+     * until 0.358 any process mapped it, and a user from telnet read the
+     * desktop of the one at the console. */
+    if (!console_ammette(proc->uid)) {
+        klog(LOG_WARN, "SYSCALL fb_map: PID %u (uid %u) non siede alla console - rifiutato",
+             proc->pid, proc->uid);
+        return ERR(EPERM);
+    }
 
     vga_info_fb(&fisico, &passo, &larg, &alt, &bit);
     if (fisico == 0 || passo == 0 || alt == 0) return ERR(ENODEV);

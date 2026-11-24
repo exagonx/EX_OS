@@ -57,7 +57,7 @@
 
 /* +0.001 a ogni modifica: `ohci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ohci.drv", "0.010");
+EX_VERSIONE("ohci.drv", "0.011");
 
 /* --- I registri, a spiazzamenti fissi (qui non si legge nessun CAPLENGTH) -- */
 #define R_REVISION      0x00
@@ -788,6 +788,7 @@ static int hid_servi(void)
                 printf("ohci: mouse USB, ma il servizio '%s' c'e' gia'\n", MOUSE_SERVICE_NAME);
             } else {
                 c_e_mouse = 1;
+                ipc_filtro(IPC_FILTRO_CONSOLE);  /* root and the console (0.359) */
                 printf("ohci: servizio '%s' attivo (mouse USB, interfaccia %u)\n",
                        MOUSE_SERVICE_NAME, g_hid[k].interfaccia);
             }

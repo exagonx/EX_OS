@@ -129,7 +129,7 @@
 
 /* +0.001 a ogni modifica: `kbd.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("kbd.drv", "0.011");
+EX_VERSIONE("kbd.drv", "0.012");
 
 static const Keymap *g_map = &g_keymaps[0];   /* us */
 
@@ -2278,6 +2278,8 @@ int main(int argc, char **argv)
                KBD_SERVICE_NAME, rc);
         return 1;
     }
+    /* only root and who sits at a console (kernel 0.359, voce 111 4b) */
+    ipc_filtro(IPC_FILTRO_CONSOLE);
 
     rc = ioport_bind(KBC_PORT_BASE, KBC_PORT_COUNT);
     if (rc < 0) {

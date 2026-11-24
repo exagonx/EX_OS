@@ -6,6 +6,10 @@
 
 **Indice**
 
+- [Firefox usa i programmi del sistema: Mostra nella cartella, il programma di ogni tipo di file, il dialogo dei file di ExWin (exwin 0.024, pm 0.030, kernel 0.361, voce 118) — testato in QEMU](#firefox-usa-i-programmi-del-sistema-mostra-nella-cartella-il-programma-di-ogni-tipo-di-file-il-dialogo-dei-file-di-exwin-exwin-0024-pm-0030-kernel-0361-voce-118--testato-in-qemu)
+- [Caricare un programma grande non blocca più il mouse e il resto del sistema (kernel 0.360, voce 117) — testato in QEMU](#caricare-un-programma-grande-non-blocca-più-il-mouse-e-il-resto-del-sistema-kernel-0360-voce-117--testato-in-qemu)
+- [Tastiera, mouse, suono e schermo a chi siede alla console; le porte sotto 1024 a root (kernel 0.359, voce 111 passo 4b) — testato in QEMU](#tastiera-mouse-suono-e-schermo-a-chi-siede-alla-console-le-porte-sotto-1024-a-root-kernel-0359-voce-111-passo-4b--testato-in-qemu)
+- [Firefox a più processi, come su Linux: socket unix a coppie, descrittori che viaggiano, memoria che è un descrittore (kernel 0.358, exilla 0.008, voce 115) — testato in QEMU](#firefox-a-più-processi-come-su-linux-socket-unix-a-coppie-descrittori-che-viaggiano-memoria-che-è-un-descrittore-kernel-0358-exilla-0008-voce-115--testato-in-qemu)
 - [Quando un programma cade il kernel scrive chi l'ha chiamato: fino a 48 chiamanti dalla pila (kernel 0.357) — testato in QEMU](#quando-un-programma-cade-il-kernel-scrive-chi-lha-chiamato-fino-a-48-chiamanti-dalla-pila-kernel-0357--testato-in-qemu)
 - [Firefox non si chiude più sulle pagine piene di immagini: fcntl F_DUPFD_CLOEXEC copia un descrittore di memoria condivisa — da testare sul PC di prova](#firefox-non-si-chiude-più-sulle-pagine-piene-di-immagini-fcntl-f_dupfd_cloexec-copia-un-descrittore-di-memoria-condivisa--da-testare-sul-pc-di-prova)
 - [Il mittente di ogni messaggio timbrato dal kernel; la scheda di rete la usa solo root (kernel 0.356, voce 111 passo 4) — testato in QEMU e sul PC di prova](#il-mittente-di-ogni-messaggio-timbrato-dal-kernel-la-scheda-di-rete-la-usa-solo-root-kernel-0356-voce-111-passo-4--testato-in-qemu-e-sul-pc-di-prova)
@@ -246,6 +250,101 @@
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### Firefox usa i programmi del sistema: Mostra nella cartella, il programma di ogni tipo di file, il dialogo dei file di ExWin (exwin 0.024, pm 0.030, kernel 0.361, voce 118) — testato in QEMU
+
+- **Perché**: un file scaricato non si poteva mostrare nella sua cartella, Firefox non
+  conosceva nessun programma per nessun tipo di file, e Salva con nome e il pulsante per caricare
+  un file non facevano niente.
+- **Cosa chiede Firefox**: su Linux ogni strada «programmi del sistema» passa da un solo servizio
+  (`nsIGIOService`). Su EX-OS ora risponde con i tipi di file del program manager
+  (Impostazioni > Applicazioni), attraverso `exwin.so`:
+  - il programma di ogni tipo e il suo nome; cambiarlo da Firefox lo cambia per il sistema;
+  - **Mostra nella cartella** apre il file manager su quella cartella.
+- **Il dialogo dei file**: Salva con nome e `<input type=file>` aprono il dialogo di ExWin
+  attraverso `/exwin/bin/scegli` (nuovo), che scrive il percorso scelto.
+- **exwin.so 0.024**: aprire una cartella lancia il programma del tipo cartella (`/`, il file
+  manager); **pm 0.030** lo mostra come «cartelle».
+- **Kernel 0.361**: un programma lanciato da un secondo filo moriva subito: `exec` non caricava
+  nel processore il puntatore del filo del programma nuovo. Trovato con `tools/prove/forkfilo.c`.
+- **Prova**: `tools/exilla/prova-sistema.sh`, 5 su 5 a 32 e 64 bit.
+
+### Caricare un programma grande non blocca più il mouse e il resto del sistema (kernel 0.360, voce 117) — testato in QEMU
+
+- **Perché**: mentre Firefox partiva la prima volta tutto andava a scatti, anche il mouse. Non
+  era Firefox a consumare la CPU: due lucchetti globali restavano presi a lungo dal caricamento.
+- **Misurato** con `tools/prova_ritardo.sh` (nuovo): una sonda (`tools/prove/ritardo.c`) dorme 5 ms,
+  fa uno `stat("/")` e manda un byte in una pipe, ognuno nel suo filo, mentre Firefox parte a
+  freddo da un disco rallentato a 12 MB/s (64 bit, 2 processori).
+- **Il lucchetto dei file**: Firefox legge il suo `omni.ja` intero con un solo `read()`, e ogni
+  altra operazione sui file del sistema aspettava dietro, fino a **5,6 s**. Ora `read` va a pezzi
+  da 256 KB e lascia il lucchetto fra l'uno e l'altro: `stat` peggiore **49 ms**.
+- **Il lucchetto del kernel**: caricare una `.so` leggeva tutto l'oggetto dentro una sola chiamata
+  senza mai lasciar entrare un altro processore nel kernel (335 ms). Ora cede ogni 64 KB: sonno
+  peggiore **56 ms** invece di 521, la pipe 69 ms invece di 418.
+- **Nel log**: una riga quando il lucchetto dei file resta preso oltre 500 ms, o un processore
+  tiene il kernel oltre 100 ms, con il PID e la sua ultima chiamata.
+- **Sui dischi in PIO** (il PC di prova) l'attesa del disco non gira più senza cedere: da misurare
+  sul PC di prova.
+
+### Tastiera, mouse, suono e schermo a chi siede alla console; le porte sotto 1024 a root (kernel 0.359, voce 111 passo 4b) — testato in QEMU
+
+- **Perché**: qualunque utente, anche entrato via telnet, poteva leggere la tastiera, muovere il
+  mouse, suonare, mappare lo schermo o aprire una finestra sulla scrivania di un altro, e aprire la
+  porta 80. La regola scelta: tastiera, mouse, suono e schermo solo a root e a chi è entrato alla
+  console; wserver solo al suo utente e a root; le porte sotto 1024 solo a root.
+- **Kernel 0.359**:
+  - `ipc_filtro(IPC_FILTRO_CONSOLE)` / `ipc_filtro(IPC_FILTRO_MIO)`: un driver dice chi può
+    scrivere nella sua casella; agli altri il kernel risponde `EPERM` e scrive nel registro i primi
+    tre rifiuti («IPC: PID ... non puo' scrivere a PID ...»);
+  - `console_utente`: login (solo root) dice chi siede a quale delle cinque console, e lo toglie
+    all'uscita; un accesso da pty (telnet, ssh) non conta. Contano tutte le console, così la
+    scrivania tiene i dispositivi dopo Alt+F1;
+  - `fb_map` rifiuta chi non siede alla console.
+- **Driver**: kbd 0.012, mouseser 0.004, sis 0.015, nv40 0.006, nv50 0.012, dpms 0.003, ac97 0.005,
+  sb 0.004, es1371 0.004, hdaudio 0.008, uhci 0.007, xhci 0.006, ohci 0.011 (quelli USB quando
+  servono un mouse) per la console; wserver 0.017 per il suo utente.
+- **Porte**: ip.drv 0.028 rifiuta una porta 1..1023 a chi non è root (`EACCES`), e così fa
+  `bind()` nella libc, prima di chiedere. httpd prende la porta 80 da root e serve come uid 100;
+  telnetd, sshd e dhcp partono da root; MariaDB, Valkey e php-fpm stanno sopra 1024.
+- login 0.007, sh 0.016 (all'uscita rimette la tastiera normale).
+- Provato: `tools/prove/consoleprova.c` (15 prove, passo 10 di `tools/prova_permessi.sh`, 14 su 14)
+  e `tools/prova_console_utente.sh` (mario entra alla console, avvia ExWin, nessuno lo rifiuta,
+  dopo l'uscita la console è vuota: 4 su 4), a 32 e 64 bit. Firefox a più processi passa ancora
+  `tools/exilla/prova-processi.sh` a 32 e 64 bit.
+- Ancora da fare: la porta parallela e la scheda WiFi non sono filtrate; un controller USB che
+  serve un mouse è filtrato intero; un altro utente preso con `su` alla console viene rifiutato.
+  Quando l'utente esce, una scrivania lasciata accesa sulla console 4 resta sullo schermo ma non
+  riceve tasti né mouse (da decidere: chiuderla all'uscita).
+
+### Firefox a più processi, come su Linux: socket unix a coppie, descrittori che viaggiano, memoria che è un descrittore (kernel 0.358, exilla 0.008, voce 115) — testato in QEMU
+
+- **Perché**: su unsplash.com Firefox si chiudeva ancora, questa volta dentro Gecko: a un processo
+  solo, un ritorno indietro della Navigation API (chiudere una foto torna indietro con
+  `navigation.back()`) manda un messaggio IPC a un processo dei contenuti che non c'è e legge a
+  0x28 (`CheckPermitUnloadRequest::Run`, `dom/ipc/WindowGlobalParent.cpp`). È un difetto di Firefox
+  del modo a un processo, ancora nel codice di Mozilla; a più processi, come su Linux, quella
+  strada non si percorre. Firefox girava a un processo perché a EX-OS mancava ciò che l'IPC di
+  Gecko chiede.
+- **Kernel 0.358**:
+  - `socketpair(AF_UNIX, SOCK_STREAM)`: due capi fatti dal kernel, ognuno di due pipe (una per
+    direzione), quindi si ereditano con fork ed exec, si duplicano, si aspettano con poll e si
+    chiudono come una pipe; `send`/`recv`/`sendmsg`/`recvmsg` sui capi, anche con `MSG_DONTWAIT`;
+  - `SCM_RIGHTS`: i descrittori mandati con `sendmsg` arrivano col byte con cui sono partiti, come
+    numeri nuovi di chi riceve; il kernel li chiude quando nessuno li può più ricevere, o quando
+    `read()` prende il loro byte; `MSG_CTRUNC` quando chi riceve ha posto per meno;
+  - `shm_open(SHM_ANON)` e `memfd_create`: memoria che è un descrittore del kernel, cresce con
+    `ftruncate`, si mappa `MAP_SHARED` con `mmap`, le stesse pagine in ogni processo che la tiene;
+  - `fstat` di una pipe dice `S_IFIFO` (diceva ENOSYS), di un capo `S_IFSOCK`.
+- **exilla 0.008** lancia Firefox a più processi; `EXILLA_UN_PROCESSO=1` torna a uno.
+- Testato: `tools/prove/unixprova.c` (70 controlli, passo 9 di `tools/prova_permessi.sh`, 13 su 13)
+  a 32 e 64 bit; `tools/exilla/prova-processi.sh` a 32 e 64 bit: 8 processi figli, la pagina si
+  carica; Firefox a un processo passa ancora `tools/exilla/prova-primotab.sh` (8 su 8).
+  Sul PC di prova a 0.358: `unixprova` 70 su 70; Firefox su unsplash.com lì: da fare.
+- Non ancora: `shutdown` su un capo, `SOCK_SEQPACKET`, `MSG_PEEK` (Gecko non li usa); un
+  descrittore mandato sulla sua stessa coppia e mai ricevuto non si raccoglie; la copia in sola
+  lettura di una memoria condivisa che Gecko dà ai figli è una copia normale (conta con la
+  sandbox, che è spenta).
 
 ### Quando un programma cade il kernel scrive chi l'ha chiamato: fino a 48 chiamanti dalla pila (kernel 0.357) — testato in QEMU
 

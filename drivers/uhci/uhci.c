@@ -56,7 +56,7 @@
 
 /* +0.001 a ogni modifica: `uhci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("uhci.drv", "0.006");
+EX_VERSIONE("uhci.drv", "0.007");
 
 /* --- Registri UHCI, spiazzamenti dalla base I/O --------------------------- */
 #define R_CMD       0x00    /* USBCMD  (16 bit) */
@@ -1025,6 +1025,8 @@ int main(int argc, char **argv)
                    MOUSE_SERVICE_NAME);
             return 1;
         }
+        /* the controller is the mouse now: root and who sits at a console */
+        ipc_filtro(IPC_FILTRO_CONSOLE);
         printf("uhci: servizio '%s' attivo (mouse USB)\n", MOUSE_SERVICE_NAME);
     }
 

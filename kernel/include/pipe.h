@@ -138,4 +138,38 @@ int pipe_attesa_registra_locked(int h, int per_lettura, uint32_t pid);
  * potrebbe appartenere a un altro. */
 void pipe_attesa_togli_locked(int h, int per_lettura, uint32_t pid);
 
+/* =============================================================================
+ * ! WHAT TRAVELS WITH THE BYTES (0.358, voce 115: SCM_RIGHTS on a unix pair)
+ *
+ * An attachment is tied to the position of the first byte of the write that
+ * carried it, and comes out with the read that takes that byte. A read never
+ * goes past the next attachment: what was written before it and what was
+ * written with it come out in two reads, as on Linux, so the receiver knows
+ * which bytes the descriptors belong to. The pipe only keeps `dopo` and
+ * `pos`; what follows the header is the caller's (syscall_impl.c: the
+ * descriptors, their references already taken).
+ *
+ * ! NOBODY TO READ THEM = TO BE FREED, NOT FREED HERE: the reader closing
+ * the pipe, or read() instead of recvmsg, leaves attachments nobody will
+ * take. Freeing one closes descriptors, which takes the locks of pipes,
+ * files and ptys: not from inside this lock. They go to one list, which
+ * the caller empties with interrupts on (pipe_allegati_orfani).
+ * ============================================================================= */
+typedef struct PipeAllegato {
+    struct PipeAllegato *dopo;
+    uint32_t             pos;       /* bytes written to the pipe before it */
+    uint32_t             n;         /* the caller's: how many follow */
+} PipeAllegato;
+
+/* As pipe_scrivi; `a` (may be NULL) goes with the first byte. It is the
+ * pipe's only if the return is > 0: on an error or EAGAIN it stays yours. */
+int32_t pipe_scrivi_con(int h, const void *buf, uint32_t n, int nonblocca,
+                        PipeAllegato *a);
+/* As pipe_leggi; the attachment of the first byte read, if any, in *a (NULL
+ * otherwise). With a == NULL it goes to the list of orphans. */
+int32_t pipe_leggi_con(int h, void *buf, uint32_t n, int nonblocca,
+                       PipeAllegato **a);
+/* The attachments nobody can take any more, all at once (NULL if none). */
+PipeAllegato *pipe_allegati_orfani(void);
+
 #endif /* PIPE_H */

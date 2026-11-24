@@ -215,6 +215,7 @@ static inline int32_t syscall4(uint32_t num, uintptr_t a, uintptr_t b,
  * tastiera: serve qui perche' sh_exit deve restituire la console prima di
  * sparire, e sh_exit e' il primo pezzo di codice del file. */
 static void kbd_modo(unsigned int modo);
+static int  g_console_raw;               /* definita piu' avanti, col dialogo con kbd */
 
 static void sh_exit(int code)
 {
@@ -241,8 +242,12 @@ static void sh_exit(int code)
      * schermo intero morto senza rimettere a posto.
      *
      * Chi muore per un fault non passa di qui, ed e' giusto cosi': quello
-     * e' il caso per cui la rete del driver esiste. */
-    kbd_modo(KBD_MODE_COOKED);
+     * e' il caso per cui la rete del driver esiste.
+     *
+     * ! ONLY IF THIS SHELL PUT IT IN RAW (0.016, kernel 0.359): a shell from
+     * telnet never did, and the keyboard refuses a user who does not sit at
+     * the console (voce 111 4b): one refusal in the log at every exit. */
+    if (g_console_raw) kbd_modo(KBD_MODE_COOKED);
 
     syscall1(SYS_EXIT, (uint32_t)code);
     /* Non ritorna */
@@ -1128,7 +1133,7 @@ static void verbose_init(void)
  * supera i 256. Un nome che si puo' creare ed elencare ma non digitare e'
  * un nome irraggiungibile per meta'. */
 /* +0.001 a ogni modifica: `sh -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define SH_VERSIONE  "0.015"
+#define SH_VERSIONE  "0.016"
 
 
 /* ! LA RIGA DI `sh -c` NON E' UNA RIGA DIGITATA, e non puo' avere lo

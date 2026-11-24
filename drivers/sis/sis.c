@@ -95,7 +95,7 @@
 
 /* +0.001 a ogni modifica: `sis.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("sis.drv", "0.014");
+EX_VERSIONE("sis.drv", "0.015");
 
 #define VGA_BASE      0x3B0
 #define VGA_PORTE     0x30

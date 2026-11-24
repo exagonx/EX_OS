@@ -75,7 +75,7 @@
 
 /* +0.001 a ogni modifica: `wserver -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("wserver", "0.016");
+EX_VERSIONE("wserver", "0.017");
 
 /* ! NO FIXED NUMBER OF WINDOWS (wserver 0.013, the user's rule: only the
  * configuration and the hardware set limits). Up to 0.012 there were 16
@@ -3931,6 +3931,11 @@ int main(int argc, char **argv)
                g_servizio);
         return 1;
     }
+    /* ! THE DESKTOP IS OF WHO STARTED IT (kernel 0.359, voce 111 4b): the
+     * kernel refuses at ipc_send whoever is neither root nor this uid. Until
+     * 0.358 any user found '<uid>:wserver' with ipc_lookup and opened windows
+     * on somebody else's screen, or read its events. */
+    ipc_filtro(IPC_FILTRO_MIO);
 
     {
         g_kbd_pid = ipc_lookup(KBD_SERVICE_NAME);

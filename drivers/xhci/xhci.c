@@ -80,7 +80,7 @@
 
 /* +0.001 a ogni modifica: `xhci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("xhci.drv", "0.005");
+EX_VERSIONE("xhci.drv", "0.006");
 
 /* --- Registri di CAPACITA', dall'inizio della finestra -------------------- */
 #define C_CAPLENGTH     0x00    /* 8 bit: quanto sono lunghi questi registri */
@@ -1937,6 +1937,8 @@ int main(int argc, char **argv)
                    MOUSE_SERVICE_NAME);
             return 1;
         }
+        /* the controller is the mouse now: root and who sits at a console */
+        ipc_filtro(IPC_FILTRO_CONSOLE);
         printf("xhci: servizio '%s' attivo (mouse USB)\n", MOUSE_SERVICE_NAME);
     }
 

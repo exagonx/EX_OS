@@ -40,6 +40,12 @@ mp4 mkv webm avi mov      | /exos/bin/vlcapri
 [Archivi]
 zip tar gz tgz            | /exwin/bin/archivi
 
+# ! A FOLDER IS THE TYPE "/" (voce 118, 24 November 2026): what opens a
+# directory - from Firefox's "show in folder", from ex_open_file on a path
+# that is a directory. A reader older than exwin 0.024 never asks for "/".
+[Cartelle]
+/                         | /exwin/bin/filemgr
+
 [Indirizzi]
 http: https:              | /exwin/bin/exbrowser
 ftp: ftps:                |

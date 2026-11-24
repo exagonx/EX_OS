@@ -147,6 +147,7 @@ static void so_scrivi_fisica(paddr_t phys, uint32_t off, const uint8_t *src, uin
 /* Reads the object open on `h` into `v`. 0 or -errno, with a log line. */
 static int32_t so_leggi(int h, SoVoce *v)
 {
+    uint32_t pagine_lette;
     ElfHeader hdr;
     ElfPhdr  *ph  = NULL;
     uint8_t  *buf = NULL;
@@ -217,6 +218,7 @@ static int32_t so_leggi(int h, SoVoce *v)
     }
 
     /* 2. the file bytes, one piece per destination page */
+    pagine_lette = 0;
     for (i = 0; i < hdr.e_phnum; i++) {
         uint32_t va, off, resta;
 
@@ -238,6 +240,13 @@ static int32_t so_leggi(int h, SoVoce *v)
             so_scrivi_fisica(v->pag[(ALIGN_DOWN(va, PAGE_SIZE) - lo) / PAGE_SIZE].fisico,
                              va & (PAGE_SIZE - 1), buf, pezzo);
             va += pezzo; off += pezzo; resta -= pezzo;
+            /* ! EVERY 64 KB THE OTHERS GO FIRST (kernel 0.360, voce 117). The
+             * whole object is read inside one call, and from the disk cache
+             * nothing ever waits: the kernel's lock stayed with this
+             * processor 120-335 ms while Firefox opened its libraries, and
+             * every other program - the mouse's driver, wserver - stood
+             * still (SYS_SO_MAPPA in the log of the long holds). */
+            if (++pagine_lette % 16u == 0u) sched_yield();
         }
     }
     rc = 0;

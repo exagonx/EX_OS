@@ -189,6 +189,7 @@ void bkl_esci(const void *frame);   /* uscendone: lo lascia se si torna in ring 
 void bkl_lascia(void);              /* lo lascia e basta: i primi ingressi in ring 3 */
 void bkl_stato(uint32_t *coda, uint32_t *turno, uint32_t *chi);
 void bkl_ozio(void);                /* lo lascia chi sta per fermarsi con hlt */
+void bkl_dici_lungo(void);          /* the longest hold over 100 ms, said once (0.360) */
 int  bkl_aspetta_qui(void);         /* 1 = this processor is waiting for it with the edge lines open (0.324) */
 
 /* ! A WAIT FOR THE CLOCK, ON A PROCESSOR THAT IS NOT 0, LETS THE LOCK GO BY

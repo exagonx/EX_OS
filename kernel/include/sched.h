@@ -376,6 +376,12 @@ typedef enum {
      * write nobody will read are those of the pipes, already proved. A
      * kernel descriptor: inherited, dup'ed and closed like a pipe. */
     FD_UNIX     = 12,
+
+    /* ! MEMORY THAT IS A DESCRIPTOR (0.358, voce 115): shm_open(SHM_ANON)
+     * and memfd_create. `inode` is the handle of kernel/mm/shmfd.c. Counted
+     * per descriptor like a pipe, so it can go to a child by fork, spawn or
+     * SCM_RIGHTS and be mapped there: see kernel/include/shmfd.h. */
+    FD_SHM      = 13,
 } FDType;
 
 typedef struct {
@@ -872,6 +878,10 @@ typedef struct Process {
     struct Process *ipc_fila_prima;
     struct Process *ipc_fila_dopo;
     uint32_t        ipc_fila_concesso;      /* a slot is promised to me */
+    uint32_t        ipc_filtro;             /* IPC_FILTRO_*: who may send to me (0.359) */
+    uint32_t        ipc_rifiuti;            /* refused sends, logged the first 3 */
+    uint32_t        sc_ultima;              /* the last syscall (0x10000 = a page fault), for the
+                                             * long holds of the kernel's lock (0.360) */
     /* I nomi dei servizi non stanno qui ma in una tabella sola del kernel
      * (kernel/ipc/ipc.c, g_nomi): un processo ne puo' tenere piu' d'uno. */
 

@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.357
+**Versione:** 0.361
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -120,14 +120,14 @@ Dentro EX-OS gli stessi manuali sono in `/doc/manuali` (dal CD:
 
 ## Ultime novità
 
+- [Firefox usa i programmi del sistema e il dialogo dei file di ExWin (kernel 0.361, voce 118)](manuali/novita.it.md#firefox-usa-i-programmi-del-sistema-mostra-nella-cartella-il-programma-di-ogni-tipo-di-file-il-dialogo-dei-file-di-exwin-exwin-0024-pm-0030-kernel-0361-voce-118--testato-in-qemu) — *testato in QEMU*
+- [Caricare un programma grande non blocca più il mouse e il resto (kernel 0.360, voce 117)](manuali/novita.it.md#caricare-un-programma-grande-non-blocca-più-il-mouse-e-il-resto-del-sistema-kernel-0360-voce-117--testato-in-qemu) — *testato in QEMU*
+- [Tastiera, mouse, suono e schermo a chi siede alla console; le porte sotto 1024 a root (kernel 0.359, voce 111 passo 4b)](manuali/novita.it.md#tastiera-mouse-suono-e-schermo-a-chi-siede-alla-console-le-porte-sotto-1024-a-root-kernel-0359-voce-111-passo-4b--testato-in-qemu) — *testato in QEMU*
+- [Firefox a più processi, come su Linux: socket unix a coppie, descrittori che viaggiano, memoria che è un descrittore (kernel 0.358, exilla 0.008, voce 115)](manuali/novita.it.md#firefox-a-più-processi-come-su-linux-socket-unix-a-coppie-descrittori-che-viaggiano-memoria-che-è-un-descrittore-kernel-0358-exilla-0008-voce-115--testato-in-qemu) — *testato in QEMU*
 - [Quando un programma cade il kernel scrive chi l'ha chiamato: fino a 48 chiamanti dalla pila (kernel 0.357)](manuali/novita.it.md#quando-un-programma-cade-il-kernel-scrive-chi-lha-chiamato-fino-a-48-chiamanti-dalla-pila-kernel-0357--testato-in-qemu) — *testato in QEMU*
 - [Firefox non si chiude più sulle pagine piene di immagini: fcntl F_DUPFD_CLOEXEC copia un descrittore di memoria condivisa](manuali/novita.it.md#firefox-non-si-chiude-più-sulle-pagine-piene-di-immagini-fcntl-f_dupfd_cloexec-copia-un-descrittore-di-memoria-condivisa--da-testare-sul-pc-di-prova) — *da testare sul PC di prova*
 - [Il mittente di ogni messaggio timbrato dal kernel; la scheda di rete la usa solo root (kernel 0.356, voce 111 passo 4)](manuali/novita.it.md#il-mittente-di-ogni-messaggio-timbrato-dal-kernel-la-scheda-di-rete-la-usa-solo-root-kernel-0356-voce-111-passo-4--testato-in-qemu-e-sul-pc-di-prova) — *testato in QEMU e sul PC di prova*
 - [Utenti separati davvero: una cartella chiusa e' chiusa, /tmp ha il bit sticky (kernel 0.355, voce 111)](manuali/novita.it.md#utenti-separati-davvero-una-cartella-chiusa-e-chiusa-tmp-ha-il-bit-sticky-kernel-0355-voce-111--testato-in-qemu-e-sul-pc-di-prova) — *testato in QEMU e sul PC di prova*
-- [I cloni dei sorgenti di terzi restano su MEGA e li rimettono a posto gli script (tools/ripara-cloni.sh)](manuali/novita.it.md#i-cloni-dei-sorgenti-di-terzi-restano-su-mega-e-li-rimettono-a-posto-gli-script-toolsripara-clonish--testato-su-questo-pc) — *testato su questo PC*
-- [Cio' che la costruzione produce sta fuori dall'albero dei sorgenti, in ~/ex_os (tools/fuori.sh)](manuali/novita.it.md#cio-che-la-costruzione-produce-sta-fuori-dallalbero-dei-sorgenti-in-ex_os-toolsfuorish--testato-su-questo-pc) — *testato su questo PC*
-- [Firefox su /lib/ld-exos.so: AAC e H.264 suonano di nuovo (voce 105)](manuali/novita.it.md#firefox-su-libld-exosso-aac-e-h264-suonano-di-nuovo-voce-105--testato-in-qemu) — *testato in QEMU*
-- [Due fili non ricevono piu' lo stesso descrittore, SQLite non dice piu' disk I/O error (kernel 0.354)](manuali/novita.it.md#due-fili-non-ricevono-piu-lo-stesso-descrittore-sqlite-non-dice-piu-disk-io-error-kernel-0354--testato-in-qemu) — *testato in QEMU*
 
 Tutte le altre, dalla più recente: [Novità](manuali/novita.it.md).
 

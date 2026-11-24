@@ -6,6 +6,10 @@
 
 **Contents**
 
+- [Firefox uses the programs of the system: Show in folder, the program of each file type, the ExWin file dialog (exwin 0.024, pm 0.030, kernel 0.361, voce 118) — tested in QEMU](#firefox-uses-the-programs-of-the-system-show-in-folder-the-program-of-each-file-type-the-exwin-file-dialog-exwin-0024-pm-0030-kernel-0361-voce-118--tested-in-qemu)
+- [Loading a big program no longer freezes the mouse and the rest of the system (kernel 0.360, voce 117) — tested in QEMU](#loading-a-big-program-no-longer-freezes-the-mouse-and-the-rest-of-the-system-kernel-0360-voce-117--tested-in-qemu)
+- [Keyboard, mouse, sound and screen belong to who sits at the console; ports under 1024 to root (kernel 0.359, voce 111 step 4b) — tested in QEMU](#keyboard-mouse-sound-and-screen-belong-to-who-sits-at-the-console-ports-under-1024-to-root-kernel-0359-voce-111-step-4b--tested-in-qemu)
+- [Firefox with more processes, as on Linux: unix socket pairs, descriptors that travel, memory that is a descriptor (kernel 0.358, exilla 0.008, voce 115) — tested in QEMU](#firefox-with-more-processes-as-on-linux-unix-socket-pairs-descriptors-that-travel-memory-that-is-a-descriptor-kernel-0358-exilla-0008-voce-115--tested-in-qemu)
 - [At a crash the kernel writes who called: up to 48 callers from the stack (kernel 0.357) — tested in QEMU](#at-a-crash-the-kernel-writes-who-called-up-to-48-callers-from-the-stack-kernel-0357--tested-in-qemu)
 - [Firefox no longer closes on pages full of images: fcntl F_DUPFD_CLOEXEC copies a shared memory descriptor — to be tested on the test PC](#firefox-no-longer-closes-on-pages-full-of-images-fcntl-f_dupfd_cloexec-copies-a-shared-memory-descriptor--to-be-tested-on-the-test-pc)
 - [The sender of every message is stamped by the kernel; only root uses the network card (kernel 0.356, voce 111 step 4) — tested in QEMU and on the test PC](#the-sender-of-every-message-is-stamped-by-the-kernel-only-root-uses-the-network-card-kernel-0356-voce-111-step-4--tested-in-qemu-and-on-the-test-pc)
@@ -246,6 +250,98 @@
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### Firefox uses the programs of the system: Show in folder, the program of each file type, the ExWin file dialog (exwin 0.024, pm 0.030, kernel 0.361, voce 118) — tested in QEMU
+
+- **Why**: a downloaded file could not be shown in its folder, Firefox knew no program for any
+  type of file, and Save as and the upload button did nothing.
+- **What Firefox asks**: on Linux every "programs of the system" path goes through one service
+  (`nsIGIOService`). On EX-OS it now answers from the program manager's file types
+  (Impostazioni > Applicazioni), through `exwin.so`:
+  - the program of each type and its name; changing it from Firefox changes it for the system;
+  - **Show in folder** opens the file manager on that folder.
+- **The file dialog**: Save as and `<input type=file>` open the ExWin dialog through
+  `/exwin/bin/scegli` (new), which prints the path chosen.
+- **exwin.so 0.024**: opening a folder starts the program of the folder type (`/`, the file
+  manager); **pm 0.030** shows it as "cartelle".
+- **Kernel 0.361**: a program started from a second thread died at once: `exec` did not load the
+  new program's thread pointer into the processor. Found with `tools/prove/forkfilo.c`.
+- **Test**: `tools/exilla/prova-sistema.sh`, 5 of 5 at 32 and 64 bit.
+
+### Loading a big program no longer freezes the mouse and the rest of the system (kernel 0.360, voce 117) — tested in QEMU
+
+- **Why**: while Firefox started for the first time, everything moved in jerks, the mouse too.
+  It was not Firefox using the CPU: two global locks were held for a long time by the loading.
+- **Measured** with `tools/prova_ritardo.sh` (new): a probe (`tools/prove/ritardo.c`) sleeps 5 ms,
+  does a `stat("/")` and sends a byte through a pipe, each in its own thread, while Firefox starts
+  cold from a disk slowed to 12 MB/s (64 bit, 2 processors).
+- **The file lock**: Firefox reads its `omni.ja` whole with one `read()`, and every other file
+  operation in the system waited behind it, up to **5.6 s**. Now `read` goes in pieces of 256 KB
+  and lets the lock go between them: worst `stat` **49 ms**.
+- **The kernel lock**: loading a `.so` read the whole object inside one system call without ever
+  letting another processor into the kernel (335 ms). Now it yields every 64 KB: worst sleep
+  **56 ms** instead of 521, the pipe 69 ms instead of 418.
+- **In the log**: a line when the file lock is held over 500 ms, or a processor holds the kernel
+  over 100 ms, with the PID and its last system call.
+- **On disks in PIO** (the test PC) the wait for the disk no longer spins without yielding: to be
+  measured on the test PC.
+
+### Keyboard, mouse, sound and screen belong to who sits at the console; ports under 1024 to root (kernel 0.359, voce 111 step 4b) — tested in QEMU
+
+- **Why**: any user, even one logged in over telnet, could read the keyboard, move the mouse,
+  play sound, map the screen or open a window on someone else's desktop, and open port 80.
+  The rule chosen: keyboard, mouse, sound and screen only for root and for the user logged in at
+  the console; wserver only for its own user and root; ports under 1024 only for root.
+- **Kernel 0.359**:
+  - `ipc_filtro(IPC_FILTRO_CONSOLE)` / `ipc_filtro(IPC_FILTRO_MIO)`: a driver says who may write to
+    its mailbox; the kernel answers `EPERM` to the others and writes the first three refusals in
+    the log ("IPC: PID ... non puo' scrivere a PID ...");
+  - `console_utente`: login (root only) says who sits at which of the five consoles, and clears
+    it at logout; a login over a pty (telnet, ssh) does not count. Every console counts, so the
+    desktop keeps its devices after Alt+F1;
+  - `fb_map` refuses who does not sit at the console.
+- **Drivers**: kbd 0.012, mouseser 0.004, sis 0.015, nv40 0.006, nv50 0.012, dpms 0.003, ac97 0.005,
+  sb 0.004, es1371 0.004, hdaudio 0.008, uhci 0.007, xhci 0.006, ohci 0.011 (the USB ones when they
+  serve a mouse) for the console; wserver 0.017 for its own user.
+- **Ports**: ip.drv 0.028 refuses a port 1..1023 to anyone but root (`EACCES`), and so does
+  `bind()` in the libc, before asking. httpd binds port 80 as root and serves as uid 100;
+  telnetd, sshd and dhcp start as root; MariaDB, Valkey and php-fpm are above 1024.
+- login 0.007, sh 0.016 (leaves the keyboard cooked at exit).
+- Tested: `tools/prove/consoleprova.c` (15 checks, step 10 of `tools/prova_permessi.sh`, 14 of 14)
+  and `tools/prova_console_utente.sh` (mario logs in at the console, starts ExWin, nobody refuses
+  him, the console is empty after exit: 4 of 4), at 32 and 64 bit. Firefox with more processes
+  still passes `tools/exilla/prova-processi.sh` at 32 and 64 bit.
+- Not there yet: the parallel port and the WiFi card are not filtered; a USB controller that
+  serves a mouse is filtered whole; a different user reached with `su` at the console is refused.
+  When the user logs out, a desktop left running on console 4 stays on screen but gets no keys
+  and no mouse (to be decided: close it at logout).
+
+### Firefox with more processes, as on Linux: unix socket pairs, descriptors that travel, memory that is a descriptor (kernel 0.358, exilla 0.008, voce 115) — tested in QEMU
+
+- **Why**: on unsplash.com Firefox still closed, now in Gecko itself: in one process a Navigation API
+  traversal (closing a photo goes back through `navigation.back()`) sends an IPC message to a
+  content process that does not exist, and reads at 0x28 (`CheckPermitUnloadRequest::Run`,
+  `dom/ipc/WindowGlobalParent.cpp`). It is a Firefox bug of the single-process mode, still in
+  Mozilla's code; with more processes, as on Linux, that path is never taken. Firefox ran in one
+  process because EX-OS lacked what Gecko's IPC needs.
+- **Kernel 0.358**:
+  - `socketpair(AF_UNIX, SOCK_STREAM)`: two ends made by the kernel, each of them two pipes (one
+    for each direction), so they are inherited by fork and exec, dup'ed, polled and closed like a
+    pipe; `send`/`recv`/`sendmsg`/`recvmsg` on them, `MSG_DONTWAIT` too;
+  - `SCM_RIGHTS`: the descriptors sent with `sendmsg` arrive with the byte they went with, as new
+    numbers of the receiver; the kernel closes them when nobody can receive them any more, or when
+    `read()` takes their byte; `MSG_CTRUNC` when the receiver has room for fewer;
+  - `shm_open(SHM_ANON)` and `memfd_create`: memory that is a kernel descriptor, grown by
+    `ftruncate`, mapped `MAP_SHARED` by `mmap`, the same pages in every process that holds it;
+  - `fstat` of a pipe says `S_IFIFO` (it said ENOSYS), of a socket end `S_IFSOCK`.
+- **exilla 0.008** starts Firefox with more processes; `EXILLA_UN_PROCESSO=1` goes back to one.
+- Tested: `tools/prove/unixprova.c` (70 checks, step 9 of `tools/prova_permessi.sh`, 13 of 13) at
+  32 and 64 bit; `tools/exilla/prova-processi.sh` at 32 and 64 bit: 8 child processes, the page loads;
+  Firefox in one process still passes `tools/exilla/prova-primotab.sh` (8 of 8).
+  On the test PC at 0.358: `unixprova` 70 of 70; Firefox on unsplash.com there: still to do.
+- Not there yet: `shutdown` on a socket end, `SOCK_SEQPACKET`, `MSG_PEEK` (Gecko uses none);
+  a descriptor sent over its own pair and never received is not collected; the read-only copy of a
+  shared memory that Gecko hands out is a plain copy (it matters with the sandbox, which is off).
 
 ### At a crash the kernel writes who called: up to 48 callers from the stack (kernel 0.357) — tested in QEMU
 

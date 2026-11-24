@@ -12,6 +12,16 @@
 # Lo stesso ambiente di tools/exilla/js-costruisci.sh (compilatore, Rust, stato
 # di mach dentro il progetto) con tools/exilla/mozconfig-gecko: il browser
 # intero, oggetti in cross_build/exilla-obj/gecko.
+#
+# ! A MOVED OBJECT TREE KEEPS ITS OLD PATHS IN THE mozbuild CRATE. Cargo does
+# not rebuild it when buildconfig.rs changes, so every build script linked to
+# it (gecko-profiler) looks for dist/include in the old place: «Include not
+# found: mozilla-config.h» (24 November 2026, after the move to ~/ex_os).
+# Remedy: delete <objdir>/release/build/mozbuild and
+# <objdir>/<target>/release/build/mozbuild, then build again. And the links
+# in dist/bin (application.ini, default.locale, ...) still point to the old
+# tree: `mach package` says «Missing file(s): bin/application.ini». Remedy:
+# find <objdir> -type l -lname '<old>/*', and point each one to the new tree.
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
 if [ "$EXOS_ARCH" = x86_64 ]; then
