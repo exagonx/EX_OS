@@ -1085,7 +1085,31 @@
  * before jumping to the program (FS base at 64 bit, the GS descriptor at 32):
  * a child forked from a thread started the new program with the TLS of the
  * old one and died at its first %fs:0 (Firefox's file dialog, voce 118). */
-#define EXOS_VERSION    "0.361"
+/* 0.361 -> 0.362: an idle processor no longer sleeps holding the kernel's
+ * lock (bkl_ozio and hlt with an interrupt in between: 10-60 ms holds, 40 a
+ * second); a PIO read lets the other processors have the kernel's lock
+ * every millisecond: on the .253 the copy itself is the wait (12 MB/s) and
+ * processor 0 lost 30-90 ms of clock a second while Firefox's files were
+ * read; once a second the log says the holds of the lock over 10 ms when they
+ * add up to 50 ms (voce 117). Optical drives on AHCI ports: the PACKET
+ * command through the controller (ahci_pacchetto), DMA for READ; after the
+ * switch to AHCI the controller's IDE channels are not asked again (the .253
+ * waited 5 s at boot on its DVD, dead under AHCI). */
+/* 0.362 -> 0.363: mount over an existing EMPTY folder, as Linux does (the
+ * .253 had an empty /cdrom and the boot's CD was refused in red); the parent
+ * lists that folder once, with the identity of the mounted volume. */
+/* 0.363 -> 0.364: how much of a long hold of the VFS lock is the device:
+ * the block layer adds up device time, commands and sectors (blk_lavoro),
+ * and once a second "VFS 1s: ..." says the holds over 50 ms with the device
+ * part of the longest (voce 117). */
+/* 0.364 -> 0.365: the device time of one command over ~1.4 s no longer
+ * wraps (tsc_us), FLUSH CACHE and every ATAPI packet count as device work,
+ * and the disk's APM level is said at boot (voce 117). */
+/* 0.365 -> 0.366: Gecko's frozen shared memory is read-only for real (voce
+ * 115 step 4): open("/proc/self/fd/N") of an FD_SHM is that memory again,
+ * never with more access; its pages map PG_CONDIVISA_RO and mprotect never
+ * makes them writable (EACCES). PTE_E_COW leaves shared pages out. */
+#define EXOS_VERSION    "0.366"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

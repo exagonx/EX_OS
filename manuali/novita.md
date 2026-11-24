@@ -6,6 +6,8 @@
 
 **Contents**
 
+- [Mounting over an empty folder (kernel 0.363) — tested in QEMU and on the test PC](#mounting-over-an-empty-folder-kernel-0363--tested-in-qemu-and-on-the-test-pc)
+- [Disks in PIO no longer stop the system; optical drives on AHCI (kernel 0.362, voce 117) — tested in QEMU and on the test PC](#disks-in-pio-no-longer-stop-the-system-optical-drives-on-ahci-kernel-0362-voce-117--tested-in-qemu-and-on-the-test-pc)
 - [Firefox uses the programs of the system: Show in folder, the program of each file type, the ExWin file dialog (exwin 0.024, pm 0.030, kernel 0.361, voce 118) — tested in QEMU](#firefox-uses-the-programs-of-the-system-show-in-folder-the-program-of-each-file-type-the-exwin-file-dialog-exwin-0024-pm-0030-kernel-0361-voce-118--tested-in-qemu)
 - [Loading a big program no longer freezes the mouse and the rest of the system (kernel 0.360, voce 117) — tested in QEMU](#loading-a-big-program-no-longer-freezes-the-mouse-and-the-rest-of-the-system-kernel-0360-voce-117--tested-in-qemu)
 - [Keyboard, mouse, sound and screen belong to who sits at the console; ports under 1024 to root (kernel 0.359, voce 111 step 4b) — tested in QEMU](#keyboard-mouse-sound-and-screen-belong-to-who-sits-at-the-console-ports-under-1024-to-root-kernel-0359-voce-111-step-4b--tested-in-qemu)
@@ -250,6 +252,39 @@
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### Mounting over an empty folder (kernel 0.363) — tested in QEMU and on the test PC
+
+- **Why**: the test PC had an empty `/cdrom` folder on its disk, and the boot refused to mount
+  the CD there with a red line: `VFS: '/cdrom' esiste gia': montaggio rifiutato`.
+- **Now** a disk mounts over an existing folder when it is empty, as on Linux: nothing gets
+  hidden. After `umount` the folder is there again as it was.
+- **A folder with something in it, or a file**, is still refused, and the message says so.
+- **The parent lists the name once**, and it shows the mounted volume.
+- Tested in QEMU at 32 and 64 bit on FAT and ext2: an empty folder is mounted over and comes
+  back after `umount`, a full one is refused.
+
+### Disks in PIO no longer stop the system; optical drives on AHCI (kernel 0.362, voce 117) — tested in QEMU and on the test PC
+
+- **Why**: on the test PC (NVIDIA MCP73, disk in PIO at 12 MB/s) every other program waited
+  50-100 ms while Firefox's files were read, and the clock lost 30-90 ms every second.
+- **The cause, measured**: not the disk turning interrupts off. Processor 0 receives the interrupts
+  and waits for the kernel's lock with them off, and the PIO copy kept that lock for the whole
+  command. A new line in the log says it, once a second, when the holds over 10 ms add up to
+  50 ms (`BKL 1s: ...`, who took it and with which call).
+- **The PIO copy** now lets the other processors in every millisecond, as the wait for the disk
+  already did. In QEMU in PIO with 4 processors: from 40 long holds a second to none, four
+  parallel reads and writes with the right sha256 at 32 and 64 bit.
+- **An idle processor** no longer falls asleep holding the kernel's lock (an interrupt between
+  letting it go and `hlt`).
+- **On the test PC the real DMA is AHCI**: `ahci -s` keeps it (`ahci = 1` in `/boot/kernel.cfg`).
+  126 MB read cold in 8 s, and the others no longer notice: sleep 14 ms, pipe 0, clock lost 0.
+- **Optical drives on AHCI ports**: the PACKET command through the controller, DMA for reads.
+  Before, the drive was left alone, and on the test PC it went dead with the switch to AHCI: the
+  boot waited 5 s on it (`timeout BSY sul canale 3`). Now it passes to AHCI with the disk and
+  reads a CD at 3.7 MB/s. After the switch the controller's IDE channels are not asked again.
+- **The root on the CD that holds the system**: with two drives the kernel took the first CD
+  that read, even a data disc.
 
 ### Firefox uses the programs of the system: Show in folder, the program of each file type, the ExWin file dialog (exwin 0.024, pm 0.030, kernel 0.361, voce 118) — tested in QEMU
 

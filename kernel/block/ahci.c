@@ -35,8 +35,8 @@
  * negoziato; un reset qui sotto vorrebbe dire rinegoziare il link del disco da
  * cui il kernel e' appena stato caricato, per non guadagnare niente.
  *
- * Solo dischi ATA: un lettore ottico su una porta AHCI si riconosce dalla
- * firma e si lascia stare.
+ * Dischi ATA e, dalla 0.362, lettori ottici ATAPI: il comando a pacchetto
+ * passa da ahci_pacchetto, il resto del protocollo resta in atapi.c.
  * ============================================================================= */
 
 #include "kernel.h"
@@ -84,10 +84,14 @@
 #define CMD_FRE             0x00000010u     /* la porta riceve le risposte */
 #define CMD_FR              0x00004000u
 #define CMD_CR              0x00008000u
+#define CMD_ATAPI           0x01000000u     /* sulla porta c'e' un lettore */
 #define IS_TFES             0x40000000u     /* il disco ha detto «errore» */
 #define FIRMA_DISCO         0x00000101u
+#define FIRMA_ATAPI         0xEB140101u     /* un lettore ottico (0.362) */
 
 #define ATA_IDENTIFY        0xEC
+#define ATA_IDENTIFY_PACKET 0xA1
+#define ATA_PACKET          0xA0
 #define ATA_READ_DMA_EXT    0x25
 #define ATA_WRITE_DMA_EXT   0x35
 #define ATA_READ_DMA        0xC8
@@ -111,6 +115,7 @@
 
 typedef struct {
     volatile uint8_t *reg;      /* i registri di QUESTA porta */
+    uint8_t   atapi;            /* 1 = un lettore ottico, non un disco (0.362) */
     uint8_t   lba48;
     uint64_t  settori;
     uint16_t  id[256];
@@ -239,6 +244,7 @@ static int puo_cedere(void)
  * --------------------------------------------------------------------------- */
 static int porta_prepara(AhciDisco *d, volatile uint8_t *p);
 static void porta_riprendi(AhciDisco *d);
+static int esegui(AhciDisco *d, uint8_t cmd, uint64_t lba, uint32_t tmo, int muto);
 
 static int comando(AhciDisco *d, uint8_t cmd, uint64_t lba, uint32_t n,
                    uint32_t byte, int scrivi)
@@ -284,6 +290,16 @@ static int comando(AhciDisco *d, uint8_t cmd, uint64_t lba, uint32_t n,
     d->elenco[2] = (uint32_t)(uintptr_t)d->tabella;
     d->elenco[3] = 0;
 
+    return esegui(d, cmd, lba, tmo, 0) == 0 ? 0 : -1;
+}
+
+/* Slot 0 is ready (FIS, table, header): start it and wait. 0 done, -2 the
+ * device said ERR (with `muto` not logged: a drive with no disc answers a
+ * TEST UNIT READY that way, it is an answer), -1 no answer. */
+static int esegui(AhciDisco *d, uint8_t cmd, uint64_t lba, uint32_t tmo, int muto)
+{
+    volatile uint8_t *p = d->reg;
+
     wl(p, P_IS, 0xFFFFFFFFu);
     wl(p, P_CI, 1u);
 
@@ -296,16 +312,17 @@ static int comando(AhciDisco *d, uint8_t cmd, uint64_t lba, uint32_t n,
         crono_via(&c);
         for (;;) {
             if (rl(p, P_IS) & IS_TFES) {
-                klog(LOG_ERROR, "AHCI: il disco rifiuta il comando %02x a lba=%u "
-                     "(TFD %08x, SERR %08x)", cmd, (uint32_t)lba,
-                     rl(p, P_TFD), rl(p, P_SERR));
+                if (!muto)
+                    klog(LOG_ERROR, "AHCI: il disco rifiuta il comando %02x a lba=%u "
+                         "(TFD %08x, SERR %08x)", cmd, (uint32_t)lba,
+                         rl(p, P_TFD), rl(p, P_SERR));
                 /* Dopo un errore la porta si ferma: la si fa ripartire. */
                 wl(p, P_CMD, rl(p, P_CMD) & ~CMD_ST);
                 (void)aspetta(p, P_CMD, CMD_CR, 0, 500);
                 wl(p, P_SERR, 0xFFFFFFFFu);
                 wl(p, P_IS, 0xFFFFFFFFu);
                 wl(p, P_CMD, rl(p, P_CMD) | CMD_ST);
-                return -1;
+                return -2;
             }
             if (!(rl(p, P_CI) & 1u)) break;
             if (crono_ms(&c) > tmo) {
@@ -327,12 +344,12 @@ static int comando(AhciDisco *d, uint8_t cmd, uint64_t lba, uint32_t n,
         /* Voce 58: how long the disk really takes, under load, on the real
          * machine. The tick count tells a slow disk from a busy processor. */
         ms = crono_ms(&c);
-        if (ms >= 1000u)
+        if (ms >= 1000u && !muto)
             klog(LOG_WARN, "AHCI: comando %02x a lba=%u lento: %u ms visti, tick %u, "
                  "cpu %u poi %u", cmd, (uint32_t)lba, ms, g_ticks - t0, cpu0, cpu_n());
     }
 
-    if (rl(p, P_TFD) & 0x01u) return -1;    /* ERR nello stato */
+    if (rl(p, P_TFD) & 0x01u) return -2;    /* ERR nello stato */
     return 0;
 }
 
@@ -388,6 +405,7 @@ static int porta_prepara(AhciDisco *d, volatile uint8_t *p)
 
     if (aspetta(p, P_TFD, 0x88u, 0, 10000) != 0) return -1;
 
+    if (rl(p, P_SIG) == FIRMA_ATAPI) wl(p, P_CMD, rl(p, P_CMD) | CMD_ATAPI);
     wl(p, P_CMD, rl(p, P_CMD) | CMD_ST);
     d->reg = p;
     return 0;
@@ -417,6 +435,21 @@ static void porta_riprendi(AhciDisco *d)
              rl(p, P_CMD), rl(p, P_SSTS), rl(p, P_TFD));
     else
         klog(LOG_WARN, "AHCI: porta ripresa dopo un comando senza risposta");
+}
+
+/* An optical drive: IDENTIFY PACKET DEVICE, the same words as from the IDE
+ * registers (serial at 10, model at 27), and no size: that is the disc's. */
+static int lettore_identifica(AhciDisco *d)
+{
+    uint32_t i;
+
+    if (comando(d, ATA_IDENTIFY_PACKET, 0, 0, 512, 0) != 0) return -1;
+    for (i = 0; i < 256; i++)
+        d->id[i] = (uint16_t)(g_rimbalzo[i * 2] | (g_rimbalzo[i * 2 + 1] << 8));
+    d->atapi   = 1;
+    d->lba48   = 0;
+    d->settori = 0;
+    return 0;
 }
 
 static int disco_identifica(AhciDisco *d)
@@ -453,12 +486,13 @@ static void porta_rimetti(volatile uint8_t *p, const uint32_t *prima)
 /* -----------------------------------------------------------------------------
  * Un controller: accenderlo in AHCI e guardare le sue porte
  * --------------------------------------------------------------------------- */
-static int controller(uint32_t bus, uint32_t slot, uint32_t fn, uint32_t abar)
+static int controller(uint32_t bus, uint32_t slot, uint32_t fn, uint32_t abar,
+                      int dichiarato)
 {
     volatile uint8_t *h;
     uint32_t pi, vs, i, cmd;
     uint32_t ghc_prima, salvati[32][4], link_prima[32];
-    int trovati = 0;
+    int trovati = 0, lettori = 0;
 
     if (g_hba != 0) {
         klog(LOG_WARN, "AHCI: un secondo controller (PCI %u:%u.%u) resta fuori", bus, slot, fn);
@@ -555,11 +589,13 @@ static int controller(uint32_t bus, uint32_t slot, uint32_t fn, uint32_t abar)
          * guarda il link solo adesso conclude che non c'e' niente. */
         if ((rl(p, P_SSTS) & 0x0Fu) != 3u && (link_prima[i] & 0x0Fu) != 3u) continue;
 
-        /* Una firma gia' letta che non e' di un disco (un lettore ottico)
-         * basta a lasciar stare la porta. Una firma che non c'e' ancora no:
-         * la si guarda dopo aver preparato la porta. */
+        /* Una firma gia' letta che non e' di un disco ne' di un lettore basta
+         * a lasciar stare la porta. Una firma che non c'e' ancora no: la si
+         * guarda dopo aver preparato la porta. */
+        d->atapi = 0;
         sig = rl(p, P_SIG);
-        if (sig != FIRMA_DISCO && sig != 0xFFFFFFFFu && !FORZA_RESET_LINK) {
+        if (sig != FIRMA_DISCO && sig != FIRMA_ATAPI && sig != 0xFFFFFFFFu &&
+            !FORZA_RESET_LINK) {
             klog(LOG_INFO, "AHCI: porta %u: non e' un disco (firma %08x): la lascio",
                  i, sig);
             continue;
@@ -572,6 +608,21 @@ static int controller(uint32_t bus, uint32_t slot, uint32_t fn, uint32_t abar)
             continue;
         }
         sig = rl(p, P_SIG);
+        /* ! THE OPTICAL DRIVE TOO (0.362). Left alone, on the .253 (MCP73) it
+         * went dead with the switch: its IDE registers answer no more once the
+         * controller speaks AHCI, and the boot waited 5 s on it ("timeout BSY
+         * sul canale 3"). */
+        if (sig == FIRMA_ATAPI) {
+            if (lettore_identifica(d) != 0) {
+                klog(LOG_WARN, "AHCI: porta %u: il lettore ottico non si presenta", i);
+                porta_rimetti(p, salvati[i]);
+                continue;
+            }
+            klog(LOG_INFO, "AHCI: porta %u: lettore ottico", i);
+            g_n++;
+            lettori++;
+            continue;
+        }
         if (sig != FIRMA_DISCO) {
             klog(LOG_INFO, "AHCI: porta %u: non e' un disco (firma %08x): la lascio",
                  i, sig);
@@ -590,8 +641,11 @@ static int controller(uint32_t bus, uint32_t slot, uint32_t fn, uint32_t abar)
     }
 
     /* Nessun disco adottato: il controller torna com'era, porta per porta, e
-     * non lo si considera preso — i registri IDE restano la sua strada. */
-    if (trovati == 0) {
+     * non lo si considera preso — i registri IDE restano la sua strada.
+     * ! A controller that says it is AHCI has no IDE road: there a drive
+     * alone is enough to keep it (0.362). */
+    if (trovati == 0 && (lettori == 0 || !dichiarato)) {
+        g_n -= lettori;
         for (i = 0; i < 32; i++) {
             volatile uint8_t *p = h + 0x100 + i * 0x80;
 
@@ -606,7 +660,7 @@ static int controller(uint32_t bus, uint32_t slot, uint32_t fn, uint32_t abar)
     }
 
     if (g_n_presi < 4) g_preso[g_n_presi++] = (bus << 16) | (slot << 8) | fn;
-    return trovati;
+    return trovati + lettori;
 }
 
 /* =============================================================================
@@ -646,7 +700,8 @@ int ahci_cerca(int anche_emulati)
 
                 abar = pci32(bus, slot, fn, 0x24);
                 if ((abar & 1u) || (abar & 0xFFFFF000u) == 0) continue;     /* non e' memoria */
-                (void)controller(bus, slot, fn, abar & 0xFFFFF000u);
+                (void)controller(bus, slot, fn, abar & 0xFFFFF000u,
+                                 sotto == 0x06 && interf == 0x01);
             }
         }
     }
@@ -771,6 +826,11 @@ const uint16_t *ahci_identify(int k)
     return (k >= 0 && k < g_n) ? g_disco[k].id : 0;
 }
 
+int ahci_e_lettore(int k)
+{
+    return (k >= 0 && k < g_n) ? g_disco[k].atapi : 0;
+}
+
 uint64_t ahci_settori(int k)
 {
     return (k >= 0 && k < g_n) ? g_disco[k].settori : 0;
@@ -781,7 +841,7 @@ int ahci_rw(int k, uint64_t lba, uint32_t n, void *buf, int scrivi)
     AhciDisco *d;
     uint8_t   *p = (uint8_t *)buf;
 
-    if (k < 0 || k >= g_n || n == 0) return -1;
+    if (k < 0 || k >= g_n || n == 0 || g_disco[k].atapi) return -1;
     d = &g_disco[k];
     if (lba + n > d->settori || lba + n < lba) return -1;
 
@@ -810,6 +870,81 @@ int ahci_rw(int k, uint64_t lba, uint32_t n, void *buf, int scrivi)
 
 int ahci_flush(int k)
 {
-    if (k < 0 || k >= g_n) return -1;
+    if (k < 0 || k >= g_n || g_disco[k].atapi) return -1;
     return comando(&g_disco[k], g_disco[k].lba48 ? ATA_FLUSH_EXT : ATA_FLUSH, 0, 0, 0, 0);
+}
+
+/* =============================================================================
+ * ahci_pacchetto - a SCSI command to an optical drive (0.362)
+ *
+ * The PACKET command (A0) with the 12 bytes of the CDB in the table (ACMD,
+ * offset 0x40) and the A bit in the slot's header: the controller sends the
+ * CDB when the drive asks for it and moves the data burst by burst, which on
+ * the IDE registers atapi.c does by hand. READ(10)/READ(12) of whole 2 KB
+ * blocks go as DMA, everything else (SENSE, CAPACITY, TEST UNIT READY) with
+ * the PIO protocol, which the controller runs too: Linux does the same, some
+ * drives refuse DMA for odd lengths. The bytes moved are the slot's PRDBC.
+ * 0 done, -2 CHECK CONDITION (the reason is in REQUEST SENSE), -1 no answer.
+ * ============================================================================= */
+int ahci_pacchetto(int k, const uint8_t *cdb, void *buf, uint32_t max,
+                   uint32_t *letti, uint32_t tmo_ms)
+{
+    AhciDisco *d;
+    volatile uint8_t *p;
+    volatile uint32_t *intest;
+    uint8_t  *t;
+    uint32_t *prd;
+    uint32_t  byte, n, i;
+    int       dma, r;
+
+    if (letti) *letti = 0;
+    if (k < 0 || k >= g_n || !g_disco[k].atapi) return -1;
+    d = &g_disco[k];
+    p = d->reg;
+    t = d->tabella;
+    prd = (uint32_t *)(d->tabella + 0x80);
+    intest = (volatile uint32_t *)d->elenco;
+
+    if (buf == 0) max = 0;
+    if (max > RIMBALZO_BYTE) max = RIMBALZO_BYTE;
+    byte = (max + 1u) & ~1u;
+    dma  = (cdb[0] == 0x28 || cdb[0] == 0xA8) && byte != 0 && (byte % 2048u) == 0;
+
+    if (aspetta(p, P_TFD, 0x88u, 0, tmo_ms) != 0) {
+        klog(LOG_WARN, "AHCI: il lettore resta occupato (TFD %08x)", rl(p, P_TFD));
+        return -1;
+    }
+
+    memset(t, 0, 0x80);
+    t[0] = 0x27;                        /* dal sistema al lettore */
+    t[1] = 0x80;                        /* e' un comando */
+    t[2] = ATA_PACKET;
+    t[3] = (uint8_t)(dma ? 1u : 0u);    /* FEATURES: DMA */
+    t[5] = (uint8_t)(byte ? (byte > 0xFFFEu ? 0xFEu : byte) : 0u);  /* PIO burst limit */
+    t[6] = (uint8_t)(byte ? ((byte > 0xFFFEu ? 0xFFFEu : byte) >> 8) : 0u);
+    for (i = 0; i < 12; i++) t[0x40 + i] = cdb[i];
+
+    if (byte) {
+        prd[0] = (uint32_t)(uintptr_t)g_rimbalzo;
+        prd[1] = 0;
+        prd[2] = 0;
+        prd[3] = byte - 1u;
+    }
+    intest[0] = 5u | (1u << 5) | ((byte ? 1u : 0u) << 16);    /* A: ATAPI */
+    intest[1] = 0;                      /* PRDBC: the controller counts here */
+    intest[2] = (uint32_t)(uintptr_t)d->tabella;
+    intest[3] = 0;
+
+    r = esegui(d, ATA_PACKET, 0, tmo_ms, 1);
+    if (r != 0) return r;
+
+    n = intest[1];
+    if (n > max) n = max;
+    if (n) {
+        uint8_t *q = (uint8_t *)buf;
+
+        for (i = 0; i < n; i++) q[i] = g_rimbalzo[i];
+    }
+    if (letti) *letti = n;
+    return 0;
 }

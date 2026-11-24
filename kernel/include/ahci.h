@@ -32,5 +32,9 @@ const uint16_t *ahci_identify(int k);       /* le 256 parole di IDENTIFY */
 uint64_t        ahci_settori(int k);
 int             ahci_rw(int k, uint64_t lba, uint32_t n, void *buf, int scrivi);
 int             ahci_flush(int k);
+int             ahci_e_lettore(int k);      /* 1: an optical drive (0.362) */
+/* a PACKET command: 0, -2 CHECK CONDITION, -1 no answer (0.362) */
+int             ahci_pacchetto(int k, const uint8_t *cdb, void *buf, uint32_t max,
+                               uint32_t *letti, uint32_t tmo_ms);
 
 #endif /* AHCI_H */

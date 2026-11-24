@@ -81,6 +81,7 @@ typedef struct {
      * controller AHCI (kernel/block/ahci.c), e canale e unita' dicono solo da
      * dove lo si era visto prima, se lo si era visto. */
     uint8_t  ahci;
+    uint8_t  solo_ahci;     /* 1 = seen only on the AHCI controller, never on IDE (0.362) */
 } AtaDevice;
 
 /* I dischi gia' visti dai registri IDE di un controller che e' anche AHCI

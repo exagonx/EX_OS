@@ -46,6 +46,9 @@
 #include "kernel.h"
 #include "ata.h"
 #include "atapi.h"
+#include "ahci.h"       /* a drive on an AHCI port (0.362) */
+#include "blk.h"        /* blk_conta_lavoro: device time (0.365) */
+#include "tsc.h"
 
 /* Un pacchetto ATAPI e' di 12 byte. Ne esistono anche da 16, ma li
  * chiedono solo dispositivi che dichiarano di volerli in IDENTIFY PACKET:
@@ -118,11 +121,14 @@ static int atapi_comando_nl(int indice, const uint8_t *cdb, void *buf,
 static int atapi_comando(int indice, const uint8_t *cdb, void *buf,
                          uint32_t max, uint32_t *letti, uint32_t timeout_ms)
 {
-    int r;
+    int      r;
+    uint64_t da = tsc_c_e() ? tsc_leggi() : 0;
 
     ata_prendi();
     r = atapi_comando_nl(indice, cdb, buf, max, letti, timeout_ms);
     ata_lascia();
+    /* every packet, the probes of a mount too (0.365) */
+    blk_conta_lavoro(da, (letti != NULL ? *letti : 0u) / 512u);
     return r;
 }
 
@@ -139,6 +145,13 @@ static int atapi_comando_nl(int indice, const uint8_t *cdb, void *buf,
     if (letti) *letti = 0;
 
     if (d == NULL || !d->presente || d->tipo != ATA_TYPE_ATAPI) return AT_ERRORE;
+
+    /* A drive on an AHCI port: the controller runs the packet protocol, the
+     * IDE registers below may be dead (0.362). Same answers, same meaning. */
+    if (d->ahci) {
+        r = ahci_pacchetto(d->ahci - 1, cdb, buf, max, letti, timeout_ms);
+        return r == 0 ? AT_OK : (r == -2 ? AT_CHECK : AT_ERRORE);
+    }
 
     canale = d->canale;
     unita  = d->unita;

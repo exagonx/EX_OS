@@ -65,6 +65,7 @@
 #include "ahci.h"
 #include "power.h"
 #include "smp.h"      /* bkl_fai_passare: clock waits on processor 1 (0.320) */
+#include "tsc.h"      /* the PIO copy yields by time (0.362) */
 
 /* Le porte, gli offset dei registri e i bit di stato stanno in ata.h:
  * sono lo stesso bus che usa kernel/block/atapi.c, e una seconda copia
@@ -692,6 +693,8 @@ void ata_attesa_ms(uint32_t ms)
  * yield to, and the loop spins as it always did.
  * ============================================================================= */
 #define ATA_GIRI_PRIMA_DI_CEDERE 64u
+#define ATA_PIO_SETT_CEDI        8u     /* without a TSC: 4 KB, about 0.35 ms on the .253 */
+#define ATA_PIO_US_CEDI          1000u  /* with one: every millisecond of copy (0.362) */
 
 static void ata_cedi(uint32_t *giri)
 {
@@ -1050,6 +1053,15 @@ static void ata_rileva(int idx, int canale, int unita)
          d->lba48 ? " LBA48" : " LBA28",
          d->clippato ? " [SPAZIO NASCOSTO]" : "");
 
+    /* ! THE HEADS PARKED (0.365, voce 117): on the .253 one 4 KB read takes
+     * 360 ms after a pause, with the VFS lock held. A laptop disk under
+     * APM below 128 unloads its heads when idle. Said, not changed: first
+     * the measure. Words 83/86 bit 3 = supported/on, 91 = the level. */
+    if (id[83] & (1u << 3))
+        klog(LOG_INFO, "ATA: canale %d %s: APM %s, livello %u (1-127 parcheggia "
+             "le testine, 254 mai)", canale, unita ? "slave" : "master",
+             (id[86] & (1u << 3)) ? "acceso" : "spento", (unsigned)(id[91] & 0xFFu));
+
     if (d->clippato) {
         klog(LOG_WARN, "ATA: il disco dichiara %u MB ma di fabbrica ne ha %u "
              "- HPA attiva o jumper di limitazione",
@@ -1079,10 +1091,11 @@ static void ahci_riempi(int idx, int k)
     const uint16_t *id = ahci_identify(k);
 
     d->presente = 1;
-    d->tipo     = ATA_TYPE_ATA;
+    d->tipo     = ahci_e_lettore(k) ? ATA_TYPE_ATAPI : ATA_TYPE_ATA;  /* 0.362 */
     d->canale   = 0;
     d->unita    = 0;
     d->ahci     = (uint8_t)(k + 1);
+    d->solo_ahci = 1;
     ata_stringa(id, 27, 20, d->modello);
     ata_stringa(id, 10, 10, d->seriale);
     ata_stringa(id, 23,  4, d->firmware);
@@ -1110,6 +1123,7 @@ int ata_init(void)
         g_dev[idx].presente = 0;
         g_dev[idx].tipo     = ATA_TYPE_NONE;
         g_dev[idx].ahci     = 0;
+        g_dev[idx].solo_ahci = 0;
     }
 
     /* ! IL BUS MASTER SI CERCA PRIMA DEL RILEVAMENTO, non dopo: ata_rileva()
@@ -1168,6 +1182,11 @@ int ata_init(void)
                 break;
             }
             ahci_riempi(idx, k);
+            if (g_dev[idx].tipo == ATA_TYPE_ATAPI) {
+                klog(LOG_INFO, "ATA: lettore ottico sul controller AHCI: '%s'",
+                     g_dev[idx].modello);
+                continue;
+            }
             g_trovati++;
             klog(LOG_INFO, "ATA: hd%d e' sul controller AHCI: '%s' %u MB", idx,
                  g_dev[idx].modello, (uint32_t)(g_dev[idx].settori / 2048));
@@ -1194,6 +1213,9 @@ int ata_init(void)
  * serie. Se l'AHCI non parte, resta tutto com'era.
  * ============================================================================= */
 static int g_passati = 0;       /* quanti dischi sono passati all'AHCI finora */
+/* 1 = this channel's IDE registers are not to be used: its controller speaks
+ * AHCI now (ata_prova_ahci, ata_passa_ad_ahci) */
+static uint8_t g_canale_ceduto[8];
 
 /* 0 = niente da passare; 1 = c'e' un disco che potrebbe passare all'AHCI e
  * sta ancora sui registri IDE; 2 = almeno uno e' gia' passato. La domanda
@@ -1211,24 +1233,50 @@ int ata_passa_ad_ahci(void)
     for (k = prima; k < n; k++) {
         const uint16_t *id = ahci_identify(k);
         char seriale[21];
+        int  tipo = ahci_e_lettore(k) ? ATA_TYPE_ATAPI : ATA_TYPE_ATA;
 
         ata_stringa(id, 10, 10, seriale);
         for (idx = 0; idx < ATA_MAX_DEVICES; idx++) {
             int j = 0;
 
-            if (g_dev[idx].tipo != ATA_TYPE_ATA || g_dev[idx].ahci) continue;
+            if (g_dev[idx].tipo != tipo || g_dev[idx].ahci) continue;
             while (seriale[j] && seriale[j] == g_dev[idx].seriale[j]) j++;
             if (seriale[j] || g_dev[idx].seriale[j]) continue;
 
             g_dev[idx].ahci = (uint8_t)(k + 1);
             passati++;
-            klog(LOG_INFO, "ATA: hd%d ('%s') passa all'AHCI: da qui si legge e "
-                 "si scrive da li'", idx, g_dev[idx].modello);
+            if (tipo == ATA_TYPE_ATAPI)
+                klog(LOG_INFO, "ATA: il lettore ottico ('%s') passa all'AHCI",
+                     g_dev[idx].modello);
+            else
+                klog(LOG_INFO, "ATA: hd%d ('%s') passa all'AHCI: da qui si legge e "
+                     "si scrive da li'", idx, g_dev[idx].modello);
             break;
         }
         if (idx == ATA_MAX_DEVICES)
             klog(LOG_WARN, "AHCI: un disco (seriale '%s') non era fra quelli gia' "
                  "visti: resta fuori", seriale);
+    }
+    /* ! THE IDE REGISTERS OF A CONTROLLER NOW IN AHCI ARE NOT ASKED AGAIN
+     * (0.362). On the .253 the optical drive's channel answered BSY for ever
+     * after the switch, and the boot's mount waited 5 s on it with the VFS
+     * lock held. A drive that passed goes through AHCI; one that did not is
+     * gone until the next boot, said once here instead of a timeout. */
+    if (passati > 0) {
+        for (idx = 0; idx < ATA_MAX_DEVICES; idx++) {
+            int c = g_dev[idx].canale;
+
+            if (!g_dev[idx].presente || !g_dev[idx].ahci || c < 0 || c >= 8) continue;
+            g_canale_ceduto[c]     = 1;
+            g_canale_ceduto[c ^ 1] = 1;     /* the pair: same controller */
+        }
+        for (idx = 0; idx < ATA_MAX_DEVICES; idx++)
+            if (g_dev[idx].presente && !g_dev[idx].ahci && g_dev[idx].canale < 8 &&
+                g_canale_ceduto[g_dev[idx].canale])
+                klog(LOG_WARN, "ATA: %s sul canale %d resta fuori: il controller "
+                     "parla AHCI e da li' non si e' presentato",
+                     g_dev[idx].tipo == ATA_TYPE_ATAPI ? "il lettore" : "il disco",
+                     g_dev[idx].canale);
     }
     if (n == prima)
         klog(LOG_INFO, "ATA: ahci = 1, ma nessun controller ha dischi da passare all'AHCI");
@@ -1312,7 +1360,6 @@ int ata_ahci_col_reset(void) { return g_col_reset; }
 /* ! AFTER THE RESET NOBODY TOUCHES THOSE IDE REGISTERS (31 October 2026). On the
  * laptop the DVD reader, on the same controller, was still polled through them:
  * "timeout BSY sul canale 2" came first, and then the disk stopped answering. */
-static uint8_t g_canale_ceduto[8];
 
 int ata_canale_ceduto(int canale)
 {
@@ -1443,9 +1490,10 @@ static int ata_rw(int indice, uint64_t lba, uint32_t n, void *buf, int scrivi)
 {
     const AtaDevice *d;
     uint16_t  io;
-    int       canale, unita, usa48;
+    int       canale, unita, usa48, cede;
     uint8_t  *p = (uint8_t *)buf;
     uint32_t  s;
+    uint64_t  dal;
 
     d = ata_get_device(indice);
     if (d == NULL || !d->presente || d->tipo != ATA_TYPE_ATA) return -1;
@@ -1564,6 +1612,20 @@ static int ata_rw(int indice, uint64_t lba, uint32_t n, void *buf, int scrivi)
          * mentre fidarsi di dati parziali costa tutto. */
     }
 
+    /* sched_yield turns interrupts on: only where they already were, and with
+     * a process to yield (not at boot) */
+    cede = (read_eflags() & 0x200u) != 0 && proc_get_current() != NULL;
+    dal  = tsc_c_e() ? tsc_leggi() : 0;
+    if (!cede && proc_get_current() != NULL) {
+        static int detto = 0;
+
+        if (!detto) {
+            detto = 1;
+            klog(LOG_WARN, "ATA: PIO a interrupt spenti, non si cede (chiamato da %x)",
+                 (uint32_t)(uintptr_t)__builtin_return_address(0));
+        }
+    }
+
     while (n > 0) {
         uint32_t blocco = n;
         uint32_t max    = usa48 ? ATA_MAX_N48 : ATA_MAX_N28;
@@ -1631,6 +1693,25 @@ static int ata_rw(int indice, uint64_t lba, uint32_t n, void *buf, int scrivi)
             if (scrivi) port_outsw(io + ATA_REG_DATA, p, ATA_SECTOR_SIZE / 2);
             else        port_insw (io + ATA_REG_DATA, p, ATA_SECTOR_SIZE / 2);
             p += ATA_SECTOR_SIZE;
+
+            /* ! THE COPY ITSELF IS THE WAIT IN PIO (0.362, voce 117). Every
+             * word crosses the bus: 12 MB/s on the .253, where a 256 KB piece
+             * kept the kernel's lock 21 ms and processor 0, deaf while it waits
+             * for it, lost 30-90 ms of clock a second; in QEMU each insw is a
+             * VM exit, a sector 1-2 ms. So by time, not by sectors: after
+             * ATA_PIO_US_CEDI of copy the others get the lock, as in BSY. */
+            if (cede) {
+                if (tsc_c_e()) {
+                    uint64_t ora = tsc_leggi();
+
+                    if (tsc_us(ora - dal) >= ATA_PIO_US_CEDI) {
+                        sched_yield();
+                        dal = tsc_leggi();
+                    }
+                } else if (((s + 1) % ATA_PIO_SETT_CEDI) == 0) {
+                    sched_yield();
+                }
+            }
         }
 
         /* Dopo una scrittura il dispositivo puo' restare occupato: va

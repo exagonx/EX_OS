@@ -2690,6 +2690,11 @@ int paging_proteggi(Process *p, uint32_t virt, uint32_t pagine, uint32_t prot)
         pte = pt[NELLA_TAB(va)];
         if (PTE_E_RISERVA(pte) || PTE_E_PIGRA(pte)) continue;   /* senza pagina: niente da controllare */
         if (!(pte & PG_PRESENT)) { interrupts_enable(); return -ENOMEM; }
+        /* frozen memory stays frozen: the descriptor was read-only (0.366) */
+        if ((nuovi & PG_WRITABLE) && PTE_E_CONDIVISA(pte) && (pte & PG_CONDIVISA_RO)) {
+            interrupts_enable();
+            return -EACCES;
+        }
         (void)frame;
     }
 
@@ -2719,7 +2724,9 @@ int paging_proteggi(Process *p, uint32_t virt, uint32_t pagine, uint32_t prot)
             if ((n & PG_WRITABLE) && !PTE_E_CONDIVISA(pte) && PMM_E_RAM_SOTTO(frame, ram) &&
                 ((pte & PG_COW) || pmm_ref_count(frame) > 1))
                 n = (n & ~(uint32_t)PG_WRITABLE) | PG_COW;
-            pt[NELLA_TAB(va)] = (pte & ~(PTE)(PG_USER | PG_WRITABLE | PG_COW)) | n;
+            /* bit 10 is PG_CONDIVISA_RO on a shared page: it stays */
+            pt[NELLA_TAB(va)] = (pte & ~(PTE)(PG_USER | PG_WRITABLE |
+                                 (PTE_E_CONDIVISA(pte) ? 0u : PG_COW))) | n;
         }
         if (proc_get_current() != NULL &&
             proc_get_current()->page_directory == pd)

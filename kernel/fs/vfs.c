@@ -89,6 +89,7 @@
 #include "sched.h"    /* proc_get_current, sched_yield: il lucchetto del VFS */
 #include "kmalloc.h"
 #include "rtc.h"      /* rtc_utc_da_locale: FAT dates are local (0.340) */
+#include "tsc.h"      /* how long the lock is held, to the ms (0.364) */
 
 /* Il kernel non ha una libreria di stringhe condivisa: ogni file definisce
  * i propri helper statici (vedi cfg_strcmp in fs/cfg.c, str_equal in
@@ -104,6 +105,17 @@ static int v_uguale(const char *a, const char *b)
 {
     while (*a && *a == *b) { a++; b++; }
     return *a == *b;
+}
+
+static int v_uguale_ci(const char *a, const char *b)
+{
+    for (;; a++, b++) {
+        char x = *a, y = *b;
+        if (x >= 'a' && x <= 'z') x = (char)(x - 32);
+        if (y >= 'a' && y <= 'z') y = (char)(y - 32);
+        if (x != y) return 0;
+        if (x == '\0') return 1;
+    }
 }
 
 static void v_copia(char *dst, const char *src, uint32_t max)
@@ -123,6 +135,8 @@ typedef struct {
     char     sotto[VFS_PUNTO_MAX];   /* see g_base below */
     uint8_t  ro_chiesto;             /* see vfs_ext2_rivaluta */
     uint8_t  segnato;                /* this slot was marked dirty by us */
+    uint8_t  copre;                  /* mounted over an empty real folder (0.362):
+                                      * the parent lists that folder once */
 } VfsPosto;
 
 static VfsPosto **volatile g_posto;
@@ -422,6 +436,57 @@ static uint32_t g_fs_dal = 0;
 
 uint32_t vfs_stato_lucchetto(void) { return g_fs_detentore; }
 
+/* ! HOW MUCH OF A LONG HOLD IS THE DEVICE (0.364, voce 117): on the .253 a
+ * stat("/") waited 345 ms behind a read on the AHCI disk and 1.8 s behind
+ * the CD. Before choosing a cure: is it the platter (seeks, the CD spinning
+ * up) or us (copies, the ext4 tree)? Holds of FS_SEC_MS or more add up, and
+ * when they reach FS_SEC_DIRE_MS a line every second or so says them, with
+ * the longest one's operation and its device time, commands and KB. */
+#define FS_SEC_MS       50u
+#define FS_SEC_DIRE_MS 100u
+static uint64_t    g_fs_tsc;              /* TSC when taken; 0 = no TSC */
+static BlkLavoro   g_fs_lav;              /* device work when taken */
+static uint32_t    g_fss_n, g_fss_tot, g_fss_max, g_fss_pid, g_fss_tick;
+static uint32_t    g_fss_dev, g_fss_cmd, g_fss_kb;
+static const char *g_fss_chi = "?";
+
+static void fs_preso(void)
+{
+    g_fs_tsc = tsc_c_e() ? tsc_leggi() : 0;
+    blk_lavoro(&g_fs_lav);
+}
+
+/* called by the holder, before letting go */
+static void fs_misura(uint32_t chi_era, const char *cosa)
+{
+    uint32_t ms;
+
+    if (g_fs_tsc == 0 || chi_era == FS_SENZA_PROCESSO) return;
+    ms = tsc_ms(tsc_leggi() - g_fs_tsc);
+    if (ms >= FS_SEC_MS) {
+        g_fss_n++;
+        g_fss_tot += ms;
+        if (ms > g_fss_max) {
+            BlkLavoro l;
+
+            blk_lavoro(&l);
+            g_fss_max = ms;
+            g_fss_pid = chi_era;
+            g_fss_chi = cosa;
+            g_fss_dev = (l.us - g_fs_lav.us) / 1000u;
+            g_fss_cmd = l.comandi - g_fs_lav.comandi;
+            g_fss_kb  = (l.settori - g_fs_lav.settori) / 2u;
+        }
+    }
+    if (g_ticks - g_fss_tick < 100u || proc_get_current() == NULL) return;
+    if (g_fss_tot >= FS_SEC_DIRE_MS)
+        klog(LOG_WARN, "VFS 1s: %u >%ums, %u ms; max %u PID %u (%s): disco %u ms, %u cmd, %u KB",
+             g_fss_n, FS_SEC_MS, g_fss_tot, g_fss_max, g_fss_pid, g_fss_chi,
+             g_fss_dev, g_fss_cmd, g_fss_kb);
+    g_fss_n = g_fss_tot = g_fss_max = 0;
+    g_fss_tick = g_ticks;
+}
+
 static void fs_prendi_n(const char *chi)
 {
     uint32_t fl_if = read_eflags();   /* IF given back as found (voce 54) */
@@ -449,6 +514,7 @@ static void fs_prendi_n(const char *chi)
             g_fs_passato   = 0;
             g_fs_chi       = chi;
             g_fs_dal       = g_ticks;
+            fs_preso();
             if (fl_if & 0x200u) interrupts_enable();
             return;
         }
@@ -516,6 +582,7 @@ static void fs_rilascia(void)
     if (tenuto > FS_TROPPO_TICK && chi_era != FS_SENZA_PROCESSO && proc_get_current() != NULL)
         klog(LOG_WARN, "VFS: lucchetto tenuto %u ms dal PID %u (%s), %u in fila",
              tenuto * 10u, chi_era, cosa, g_fs_n_attesa);
+    fs_misura(chi_era, cosa);
 
     interrupts_disable();
 
@@ -540,6 +607,7 @@ static void fs_rilascia(void)
         g_fs_passato   = chi_e;
         g_fs_chi       = "(passato)";
         g_fs_dal       = g_ticks;
+        fs_preso();
         sched_unblock_locked(chi_e);
     } else {
         g_fs_n_attesa = 0;
@@ -892,8 +960,14 @@ void vfs_init(uint8_t boot_drive)
      * i driver di questo sistema sanno gia' leggere.
      * ===================================================================== */
     if (!fat12_pronto()) {
-        int n = blk_conta(), i2;
+        int n = blk_conta(), i2, giro;
 
+        /* ! THE CD WITH THE SYSTEM, NOT THE FIRST ONE THAT READS (0.362). With
+         * a second drive - an AHCI port next to the IDE one, as in QEMU with a
+         * test disc - cd0 can be a data CD: the root went there, no
+         * kernel.cfg, no base system, a shell that answered nothing. First
+         * round: the CD holding /boot/kernel.cfg; second: any, as before. */
+        for (giro = 0; giro < 2; giro++)
         for (i2 = 0; i2 < n; i2++) {
             const BlkDev *d = blk_get(i2);
             int mnt;
@@ -902,6 +976,14 @@ void vfs_init(uint8_t boot_drive)
 
             mnt = iso_mount(i2);
             if (mnt < 0) continue;
+            if (giro == 0) {
+                IsoDirEntry e;
+
+                if (iso_stat(mnt, "/boot/kernel.cfg", &e) != 0) {
+                    iso_umount(mnt);
+                    continue;
+                }
+            }
 
             /* La root non si smonta mai: si rivendica il dispositivo. */
             blk_acquisisci(i2);
@@ -952,9 +1034,29 @@ const VfsMount *vfs_get(int i)
     return NULL;
 }
 
+static int vfs_readdir_nl(const char *abs, VfsDirEntry *out, uint32_t max,
+                uint32_t *count, uint32_t start);
+
+/* 1 if abs is a folder with nothing in it ("." and ".." don't count, nor
+ * does anything else: a mount below it is content too). */
+static int cartella_vuota(const char *abs)
+{
+    static VfsDirEntry v;            /* 270 bytes: not on the kernel stack.
+                                      * Callers hold the VFS lock. */
+    uint32_t n = 0, da = 0;
+
+    for (;;) {
+        if (vfs_readdir_nl(abs, &v, 1, &n, da) != 0) return 0;
+        if (n == 0) return 1;
+        if (!(v.nome[0] == '.' && (v.nome[1] == '\0' ||
+              (v.nome[1] == '.' && v.nome[2] == '\0')))) return 0;
+        da++;
+    }
+}
+
 static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
 {
-    int        blkdev, slot = -1, i, mnt, chiesto = sola_lettura ? 1 : 0;
+    int        blkdev, slot = -1, i, mnt, chiesto = sola_lettura ? 1 : 0, copre = 0;
     VolumeInfo vi;
     VfsStat    st;
 
@@ -998,10 +1100,17 @@ static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
     }
 
     /* Il nome non deve esistere gia' (punto 4): montarci sopra
-     * nasconderebbe dei file senza dirlo. */
+     * nasconderebbe dei file senza dirlo. Una cartella VUOTA invece non
+     * nasconde niente (0.362): sul .253 qualcuno aveva fatto /cdrom, e il
+     * CD dell'avvio veniva respinto con una riga rossa. Come su Linux ci si
+     * monta sopra, e allo smontaggio la cartella torna com'era. */
     if (punto[1] != '\0' && vfs_stat_nl(punto, &st) == 0) {
-        klog(LOG_ERROR, "VFS: '%s' esiste gia': montaggio rifiutato", punto);
-        return ERR(EEXIST);
+        if (!st.is_dir || !cartella_vuota(punto)) {
+            klog(LOG_ERROR, "VFS: '%s' esiste gia' e non e' una cartella vuota: "
+                 "montaggio rifiutato", punto);
+            return ERR(EEXIST);
+        }
+        copre = 1;
     }
 
     /* Anche la directory che lo conterra' deve esistere, altrimenti si
@@ -1086,6 +1195,7 @@ static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
     g_posto[slot]->m.blkdev       = blkdev;
     v_copia(g_posto[slot]->m.dev, dev, BLK_NOME_MAX);
     g_posto[slot]->sotto[0] = '\0';
+    g_posto[slot]->copre    = (uint8_t)copre;
 
     /* ! IL DISCO TORNA SOPRA LA BASE (@RDBOOT passo 2). Montato in uno slot
      * qualunque, ora prende lo slot 0, quello della radice. I file aperti
@@ -1103,6 +1213,7 @@ static int vfs_mount_nl(const char *dev, const char *punto, int sola_lettura)
         g_posto[0]->segnato    = g_posto[slot]->segnato;
         g_posto[slot]->segnato = 0;
         g_posto[0]->sotto[0]   = '\0';
+        g_posto[0]->copre      = 0;
         g_posto[slot]->m.usato = 0;
         slot = 0;
         klog(LOG_WARN, "VFS: %s e' di nuovo la radice, sopra il sistema di base", dev);
@@ -2147,6 +2258,9 @@ static int vfs_readdir_nl(const char *abs, VfsDirEntry *out, uint32_t max,
         /* Con la base come radice /rdboot e' gia' una directory vera della
          * radice: elencarla anche come montaggio la mostrerebbe due volte. */
         if (i == g_base && radice_e_base()) continue;
+        /* Over a real empty folder: the filesystem lists that name itself,
+         * patched below. Listing it here too = the same name twice. */
+        if (g_posto[i]->copre) continue;
 
         k_punti++;
         if (saltati < start) { saltati++; continue; }
@@ -2272,6 +2386,31 @@ static int vfs_readdir_nl(const char *abs, VfsDirEntry *out, uint32_t max,
                 }
                 s_fs += (uint32_t)n;
                 if ((uint32_t)n < cap) break;
+            }
+        }
+    }
+
+    /* The real folder under a mount shows what is mounted on it: the same
+     * identity stat() gives, the root of that volume. */
+    {
+        uint32_t j;
+        char     corto[sizeof(out[0].nome)];
+        int      fat = g_posto[im]->m.tipo == VFS_FS_FAT ||
+                       g_posto[im]->m.tipo == VFS_FS_FAT12FD;
+
+        for (i = 0; i < g_posti_n; i++) {
+            const char *nome;
+
+            if (!g_posto[i]->m.usato || !g_posto[i]->copre || i == im) continue;
+            if (!e_figlio(g_posto[i]->m.punto, abs, &nome)) continue;
+            v_copia(corto, nome, sizeof(corto));
+            for (j = 0; j < scritti; j++) {
+                /* FAT shows "X" for the x it finds: case doesn't count there */
+                if (fat ? !v_uguale_ci(out[j].nome, corto)
+                        : !v_uguale(out[j].nome, corto)) continue;
+                out[j].ident      = VFS_IDENT(i, 0);
+                out[j].is_dir     = 1;
+                out[j].dimensione = 0;
             }
         }
     }

@@ -346,6 +346,30 @@ static int e_dev_null(const char *p)
     return p[i] == '\0';
 }
 
+/* (0.366) "/proc/self/fd/N" or "/proc/<own pid>/fd/N" -> N, anything else -1.
+ * Digits only, as dev_pty_nome. */
+static int proc_fd_proprio(const char *p, uint32_t pid)
+{
+    static const char pr[] = "/proc/";
+    int      i, j;
+    uint32_t n = 0, chi = 0;
+
+    for (i = 0; pr[i]; i++) if (p[i] != pr[i]) return -1;
+    if (p[i] == 's' && p[i+1] == 'e' && p[i+2] == 'l' && p[i+3] == 'f') {
+        i += 4;
+    } else {
+        for (j = i; p[i] >= '0' && p[i] <= '9' && i - j < 10; i++)
+            chi = chi * 10u + (uint32_t)(p[i] - '0');
+        if (i == j || chi != pid) return -1;
+    }
+    if (p[i] != '/' || p[i+1] != 'f' || p[i+2] != 'd' || p[i+3] != '/') return -1;
+    i += 4;
+    if (p[i] < '0' || p[i] > '9' || (p[i] == '0' && p[i+1] != '\0')) return -1;
+    for (j = i; p[i] >= '0' && p[i] <= '9' && i - j < 9; i++)
+        n = n * 10u + (uint32_t)(p[i] - '0');
+    return p[i] == '\0' ? (int)n : -1;
+}
+
 /* (kernel 0.318) "/dev/ptmx" -> -1, "/dev/pts/N" -> N, anything else -> -2.
  * The names of the pseudo-terminals: see pty_apri_ptmx in kernel/ipc/pty.c.
  * ! N IS DIGITS ONLY, no sign, no leading zeros beyond "0": "/dev/pts/07"
@@ -862,6 +886,32 @@ int32_t sys_open(InterruptFrame *frame)
             FDV(proc, free_fd).offset = 0;
             FDV(proc, free_fd).inode  = 0;
             return free_fd;
+        }
+        /* ! /proc/self/fd/N OF A MEMORY DESCRIPTOR IS THAT MEMORY AGAIN
+         * (0.366, voce 115), as on Linux: Gecko makes its "frozen" read-only
+         * handle exactly so, and hands it to a content process. The access
+         * can only shrink - a read-only one does not open for writing
+         * (EACCES) - and its pages map PG_CONDIVISA_RO. Other kinds keep
+         * the /proc text file they had. */
+        {
+            int n = proc_fd_proprio(abs, proc->pid);
+
+            if (n >= 0 && n < FD_N(proc) && FDV(proc, n).type == FD_SHM) {
+                uint32_t ha = FDV(proc, n).flags & 3u, vuole = flags & 3u;
+
+                if (vuole != O_RDONLY && ha == O_RDONLY) {
+                    FDV(proc, free_fd).type = FD_UNUSED;
+                    fd_rilasciato(proc, free_fd);
+                    return ERR(EACCES);
+                }
+                shmfd_apri((int)FDV(proc, n).inode);
+                FDV(proc, free_fd).flags  = vuole | (flags & O_CLOEXEC);
+                FDV(proc, free_fd).offset = 0;
+                FDV(proc, free_fd).inode  = FDV(proc, n).inode;
+                FDV(proc, free_fd).inode2 = 0;
+                FDV(proc, free_fd).type   = FD_SHM;
+                return free_fd;
+            }
         }
         /* (0.318) /dev/ptmx: a new pair, its master; /dev/pts/N: the slave
          * of pair N, once unlocked. See dev_pty_nome. */
@@ -2442,7 +2492,9 @@ int32_t sys_mmap(InterruptFrame *frame)
             return ERR(EACCES);
         if (p->offset & (PAGE_SIZE - 1)) return ERR(EINVAL);
         r = shmfd_mappa((int)FDV(proc, p->fd).inode, proc, vaddr, pages,
-                        p->offset / PAGE_SIZE, pg_flags);
+                        p->offset / PAGE_SIZE,
+                        pg_flags | ((FDV(proc, p->fd).flags & 3u) == O_RDONLY
+                                    ? PG_CONDIVISA_RO : 0u));
         if (r < 0) return r;
         if (vaddr + pages * PAGE_SIZE > proc->heap_end)
             proc->heap_end = vaddr + pages * PAGE_SIZE;

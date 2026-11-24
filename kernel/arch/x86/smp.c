@@ -582,10 +582,33 @@ static void bkl_aspetta_aperto(uint32_t mio)
  * interrupts off and the lock half given). */
 #define BKL_TROPPO_MS 100u
 static uint64_t          g_bkl_dal;
+static uint32_t          g_bkl_dal_pid, g_bkl_dal_sc, g_bkl_dal_da;   /* who took it (0.362) */
 static volatile uint32_t g_bkl_lungo_ms, g_bkl_lungo_pid, g_bkl_da_dire, g_bkl_lungo_cpu, g_bkl_lungo_sc;
+
+/* ! AND EVERY SECOND, THE HOLDS OVER BKL_SEC_MS (0.362, voce 117): the one
+ * above is said once, the longest of the session, and on the .253 the boot's
+ * 198 ms hid the 10-30 ms holds of a PIO read that cost 30-90 ms of clock a
+ * second. Said by processor 0 only, when they add up to BKL_SEC_DIRE_MS. */
+#define BKL_SEC_MS      10u
+#define BKL_SEC_DIRE_MS 50u
+static volatile uint32_t g_bkl_sec_n, g_bkl_sec_tot, g_bkl_sec_max, g_bkl_sec_sc, g_bkl_sec_pid;
+static volatile uint32_t g_bkl_sec_epid, g_bkl_sec_esc, g_bkl_sec_eda;
+static uint32_t          g_bkl_sec_tick;
+
+static void bkl_dici_secondo(void)
+{
+    if (cpu_n() != 0 || g_ticks - g_bkl_sec_tick < 100u) return;
+    g_bkl_sec_tick = g_ticks;
+    if (g_bkl_sec_tot >= BKL_SEC_DIRE_MS)
+        klog(LOG_WARN, "BKL 1s: %u >%ums, %u ms, max %u: preso pid %u sc 0x%x da %x, lasciato pid %u sc 0x%x",
+             g_bkl_sec_n, BKL_SEC_MS, g_bkl_sec_tot, g_bkl_sec_max, g_bkl_sec_epid,
+             g_bkl_sec_esc, g_bkl_sec_eda, g_bkl_sec_pid, g_bkl_sec_sc);
+    g_bkl_sec_n = g_bkl_sec_tot = g_bkl_sec_max = 0;
+}
 
 void bkl_dici_lungo(void)
 {
+    bkl_dici_secondo();
     if (!g_bkl_da_dire) return;
     g_bkl_da_dire = 0;
     klog(LOG_WARN, "SMP: lucchetto del kernel tenuto %u ms dal processore %u (PID %u all'uscita, "
@@ -618,6 +641,13 @@ void bkl_entra(void)
         }
         g_bkl_tiene[n] = 1;
         if (tsc_c_e()) g_bkl_dal = tsc_leggi();
+        {
+            Process *p = proc_get_current();
+
+            g_bkl_dal_pid = p != NULL ? p->pid : 0u;
+            g_bkl_dal_sc  = p != NULL ? p->sc_ultima : 0u;
+            g_bkl_dal_da  = (uint32_t)(uintptr_t)__builtin_return_address(0);
+        }
         irq_fronti_rimandati();     /* edges taken during the wait (0.324) */
     }
     if (eflags & 0x200u) __asm__ volatile ("sti");
@@ -635,6 +665,20 @@ void bkl_lascia(void)
         if (g_bkl_dal && tsc_c_e()) {
             uint32_t ms = tsc_ms(tsc_leggi() - g_bkl_dal);
 
+            if (ms >= BKL_SEC_MS) {
+                g_bkl_sec_n++;
+                g_bkl_sec_tot += ms;
+                if (ms > g_bkl_sec_max) {
+                    Process *p = proc_get_current();
+
+                    g_bkl_sec_max = ms;
+                    g_bkl_sec_epid = g_bkl_dal_pid;
+                    g_bkl_sec_esc  = g_bkl_dal_sc;
+                    g_bkl_sec_eda  = g_bkl_dal_da;
+                    g_bkl_sec_sc  = p != NULL ? p->sc_ultima : 0u;
+                    g_bkl_sec_pid = p != NULL ? p->pid : 0u;
+                }
+            }
             if (ms > BKL_TROPPO_MS && ms > g_bkl_lungo_ms) {
                 Process *p = proc_get_current();
 

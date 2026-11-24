@@ -124,7 +124,14 @@ void paging_wp_accendi(void);
 void paging_wp_rimetti(void);
 struct Process;
 int  paging_copia_spazio(struct Process *dal, PDE *al);
-#define PTE_E_COW(pte)  (((pte) & (PG_PRESENT | PG_COW)) == (PG_PRESENT | PG_COW))
+/* PG_CONDIVISA_RO: bit 10 of a PRESENT PG_CONDIVISA page (0.366, voce 115):
+ * mapped from a READ-ONLY descriptor (Gecko's frozen shared memory, handed to
+ * a content process). mprotect never makes it writable: EACCES. On a shared
+ * page bit 10 is not PG_COW - shared pages are never copied on write - so
+ * PTE_E_COW leaves them out, or a write would get a private copy instead of
+ * the fault it deserves. */
+#define PG_CONDIVISA_RO (1u << 10)
+#define PTE_E_COW(pte)  (((pte) & (PG_PRESENT | PG_COW | PG_CONDIVISA)) == (PG_PRESENT | PG_COW))
 #define PTE_E_CONDIVISA(pte) (((pte) & (PG_PRESENT | PG_CONDIVISA)) == (PG_PRESENT | PG_CONDIVISA))
 
 /* =============================================================================

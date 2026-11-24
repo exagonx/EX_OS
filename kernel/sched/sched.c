@@ -828,8 +828,15 @@ static void idle_task_fn(void)
         /* Chi non ha niente da fare non tiene il kernel: con piu' processori
          * il lucchetto si lascia PRIMA di fermarsi, o gli altri restano
          * fuori finche' questo dorme. Con uno solo non fa niente. */
+        /* ! LET GO WITH INTERRUPTS OFF, THEN sti; hlt (0.362, voce 117). With
+         * "bkl_ozio(); hlt" an interrupt in between took the lock in its
+         * handler, went back to ring 0 still holding it (bkl_esci lets go only
+         * towards ring 3), and the processor slept on it until the next tick:
+         * 10-60 ms, 40 times a second with four idle CPUs, while processor 0
+         * waited for it deaf. sti holds interrupts off one more instruction. */
+        __asm__ volatile ("cli" ::: "memory");
         bkl_ozio();
-        __asm__ volatile ("hlt"); /* Risparmia CPU */
+        __asm__ volatile ("sti; hlt" ::: "memory"); /* Risparmia CPU */
     }
 }
 
@@ -3757,8 +3764,9 @@ interrupts_enable();
          * processori: senza, lo teneva finche' non girava un programma, e un
          * programma solo sul secondo processore restava fermo al suo battito
          * ad aspettarlo (misurato: andava a un quinto). */
+        __asm__ volatile ("cli" ::: "memory");     /* as in idle_task_fn (0.362) */
         bkl_ozio();
-        __asm__ volatile("hlt");
+        __asm__ volatile ("sti; hlt" ::: "memory");
     }
 }
 

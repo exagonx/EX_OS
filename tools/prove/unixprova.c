@@ -16,6 +16,10 @@
  * since 0.358 (FD_SHM): ftruncate, fstat, mmap MAP_SHARED, the same memory in
  * a child from fork and in one that got it by SCM_RIGHTS, a mapping that
  * outlives close, growing after a mapping.
+ * And its frozen copy (0.366): open("/proc/self/fd/N", O_RDONLY) is the same
+ * memory read-only, as Gecko makes it on Linux; it never maps or mprotects
+ * for writing, never grows, never opens for writing again, and a child that
+ * got only it and writes there dies of SIGSEGV.
  *
  * Prints one line per check that fails and the count at the end:
  *     unixprova: N prove, M fallite
@@ -364,6 +368,65 @@ int main(void)
         prova(ftruncate(m, 4096) == 0 && (a = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, m, 0)) != MAP_FAILED,
               "memfd: ftruncate e mmap");
         if (m > 2) close(m);
+    }
+
+    /* 20. the frozen copy: /proc/self/fd/N read-only (0.366) */
+    {
+        int            w, r, f[4], n, tr;
+        unsigned char *aw = NULL, *ar = NULL;
+        char           nome[40];
+
+        w = shm_open(SHM_ANON, O_RDWR | O_CREAT, 0600);
+        prova(w > 2 && ftruncate(w, 4096) == 0, "memoria da congelare");
+        if (w > 2) aw = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, w, 0);
+        if (aw == MAP_FAILED) aw = NULL;
+        if (aw) aw[0] = 7;
+        snprintf(nome, sizeof(nome), "/proc/self/fd/%d", w);
+        r = open(nome, O_RDONLY | O_CLOEXEC);
+        prova(r > 2, "open di /proc/self/fd/N in sola lettura");
+        prova(r > 2 && fcntl(r, F_GETFD) == FD_CLOEXEC, "con O_CLOEXEC");
+        if (r > 2) ar = mmap(NULL, 4096, PROT_READ, MAP_SHARED, r, 0);
+        if (ar == MAP_FAILED) ar = NULL;
+        prova(ar && aw && ar[0] == 7, "la copia si mappa in lettura: la stessa memoria");
+        if (ar && aw) { aw[1] = 8; prova(ar[1] == 8, "e vede cio' che scrive l'originale"); }
+        errno = 0;
+        prova(r > 2 && mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, r, 0) == MAP_FAILED &&
+              errno == EACCES, "la copia mappata in scrittura: EACCES");
+        errno = 0;
+        prova(ar && mprotect(ar, 4096, PROT_READ | PROT_WRITE) == -1 && errno == EACCES,
+              "mprotect in scrittura della copia: EACCES");
+        prova(r > 2 && ftruncate(r, 8192) == -1, "la copia non cambia misura");
+        snprintf(nome, sizeof(nome), "/proc/self/fd/%d", r);
+        errno = 0;
+        prova(open(nome, O_RDWR) == -1 && errno == EACCES, "dalla copia la scrittura non torna");
+
+        /* a child that has only the copy, by SCM_RIGHTS, and writes */
+        if (r > 2 && aw && socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0) {
+            figlio = fork();
+            if (figlio == 0) {
+                volatile unsigned char *c2;
+
+                close(sv[0]);
+                close(w);
+                close(r);
+                munmap(aw, 4096);
+                if (ricevi_fd(sv[1], (char *)c, sizeof(c), f, 4, &n, &tr) != 1 || n != 1) _exit(2);
+                c2 = mmap(NULL, 4096, PROT_READ, MAP_SHARED, f[0], 0);
+                if (c2 == MAP_FAILED || c2[0] != 7) _exit(3);
+                if (mprotect((void *)c2, 4096, PROT_READ | PROT_WRITE) == 0) _exit(4);
+                c2[0] = 99;             /* must not get through */
+                _exit(5);
+            }
+            close(sv[1]);
+            prova(manda_fd(sv[0], 'R', &r, 1) == 1, "la copia va a un figlio");
+            prova(waitpid(figlio, &st, 0) == figlio && WIFSIGNALED(st) && WTERMSIG(st) == SIGSEGV,
+                  "il figlio che scrive nella copia muore di SIGSEGV");
+            prova(aw[0] == 7, "e la memoria non e' cambiata");
+            close(sv[0]);
+        }
+        if (aw) munmap(aw, 4096);
+        if (r > 2) close(r);
+        if (w > 2) close(w);
     }
 
     printf("unixprova: %d prove, %d fallite\n", g_prove, g_fallite);

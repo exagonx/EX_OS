@@ -148,6 +148,17 @@ typedef struct {
 /* 0 and a copy of the counters of ATA disk `disco`, -1 if there is no such. */
 int  blk_conti(int disco, BlkConti *c);
 
+/* Device work since boot, every disk and reader together (0.364, voce 117):
+ * microseconds at the device, commands, sectors. 32 bits that wrap: only the
+ * difference of two readings means something. The VFS lock reads it when
+ * taken and let go, to say how much of a long hold was the device. */
+typedef struct { uint32_t us, comandi, settori; } BlkLavoro;
+void blk_lavoro(BlkLavoro *l);
+/* One device command that began at TSC `da`, of `sett` sectors: for the
+ * drivers that talk to a device outside blk_read/blk_write (ATAPI's
+ * probes, 0.365). */
+void blk_conta_lavoro(uint64_t da, uint32_t sett);
+
 /* Indice del dispositivo che rappresenta la partizione `numero` del disco
  * ATA `disco`. Ritorna -1 se non registrata (per esempio perche' era
  * fuori dal disco, o perche' e' un contenitore esteso). */

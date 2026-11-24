@@ -933,6 +933,24 @@ FIREFOX: "MOSTRA NELLA CARTELLA" NON FA NIENTE, NESSUN PROGRAMMA PER UN TIPO
   file manager e il dialogo dei file e' quello di ExWin (/exwin/bin/scegli,
   exwin.so 0.024, kernel 0.361). netupdate -check -yes, riavvia, riapri
   Exilla. Se il dialogo non compare: ls /exwin/bin/scegli.
+CON IL DISCO IN PIO TUTTO RALLENTA MENTRE SI LEGGE UN FILE GRANDE, e dmesg
+  dice "BKL 1s: ...": e' il kernel fino alla 0.361, dove la copia PIO teneva
+  il lucchetto del kernel per tutto il comando e il processore 0 perdeva il
+  clock. Kernel 0.362: netupdate -check -yes e riavvia. Meglio ancora, se
+  il controller lo offre, l'AHCI (DMA vero): prova con  ahci  (vale fino al
+  riavvio), misura con  ahci -m FILE, e se va  ahci -s  lo rende stabile.
+"ATA: timeout BSY sul canale N" ALL'AVVIO E IL LETTORE CD/DVD NON LEGGE dopo
+  ahci = 1 in /boot/kernel.cfg: e' il kernel fino alla 0.361, che non sapeva
+  parlare col lettore sulla porta AHCI e lo lasciava sui registri IDE, morti
+  col passaggio (5 secondi di attesa a ogni avvio). Kernel 0.362: il
+  lettore passa all'AHCI col disco, dmesg dice "il lettore ottico ... passa
+  all'AHCI". Se dice "resta fuori", il lettore non si e' presentato: scrivilo.
+"VFS: '/cdrom' esiste gia': montaggio rifiutato" ALL'AVVIO (o su un altro
+  punto di montaggio): e' il kernel fino alla 0.362, che non montava sopra
+  una cartella che esiste, nemmeno vuota. Kernel 0.363 ci monta sopra se e'
+  vuota. Se dice "non e' una cartella vuota", dentro c'e' qualcosa che il
+  montaggio nasconderebbe: spostalo, o scegli un altro punto in
+  /boot/kernel.cfg.
 UN PROGRAMMA LANCIATO DA UN ALTRO PROGRAMMA MUORE SUBITO, [FAULT] in dmesg
   appena dopo "SYSCALL exec: salto a entry": e' il kernel fino alla 0.360
   quando chi lancia e' un filo secondario (pthread): il programma nuovo

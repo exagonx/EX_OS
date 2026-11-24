@@ -10647,6 +10647,9 @@ tools/netinst/velocita tolto da netinst.
         cosa cambia fra il figlio di sp_fai (pipe2 O_CLOEXEC, sp_prepara) e
         quello fatto a mano; il frame con cui il figlio riparte dopo fork
         (proc_prepara_fork) quando il chiamante e' un filo.
+        SUL .253 (ferro, 0.361) forkfilo64 con /exwin/bin/scegli: 3 giri su
+        3, anche il fork+execve a mano da un filo. Muore solo in QEMU
+        (-cpu qemu64, KVM, -smp 2): guardare cosa cambia col processore.
 
   117. IL SISTEMA RALLENTA QUANDO SI CARICA UN PROGRAMMA GROSSO (24/11/2026,
       appunto dell'utente, in coda). L'utente: "quando viene letto un
@@ -10701,6 +10704,119 @@ tools/netinst/velocita tolto da netinst.
         IPC verso wserver) e aspettava con tutti gli altri.
       - Da fare: tools/prova_ritardo.sh anche a 32 bit; sul .253 la stessa
         misura con ritardo64 mentre parte Exilla, prima e dopo la 0.360.
+      - MISURATO SUL .253 A 0.361 (24/11 mattina): ritardo 50 mentre un
+        figlio legge firefox + i due omni.ja (328 MB in 27 s, 12 MB/s).
+        Il disco Hitachi e' sul canale nativo 2 IN PIO ("bus master 0xbc00
+        non usato", PCI 0:14.0). Durante la lettura, ogni secondo: sonno
+        50-100 ms al peggio, tubo 26-61 ms, stat 10 ms (una volta 684 e 172
+        all'inizio, 140 alla fine), e "persi" 32-88 ms: il clock IRQ0 resta
+        indietro rispetto al TSC, quindi interrupt spenti a lungo da qualche
+        parte durante il PIO. A riposo: sonno 14, il resto 0.
+        Prossimi passi, da decidere con l'utente: (a) chi tiene spenti gli
+        interrupt durante rep insw (il trasferimento di un settore e' 256
+        parole; a 12 MB/s sono 40 ms persi ogni secondo); (b) perche' sui
+        canali nativi il bus master non si usa: col DMA la CPU non copia.
+      - FATTO (24/11, kernel 0.362, l'utente: "procedi con interrupt e poi
+        dma"):
+        1. Gli interrupt non li spegne il PIO: le chiamate di sistema girano a
+           interrupt accesi. E' il processore 0, che riceve gli interrupt
+           dell'8259 e aspetta il lucchetto del kernel (BKL) a interrupt
+           spenti mentre un altro processore lo tiene. Misurato con una riga
+           nuova del log, una volta al secondo quando le prese oltre 10 ms
+           fanno 50 ms ("BKL 1s: ... preso pid .. sc .. da .., lasciato
+           pid .."): in QEMU in PIO (atadma = 0, 4 CPU) 40 prese al secondo,
+           700 ms in tutto, prese dal lettore (sc 0x3 = read). In QEMU con KVM
+           ogni insw e' un'uscita dalla macchina virtuale: un settore 1-2 ms,
+           il PIO e' lento come sul ferro.
+        2. Rimedio: la copia PIO cede ogni millisecondo (TSC; senza TSC ogni 8
+           settori), come gia' l'attesa di BSY. Dopo: zero righe BKL, e 4
+           letture/scritture parallele con sha256 giuste a 32 e 64 bit.
+        3. Visto strada facendo e chiuso: l'ozio faceva bkl_ozio(); hlt e un
+           interrupt fra le due si teneva il lucchetto fino al battito dopo.
+           Ora cli; bkl_ozio(); sti; hlt.
+        4. DMA: sul .253 c'e' gia', e' l'AHCI (kernel/block/ahci.c, nato per
+           questa scheda MCP73). Il comando `ahci` (senza argomenti: passa
+           SUBITO i dischi, fino al riavvio) l'ha acceso a 0.361: 126 MB letti
+           a freddo in circa 8 s, sonno 14 ms costanti, tubo 0, persi 0 (in
+           PIO 50-100, 26-61, 30-90). Resta stat fino a 345 ms: il lucchetto
+           del VFS, da guardare a parte. Per tenerlo: `ahci -s` (scrive
+           ahci = 1 in /boot/kernel.cfg), DA DECIDERE CON L'UTENTE.
+        5. Il bus master IDE dei canali nativi resta spento: su MCP73 non
+           funziona (7/10), e dove c'e' l'AHCI non serve.
+        6. L'utente: "ok rendi stabile l'ahci con ahci -s" (24/11). Fatto sul
+           .253 (prima copia in /boot/kernel.cfg.prima-ahci). Al riavvio una
+           riga rossa: "ATA: timeout BSY sul canale 3 ... 5000 ms" = il
+           lettore DVD, sullo stesso controller (porta AHCI 1, firma
+           eb140101): coi registri IDE morti dopo il passaggio e l'AHCI che
+           sapeva solo i dischi, l'avvio lo aspettava 5 s col lucchetto del
+           VFS preso. L'utente ha scelto la strada 1 (insegnare l'ATAPI
+           all'AHCI): FATTO nella 0.362. ahci_pacchetto (PACKET A0, CDB nella
+           tabella, bit A; DMA per READ(10/12) di blocchi interi, il resto col
+           protocollo PIO del controller), IDENTIFY PACKET, atapi.c passa da
+           li' se d->ahci; dopo il passaggio i canali IDE del controller sono
+           ceduti (niente piu' attese); i lettori solo-AHCI hanno nome dopo
+           quelli IDE (cd0 non cambia); la radice va sul CD con
+           /boot/kernel.cfg. QEMU (ich9 ahci + ide-cd, 32 e 64): sha256 di un
+           file da 8 MB giusto, lettore vuoto = "nessun disco nel lettore".
+           SUL .253 A 0.362: disco e lettore passano all'AHCI, niente timeout,
+           un CD del 1997 si legge a 3,7 MB/s, due sha256 uguali; durante la
+           lettura sonno 14-32, tubo 0, persi 0.
+        7. APERTI: (a) "VFS: '/cdrom' esiste gia': montaggio rifiutato" sul
+           .253: /cdrom e' una cartella vuota sul disco (non la crea il nostro
+           codice), e il VFS rifiutava un punto di montaggio che esiste.
+           L'utente: "ok procedi con la seconda" = FATTO nel kernel 0.363: si
+           monta sopra una cartella VUOTA (VfsPosto.copre, la madre la elenca
+           una volta col volume montato); piena o file = rifiutato. QEMU 32 e
+           64, FAT ed ext2: ok. Sul .253 a 0.363 (netupdate): cd0 montato su
+           /cdrom all'avvio, nessuna riga ERROR, verifica a posto. (b) stat fino a 1,8 s mentre si
+           legge il CD e 345 ms col disco AHCI: il lucchetto del VFS tenuto
+           durante la lettura (spin-up del lettore), da guardare come
+           @CODA-20-10 p.5.
+           24/11 sera, l'utente: "ok procedi con il lucchetto VFS". Prima la
+           misura (kernel 0.364): blk_lavoro somma tempo al dispositivo,
+           comandi e settori; "VFS 1s: ..." ogni secondo dice le prese oltre
+           50 ms e quanto della piu' lunga e' il dispositivo. QEMU 32, disco
+           12 MB/s e 150 letture/s: IDE stat max 18/48 ms, una presa di 59 ms
+           tutta disco (4 cmd, 344 KB); AHCI stat max 17 ms, nessuna presa
+           lunga. QEMU non riproduce i 345 ms / 1,8 s del .253: serve la
+           misura li' (chiedere l'OK per la 0.364).
+           SUL .253 A 0.364 (OK dell'utente): durante una lettura del CD stat
+           arriva a 1807 ms; le prese lunghe sono read di 64 KB in UN comando
+           che dura 1,5-1,9 s (il lettore che riprende velocita'); il conto
+           "disco 4294967 ms" e' tsc_us che trabocca oltre ~1,4 s: da
+           correggere. Disco AHCI: open/read di 4 KB in 1 comando da 356-361
+           ms (il disco che riparte: APM del portatile?). sync e giornale
+           tengono 380-600 ms con 10-156 ms di disco: il resto e' fuori dai
+           conti, probabilmente FLUSH CACHE (non contato): da verificare.
+           Mount del CD all'avvio 3,4 s (1,6 s contati, il resto i comandi
+           di sondaggio ATAPI non contati). In sintesi: e' quasi tutto
+           attesa del dispositivo, non calcolo nostro. DA DECIDERE CON
+           L'UTENTE la cura (lucchetto per volume / lasciare il lucchetto
+           durante l'attesa / APM 254 sul disco).
+           L'utente: "ok procedi con la 0.365 e poi la 1". 0.365 SUL .253: il
+           conto non trabocca piu', FLUSH e pacchetti ATAPI contati. ORA OGNI
+           PRESA LUNGA E' IL DISPOSITIVO AL 98-100%: mount del CD 3395 ms
+           (3377 disco, 8 cmd), read CD 64 KB 1858/1447 ms (1840/1429), open
+           sul CD 837 (819), stat/read sul disco 355-358 ms con 1-2 comandi,
+           giornale 637 (619, 19 cmd), sync 766 (749). Il disco: "APM acceso,
+           livello 128" (sotto 254 l'Hitachi puo' scaricare le testine: i
+           360 ms dopo una pausa). NB il testo del log "1-127 parcheggia" e'
+           impreciso: 1-127 si ferma, 128-253 puo' scaricare le testine.
+           PER LA 1: ext2 (g_st, g_ris), fat (g_cache), iso (g_ricordi) e
+           blk (cache delle pagine, finestra avanti, g_cd_buf) hanno stato
+           comune a tutti i loro volumi, protetto oggi dal lucchetto unico
+           anche mentre dormono sul dispositivo: un lucchetto per volume
+           vorrebbe dire rifare quello stato per volume. Proposta: un
+           lucchetto per DRIVER (ext2, fat, iso, proc) + uno corto per le
+           tabelle del VFS e uno per la cache di blk; basta per il caso CD
+           contro disco. Il disco contro se stesso (360 ms, flush 600 ms)
+           resta: APM 254 (3) e il flush di sync/giornale fuori dal
+           lucchetto come gia' fa fsync.
+           L'UTENTE 24/11 sera: "mettilo da parte e continua con ex_os": IN
+           CODA. Si riprende da qui: decidere lucchetto per driver (proposta
+           sopra) + APM 254 + flush fuori dal lucchetto. Il .253 resta a
+           0.365 (solo misure, nessun rischio). (c) all'avvio qualche "BKL 1s" (pid 1, 21 sc 4):
+           l'avvio stesso, da guardare se succede dopo.
 
   116. EXWIN: IL SALVASCHERMO (23/11/2026, appunto dell'utente, in coda).
       L'utente: "su exwin su impostazioni in scrivania aggiungi la voce di

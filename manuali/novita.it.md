@@ -6,6 +6,8 @@
 
 **Indice**
 
+- [Montare sopra una cartella vuota (kernel 0.363) — testato in QEMU e sul PC di prova](#montare-sopra-una-cartella-vuota-kernel-0363--testato-in-qemu-e-sul-pc-di-prova)
+- [I dischi in PIO non fermano più il sistema; i lettori ottici sull'AHCI (kernel 0.362, voce 117) — testato in QEMU e sul PC di prova](#i-dischi-in-pio-non-fermano-più-il-sistema-i-lettori-ottici-sullahci-kernel-0362-voce-117--testato-in-qemu-e-sul-pc-di-prova)
 - [Firefox usa i programmi del sistema: Mostra nella cartella, il programma di ogni tipo di file, il dialogo dei file di ExWin (exwin 0.024, pm 0.030, kernel 0.361, voce 118) — testato in QEMU](#firefox-usa-i-programmi-del-sistema-mostra-nella-cartella-il-programma-di-ogni-tipo-di-file-il-dialogo-dei-file-di-exwin-exwin-0024-pm-0030-kernel-0361-voce-118--testato-in-qemu)
 - [Caricare un programma grande non blocca più il mouse e il resto del sistema (kernel 0.360, voce 117) — testato in QEMU](#caricare-un-programma-grande-non-blocca-più-il-mouse-e-il-resto-del-sistema-kernel-0360-voce-117--testato-in-qemu)
 - [Tastiera, mouse, suono e schermo a chi siede alla console; le porte sotto 1024 a root (kernel 0.359, voce 111 passo 4b) — testato in QEMU](#tastiera-mouse-suono-e-schermo-a-chi-siede-alla-console-le-porte-sotto-1024-a-root-kernel-0359-voce-111-passo-4b--testato-in-qemu)
@@ -250,6 +252,40 @@
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### Montare sopra una cartella vuota (kernel 0.363) — testato in QEMU e sul PC di prova
+
+- **Perché**: il PC di prova aveva sul disco una cartella `/cdrom` vuota, e all'avvio il CD
+  veniva respinto con una riga rossa: `VFS: '/cdrom' esiste gia': montaggio rifiutato`.
+- **Ora** un disco si monta sopra una cartella che esiste se è vuota, come su Linux: non si
+  nasconde niente. Dopo `umount` la cartella torna com'era.
+- **Una cartella con qualcosa dentro, o un file**, si rifiuta ancora, e il messaggio lo dice.
+- **La cartella madre elenca il nome una volta sola**, e mostra il volume montato.
+- Provato in QEMU a 32 e 64 bit su FAT ed ext2: una cartella vuota si monta e torna dopo
+  `umount`, una piena si rifiuta.
+
+### I dischi in PIO non fermano più il sistema; i lettori ottici sull'AHCI (kernel 0.362, voce 117) — testato in QEMU e sul PC di prova
+
+- **Perché**: sul PC di prova (NVIDIA MCP73, disco in PIO a 12 MB/s) ogni altro programma
+  aspettava 50-100 ms mentre si leggevano i file di Firefox, e il clock perdeva 30-90 ms al secondo.
+- **La causa, misurata**: non il disco che spegne gli interrupt. Il processore 0 riceve gli
+  interrupt e aspetta il lucchetto del kernel a interrupt spenti, e la copia PIO teneva quel
+  lucchetto per tutto il comando. Una riga nuova del log lo dice, una volta al secondo, quando le
+  prese oltre 10 ms fanno 50 ms (`BKL 1s: ...`, chi l'ha preso e con quale chiamata).
+- **La copia PIO** ora lascia entrare gli altri processori ogni millisecondo, come già faceva
+  l'attesa del disco. In QEMU in PIO con 4 processori: da 40 prese lunghe al secondo a nessuna,
+  quattro letture e scritture in parallelo con lo sha256 giusto a 32 e 64 bit.
+- **Un processore in ozio** non si addormenta più col lucchetto del kernel in mano (un interrupt
+  fra il lasciarlo e `hlt`).
+- **Sul PC di prova il DMA vero è l'AHCI**: `ahci -s` lo tiene (`ahci = 1` in
+  `/boot/kernel.cfg`). 126 MB letti a freddo in 8 s, e gli altri non se ne accorgono più: sonno
+  14 ms, pipe 0, clock perso 0.
+- **I lettori ottici sulle porte AHCI**: il comando PACKET passa dal controller, DMA per le
+  letture. Prima il lettore si lasciava stare, e sul PC di prova moriva col passaggio all'AHCI:
+  l'avvio lo aspettava 5 s (`timeout BSY sul canale 3`). Ora passa all'AHCI col disco e legge un
+  CD a 3,7 MB/s. Dopo il passaggio i canali IDE del controller non si interrogano più.
+- **La radice sul CD che ha il sistema**: con due lettori il kernel prendeva il primo CD leggibile,
+  anche un disco di dati.
 
 ### Firefox usa i programmi del sistema: Mostra nella cartella, il programma di ogni tipo di file, il dialogo dei file di ExWin (exwin 0.024, pm 0.030, kernel 0.361, voce 118) — testato in QEMU
 

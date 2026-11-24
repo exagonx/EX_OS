@@ -196,12 +196,19 @@ int blk_init(void)
      * sondarlo qui costerebbe qualche secondo di avvio per ogni lettore,
      * ogni volta, anche a chi non lo usera'. */
     {
-        int n_cd = 0;
+        int n_cd = 0, giro;
 
+        /* ! THE IDE DRIVES FIRST, THEN THOSE ON AHCI PORTS (0.362): before,
+         * the AHCI ones were not seen at all, and a drive that appears must
+         * not rename the cd0 that kernel.cfg's [mount] already names. A
+         * drive that passed to AHCI keeps its place: it had one on IDE. */
+        for (giro = 0; giro < 2; giro++)
         for (d = 0; d < ATA_MAX_DEVICES; d++) {
+            const AtaDevice *a = ata_get_device(d);
             BlkDev *b;
 
             if (!atapi_e_lettore(d)) continue;
+            if ((a != NULL && a->solo_ahci) != (giro == 1)) continue;
 
             b = nuovo();
             if (b == NULL) break;
@@ -650,6 +657,33 @@ int blk_conti(int disco, BlkConti *c)
     return 0;
 }
 
+static volatile uint32_t g_lav_us, g_lav_cmd, g_lav_sett;
+
+static void conta_lavoro(uint64_t da, uint32_t sett);
+
+void blk_conta_lavoro(uint64_t da, uint32_t sett) { conta_lavoro(da, sett); }
+
+void blk_lavoro(BlkLavoro *l)
+{
+    l->us = g_lav_us; l->comandi = g_lav_cmd; l->settori = g_lav_sett;
+}
+
+/* atomic: two processors can be at two disks at once */
+static void conta_lavoro(uint64_t da, uint32_t sett)
+{
+    uint64_t c;
+    uint32_t ms;
+
+    if (!tsc_c_e() || da == 0) return;
+    c  = tsc_leggi() - da;
+    ms = tsc_ms(c);
+    /* tsc_us dies at 2^32 cycles, ~1.4 s: the CD of the .253 takes 1.9 s
+     * for one command and the 0.364 said "4294967 ms". Long = in ms. */
+    __sync_fetch_and_add(&g_lav_us, ms >= 1000u ? ms * 1000u : tsc_us(c));
+    __sync_fetch_and_add(&g_lav_cmd, 1u);
+    __sync_fetch_and_add(&g_lav_sett, sett);
+}
+
 static void conta_tempo(uint64_t *totale, uint32_t *massimo, uint64_t da)
 {
     uint32_t ms = tsc_ms(tsc_leggi() - da);
@@ -663,6 +697,7 @@ static int disco_leggi(int disco, uint64_t abs, uint32_t n, void *buf)
     uint64_t da = tsc_leggi();
     int      r  = ata_read(disco, abs, n, buf);
 
+    conta_lavoro(da, n);
     if (disco >= 0 && disco < ATA_MAX_DEVICES) {
         BlkConti *c = &g_conti[disco];
 
@@ -678,6 +713,7 @@ static int disco_scrivi(int disco, uint64_t abs, uint32_t n, const void *buf)
     uint64_t da = tsc_leggi();
     int      r  = ata_write(disco, abs, n, buf);
 
+    conta_lavoro(da, n);
     if (disco >= 0 && disco < ATA_MAX_DEVICES) {
         BlkConti *c = &g_conti[disco];
 
@@ -1595,6 +1631,8 @@ int blk_flush(int i)
     {
         uint64_t da = tsc_leggi();
         int      r  = ata_flush(b->disco);
+
+        conta_lavoro(da, 0);     /* FLUSH CACHE: sync waited on it (0.365) */
 
         if (b->disco >= 0 && b->disco < ATA_MAX_DEVICES) {
             BlkConti *c = &g_conti[b->disco];

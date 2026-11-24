@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.361
+**Version:** 0.366
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -120,14 +120,14 @@ Inside EX-OS the same manuals are in `/doc/manuali` (from the CD:
 
 ## Latest changes
 
+- [Mounting over an empty folder (kernel 0.363)](manuali/novita.md#mounting-over-an-empty-folder-kernel-0363--tested-in-qemu-and-on-the-test-pc) — *tested in QEMU and on the test PC*
+- [Disks in PIO no longer stop the system; optical drives on AHCI (kernel 0.362, voce 117)](manuali/novita.md#disks-in-pio-no-longer-stop-the-system-optical-drives-on-ahci-kernel-0362-voce-117--tested-in-qemu-and-on-the-test-pc) — *tested in QEMU and on the test PC*
 - [Firefox uses the programs of the system and the ExWin file dialog (kernel 0.361, voce 118)](manuali/novita.md#firefox-uses-the-programs-of-the-system-show-in-folder-the-program-of-each-file-type-the-exwin-file-dialog-exwin-0024-pm-0030-kernel-0361-voce-118--tested-in-qemu) — *tested in QEMU*
 - [Loading a big program no longer freezes the mouse and the rest (kernel 0.360, voce 117)](manuali/novita.md#loading-a-big-program-no-longer-freezes-the-mouse-and-the-rest-of-the-system-kernel-0360-voce-117--tested-in-qemu) — *tested in QEMU*
 - [Keyboard, mouse, sound and screen belong to who sits at the console; ports under 1024 to root (kernel 0.359, voce 111 step 4b)](manuali/novita.md#keyboard-mouse-sound-and-screen-belong-to-who-sits-at-the-console-ports-under-1024-to-root-kernel-0359-voce-111-step-4b--tested-in-qemu) — *tested in QEMU*
 - [Firefox with more processes, as on Linux: unix socket pairs, descriptors that travel, memory that is a descriptor (kernel 0.358, exilla 0.008, voce 115)](manuali/novita.md#firefox-with-more-processes-as-on-linux-unix-socket-pairs-descriptors-that-travel-memory-that-is-a-descriptor-kernel-0358-exilla-0008-voce-115--tested-in-qemu) — *tested in QEMU*
 - [At a crash the kernel writes who called: up to 48 callers from the stack (kernel 0.357)](manuali/novita.md#at-a-crash-the-kernel-writes-who-called-up-to-48-callers-from-the-stack-kernel-0357--tested-in-qemu) — *tested in QEMU*
 - [Firefox no longer closes on pages full of images: fcntl F_DUPFD_CLOEXEC copies a shared memory descriptor](manuali/novita.md#firefox-no-longer-closes-on-pages-full-of-images-fcntl-f_dupfd_cloexec-copies-a-shared-memory-descriptor--to-be-tested-on-the-test-pc) — *to be tested on the test PC*
-- [The sender of every message is stamped by the kernel; only root uses the network card (kernel 0.356, voce 111 step 4)](manuali/novita.md#the-sender-of-every-message-is-stamped-by-the-kernel-only-root-uses-the-network-card-kernel-0356-voce-111-step-4--tested-in-qemu-and-on-the-test-pc) — *tested in QEMU and on the test PC*
-- [Users really apart: a closed folder is closed, /tmp has the sticky bit (kernel 0.355, voce 111)](manuali/novita.md#users-really-apart-a-closed-folder-is-closed-tmp-has-the-sticky-bit-kernel-0355-voce-111--tested-in-qemu-and-on-the-test-pc) — *tested in QEMU and on the test PC*
 
 All the others, newest first: [What's new](manuali/novita.md).
 
