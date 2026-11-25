@@ -1,0 +1,208 @@
+BUG UNIX001 - SCM_RIGHTS: i cicli di descrittori in volo non si raccolgono
+               mai e non hanno tetto; qualunque utente esaurisce la memoria
+               del kernel
+===============================================================================
+Gravita':   ALTA (stabilita': DoS locale senza privilegi, memoria del kernel
+            non scambiabile, recuperabile solo col riavvio)
+Programma:  kernel EX-OS (socketpair AF_UNIX, kernel 0.358, voce 115)
+Sorgenti:   kernel/syscall/syscall_impl.c  sys_socketpair, sys_unix_manda,
+                                           sys_unix_ricevi, fd_riferimento,
+                                           unix_allegato_via, unix_orfani_via,
+                                           fd_lascia (FD_UNIX)
+            kernel/ipc/pipe.c              pipe_crea (kmalloc, "never freed,
+                                           reused"), pipe_scrivi_con,
+                                           pipe_leggi_con,
+                                           pipe_allegati_orfani
+            kernel/include/pipe.h          PIPE_DIM 4096, PipeAllegato
+            kernel/mm/kmalloc.c            lo heap cresce a regioni dal PMM
+Rilevato su: albero del 24/11/2026.
+
+-------------------------------------------------------------------------------
+1. IL DIFETTO
+-------------------------------------------------------------------------------
+Il commento in testa a UnixAllegato lo dichiara:
+
+    "! A cycle (an end sent over itself and never received) is not
+     collected, as Linux does with its garbage collector: those pipes stay
+     until reboot."
+
+Quello che il commento non dice e' che il ciclo:
+  - si costruisce con quattro chiamate da un processo qualunque;
+  - sfugge a ogni limite: i descrittori del processo vengono chiusi subito
+    (RLIMIT_NOFILE non conta cio' che e' in volo), e le pipe sono
+    "as many as are needed" (kernel 0.282, nessun tetto);
+  - costa per ogni giro due struct Pipe (ciascuna ~4,1 KB: buf[PIPE_DIM]
+    + testa), piu' l'UnixAllegato (kmalloc), piu' eventuali riferimenti
+    VFS/shm/pty trasportati, tutti in memoria del kernel: lo heap cresce a
+    regioni prese dal PMM, pagine fisse, mai nello swap;
+  - non torna mai: pipe_allegati_orfani considera orfano un allegato solo
+    quando la pipe non ha piu' lettori, ma il lettore del ciclo e' proprio
+    il descrittore dentro l'allegato.
+
+Forme del ciclo:
+  (1) diretto:   socketpair(s); sendmsg(s[0], fds = {s[1]}); close(s[0]);
+                 close(s[1]);   -> s[1] viaggia dentro ab, e tiene aperto
+                 il lettore di ab
+  (2) incrociato: due coppie, ciascuna mandata dentro l'altra.
+  (3) trasportando altro: dentro il ciclo si possono mettere anche
+      FD_FILE (vfs_dup: il file resta aperto e il volume non si smonta
+      piu', "in use"), FD_SHM (memoria condivisa fino a pagine_max e oltre
+      con ftruncate: bug_SHM001 4.5), FD_PTY (un terminale che non chiude
+      mai: la shell della sessione non vede l'hangup).
+
+-------------------------------------------------------------------------------
+2. COSA COMPORTA
+-------------------------------------------------------------------------------
+    for (;;) { socketpair(AF_UNIX, SOCK_STREAM, 0, s);
+               invia_fd(s[0], s[1]); close(s[0]); close(s[1]); }
+
+~120 giri per MB. Con 512 MB di RAM la memoria del kernel finisce in
+qualche secondo: kmalloc rende NULL dappertutto (PCB, tabelle delle
+pagine, buffer di rete, allegati, pile del kernel dei processi nuovi),
+cioe' nessun processo nuovo, driver ring 3 che non ricevono piu', fault
+che non trovano pagine. Lo swap non aiuta (memoria del kernel). Con (3) si
+blocca anche lo smontaggio dei dischi e si tiene in vita memoria
+condivisa arbitraria.
+
+-------------------------------------------------------------------------------
+3. RIPRODUZIONE
+-------------------------------------------------------------------------------
+    #include <sys/socket.h>
+    #include <string.h>
+    #include <unistd.h>
+    static int invia_fd(int via, int fd) {
+        char b = 'x'; struct iovec io = { &b, 1 };
+        char c[CMSG_SPACE(sizeof(int))]; struct msghdr m = {0};
+        m.msg_iov = &io; m.msg_iovlen = 1;
+        m.msg_control = c; m.msg_controllen = sizeof c;
+        struct cmsghdr *h = CMSG_FIRSTHDR(&m);
+        h->cmsg_level = SOL_SOCKET; h->cmsg_type = SCM_RIGHTS;
+        h->cmsg_len = CMSG_LEN(sizeof(int)); memcpy(CMSG_DATA(h), &fd, sizeof fd);
+        return sendmsg(via, &m, 0);
+    }
+    int main(void) {
+        long i; int s[2];
+        for (i = 0; ; i++) {
+            if (socketpair(AF_UNIX, SOCK_STREAM, 0, s) < 0) break;
+            invia_fd(s[0], s[1]); close(s[0]); close(s[1]);
+            if (i % 1000 == 0) write(1, ".", 1);
+        }
+        return 0;
+    }
+    /* come uid 1000; "mem" prima e dopo: la memoria del kernel non torna
+       anche dopo la fine del programma */
+
+-------------------------------------------------------------------------------
+4. CORREZIONE
+-------------------------------------------------------------------------------
+Due livelli: un tetto (subito, poche righe) e la raccolta (il rimedio
+vero, come unix_gc di Linux).
+
+4.1 Tetto ai descrittori in volo (come Linux too_many_unix_fds)
+
+   Contatore per uid dei descrittori dentro allegati non ancora ricevuti
+   (nel ContoUtente di implementazione_LIM001, o una tabellina dedicata):
+
+    /* sys_unix_manda, prima di kmalloc dell'allegato */
+    if (proc->uid != 0 &&
+        in_volo_di(proc->uid) + m.nfds > proc->fdt->limite)   /* RLIMIT_NOFILE */
+        return ERR(ETOOMANYREFS);
+
+   Ogni UnixAllegato ricorda l'uid del mittente (campo nuovo in
+   PipeAllegato: uint32_t uid). in_volo_di += t.n quando l'allegato entra
+   nella pipe (pipe_scrivi_con riuscita), -= t.n in sys_unix_ricevi e in
+   unix_allegato_via. Questo limita il danno di un utente a RLIMIT_NOFILE
+   cicli, ma non libera niente.
+
+   In piu', il ciclo diretto si riconosce gratis: in sys_unix_manda,
+   rifiutare (o meglio: contare per la raccolta) un FD_UNIX k[i] tale che
+   k[i].inode == d->inode2 (il lettore della pipe su cui sta viaggiando).
+   Linux lo permette; rifiutarlo con EINVAL e' piu' stretto, ma nessun
+   programma reale lo fa (verificare con Firefox multiprocesso: Gecko
+   manda socket nuovi, non quello su cui parla).
+
+4.2 La raccolta (mark and sweep sulle pipe dei socket)
+
+   Strutture: ogni Pipe tiene gia' lettori/scrittori. Aggiungere:
+        uint32_t in_volo;     /* quante delle sue estremita' (lettore) sono
+                                 dentro allegati non ricevuti */
+        uint8_t  gc_segno;
+
+   Aggiornamento di in_volo: fd_riferimento su FD_UNIX incrementa
+   in_volo della pipe d->inode (il lettore che viaggia); sys_unix_ricevi
+   e fd_riferimento_via lo decrementano.
+
+   Raccolta (unix_gc), chiamata quando il totale in volo supera una soglia
+   o a ogni chiusura di un FD_UNIX che lascia una pipe con lettori ==
+   in_volo:
+
+     1. Candidate: le pipe di socket con lettori > 0 e lettori == in_volo
+        (ogni riferimento di lettura sta dentro un allegato: nessun
+        processo puo' piu' leggerle direttamente).
+     2. Per ogni candidata C, per ogni allegato A in coda a C, per ogni
+        FD_UNIX dentro A: la pipe P puntata ha un riferimento "interno" in
+        meno (decrementare un contatore di lavoro P.gc_esterni, inizializzato
+        a lettori - in_volo per le non candidate, 0 per le candidate).
+     3. Ogni candidata raggiungibile da una pipe "viva" (non candidata, o
+        candidata con gc_esterni > 0 dopo il passo 2) e' viva: propagare
+        (visita in ampiezza sugli allegati delle vive).
+     4. Le candidate rimaste non vive sono spazzatura: staccarne gli
+        allegati (lista di lavoro) e chiamare unix_allegato_via su ognuno
+        FUORI dalla sezione critica, come fa gia' unix_orfani_via (che va
+        rifatto girare, perche' chiudere crea orfani nuovi).
+
+   E' l'algoritmo di Linux (net/unix/garbage.c, versione precedente a
+   6.10, piu' semplice di quella con le SCC) adattato: qui le "socket"
+   sono coppie di pipe e le "code di ricezione" sono gli allegati delle
+   pipe, quindi la visita passa per pipe->allegati.
+
+   Concorrenza: tutto a interrupt spenti con lo stato IF salvato (voce
+   54) e sotto il BKL; la raccolta non deve dormire (niente vfs_close
+   dentro: si fa dopo, sulla lista di lavoro). Con il BKL ceduto dal PIO
+   (kernel 0.362) la visita va comunque fatta tutta in una sezione
+   critica.
+
+4.3 Pipe che tornano memoria
+
+   Oggi una Pipe e' "reused, never freed": dopo un picco legittimo (un
+   server con migliaia di CGI) la memoria resta occupata per sempre. Con
+   la raccolta conviene anche liberare le pipe oltre una scorta (p.es.
+   tenere libere al massimo 64) quando nessuno ha il loro indice: il
+   problema dichiarato ("a reader that looked it up keeps valid memory")
+   si risolve con un conteggio di chi sta dentro pipe_leggi/pipe_scrivi
+   sulla pipe (gia' serialized dal lucchetto: verificare) o con una
+   generazione nell'handle.
+
+-------------------------------------------------------------------------------
+5. PROVA
+-------------------------------------------------------------------------------
+  - Il programma del punto 3 come uid 1000: con 4.1 si ferma con
+    ETOOMANYREFS dopo RLIMIT_NOFILE giri; con 4.2 gira per sempre a
+    memoria costante (mem / meminfo, regioni dello heap del kernel
+    stabili).
+  - Ciclo incrociato a due coppie, e ciclo con dentro un FD_FILE di un
+    disco montato: dopo la raccolta umount riesce.
+  - Firefox multiprocesso (voce 115: prova con unsplash.com e con
+    prova-media 8 su 8), Apache con CGI, MariaDB: nessuna regressione,
+    e il contatore delle raccolte (klog INFO o /proc/stat) che resta a 0
+    nel traffico normale.
+-------------------------------------------------------------------------------
+6. STATO (25/11/2026, notte)
+-------------------------------------------------------------------------------
+FATTO (kernel 0.367): 4.1, il tetto. Descrittori in viaggio contati per
+  uid dal kmalloc dell'allegato alla sua kfree; oltre il tetto
+  ETOOMANYREFS (detto nel log una volta). root non contato.
+  ! IL TETTO NON E' SOLO RLIMIT_NOFILE: qui vale uno ogni 2 KB di RAM e
+  un ciclo tiene 8 KB di pipe, quindi da solo lascerebbe bloccare 4 volte
+  la RAM. Tetto = min(RLIMIT_NOFILE, RAM / 128 KB): al piu' ~1/16 della
+  RAM per utente. SCELTA DA CONFERMARE.
+  Prova: unixprova sezione 9 (3000 mandati e ricevuti senza consumare, i
+  cicli di uid 1003 si fermano con ETOOMANYREFS).
+NON FATTO: 4.2 la raccolta dei cicli (unix_gc) e 4.3 le pipe che tornano
+  memoria: col tetto il danno e' limitato, ma i cicli restano fino al
+  riavvio e il tetto di quell'utente resta consumato. Il rifiuto del
+  ciclo diretto (4.1, seconda parte) non l'ho messo: Firefox va provato
+  prima.
+
+ESITO (25/11, 06:36): prova_permessi 17 su 17 (unixprova 84, tetto 4095
+per uid sulle macchine di prova). Resta qui per la raccolta dei cicli.

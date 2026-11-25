@@ -2307,7 +2307,7 @@ static void bis_chiedi(void *dato, const char *host, const char *percorso,
     bis_da_mandare(&g_bis, host, percorso, cifrata, 0, ora_epoca(), fuori, max);
 }
 
-static void bis_arrivo(void *dato, const char *host, const char *riga)
+static void bis_arrivo(void *dato, const char *host, const char *riga, int cifrata)
 {
     (void)dato;
     /* ! IL PERCORSO NON CE L'ABBIAMO QUI E NON SERVE INVENTARLO: exhttp ci
@@ -2315,7 +2315,7 @@ static void bis_arrivo(void *dato, const char *host, const char *riga)
      * sta caricando. Nei casi che contano — una redirezione dentro la stessa
      * chiamata — e' quello giusto; e comunque un `Path` scritto nel biscotto
      * vince su qualunque predefinito. */
-    if (bis_arrivato(&g_bis, host, "/", riga, ora_epoca())) g_bis_sporca = 1;
+    if (bis_arrivato(&g_bis, host, "/", riga, ora_epoca(), cifrata)) g_bis_sporca = 1;
 }
 
 /* --- la porta degli script: document.cookie ------------------------------- */
@@ -2362,7 +2362,7 @@ static void bis_dallo_script(void)
         while (k > 0 && pezzo[k - 1] == ' ') k--;
         pezzo[k] = '\0';
         if (pezzo[0] &&
-            bis_da_script(&g_bis, u.host, u.percorso, pezzo, ora_epoca()))
+            bis_da_script(&g_bis, u.host, u.percorso, pezzo, ora_epoca(), u.cifrato))
             g_bis_sporca = 1;
     }
 }
@@ -7754,7 +7754,7 @@ int main(int argc, char **argv)
      * una redirezione. */
     bis_azzera(&g_bis);
     if (bis_prepara()) bis_leggi_file();
-    exhttp_biscotti(bis_chiedi, bis_arrivo, 0);
+    exhttp_biscotti_schema(bis_chiedi, bis_arrivo, 0);
 
     /* ! E IL GANCIO DELL'ATTESA, che e' quel che tiene viva la finestra mentre
      * si scarica: senza, fra un pezzo e l'altro exhttp dorme e qui non arriva

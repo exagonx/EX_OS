@@ -283,6 +283,8 @@ void syscall_init(void)
     syscall_table[SYS_IPC_RECV_CHI]   = sys_ipc_recv_chi;   /* voce 111 */
     syscall_table[SYS_IPC_FILTRO]     = sys_ipc_filtro;     /* voce 111, 4b */
     syscall_table[SYS_CONSOLE_UTENTE] = sys_console_utente; /* voce 111, 4b */
+    syscall_table[SYS_FCHOWN]         = sys_fchown;         /* 0.367, PTY001 */
+    syscall_table[SYS_FCHMOD]         = sys_fchmod;
     syscall_table[SYS_SOCKETPAIR]     = sys_socketpair;     /* voce 115 */
     syscall_table[SYS_UNIX_MANDA]     = sys_unix_manda;
     syscall_table[SYS_UNIX_RICEVI]    = sys_unix_ricevi;

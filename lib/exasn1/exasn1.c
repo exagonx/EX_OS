@@ -155,6 +155,22 @@ static const unsigned char OID_P384[] =
 static const unsigned char OID_BASIC[] = { 0x55,0x1D,0x13 };
 /* 2.5.29.17 — subjectAltName */
 static const unsigned char OID_SAN[]   = { 0x55,0x1D,0x11 };
+/* (TLS001) 2.5.29.15 keyUsage, 2.5.29.37 extKeyUsage, 2.5.29.30
+ * nameConstraints, and the ones understood enough to let them be critical:
+ * certificatePolicies 2.5.29.32, policyConstraints 2.5.29.36,
+ * inhibitAnyPolicy 2.5.29.54, policyMappings 2.5.29.33, subject and
+ * authority key identifiers 2.5.29.14 and 2.5.29.35 */
+static const unsigned char OID_KU[]    = { 0x55,0x1D,0x0F };
+static const unsigned char OID_EKU[]   = { 0x55,0x1D,0x25 };
+static const unsigned char OID_NC[]    = { 0x55,0x1D,0x1E };
+static const unsigned char OID_EKU_SERVER[] = { 0x2B,0x06,0x01,0x05,0x05,0x07,0x03,0x01 };
+static const unsigned char OID_EKU_TUTTI[]  = { 0x55,0x1D,0x25,0x00 };
+static int oid_noto(const ExDer *o)
+{
+    return o->n == 3 && o->p[0] == 0x55 && o->p[1] == 0x1D &&
+           (o->p[2] == 0x20 || o->p[2] == 0x24 || o->p[2] == 0x36 ||
+            o->p[2] == 0x21 || o->p[2] == 0x0E || o->p[2] == 0x23);
+}
 
 static unsigned int alg_da_oid(const ExDer *o)
 {
@@ -289,25 +305,96 @@ static void leggi_estensioni(const ExDer *ext, ExCert *c)
     while (off < ext->n) {
         ExDerElem e, oid, dopo;
         unsigned int passo = misura(ext, off), interno;
-        int          e_basic, e_san;
+        int          e_basic, e_san, e_ku, e_eku, e_nc, critica = 0;
 
-        if (passo == 0) return;
-        if (exder_leggi(ext, off, &e) != 0 || e.tag != TAG_SEQUENZA) return;
+        if (passo == 0) { c->critica_ignota = 1; return; }
+        if (exder_leggi(ext, off, &e) != 0 || e.tag != TAG_SEQUENZA) {
+            c->critica_ignota = 1;      /* unreadable: it may have been critical */
+            return;
+        }
         off += passo;
 
-        if (exder_leggi(&e.valore, 0, &oid) != 0 || oid.tag != TAG_OID) continue;
+        if (exder_leggi(&e.valore, 0, &oid) != 0 || oid.tag != TAG_OID) {
+            c->critica_ignota = 1;
+            continue;
+        }
         e_basic = uguali(oid.valore.p, oid.valore.n, OID_BASIC, sizeof(OID_BASIC));
         e_san   = uguali(oid.valore.p, oid.valore.n, OID_SAN,   sizeof(OID_SAN));
-        if (!e_basic && !e_san) continue;
+        e_ku    = uguali(oid.valore.p, oid.valore.n, OID_KU,    sizeof(OID_KU));
+        e_eku   = uguali(oid.valore.p, oid.valore.n, OID_EKU,   sizeof(OID_EKU));
+        e_nc    = uguali(oid.valore.p, oid.valore.n, OID_NC,    sizeof(OID_NC));
 
-        /* Dopo l'OID puo' esserci il booleano «critica», poi l'OCTET STRING. */
+        /* Dopo l'OID puo' esserci il booleano «critica», poi l'OCTET STRING.
+         * ! (TLS001) AND THE BOOLEAN COUNTS: a critical extension we do not
+         * understand refuses the certificate (RFC 5280 4.2), and so does
+         * one we cannot read - refuse, never guess. */
         interno = oid.intestazione + oid.valore.n;
-        if (exder_leggi(&e.valore, interno, &dopo) != 0) continue;
+        if (exder_leggi(&e.valore, interno, &dopo) != 0) { c->critica_ignota = 1; continue; }
         if (dopo.tag == TAG_BOOLEANO) {
+            critica = dopo.valore.n >= 1 && dopo.valore.p[0] != 0;
             interno += dopo.intestazione + dopo.valore.n;
-            if (exder_leggi(&e.valore, interno, &dopo) != 0) continue;
+            if (exder_leggi(&e.valore, interno, &dopo) != 0) { c->critica_ignota = 1; continue; }
         }
-        if (dopo.tag != TAG_OCTETSTRING) continue;
+        if (dopo.tag != TAG_OCTETSTRING) { if (critica) c->critica_ignota = 1; continue; }
+
+        if (e_ku) {
+            /* KeyUsage ::= BIT STRING: the unused-bits byte, then the bits */
+            ExDerElem b;
+
+            if (exder_leggi(&dopo.valore, 0, &b) != 0 || b.tag != TAG_BITSTRING ||
+                b.valore.n < 2) { if (critica) c->critica_ignota = 1; continue; }
+            c->ha_ku = 1;
+            c->ku = (unsigned int)b.valore.p[1] << 8;
+            if (b.valore.n >= 3) c->ku |= b.valore.p[2];
+            continue;
+        }
+        if (e_eku) {
+            /* ExtKeyUsageSyntax ::= SEQUENCE SIZE (1..MAX) OF KeyPurposeId */
+            ExDerElem seq, k;
+            unsigned int o = 0;
+
+            if (exder_leggi(&dopo.valore, 0, &seq) != 0 || seq.tag != TAG_SEQUENZA) {
+                if (critica) c->critica_ignota = 1;
+                continue;
+            }
+            c->ha_eku = 1;
+            while (o < seq.valore.n && exder_leggi(&seq.valore, o, &k) == 0) {
+                if (k.tag == TAG_OID) {
+                    if (uguali(k.valore.p, k.valore.n, OID_EKU_SERVER, sizeof(OID_EKU_SERVER)))
+                        c->eku |= EXASN1_EKU_SERVER;
+                    else if (uguali(k.valore.p, k.valore.n, OID_EKU_TUTTI, sizeof(OID_EKU_TUTTI)))
+                        c->eku |= EXASN1_EKU_QUALUNQUE;
+                    else c->eku |= EXASN1_EKU_ALTRO;
+                }
+                o += k.intestazione + k.valore.n;
+            }
+            continue;
+        }
+        if (e_nc) {
+            /* NameConstraints ::= SEQUENCE { permittedSubtrees [0],
+             * excludedSubtrees [1] }, both IMPLICIT: the subtrees are the
+             * content of A0 and A1 */
+            ExDerElem seq, t;
+            unsigned int o = 0;
+
+            if (exder_leggi(&dopo.valore, 0, &seq) != 0 || seq.tag != TAG_SEQUENZA) {
+                c->critica_ignota = 1;          /* a limit we cannot read: no */
+                continue;
+            }
+            while (o < seq.valore.n && exder_leggi(&seq.valore, o, &t) == 0) {
+                if (t.tag == 0xA0) c->nc_permessi = t.valore;
+                else if (t.tag == 0xA1) c->nc_esclusi = t.valore;
+                else c->critica_ignota = 1;
+                o += t.intestazione + t.valore.n;
+            }
+            /* an empty [0] still says "nothing is permitted" */
+            if (c->nc_permessi.p == 0 && c->nc_esclusi.p == 0) c->critica_ignota = 1;
+            continue;
+        }
+        if (!e_basic && !e_san) {
+            if (critica && !oid_noto(&oid.valore)) c->critica_ignota = 1;
+            continue;
+        }
 
         if (e_san) {
             /* GeneralNames ::= SEQUENCE SIZE (1..MAX) OF GeneralName.
@@ -338,6 +425,20 @@ static void leggi_estensioni(const ExDer *ext, ExCert *c)
             if (exder_leggi(&dentro, 0, &ca) != 0) continue;
             if (ca.tag == TAG_BOOLEANO && ca.valore.n >= 1 && ca.valore.p[0] != 0)
                 c->e_ca = 1;
+            /* (TLS001) pathLenConstraint INTEGER (0..MAX) OPTIONAL */
+            {
+                ExDerElem pl;
+                unsigned int o = ca.tag == TAG_BOOLEANO ? ca.intestazione + ca.valore.n : 0;
+
+                if (o < dentro.n && exder_leggi(&dentro, o, &pl) == 0 && pl.tag == TAG_INTERO) {
+                    if (pl.valore.n == 0 || pl.valore.n > 2 || (pl.valore.p[0] & 0x80)) {
+                        c->critica_ignota = 1;  /* negative or absurd: refuse */
+                    } else {
+                        c->path_len = pl.valore.p[0];
+                        if (pl.valore.n == 2) c->path_len = c->path_len << 8 | pl.valore.p[1];
+                    }
+                }
+            }
         }
     }
 }
@@ -359,6 +460,7 @@ int excert_analizza(const unsigned char *der, unsigned int len, ExCert *c)
     if (der == 0 || c == 0) return -1;
 
     for (i = 0; i < sizeof(ExCert); i++) ((unsigned char *)c)[i] = 0;
+    c->path_len = -1;                   /* (TLS001) no pathLen = no limit */
 
     tutto.p = der;
     tutto.n = len;

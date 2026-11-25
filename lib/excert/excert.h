@@ -94,6 +94,14 @@ void sha256(const void *dati, __SIZE_TYPE__ len, unsigned char out[32]);   /* si
  * guardato fino in fondo. */
 #define EXCERT_ANNULLATO       -11
 
+/* (debug/bug_TLS001, November 2026) what RFC 5280 says a chain must also
+ * respect: a critical extension we do not know (4.2), keyUsage and
+ * extendedKeyUsage (a certificate not for TLS servers, or a CA that may not
+ * sign certificates), and nameConstraints (a CA limited to some names). */
+#define EXCERT_CRITICA_IGNOTA  -12
+#define EXCERT_USO_SBAGLIATO   -13
+#define EXCERT_NOME_VINCOLATO  -14
+
 /* ! I NOVE CASI HANNO NOVE FRASI, e servono davvero. Il codice si teneva gia'
  * — extls lo mette in `motivo` apposta — ma nessuno lo traduceva, e quello che
  * arrivava all'utente era sempre «certificato non verificabile»: una frase che

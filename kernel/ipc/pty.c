@@ -59,6 +59,11 @@ typedef struct {
      * master WAITS instead of reading the end of the data - nobody has been
      * there yet, nobody has left. */
     uint32_t bloccato, slave_atteso;
+    /* (0.367, debug/bug_PTY001) who owns the slave, as devpts: the creator,
+     * 0620; login hands it to the user with fchown/fchmod. Until 0.367 any
+     * user opened /dev/pts/N of anyone, root's telnet included, and read the
+     * passwords typed there. */
+    uint32_t uid, gid, modo;
     /* (0.317) every waiter, see attese.h */
     Attese   att_in;            /* chi dorme aspettando di leggere lo slave  */
     Attese   att_out;           /* chi dorme aspettando di leggere il master */
@@ -396,6 +401,13 @@ ancora:
         q->colonne = 80;
         q->master_aperti = 1;
         q->slave_aperti  = 1;
+        {
+            Process *me = proc_get_current();
+
+            q->uid  = me ? me->uid : 0;
+            q->gid  = me ? me->gid : 0;
+            q->modo = 0620u;
+        }
 
         *master = i;
         *slave  = i;
@@ -432,16 +444,28 @@ int32_t pty_apri_ptmx(int *h)
 }
 
 /* /dev/pts/N: 0, or -ENOENT (no such pair, or its master is gone: on Linux
- * the name disappears with the master), -EIO (still locked). */
-int32_t pty_apri_slave(uint32_t n)
+ * the name disappears with the master), -EIO (still locked), -EACCES (0.367:
+ * the owner's bits, the group's or the others', as for a file; root passes).
+ * `vuole` is the O_ACCMODE asked. */
+int32_t pty_apri_slave(uint32_t n, uint32_t vuole)
 {
     uint32_t fl_if = read_eflags();   /* IF given back as found (voce 54) */
+    Process *me    = proc_get_current();
+    uint32_t serve = 0, ha;
     Pty *p;
 
+    if (vuole != 1u) serve |= 4u;     /* not O_WRONLY: read */
+    if (vuole != 0u) serve |= 2u;     /* not O_RDONLY: write */
     interrupts_disable();
     p = ((int)n >= 0) ? pty_da_handle((int)n) : NULL;
     if (!p || p->master_aperti == 0) { if (fl_if & 0x200u) interrupts_enable(); return ERR(ENOENT); }
     if (p->bloccato)                 { if (fl_if & 0x200u) interrupts_enable(); return ERR(EIO); }
+    if (me != NULL && me->uid != 0) {
+        if (me->uid == p->uid)      ha = (p->modo >> 6) & 7u;
+        else if (me->gid == p->gid) ha = (p->modo >> 3) & 7u;
+        else                        ha =  p->modo       & 7u;
+        if ((ha & serve) != serve) { if (fl_if & 0x200u) interrupts_enable(); return ERR(EACCES); }
+    }
     p->slave_aperti++;
     p->slave_atteso = 0;
     if (fl_if & 0x200u) interrupts_enable();
@@ -449,6 +473,35 @@ int32_t pty_apri_slave(uint32_t n)
 }
 
 /* Whether pair n exists with its master open: stat("/dev/pts/N"). */
+/* Owner and permissions of pair N, for stat: 0 if it is there. */
+int pty_stato(uint32_t n, uint32_t *uid, uint32_t *gid, uint32_t *modo)
+{
+    Pty *p = ((int)n >= 0) ? pty_da_handle((int)n) : NULL;
+
+    if (p == NULL || p->master_aperti == 0) return -1;
+    *uid = p->uid; *gid = p->gid; *modo = p->modo;
+    return 0;
+}
+
+/* fchown/fchmod on either end (0.367): chown is root's, chmod root's or the
+ * owner's; -1 leaves a field as it is. */
+int32_t pty_proprietario(int h, int32_t uid, int32_t gid, int32_t modo)
+{
+    Pty     *p  = pty_da_handle(h);
+    Process *me = proc_get_current();
+    uint32_t chi = me ? me->uid : 0;
+
+    if (p == NULL) return ERR(EBADF);
+    if ((uid >= 0 && (uint32_t)uid != p->uid) || (gid >= 0 && (uint32_t)gid != p->gid)) {
+        if (chi != 0) return ERR(EPERM);
+    }
+    if (modo >= 0 && chi != 0 && chi != p->uid) return ERR(EPERM);
+    if (uid >= 0)  p->uid  = (uint32_t)uid;
+    if (gid >= 0)  p->gid  = (uint32_t)gid;
+    if (modo >= 0) p->modo = (uint32_t)modo & 0777u;
+    return 0;
+}
+
 int pty_esiste(uint32_t n)
 {
     Pty *p = ((int)n >= 0) ? pty_da_handle((int)n) : NULL;

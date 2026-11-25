@@ -1,0 +1,27 @@
+# Oceano - Azzurro acqua, barra verde petrolio.
+# Schema di colori per il tema classico (ExWin). Vedi excolori.h.
+schema = Oceano
+tema = classico
+scrivania = #2F8FA0
+scrivania2 = #0C3A48
+finestra = #CFE3E8
+testo = #0B2A33
+campo = #FFFFFF
+campo_testo = #0B2A33
+selezione = #0E7C86
+selezione_testo = #FFFFFF
+barra = #0E5A6E
+barra2 = #4FB3BF
+titolo = #FFFFFF
+barra_inattiva = #8AA6AD
+barra_inattiva2 = #C7D9DD
+titolo_inattivo = #F0F6F7
+luce = #FFFFFF
+ombra = #2E4A52
+suggerimento = #FFFDE6
+suggerimento_testo = #0B2A33
+chiudi = #C0392B
+sfumata = si
+grassetto = si
+ombra = 0
+raggio = 0

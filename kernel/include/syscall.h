@@ -271,7 +271,7 @@ typedef struct {
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   282     /* la piu' alta e' SYS_CONSOLE_UTENTE = 281 */
+#define SYSCALL_COUNT   284     /* la piu' alta e' SYS_FCHMOD = 283 */
 
 /* =============================================================================
  * Codici errno
@@ -293,6 +293,7 @@ typedef struct {
 #define EPIPE       32
 #define ENOTSOCK    88      /* not a socket (0.358, unix pairs) */
 #define EOPNOTSUPP  95
+#define ETOOMANYREFS 109        /* SCM_RIGHTS past the limit (0.367, UNIX001) */
 #define ENOSYS      38
 #define ESRCH       3       /* processo destinatario non esiste */
 #define ENOTDIR     20      /* atteso una directory, trovato altro */
@@ -463,6 +464,10 @@ typedef struct {
  * password, and empties it when the shell is gone. On a pty login does not
  * call it: a session from the network does not sit at the machine. */
 #define SYS_CONSOLE_UTENTE 281
+/* (0.367) fchown(fd, uid, gid) and fchmod(fd, mode): for now the ends of a
+ * pty (login gives the terminal to the user); -EOPNOTSUPP on anything else. */
+#define SYS_FCHOWN         282
+#define SYS_FCHMOD         283
 #define CONSOLE_NESSUNO    0xFFFFFFFFu
 #define STAT_ATTR_SHM      0x80
 typedef struct {
@@ -2071,6 +2076,8 @@ int32_t sys_ipc_recv_seg(InterruptFrame *f);
 int32_t sys_ipc_recv_chi(InterruptFrame *f);
 int32_t sys_ipc_filtro(InterruptFrame *f);
 int32_t sys_console_utente(InterruptFrame *f);
+int32_t sys_fchown(InterruptFrame *f);
+int32_t sys_fchmod(InterruptFrame *f);
 int32_t sys_socketpair(InterruptFrame *f);
 int32_t sys_unix_manda(InterruptFrame *f);
 int32_t sys_unix_ricevi(InterruptFrame *f);

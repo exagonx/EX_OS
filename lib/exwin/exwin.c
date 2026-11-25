@@ -554,6 +554,9 @@ static Appunti *appunti(void)
     z.flag = SHM_CREA;
 
     if (shm_apri(&z) != 0) return 0;    /* senza appunti si continua a vivere */
+    /* (kernel 0.367, debug/bug_SHM001) a zone of somebody else's size is not
+     * our clipboard: n and testo would be read past its end */
+    if (z.byte < APPUNTI_BYTE) { shm_chiudi((void *)(uintptr_t)z.virt); return 0; }
     g_appunti = (Appunti *)z.virt;
     if (g_appunti->n > sizeof(g_appunti->testo)) g_appunti->n = 0;
     return g_appunti;
@@ -3379,6 +3382,38 @@ void ex_update(ExWindow f)
     w.larghezza = (unsigned int)r->w;
     w.altezza   = (unsigned int)r->h;
     (void)ipc_send((unsigned int)g_server, WIN_MSG_AGGIORNA, &w, sizeof(w));
+}
+
+/* (debug/bug_EXIDE001) ex_update for one rectangle: only it is copied to the
+ * zone and declared to the server. For a program that draws a part of its
+ * window by itself many times a second - exide dragging a control on its
+ * canvas - instead of the whole window each time. */
+void ex_update_rect(ExWindow f, int x, int y, int w, int h)
+{
+    Oggetto   *r = radice(f);
+    WinRegione u;
+
+    if (!r || g_server < 0) return;
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > r->w) w = r->w - x;
+    if (y + h > r->h) h = r->h - y;
+    if (w <= 0 || h <= 0) return;
+
+    {
+        ExWindow rh = radice_h(f);
+
+        menu_sopra(rh);                 /* as ex_update: what floats stays on top */
+        combo_sopra(rh);
+        avviso_sopra(rh);
+    }
+    presenta(r, x, y, w, h);
+
+    u.id = r->win_id;
+    u.x = (unsigned int)x; u.y = (unsigned int)y;
+    u.larghezza = (unsigned int)w;
+    u.altezza   = (unsigned int)h;
+    (void)ipc_send((unsigned int)g_server, WIN_MSG_AGGIORNA, &u, sizeof(u));
 }
 
 /* =============================================================================
@@ -9416,7 +9451,7 @@ void ex_item_rename(ExWindow c, unsigned int i, const char *testo)
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
  * 0.002 = ex_enable() ed EX_DISABLED; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.024"   /* 0.024: ex_open_file apre le cartelle col programma del tipo "/" (il file manager); 0.023: i programmi per tipo scelti in Impostazioni (ex_types, ex_type_set, ex_type_program, /boot/tipi.cfg); 0.022: tabulazioni nelle aree (ex_textarea_set_tab, ex_textarea_get_column), voci di menu spente (ex_menu_enable) */
+#define EXWIN_VERSIONE "0.025"   /* 0.025: ex_update_rect (debug/bug_EXIDE001), gli appunti di misura sbagliata rifiutati (debug/bug_SHM001); 0.024: ex_open_file apre le cartelle col programma del tipo "/" (il file manager); 0.023: i programmi per tipo scelti in Impostazioni (ex_types, ex_type_set, ex_type_program, /boot/tipi.cfg); 0.022: tabulazioni nelle aree (ex_textarea_set_tab, ex_textarea_get_column), voci di menu spente (ex_menu_enable) */
 
 const char *ex_version(void) { return EXWIN_VERSIONE; }
 

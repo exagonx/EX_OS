@@ -124,7 +124,7 @@ static int ip_ricevi(IpcMessage *meta, void *buf, unsigned int len, unsigned int
 
 /* +0.001 a ogni modifica: `ip.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ip.drv", "0.028");
+EX_VERSIONE("ip.drv", "0.029");
 
 /* =============================================================================
  * Costanti di protocollo
@@ -1565,12 +1565,124 @@ static Conn *tcp_slot_nuovo(void)
     g_tcp[g_tcp_n++] = c;
     return c;
 }
-static unsigned int g_tcp_porta = 49152;   /* fascia effimera, come UDP */
+static unsigned int g_tcp_porta = 0;       /* RFC 6056 alg. 3: a counter (0.029) */
 
 /* Vero se a precede b nello spazio circolare dei numeri di sequenza. */
 static int seq_prima(unsigned int a, unsigned int b)
 {
     return (int)(a - b) < 0;
+}
+
+/* =============================================================================
+ * ! NUMBERS NOBODY CAN GUESS (0.029, debug/bug_IP001)
+ *
+ * Until 0.028 a server ISN was 1000 + (uptime_ms & 0xFFFF): whoever made one
+ * connection knew the next SYN+ACK to a few ms, and could open a connection
+ * in the name of another address (Mitnick) - MariaDB grants per host,
+ * Apache's Allow/Deny. The client ISN and the ephemeral ports were in order.
+ * Now RFC 6528 and RFC 6056 (alg. 3): a clock plus SipHash of the four-tuple
+ * with a secret from getentropy, which at boot may not be there yet - then
+ * it is asked again at every connection and the log says so once.
+ * --------------------------------------------------------------------------- */
+static unsigned long long g_isn_k0, g_isn_k1;
+static int      g_isn_pronto = 0, g_isn_detto = 0;
+
+#define ROTL64(x, b) (unsigned long long)(((x) << (b)) | ((x) >> (64 - (b))))
+#define SIPROUND do { \
+        v0 += v1; v1 = ROTL64(v1, 13); v1 ^= v0; v0 = ROTL64(v0, 32); \
+        v2 += v3; v3 = ROTL64(v3, 16); v3 ^= v2; \
+        v0 += v3; v3 = ROTL64(v3, 21); v3 ^= v0; \
+        v2 += v1; v1 = ROTL64(v1, 17); v1 ^= v2; v2 = ROTL64(v2, 32); \
+    } while (0)
+
+/* SipHash-2-4 of 16 bytes: two addresses and two ports, plus a domain byte */
+static unsigned int sip_quaterna(const unsigned char a[4], unsigned int pa,
+                                 const unsigned char b[4], unsigned int pb,
+                                 unsigned int dominio)
+{
+    unsigned long long v0 = 0x736f6d6570736575ull ^ g_isn_k0, v1 = 0x646f72616e646f6dull ^ g_isn_k1;
+    unsigned long long v2 = 0x6c7967656e657261ull ^ g_isn_k0, v3 = 0x7465646279746573ull ^ g_isn_k1;
+    unsigned long long m[2];
+    int      i;
+
+    m[0] = (unsigned long long)a[0] | (unsigned long long)a[1] << 8 | (unsigned long long)a[2] << 16 | (unsigned long long)a[3] << 24 |
+           (unsigned long long)(pa & 0xFFFFu) << 32 | (unsigned long long)(pb & 0xFFFFu) << 48;
+    m[1] = (unsigned long long)b[0] | (unsigned long long)b[1] << 8 | (unsigned long long)b[2] << 16 | (unsigned long long)b[3] << 24 |
+           (unsigned long long)(dominio & 0xFFu) << 32;
+    for (i = 0; i < 2; i++) { v3 ^= m[i]; SIPROUND; SIPROUND; v0 ^= m[i]; }
+    v3 ^= 16ull << 56; SIPROUND; SIPROUND; v0 ^= 16ull << 56;
+    v2 ^= 0xFF; SIPROUND; SIPROUND; SIPROUND; SIPROUND;
+    v0 ^= v1 ^ v2 ^ v3;
+    return (unsigned int)(v0 ^ (v0 >> 32));
+}
+
+static void isn_segreto(void)
+{
+    unsigned char k[16];
+    int i;
+
+    if (g_isn_pronto) return;
+    if (getentropy(k, sizeof(k)) == 0) {
+        g_isn_k0 = g_isn_k1 = 0;
+        for (i = 0; i < 8; i++) {
+            g_isn_k0 |= (unsigned long long)k[i] << (8 * i);
+            g_isn_k1 |= (unsigned long long)k[8 + i] << (8 * i);
+        }
+        memset(k, 0, sizeof(k));
+        g_isn_pronto = 1;
+        if (g_isn_detto) printf("ip.drv: ora c'e' entropia, numeri di sequenza imprevedibili\n");
+        return;
+    }
+    /* none yet: the clock, mixed, so at least they differ; said once */
+    g_isn_k0 ^= (unsigned long long)uptime_ms() * 0x9E3779B97F4A7C15ull;
+    g_isn_k1 += 0xD1B54A32D192ED03ull;
+    if (!g_isn_detto) {
+        printf("ip.drv: ! niente entropia ancora: numeri di sequenza TCP deboli finche' non arriva\n");
+        g_isn_detto = 1;
+    }
+}
+
+/* RFC 6528: a 4-microsecond clock plus F(four-tuple, secret) */
+static unsigned int isn_nuovo(const unsigned char loc[4], unsigned int pl,
+                              const unsigned char rem[4], unsigned int pr)
+{
+    isn_segreto();
+    return uptime_ms() * 250u + sip_quaterna(loc, pl, rem, pr, 1);
+}
+
+/* ! THE ANSWER TO A SEGMENT THAT DOES NOT FIT (RFC 5961 7): at most 10 a
+ * second for the whole server, or an attacker makes us flood for him */
+static void tcp_manda(Conn *c, unsigned int flag, const unsigned char *dati, unsigned int n);
+static void tcp_challenge_ack(Conn *c)
+{
+    static unsigned int da_ms, quanti;
+    unsigned int ora = uptime_ms();
+
+    if (ora - da_ms >= 1000u) { da_ms = ora; quanti = 0; }
+    if (++quanti > 10u) return;
+    g_st.tcp_challenge++;
+    tcp_manda(c, TCP_ACK, NULL, 0);
+}
+
+/* The receive window: what we announced, or what is free now if more. */
+static unsigned int tcp_fin_ricevo(Conn *c)
+{
+    unsigned int w = c->fin_nostra, libero = rx_cap(c) - c->rx_len;
+
+    if (libero > w) w = libero;
+    return w > 65535u ? 65535u : w;
+}
+
+/* RFC 793 3.9 "first check sequence number": does the segment touch the
+ * receive window? A zero window takes only seq == rcv_nxt (its ACK). */
+static int tcp_seq_buono(Conn *c, unsigned int seq, unsigned int n)
+{
+    unsigned int w = tcp_fin_ricevo(c);
+
+    if (seq == c->rcv_nxt) return 1;
+    if (w == 0) return 0;
+    if (seq - c->rcv_nxt < w) return 1;
+    return n > 0 && seq + n - 1u - c->rcv_nxt < w;
 }
 
 /* =============================================================================
@@ -2148,7 +2260,7 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
         nuova->rcv_nxt      = seq + 1u;
         nuova->fs_n         = 0;
         nuova->fin_c = 0;
-        nuova->snd_una      = 1000u + (uptime_ms() & 0xFFFFu);
+        nuova->snd_una      = isn_nuovo(ip + 16, porta_loc, ip + 12, porta_rem);   /* 0.029 */
         nuova->snd_nxt      = nuova->snd_una;
         nuova->finestra     = finestra;
         nuova->stato        = S_SYN_RICEV;
@@ -2171,9 +2283,25 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
         return;
     }
 
-    /* an RST to our SYN: nobody listens there, connect() says ECONNREFUSED */
+    /* an RST to our SYN: nobody listens there, connect() says ECONNREFUSED.
+     * ! (0.029, RFC 5961 3.2) ONLY AN RST THAT KNOWS THE NUMBERS: until 0.028
+     * the four-tuple was enough, and one RST per ephemeral port closed every
+     * telnet, ssh and MariaDB session from outside the path. To our SYN it
+     * must ack our SYN; afterwards its seq must be exactly rcv_nxt; inside
+     * the window but not exact gets a challenge ACK, so an honest peer sends
+     * it again with the right number; outside, nothing. */
     if (flag & TCP_RST) {
-        tcp_chiudi_dura(c, c->stato == S_SYN_INVIA ? -ECONNREFUSED : -ECONNRESET);
+        if (c->stato == S_SYN_INVIA) {
+            if ((flag & TCP_ACK) && ack == c->snd_nxt) tcp_chiudi_dura(c, -ECONNREFUSED);
+            else g_st.tcp_rst_ignorati++;
+            return;
+        }
+        if (seq == c->rcv_nxt) {
+            tcp_chiudi_dura(c, -ECONNRESET);
+            return;
+        }
+        g_st.tcp_rst_ignorati++;
+        if (c->stato != S_SYN_RICEV && tcp_seq_buono(c, seq, 0)) tcp_challenge_ack(c);
         return;
     }
 
@@ -2262,6 +2390,41 @@ static void tratta_tcp(const unsigned char *f, unsigned int ihl, unsigned int to
         }
         tcp_evento(c);
         return;
+    }
+
+    /* ! (0.029, RFC 5961 4) A SYN ON AN OPEN CONNECTION opens and closes
+     * nothing: a challenge ACK. A peer that really restarted answers it with
+     * an RST of the right number, which closes this one. */
+    if (flag & TCP_SYN) {
+        c->finestra = fin_prima;
+        g_st.tcp_fuori_fin++;
+        tcp_challenge_ack(c);
+        return;
+    }
+
+    /* ! (0.029, RFC 793 3.9 and RFC 5961 5.2) THE SEGMENT MUST FIT. Its seq
+     * in the receive window, its ack between SND.UNA - 64 KB and the highest
+     * byte ever sent. Until 0.028 any seq was taken and an ack past snd_nxt
+     * threw away queued data never sent - the program thought it delivered
+     * - and moved snd_nxt: the connection stalled. Outside: an ACK, which
+     * also stops a peer retransmitting a FIN we already have, and nothing
+     * else; the window it carried does not count either. */
+    if (!tcp_seq_buono(c, seq, n + ((flag & TCP_FIN) ? 1u : 0u))) {
+        c->finestra = fin_prima;
+        g_st.tcp_fuori_fin++;
+        tcp_manda(c, TCP_ACK, NULL, 0);
+        return;
+    }
+    if (flag & TCP_ACK) {
+        unsigned int alto = c->snd_nxt;
+
+        if (c->cwnd != 0 && seq_prima(alto, c->snd_max)) alto = c->snd_max;
+        if (seq_prima(alto, ack) || seq_prima(ack, c->snd_una - 65535u)) {
+            c->finestra = fin_prima;
+            g_st.tcp_fuori_fin++;
+            tcp_challenge_ack(c);
+            return;
+        }
     }
 
     /* ! THE THIRD DUPLICATE ACK (RFC 5681, 0.024): the same ACK, no data, no
@@ -3160,12 +3323,16 @@ ha_mac:
     memcpy(c->mac, v->mac, 6);
     c->porta_rem = a->porta;
 
-    /* Porta locale effimera, saltando quelle gia' in uso. */
+    /* Porta locale effimera, saltando quelle gia' in uso.
+     * (0.029) RFC 6056 alg. 3: from an offset of F(destination, secret) on,
+     * not in order for everybody - guessing it was half of a blind RST. */
+    isn_segreto();
     for (i = 0; i < 1024u; i++) {
-        unsigned int p = g_tcp_porta++;
+        static const unsigned char zero[4] = { 0, 0, 0, 0 };
+        unsigned int p = 49152u + ((sip_quaterna(zero, 0, c->ip, c->porta_rem, 2) +
+                                    g_tcp_porta++) & 16383u);
         unsigned int j, libera = 1;
 
-        if (g_tcp_porta > 65535u) g_tcp_porta = 49152u;
         for (j = 0; j < g_tcp_n; j++)
             if (g_tcp[j]->stato != S_LIBERA && g_tcp[j] != c &&
                 g_tcp[j]->porta_loc == p) { libera = 0; break; }
@@ -3173,12 +3340,14 @@ ha_mac:
     }
     if (c->porta_loc == 0) { c->stato = S_LIBERA; rispondi_esito(cliente, -ENFILE); return; }
 
-    /* ! IL NUMERO DI SEQUENZA INIZIALE NON DEV'ESSERE PREVEDIBILE, ma
-     * qui non c'e' una sorgente di casualita': si mescolano il tempo
-     * trascorso e la porta, che e' meglio di zero e non e' sicurezza.
-     * Con TLS sopra, l'attaccante che potrebbe indovinarlo ha comunque
-     * bisogno di ben altro. */
-    c->snd_una  = (uptime_ms() << 8) ^ (c->porta_loc << 16) ^ 0x45584F53u;
+    /* ! IL NUMERO DI SEQUENZA INIZIALE NON DEV'ESSERE PREVEDIBILE (0.029,
+     * RFC 6528): see isn_nuovo. The local address is left out, it is not
+     * chosen yet here: the four-tuple without it is unique enough. */
+    {
+        static const unsigned char zero[4] = { 0, 0, 0, 0 };
+
+        c->snd_una = isn_nuovo(zero, c->porta_loc, c->ip, c->porta_rem);
+    }
     c->snd_nxt  = c->snd_una;
     c->finestra = 1024;          /* provvisoria: la vera arriva col SYN+ACK */
     c->proprietario = gruppo_di(cliente);
@@ -3816,9 +3985,14 @@ static void udp_apri(unsigned int client, const IpUdpApri *a)
     if (porta == 0) {
         int tentativi;
 
+        /* ! (0.029, debug/bug_DNS001) NOT IN ORDER: the port of a DNS
+         * question is half of what a forged answer has to guess. A counter
+         * through SipHash with the secret, so never twice in a row. */
+        isn_segreto();
         for (tentativi = 0; tentativi < 1024; tentativi++) {
-            porta = g_porta_effimera++;
-            if (g_porta_effimera > 65535) g_porta_effimera = 49152;
+            static const unsigned char zero[4] = { 0, 0, 0, 0 };
+
+            porta = 49152u + (sip_quaterna(zero, 0, zero, g_porta_effimera++ & 0xFFFFu, 3) & 16383u);
             if (udp_cerca(porta) < 0) break;
         }
     }

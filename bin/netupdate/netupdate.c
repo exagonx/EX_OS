@@ -63,9 +63,12 @@
 #include "libc.h"
 #include "exhttp.h"
 #include "inflate.h"
+#include "excrypt.h"
+#include "chiave_netupdate.h"
+int fsync(int fd);   /* lib/libc.c; its prototype is in unistd.h, not libc.h */
 
 /* +0.001 a ogni modifica: `netupdate -version` la stampa. Vedi EX_VERSIONE. */
-EX_VERSIONE("netupdate", "0.052");
+EX_VERSIONE("netupdate", "0.053");
 
 /* =============================================================================
  * DUE ARCHITETTURE, DUE REPOSITORY (10 ottobre 2026)
@@ -2187,6 +2190,186 @@ static int leggi_tutto(const char *nome, unsigned char *buf, int max)
     return tot;
 }
 
+/* =============================================================================
+ * THE SIGNED ROOT (0.053, debug/bug_NETUPD001)
+ *
+ * versione.txt holds the sha256 of everything else, so whoever answers for it
+ * decides what gets installed and what runs as root. It travels in plain HTTP:
+ * anyone on the path, or a forged DNS answer, could hand out a fake one. Now
+ * its LAST line is "firma = <128 hex>", ed25519 of every byte before that
+ * line (tools/netinst/firma.py, RFC 8032).
+ *
+ *   key      compiled in (chiave_netupdate.h), or /boot/netupdate.pub (32
+ *            raw bytes) for whoever publishes their own repository: it wins,
+ *            but only if root owns it and nobody else can write it
+ *   serie    never lower than the one already installed (/boot/netupdate.serie)
+ *            unless -indietro: no replay of an old, signed, buggy tree
+ *   scade    past that date the tree is refused: a machine held on an old
+ *            tree by someone who keeps answering with it finds out
+ *   -insicuro  an unsigned tree, said out loud, only without
+ *            /boot/netupdate.pub: the bridge from the last unsigned repository
+ * ============================================================================= */
+#define PUB_FILE   "/boot/netupdate.pub"
+#define SERIE_FILE "/boot/netupdate.serie"
+
+static int  g_indietro;      /* defined with the -check code below */
+static int  g_insicuro = 0;
+static long long g_serie = 0;  /* serie of the verified versione.txt, 0 = none;
+                                * long long: at 32 bit a long stops at 2^31 */
+
+static int esa_cifra(int c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static long long serie_vista(void)
+{
+    char b[32];
+    int  n = leggi_tutto(SERIE_FILE, (unsigned char *)b, (int)sizeof(b) - 1);
+
+    if (n <= 0) return 0;
+    b[n] = 0;
+    return atoll(b);
+}
+
+/* After an update that went through: the serie that is installed now. */
+static void serie_segna(void)
+{
+    char b[32];
+    int  fd, n;
+
+    if (g_serie <= 0 || (g_serie <= serie_vista() && !g_indietro)) return;
+    n  = snprintf(b, sizeof(b), "%lld\n", g_serie);
+    fd = open(SERIE_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return;
+    if (write(fd, b, (unsigned int)n) == n) fsync(fd);
+    close(fd);
+}
+
+/* The key versione.txt has to be signed with; NULL (and said why) if the
+ * local one is there but cannot be trusted. */
+static const unsigned char *chiave_radice(int *locale)
+{
+    static unsigned char pub[33];
+    struct stat st;
+
+    *locale = 0;
+    if (stat(PUB_FILE, &st) != 0) return CHIAVE_UFFICIALE;
+    *locale = 1;
+    if (st.st_uid != 0 || (st.st_mode & 022)) {
+        if (!g_zitto)
+            printf("  ! %s non e' di root, o altri ci possono scrivere:\n"
+                   "    non me ne fido (chown root, chmod 644).\n", PUB_FILE);
+        return NULL;
+    }
+    if (leggi_tutto(PUB_FILE, pub, (int)sizeof(pub)) != 32) {
+        if (!g_zitto)
+            printf("  ! %s non e' una chiave ed25519 (32 byte).\n", PUB_FILE);
+        return NULL;
+    }
+    return pub;
+}
+
+/* 0 if the versione.txt saved in `ver` is signed and current. Before any
+ * hash in it is used and before anything else is downloaded. */
+static int radice_firmata(const char *ver)
+{
+    static unsigned char b[16384];
+    unsigned char        sig[64];
+    const unsigned char *pub;
+    int   n, i, j, inizio = -1, locale;
+    long long serie, scade, vista;
+    char  v[32];
+
+    n = leggi_tutto(ver, b, (int)sizeof(b) - 1);
+    if (n <= 0) return -1;
+    b[n] = 0;
+
+    /* the line that starts with the key "firma" */
+    for (i = 0; i < n; i++) {
+        if ((i == 0 || b[i - 1] == '\n') && strncmp((char *)b + i, "firma", 5) == 0) {
+            j = i + 5;
+            while (b[j] == ' ' || b[j] == '\t') j++;
+            if (b[j] == '=') { inizio = i; break; }
+        }
+    }
+    pub = chiave_radice(&locale);
+    if (inizio < 0) {
+        if (g_insicuro && !locale) {
+            if (!g_zitto)
+                printf("  ! versione.txt NON E' FIRMATO e -insicuro dice di andare\n"
+                       "    avanti lo stesso: chi sta sulla rete decide cosa installo.\n");
+            return 0;
+        }
+        if (!g_zitto) {
+            printf("  ! versione.txt non e' firmato: non tocco niente.\n");
+            printf("    Chi sta fra te e il server potrebbe dirmi cosa installare ed\n");
+            printf("    eseguire come root. Un repository fatto con un mknetinst\n");
+            printf("    vecchio va rifatto (tools/netinst/firma.py); solo per\n");
+            printf("    quest'ultima volta: netupdate -check -insicuro.\n");
+        }
+        return -1;
+    }
+    if (pub == NULL) return -1;
+
+    /* "firma = " then 128 hex digits, then only the end of the file */
+    j = inizio + 5;
+    while (b[j] == ' ' || b[j] == '\t') j++;
+    j++;
+    while (b[j] == ' ' || b[j] == '\t') j++;
+    for (i = 0; i < 64; i++) {
+        int a = esa_cifra(b[j + 2 * i]), z = a < 0 ? -1 : esa_cifra(b[j + 2 * i + 1]);
+
+        if (a < 0 || z < 0) { inizio = -2; break; }
+        sig[i] = (unsigned char)(a * 16 + z);
+    }
+    if (inizio >= 0)
+        for (j += 128; j < n; j++)
+            if (b[j] != '\r' && b[j] != '\n' && b[j] != ' ') { inizio = -2; break; }
+
+    if (inizio < 0 || ed25519_verifica(sig, b, (unsigned int)inizio, pub) != 0) {
+        if (!g_zitto) {
+            printf("  ! versione.txt non porta la firma della chiave di questo\n");
+            printf("    sistema%s: non tocco niente.\n",
+                   locale ? " (" PUB_FILE ")" : "");
+            printf("    O e' stato cambiato per strada, o il server e' di qualcun\n");
+            printf("    altro. Se il repository e' tuo, metti la sua chiave in\n");
+            printf("    %s (tools/netinst/firma.py pub).\n", PUB_FILE);
+        }
+        return -1;
+    }
+
+    if (chiave_da_file(ver, "serie", v, sizeof(v)) != 0 || (serie = atoll(v)) <= 0 ||
+        chiave_da_file(ver, "scade", v, sizeof(v)) != 0 || (scade = atoll(v)) <= 0) {
+        if (!g_zitto) printf("  ! versione.txt firmato ma senza serie o scadenza: mi fermo.\n");
+        return -1;
+    }
+    vista = serie_vista();
+    if (serie < vista && !g_indietro) {
+        if (!g_zitto) {
+            printf("  ! il server propone un albero firmato PIU' VECCHIO di quello\n");
+            printf("    gia' installato (serie %lld, qui %lld): rifiuto. Puo' essere\n", serie, vista);
+            printf("    qualcuno che ripropone un aggiornamento vecchio con difetti\n");
+            printf("    noti. Se vuoi davvero tornare indietro: -indietro.\n");
+        }
+        return -1;
+    }
+    if ((long long)time(NULL) > scade) {
+        if (!g_zitto) {
+            printf("  ! l'albero del server e' scaduto (firmato per durare fino a\n");
+            printf("    %lld, adesso e' %lld): rifiuto. O il server non e' stato\n", scade, (long long)time(NULL));
+            printf("    ripubblicato, o qualcuno ti tiene fermo su un albero vecchio.\n");
+            printf("    Se l'orologio di questa macchina e' sbagliato: date.\n");
+        }
+        return -1;
+    }
+    g_serie = serie;
+    return 0;
+}
+
 static int firma_video(const unsigned char *b, int n)
 {
     int k;
@@ -2550,6 +2733,7 @@ static int manifesto(Config *c, char *ver, char *cat, char *ele,
         }
         return 1;
     }
+    if (radice_firmata(ver) != 0) return 1;
     if (chiave_da_file(ver, "versione", versione, 16) != 0) {
         if (!g_zitto) {
             printf("  ! versione.txt non dice nessuna versione: non e' un albero\n");
@@ -4199,17 +4383,33 @@ static int verifiche_esegui(const Config *c, const char *ver,
             guaste++;
             continue;
         }
-        setenv("NETUPDATE_PACCHETTO", pac, 1);
-        setenv("NETUPDATE_SISTEMA", sistema, 1);
-        setenv("NETUPDATE_KERNEL", kernel, 1);
-        setenv("NETUPDATE_RIAVVIO", riavvio ? "1" : "0", 1);
-        setenv("NETUPDATE_ARCH", arch, 1);
-        setenv("NETUPDATE_SERVER", c->url, 1);
         printf("  -- %s (%s)\n", nome, pac);
         av[0] = (char *)"/bin/sh";
         av[1] = dove;
         av[2] = 0;
-        pid = spawn(av[0], av);
+        {
+            /* ! A CLEAN ENVIRONMENT, NOT THE CALLER'S (0.053): these run as
+             * root, and a PATH or LD_* left by whoever launched netupdate
+             * would choose what they execute. The shell adds the
+             * directories of /boot/percorsi.txt by itself. */
+            static char e[10][PERC_MAX];
+            char *envp[11];
+            const char *t = getenv("TERM"), *l = getenv("LANG");
+            int k = 0;
+
+            snprintf(e[k], PERC_MAX, "PATH=/bin");                     envp[k] = e[k]; k++;
+            snprintf(e[k], PERC_MAX, "HOME=/root");                    envp[k] = e[k]; k++;
+            snprintf(e[k], PERC_MAX, "NETUPDATE_PACCHETTO=%s", pac);   envp[k] = e[k]; k++;
+            snprintf(e[k], PERC_MAX, "NETUPDATE_SISTEMA=%s", sistema); envp[k] = e[k]; k++;
+            snprintf(e[k], PERC_MAX, "NETUPDATE_KERNEL=%s", kernel);   envp[k] = e[k]; k++;
+            snprintf(e[k], PERC_MAX, "NETUPDATE_RIAVVIO=%s", riavvio ? "1" : "0"); envp[k] = e[k]; k++;
+            snprintf(e[k], PERC_MAX, "NETUPDATE_ARCH=%s", arch);       envp[k] = e[k]; k++;
+            snprintf(e[k], PERC_MAX, "NETUPDATE_SERVER=%s", c->url);   envp[k] = e[k]; k++;
+            if (t) { snprintf(e[k], PERC_MAX, "TERM=%s", t); envp[k] = e[k]; k++; }
+            if (l) { snprintf(e[k], PERC_MAX, "LANG=%s", l); envp[k] = e[k]; k++; }
+            envp[k] = 0;
+            pid = spawn_ex(av[0], av, envp, NULL, 0);
+        }
         if (pid < 0) { printf("  ! /bin/sh non parte\n"); guaste++; continue; }
         waitpid(pid, &stato, 0);
         x = WIFEXITED(stato) ? WEXITSTATUS(stato) : -1;
@@ -4286,6 +4486,7 @@ static int comando_check(int senza_chiedere)
                    g_daregistrare, g_daregistrare == 1 ? "e" : "i");
             comando_registro_crea(TMPDIR);
         }
+        serie_segna();
         verifiche_esegui(&c, ver, NULL, 0, 0);
         return 0;
     }
@@ -4482,6 +4683,7 @@ static int comando_check(int senza_chiedere)
     /* (0.044) the checks after the files, before the last word: what they
      * say about a reboot belongs with "IL KERNEL E' CAMBIATO" below */
     if (fatti > 0) registro_carica();
+    if (falliti == 0 && !avvio_guasto) serie_segna();
     verifiche_esegui(&c, ver, NULL, 0, kernel_nuovo || stage2_nuovo);
 
     /* ! THIS LINE SAID "IL KERNEL E' CAMBIATO" EVEN WHEN THE MAP HAD FAILED, and
@@ -5177,6 +5379,7 @@ static int comando_sorgenti(void)
         printf("  pubblica i sorgenti (make netinst-src).\n");
         return 1;
     }
+    if (radice_firmata(ver) != 0) return 1;
     if (chiave_da_file(ver, "versione", versione, sizeof(versione)) != 0 ||
         chiave_da_file(ver, "arch", arch, sizeof(arch)) != 0 ||
         strcmp(arch, "sorgenti") != 0) {
@@ -5775,6 +5978,7 @@ static void uso(void)
     printf("     netupdate -verifica                le verifiche del server, senza\n");
     printf("                                        aggiornare (-verifica:<app>)\n");
     printf("     ... -noverifica                    con -check e -install: senza\n");
+    printf("     ... -insicuro                      accetta un versione.txt non firmato\n");
     printf("     netupdate -install:sourcecode      i sorgenti del sistema, in\n");
     printf("                                        %s/exos-<versione>/\n", SRC_DIR);
     printf("\n");
@@ -5855,6 +6059,7 @@ int main(int argc, char **argv)
     for (i = j = 1; i < argc; i++) {
         if (strcmp(argv[i], "-indietro") == 0) g_indietro = 1;
         else if (strcmp(argv[i], "-noverifica") == 0) g_noverifica = 1;
+        else if (strcmp(argv[i], "-insicuro") == 0) g_insicuro = 1;
         else if (i > 1 && strcmp(argv[i], "-yes") == 0 &&
                  (strncmp(argv[1], "-install:", 9) == 0 || strncmp(argv[1], "-remove:", 8) == 0))
             g_si = 1;

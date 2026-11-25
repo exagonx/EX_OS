@@ -52,7 +52,7 @@
 
 /* +0.001 a ogni modifica, aggiunta o prova: `exide -version` la stampa.
  * Vedi EX_VERSIONE in libc.h; la stessa stringa la mostra «Informazioni su». */
-#define VERSIONE_APP "0.027"
+#define VERSIONE_APP "0.029"
 EX_VERSIONE("exide", VERSIONE_APP);
 
 /* -----------------------------------------------------------------------------
@@ -255,6 +255,17 @@ static int  g_sel = -1;             /* il controllo scelto, -1 = nessuno */
 static int  g_strum_sel = -1;       /* lo strumento armato, -1 = nessuno */
 static int  g_ridim = -1;           /* quale maniglia si sta tirando, -1 = nessuna */
 
+/* (debug/implementazione_EXIDE002, passo 2) THE CHOSEN SET, "working on more
+ * parts at once". g_sel stays the FIRST - the reference, with full handles,
+ * whose properties the panel shows; the others carry hollow handles. Every
+ * place that sets g_sel alone still means "only him": scelti_norm() rebuilds
+ * the set from g_sel before anything reads it, so the forty old places did
+ * not have to change. One bit per control: CTRL_MAX is 64. */
+static unsigned long long g_scelti = 0;
+#define BIT(k)     (1ull << (k))
+#define SCELTO(k)  ((g_scelti >> (k)) & 1ull)
+typedef char ctrl_max_sta_in_64_bit[(CTRL_MAX <= 64) ? 1 : -1];
+
 /* ! UNA FOTOGRAFIA PER TRASCINAMENTO, E SOLO SE QUALCOSA CAMBIA. Un
  * trascinamento manda decine di EXM_MOUSE_MOVE: fotografando a ognuno, i
  * sedici passi indietro se li mangerebbe tutti un movimento solo, e si
@@ -362,6 +373,7 @@ typedef struct {
     Form form[FORM_MAX];
     int  form_sel;
     int  sel;
+    unsigned long long scelti;      /* (EXIDE002) the chosen set */
 } Istante;
 
 static Istante g_indietro[ANNULLA_MAX];     /* si torna qui con Annulla */
@@ -389,6 +401,7 @@ static void istante_prendi(Istante *s)
     memcpy(s->form, g_form, sizeof(g_form));
     s->form_sel = g_form_sel;
     s->sel      = g_sel;
+    s->scelti   = g_scelti;
 }
 
 static void istante_rimetti(const Istante *s)
@@ -397,6 +410,7 @@ static void istante_rimetti(const Istante *s)
     memcpy(g_form, s->form, sizeof(g_form));
     g_form_sel = s->form_sel;
     g_sel      = s->sel;
+    g_scelti   = s->scelti;
 }
 
 /* ! LA PILA SCORRE QUANDO E' PIENA, invece di rifiutare l'istante nuovo: il
@@ -914,7 +928,34 @@ static void maniglia_centro(const Ctrl *c, int i, int ox, int oy,
     *cy = oy + c->y + (g_man_y[i] < 0 ? 0 : g_man_y[i] > 0 ? c->h : c->h / 2);
 }
 
-static void disegna_maniglie(const Ctrl *c, int ox, int oy)
+/* The set follows g_sel and the form on the canvas; see g_scelti. */
+static void scelti_norm(void)
+{
+    int i;
+
+    if (g_sel < 0 || g_sel >= CTRL_MAX || !g_ctrl[g_sel].usato ||
+        g_ctrl[g_sel].form != g_form_sel) {
+        g_scelti = 0;
+        return;
+    }
+    if (!SCELTO(g_sel)) g_scelti = BIT(g_sel);
+    for (i = 0; i < CTRL_MAX; i++)
+        if (SCELTO(i) && (!g_ctrl[i].usato || g_ctrl[i].form != g_form_sel))
+            g_scelti &= ~BIT(i);
+}
+
+static int quanti_scelti(void)
+{
+    unsigned long long t;
+    int n = 0;
+
+    scelti_norm();
+    for (t = g_scelti; t; t &= t - 1) n++;
+    return n;
+}
+
+/* Full black on the first, hollow on the others of the set (as VB). */
+static void disegna_maniglie(const Ctrl *c, int ox, int oy, int piena)
 {
     int i, cx, cy;
 
@@ -922,15 +963,22 @@ static void disegna_maniglie(const Ctrl *c, int ox, int oy)
         maniglia_centro(c, i, ox, oy, &cx, &cy);
         ex_fill_rect(g_f, cx - MAN_LATO / 2, cy - MAN_LATO / 2,
                   MAN_LATO, MAN_LATO, EX_BLACK);
+        if (!piena)
+            ex_fill_rect(g_f, cx - MAN_LATO / 2 + 1, cy - MAN_LATO / 2 + 1,
+                         MAN_LATO - 2, MAN_LATO - 2, EX_WHITE);
     }
 }
 
-static void disegna_tela(void)
+/* The rubber band, while it is pulled: corners in form coordinates. */
+static int g_elastico = 0;
+static int g_el_x1, g_el_y1, g_el_x2, g_el_y2;
+static unsigned int g_el_mods;      /* Shift/Alt of the press that started it */
+
+/* The canvas alone, without the tool panel: what a drag changes. */
+static void disegna_tela_solo(void)
 {
     int ox = TELA_X + 8, oy = TELA_Y + 8 + 20;      /* dentro il telaio finto */
     int i;
-
-    disegna_strumenti();
 
     /* Il ripiano su cui sta la maschera. */
     ex_fill_rect(g_f, TELA_X, TELA_Y, TELA_W, TELA_H, 0x00505050);
@@ -962,9 +1010,39 @@ static void disegna_tela(void)
         if (g_ctrl[i].usato && g_ctrl[i].form == g_form_sel)
             disegna_controllo(&g_ctrl[i], ox, oy);
 
+    scelti_norm();
+    for (i = 0; i < CTRL_MAX; i++)
+        if (SCELTO(i) && i != g_sel) disegna_maniglie(&g_ctrl[i], ox, oy, 0);
     if (g_sel >= 0 && g_ctrl[g_sel].usato)
-        disegna_maniglie(&g_ctrl[g_sel], ox, oy);
+        disegna_maniglie(&g_ctrl[g_sel], ox, oy, 1);
+    if (g_elastico) {
+        int x1 = g_el_x1 < g_el_x2 ? g_el_x1 : g_el_x2;
+        int y1 = g_el_y1 < g_el_y2 ? g_el_y1 : g_el_y2;
+        int w  = (g_el_x1 < g_el_x2 ? g_el_x2 - g_el_x1 : g_el_x1 - g_el_x2) + 1;
+        int h  = (g_el_y1 < g_el_y2 ? g_el_y2 - g_el_y1 : g_el_y1 - g_el_y2) + 1;
+
+        ex_draw_rect(g_f, ox + x1, oy + y1, w, h, EX_BLACK);
+        if (w > 2 && h > 2) ex_draw_rect(g_f, ox + x1 + 1, oy + y1 + 1, w - 2, h - 2, EX_WHITE);
+    }
     ex_set_clip(g_f, 0, 0, 0, 0);
+}
+
+static void disegna_tela(void)
+{
+    disegna_strumenti();
+    disegna_tela_solo();
+}
+
+static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp);
+
+/* ! (debug/bug_EXIDE001) THE WHOLE MAIN WINDOW, THROUGH ITS PROC: background,
+ * controls, tools, canvas, one ex_update. Every secondary window called
+ * ex_default_proc(g_f, EXM_PAINT) on closing, which paints the grey over the
+ * canvas and the tools and redraws only the controls: the designer stayed grey
+ * until the mouse passed over it, sometimes forever. */
+static void principale_ridisegna(void)
+{
+    if (g_f) proc(g_f, EXM_PAINT, 0, 0);
 }
 
 /* =============================================================================
@@ -1702,34 +1780,51 @@ static int aggiungi(int tipo, int x, int y)
  * com'e' — copiare un pulsante da un progetto all'altro e' utile e non
  * ricostruisce niente che non sia mai esistito.
  * ============================================================================= */
-static Ctrl g_app;                  /* il controllo copiato */
-static int  g_app_pieno = 0;
-static int  g_app_form  = -1;       /* da quale maschera veniva */
+/* (EXIDE002) the clipboard holds the whole set, the first one first */
+static Ctrl g_app[CTRL_MAX];        /* i controlli copiati */
+static int  g_app_pieno = 0;        /* quanti */
+static int  g_app_form  = -1;       /* da quale maschera venivano */
 
 static void ctrl_copia(void)
 {
+    int i;
+
     if (g_sel < 0 || !g_ctrl[g_sel].usato) { dico("non c'e' niente di scelto"); return; }
 
-    g_app       = g_ctrl[g_sel];
+    scelti_norm();
+    g_app[0]    = g_ctrl[g_sel];
     g_app_pieno = 1;
+    for (i = 0; i < CTRL_MAX; i++)
+        if (SCELTO(i) && i != g_sel) g_app[g_app_pieno++] = g_ctrl[i];
     g_app_form  = g_form_sel;
-    dico("copiato: Incolla lo mette nella maschera che si sta disegnando");
+    if (g_app_pieno > 1) {
+        char t[80];
+
+        sprintf(t, "copiati %d controlli: Incolla li mette nella maschera che si sta disegnando",
+                g_app_pieno);
+        dico(t);
+    } else
+        dico("copiato: Incolla lo mette nella maschera che si sta disegnando");
 }
 
 static void ctrl_incolla(void)
 {
-    int   i;
-    Ctrl *c;
+    int   i, k, liberi = 0, primo = -1;
+    Ctrl *c = 0;
 
     if (!g_app_pieno) { dico("gli appunti del disegno sono vuoti"); return; }
 
-    for (i = 0; i < CTRL_MAX; i++) if (!g_ctrl[i].usato) break;
-    if (i == CTRL_MAX) { dico("non c'e' posto per un altro controllo"); return; }
+    for (i = 0; i < CTRL_MAX; i++) if (!g_ctrl[i].usato) liberi++;
+    if (liberi < g_app_pieno) { dico("non c'e' posto per altri controlli"); return; }
 
     istante_segna();
+    g_scelti = 0;
+
+    for (k = 0; k < g_app_pieno; k++) {
+    for (i = 0; i < CTRL_MAX; i++) if (!g_ctrl[i].usato) break;
 
     c = &g_ctrl[i];
-    *c = g_app;
+    *c = g_app[k];
     c->form = g_form_sel;           /* si incolla SEMPRE dove si sta disegnando */
     c->id   = id_libero();
     nome_libero(c->tipo, i, c->nome);
@@ -1750,7 +1845,11 @@ static void ctrl_incolla(void)
     if (c->x < 0) c->x = 0;
     if (c->y < 0) c->y = 0;
 
-    g_sel    = i;
+    g_scelti |= BIT(i);
+    if (primo < 0) primo = i;
+    }
+
+    g_sel    = primo;
     g_sporco = 1;
     prop_mostra();
     disegna_tela();
@@ -1759,7 +1858,10 @@ static void ctrl_incolla(void)
     {
         char t[80];
 
-        sprintf(t, "incollato come %s (l'handler e' suo, e nasce vuoto)", c->nome);
+        if (g_app_pieno > 1)
+            sprintf(t, "incollati %d controlli (gli handler sono loro, e nascono vuoti)", g_app_pieno);
+        else
+            sprintf(t, "incollato come %s (l'handler e' suo, e nasce vuoto)", c->nome);
         dico(t);
     }
 }
@@ -3148,7 +3250,7 @@ static long proc_ed(ExWindow f, unsigned int msg, unsigned int wp, long lp)
             ed_salva();
             ex_destroy(f);
             g_ed = 0;
-            ex_default_proc(g_f, EXM_PAINT, 0, 0);
+            principale_ridisegna();
             return 0;
         case ID_COPIA:     ex_textarea_copy(g_ed_cod);    break;
         case ID_INCOLLA:   ex_textarea_paste(g_ed_cod);  break;
@@ -3220,7 +3322,7 @@ static long proc_ed(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         ed_salva();
         ex_destroy(f);
         g_ed = 0;
-        ex_default_proc(g_f, EXM_PAINT, 0, 0);
+        principale_ridisegna();
         return 0;
 
     default: break;
@@ -4534,7 +4636,7 @@ static long proc_cc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         case ID_CC_CHIUDI:
             ex_destroy(f);
             g_cc = 0;
-            ex_default_proc(g_f, EXM_PAINT, 0, 0);
+            principale_ridisegna();
             return 0;
         default: break;
         }
@@ -4543,7 +4645,7 @@ static long proc_cc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
     case EXM_CLOSE:
         ex_destroy(f);
         g_cc = 0;
-        ex_default_proc(g_f, EXM_PAINT, 0, 0);
+        principale_ridisegna();
         return 0;
 
     default: break;
@@ -4656,7 +4758,7 @@ static long proc_lib(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         } else if (wp == ID_LIB_CHIUDI) {
             ex_destroy(f);
             g_libf = 0;
-            ex_default_proc(g_f, EXM_PAINT, 0, 0);
+            principale_ridisegna();
             return 0;
         }
         return 0;
@@ -4664,7 +4766,7 @@ static long proc_lib(ExWindow f, unsigned int msg, unsigned int wp, long lp)
     case EXM_CLOSE:
         ex_destroy(f);
         g_libf = 0;
-        ex_default_proc(g_f, EXM_PAINT, 0, 0);
+        principale_ridisegna();
         return 0;
 
     default: break;
@@ -4877,7 +4979,7 @@ static long proc_prg(ExWindow f, unsigned int msg, unsigned int wp, long lp)
             progetto_scheda_salva();
             ex_destroy(f);
             g_prgf = 0;
-            ex_default_proc(g_f, EXM_PAINT, 0, 0);
+            principale_ridisegna();
             return 0;
         }
         return 0;
@@ -4890,7 +4992,7 @@ static long proc_prg(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         progetto_scheda_salva();
         ex_destroy(f);
         g_prgf = 0;
-        ex_default_proc(g_f, EXM_PAINT, 0, 0);
+        principale_ridisegna();
         return 0;
 
     default: break;
@@ -5099,7 +5201,7 @@ static long proc_fe(ExWindow f, unsigned int msg, unsigned int wp, long lp)
             ex_destroy(f);
             g_fe_f = 0;
             g_fe_n = 0;
-            ex_default_proc(g_f, EXM_PAINT, 0, 0);
+            principale_ridisegna();
             return 0;
         default: break;
         }
@@ -5150,7 +5252,7 @@ static long proc_fe(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         ex_destroy(f);
         g_fe_f = 0;
         g_fe_n = 0;
-        ex_default_proc(g_f, EXM_PAINT, 0, 0);
+        principale_ridisegna();
         return 0;
 
     default: break;
@@ -5301,7 +5403,7 @@ static long proc_fl(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         } else if (wp == ID_FL_CHIUDI) {
             ex_destroy(f);
             g_flf = 0;
-            ex_default_proc(g_f, EXM_PAINT, 0, 0);
+            principale_ridisegna();
             return 0;
         }
         return 0;
@@ -5309,7 +5411,7 @@ static long proc_fl(ExWindow f, unsigned int msg, unsigned int wp, long lp)
     case EXM_CLOSE:
         ex_destroy(f);
         g_flf = 0;
-        ex_default_proc(g_f, EXM_PAINT, 0, 0);
+        principale_ridisegna();
         return 0;
 
     default: break;
@@ -5417,8 +5519,62 @@ static void shell_progetto(void)
  * ============================================================================= */
 static int g_trascina = 0;
 static int g_tras_dx, g_tras_dy;
+/* (EXIDE002) the group drag: where each chosen one and the mouse were at the
+ * start, and which control the grid snaps (the one that was clicked) */
+static int g_tras_x0[CTRL_MAX], g_tras_y0[CTRL_MAX];
+static int g_tras_mx, g_tras_my, g_tras_rif = -1;
 
-static void tela_clic(int x, int y, int doppio)
+static void tras_comincia(int k, int x, int y)
+{
+    int i;
+
+    for (i = 0; i < CTRL_MAX; i++) { g_tras_x0[i] = g_ctrl[i].x; g_tras_y0[i] = g_ctrl[i].y; }
+    g_tras_mx  = x;
+    g_tras_my  = y;
+    g_tras_rif = k;
+}
+
+/* The chosen ones moved by (dx, dy) from where they were (x0, y0), the group
+ * kept inside the form as one rectangle. 1 if something moved. */
+static int scelti_sposta(const int *x0, const int *y0, int dx, int dy)
+{
+    int i, minx = 1 << 30, miny = 1 << 30, maxx = -(1 << 30), maxy = -(1 << 30), mosso = 0;
+
+    scelti_norm();
+    if (!g_scelti) return 0;
+    for (i = 0; i < CTRL_MAX; i++) {
+        if (!SCELTO(i)) continue;
+        if (x0[i] < minx) minx = x0[i];
+        if (y0[i] < miny) miny = y0[i];
+        if (x0[i] + g_ctrl[i].w > maxx) maxx = x0[i] + g_ctrl[i].w;
+        if (y0[i] + g_ctrl[i].h > maxy) maxy = y0[i] + g_ctrl[i].h;
+    }
+    if (maxx + dx > forma()->w) dx = forma()->w - maxx;
+    if (maxy + dy > forma()->h) dy = forma()->h - maxy;
+    if (minx + dx < 0) dx = -minx;
+    if (miny + dy < 0) dy = -miny;
+    for (i = 0; i < CTRL_MAX; i++) {
+        if (!SCELTO(i)) continue;
+        if (g_ctrl[i].x != x0[i] + dx || g_ctrl[i].y != y0[i] + dy) mosso = 1;
+    }
+    if (!mosso) return 0;
+    if (!g_tras_segnato) { istante_segna(); g_tras_segnato = 1; }
+    for (i = 0; i < CTRL_MAX; i++) {
+        if (!SCELTO(i)) continue;
+        g_ctrl[i].x = x0[i] + dx;
+        g_ctrl[i].y = y0[i] + dy;
+    }
+    g_sporco = 1;
+    return 1;
+}
+
+static void tela_rifai(void)
+{
+    disegna_tela_solo();
+    ex_update_rect(g_f, TELA_X, TELA_Y, TELA_W, TELA_H);
+}
+
+static void tela_clic(int x, int y, int doppio, unsigned int mods)
 {
     int ox = TELA_X + 8, oy = TELA_Y + 28;
     int k;
@@ -5445,8 +5601,38 @@ static void tela_clic(int x, int y, int doppio)
 
     k = ctrl_in(x, y);
 
+    /* (EXIDE002) Ctrl+click adds or takes away one, without dragging */
+    if (k >= 0 && !doppio && (mods & KBD_MOD_CTRL)) {
+        scelti_norm();
+        g_scelti ^= BIT(k);
+        if (!SCELTO(k) && g_sel == k) {             /* the first went out */
+            int i;
+
+            g_sel = -1;
+            for (i = 0; i < CTRL_MAX; i++) if (SCELTO(i)) { g_sel = i; break; }
+        } else if (SCELTO(k) && g_sel < 0) g_sel = k;
+        if (g_sel >= 0 && !SCELTO(g_sel)) g_scelti |= BIT(g_sel);
+        prop_mostra();
+        tela_rifai();
+        {
+            char t[64];
+
+            sprintf(t, "%d controlli scelti", quanti_scelti());
+            dico(t);
+        }
+        return;
+    }
+
     if (k >= 0) {
-        g_sel = k;
+        scelti_norm();
+        if (doppio) {
+            g_sel = k; g_scelti = BIT(k);
+        } else if (mods & KBD_MOD_SHIFT) {          /* Shift adds him and drags all */
+            if (g_sel < 0) g_sel = k;
+            g_scelti |= BIT(k) | BIT(g_sel);
+        } else if (!SCELTO(k)) {                    /* only him */
+            g_sel = k; g_scelti = BIT(k);
+        }                                           /* already in: the set is dragged */
         /* ! IL DOPPIO CLIC APRE IL CODICE, e non aggiunge un controllo: chi fa
          * doppio clic su qualcosa che c'e' gia' sta chiedendo di quello, non
          * di uno nuovo. */
@@ -5468,8 +5654,16 @@ static void tela_clic(int x, int y, int doppio)
         g_tras_segnato = 0;
         g_tras_dx  = x - (ox + g_ctrl[k].x);
         g_tras_dy  = y - (oy + g_ctrl[k].y);
+        tras_comincia(k, x, y);
         prop_mostra();
-        dico(g_ctrl[k].nome);
+        if (quanti_scelti() > 1) {
+            char t[64];
+
+            sprintf(t, "%d controlli scelti: tirali per spostarli insieme", quanti_scelti());
+            dico(t);
+        } else
+            dico(g_ctrl[k].nome);
+        tela_rifai();
         return;
     }
 
@@ -5492,10 +5686,122 @@ static void tela_clic(int x, int y, int doppio)
             dico(t);
         }
     } else {
-        g_sel = -1;
+        /* (EXIDE002) on the empty form the rubber band starts; with Shift
+         * what it catches is added to what was chosen */
+        if (!(mods & KBD_MOD_SHIFT)) { g_sel = -1; g_scelti = 0; }
+        g_elastico = !doppio;
+        g_el_mods  = mods;
+        g_el_x1 = g_el_x2 = x - ox;
+        g_el_y1 = g_el_y2 = y - oy;
         dico("maschera");
     }
     prop_mostra();
+    tela_rifai();
+}
+
+/* (EXIDE002) the band let go: the controls it TOUCHES are chosen (as VB),
+ * with Alt only those all inside. */
+static void elastico_fine(unsigned int mods)
+{
+    int x1 = g_el_x1 < g_el_x2 ? g_el_x1 : g_el_x2, x2 = g_el_x1 < g_el_x2 ? g_el_x2 : g_el_x1;
+    int y1 = g_el_y1 < g_el_y2 ? g_el_y1 : g_el_y2, y2 = g_el_y1 < g_el_y2 ? g_el_y2 : g_el_y1;
+    int i, n;
+
+    g_elastico = 0;
+    if (x2 - x1 >= 2 || y2 - y1 >= 2) {
+        for (i = 0; i < CTRL_MAX; i++) {
+            const Ctrl *c = &g_ctrl[i];
+            int dentro;
+
+            if (!c->usato || c->form != g_form_sel) continue;
+            if (mods & KBD_MOD_ALT)
+                dentro = c->x >= x1 && c->y >= y1 && c->x + c->w <= x2 && c->y + c->h <= y2;
+            else
+                dentro = c->x <= x2 && c->x + c->w >= x1 && c->y <= y2 && c->y + c->h >= y1;
+            if (!dentro) continue;
+            g_scelti |= BIT(i);
+            if (g_sel < 0) g_sel = i;
+        }
+    }
+    n = quanti_scelti();
+    prop_mostra();
+    tela_rifai();
+    if (n > 1) {
+        char t[64];
+
+        sprintf(t, "%d controlli scelti", n);
+        dico(t);
+    } else if (n == 1) dico(g_ctrl[g_sel].nome);
+}
+
+/* (EXIDE002) Arrows move the chosen ones by 1 (Shift: the grid), Ctrl+arrows
+ * change their size. Held down, they make ONE undo step: the first arrow
+ * marks it, the next ones within 600 ms do not. */
+static unsigned int g_ultima_freccia = 0;
+
+static void frecce(unsigned int c, unsigned int mods)
+{
+    int dx = 0, dy = 0, passo = (mods & KBD_MOD_SHIFT) ? GRIGLIA : 1, i;
+    unsigned int ora = uptime_ms();
+    int x0[CTRL_MAX], y0[CTRL_MAX];
+
+    if (quanti_scelti() == 0) { dico("non c'e' niente di scelto"); return; }
+    if (c == KBD_K_LEFT)  dx = -passo;
+    if (c == KBD_K_RIGHT) dx =  passo;
+    if (c == KBD_K_UP)    dy = -passo;
+    if (c == KBD_K_DOWN)  dy =  passo;
+    g_tras_segnato = (ora - g_ultima_freccia <= 600u && g_ultima_freccia != 0);
+    g_ultima_freccia = ora;
+
+    if (mods & KBD_MOD_CTRL) {
+        int cambiato = 0;
+
+        for (i = 0; i < CTRL_MAX; i++) {
+            int w, h;
+
+            if (!SCELTO(i)) continue;
+            w = g_ctrl[i].w + dx;
+            h = g_ctrl[i].h + dy;
+            if (w < MISURA_MIN) w = MISURA_MIN;
+            if (h < MISURA_MIN) h = MISURA_MIN;
+            if (g_ctrl[i].x + w > forma()->w) w = forma()->w - g_ctrl[i].x;
+            if (g_ctrl[i].y + h > forma()->h) h = forma()->h - g_ctrl[i].y;
+            if (w == g_ctrl[i].w && h == g_ctrl[i].h) continue;
+            if (!g_tras_segnato) { istante_segna(); g_tras_segnato = 1; }
+            g_ctrl[i].w = w;
+            g_ctrl[i].h = h;
+            cambiato = 1;
+        }
+        if (!cambiato) return;
+        g_sporco = 1;
+    } else {
+        for (i = 0; i < CTRL_MAX; i++) { x0[i] = g_ctrl[i].x; y0[i] = g_ctrl[i].y; }
+        if (!scelti_sposta(x0, y0, dx, dy)) return;
+    }
+    prop_mostra();
+    tela_rifai();
+}
+
+static void scegli_tutti(void)
+{
+    int i, n;
+
+    g_scelti = 0;
+    g_sel = -1;
+    for (i = 0; i < CTRL_MAX; i++)
+        if (g_ctrl[i].usato && g_ctrl[i].form == g_form_sel) {
+            g_scelti |= BIT(i);
+            if (g_sel < 0) g_sel = i;
+        }
+    n = quanti_scelti();
+    prop_mostra();
+    tela_rifai();
+    {
+        char t[64];
+
+        sprintf(t, "%d controlli scelti", n);
+        dico(t);
+    }
 }
 
 /* ! TAGLIA E' COPIA PIU' ELIMINA, e si scrive cosi' invece di rifare le due
@@ -5506,9 +5812,17 @@ static void ctrl_taglia(void);
 
 static void elimina(void)
 {
+    int i, n;
+
     if (g_sel < 0 || !g_ctrl[g_sel].usato) { dico("non c'e' niente di scelto"); return; }
 
+    n = quanti_scelti();
     istante_segna();
+
+    /* (EXIDE002) the whole set, one undo step */
+    for (i = 0; i < CTRL_MAX; i++)
+        if (SCELTO(i) && i != g_sel) g_ctrl[i].usato = 0;
+    g_scelti = 0;
 
     /* ! SI TOGLIE DAL DISEGNO E NON DAL CODICE. L'handler in finestra.c resta
      * dov'e': e' codice scritto a mano, e cancellarlo perche' un rettangolo non
@@ -5518,7 +5832,14 @@ static void elimina(void)
     g_sel = -1;
     g_sporco = 1;
     prop_mostra();
-    dico("controllo tolto dal disegno (l'handler in finestra.c resta)");
+    tela_rifai();
+    if (n > 1) {
+        char t[80];
+
+        sprintf(t, "%d controlli tolti dal disegno (gli handler in finestra.c restano)", n);
+        dico(t);
+    } else
+        dico("controllo tolto dal disegno (l'handler in finestra.c resta)");
 }
 
 static void ctrl_taglia(void)
@@ -5686,7 +6007,7 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
             return EX_NO_REDRAW;
         }
 
-        tela_clic(x, y, 0);
+        tela_clic(x, y, 0, wp);
         /* ! ONLY A CLICK ON THE CANVAS takes the keys away from the boxes
          * (30 September 2026). The toolkit sends EXM_MOUSE_DOWN for a click in
          * a text box too, after giving it the focus and placing the caret:
@@ -5698,10 +6019,21 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
     }
 
     case EXM_DOUBLE_CLICK:
-        tela_clic(EX_X(lp), EX_Y(lp), 1);
+        tela_clic(EX_X(lp), EX_Y(lp), 1, 0);
         return 0;
 
     case EXM_MOUSE_MOVE:
+        if (g_elastico) {
+            int ox = TELA_X + 8, oy = TELA_Y + 28;
+            int nx = EX_X(lp) - ox, ny = EX_Y(lp) - oy;
+
+            if (nx != g_el_x2 || ny != g_el_y2) {
+                g_el_x2 = nx;
+                g_el_y2 = ny;
+                tela_rifai();
+            }
+            return EX_NO_REDRAW;
+        }
         if (!g_trascina && g_ridim < 0) {
             int st = strumento_a(EX_X(lp), EX_Y(lp));
 
@@ -5716,43 +6048,54 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
             ridimensiona(EX_X(lp), EX_Y(lp));
             return 0;
         }
-        if (g_trascina && g_sel >= 0 && g_ctrl[g_sel].usato) {
-            int ox = TELA_X + 8, oy = TELA_Y + 28;
-            int nx = arrotonda(EX_X(lp) - g_tras_dx - ox);
-            int ny = arrotonda(EX_Y(lp) - g_tras_dy - oy);
+        if (g_trascina && g_sel >= 0 && g_ctrl[g_sel].usato &&
+            g_tras_rif >= 0 && g_ctrl[g_tras_rif].usato) {
+            /* (EXIDE002) the whole set by the same step; the clicked one
+             * snaps to the grid as before, the others follow it */
+            int r  = g_tras_rif;
+            int dx = arrotonda(g_tras_x0[r] + EX_X(lp) - g_tras_mx) - g_tras_x0[r];
+            int dy = arrotonda(g_tras_y0[r] + EX_Y(lp) - g_tras_my) - g_tras_y0[r];
 
-            if (nx < 0) nx = 0;
-            if (ny < 0) ny = 0;
-            if (nx + g_ctrl[g_sel].w > forma()->w)
-                nx = forma()->w - g_ctrl[g_sel].w;
-            if (ny + g_ctrl[g_sel].h > forma()->h)
-                ny = forma()->h - g_ctrl[g_sel].h;
-            if (nx < 0) nx = 0;
-            if (ny < 0) ny = 0;
-
-            if (nx != g_ctrl[g_sel].x || ny != g_ctrl[g_sel].y) {
-                if (!g_tras_segnato) { istante_segna(); g_tras_segnato = 1; }
-                g_ctrl[g_sel].x = nx;
-                g_ctrl[g_sel].y = ny;
-                g_sporco = 1;
+            if (scelti_sposta(g_tras_x0, g_tras_y0, dx, dy)) {
                 prop_mostra();
                 /* ! IL DISEGNO SI RIFA' QUI, e prima non lo faceva nessuno:
                  * EXM_PAINT non arriva da solo mentre si trascina, e il
                  * controllo si vedeva saltare nel posto nuovo solo quando
                  * qualcos'altro faceva ridisegnare la finestra. */
-                disegna_tela();
-                ex_update(g_f);
+                /* (debug/bug_EXIDE001) only the canvas, and only its
+                 * rectangle to the server: 60-100 times a second the whole
+                 * window with the tool panel was the flicker on slow PCs */
+                disegna_tela_solo();
+                ex_update_rect(g_f, TELA_X, TELA_Y, TELA_W, TELA_H);
             }
         }
         return 0;
 
     case EXM_MOUSE_UP:
+        if (g_elastico) elastico_fine(g_el_mods);
         g_trascina = 0;
         g_ridim = -1;
         return 0;
 
     case EXM_KEY:
         if ((wp & KBD_KEY_MASK) == KBD_K_DEL) { elimina(); return 0; }
+        /* (EXIDE002) the keyboard on the canvas */
+        {
+            unsigned int c = wp & KBD_KEY_MASK;
+
+            if (c == KBD_K_LEFT || c == KBD_K_RIGHT || c == KBD_K_UP || c == KBD_K_DOWN) {
+                frecce(c, wp);
+                return 0;
+            }
+            if (c == 27) {                          /* Esc: back to the form */
+                g_sel = -1;
+                g_scelti = 0;
+                prop_mostra();
+                tela_rifai();
+                dico("maschera");
+                return 0;
+            }
+        }
 
         /* ! LE SCORCIATOIE SCRITTE NEL MENU ADESSO FANNO QUALCOSA. Erano
          * etichette e basta — il menu prometteva Ctrl+S dal primo giorno e
@@ -5764,6 +6107,7 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
          * anche la maiuscola perche' con il Bloc Maiusc acceso arriva quella. */
         if (wp & KBD_MOD_CTRL) {
             switch (wp & KBD_KEY_MASK) {
+            case 'a': case 'A': scegli_tutti();   return 0;
             case 'z': case 'Z': annulla();        return 0;
             case 'y': case 'Y': rifai();          return 0;
             case 'c': case 'C': ctrl_copia();     return 0;
@@ -5896,9 +6240,7 @@ int main(int argc, char **argv)
     dico(g_prog_dir[0] ? "progetto aperto"
                        : "File > Nuovo progetto per cominciare");
 
-    ex_default_proc(g_f, EXM_PAINT, 0, 0);
-    disegna_tela();
-    ex_update(g_f);
+    principale_ridisegna();
 
     while (ex_get_message(&m)) { auto_controlla(); ex_dispatch(&m); }
     return 0;

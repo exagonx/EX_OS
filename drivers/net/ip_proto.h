@@ -403,6 +403,16 @@ typedef struct {
     unsigned int  tcp_rit_veloci;
     unsigned int  tcp_scadenze;
     unsigned int  tcp_code_grandi;
+    /* (ip.drv 0.029, debug/bug_IP001) segments that did not fit the
+     * connection: RST or ACK outside the window, a SYN on an open one. Zero
+     * with honest traffic; growing means somebody is guessing.
+     *   tcp_challenge    challenge ACKs sent (RFC 5961), at most 10 a second
+     *   tcp_rst_ignorati RSTs whose sequence was not exactly ours
+     *   tcp_fuori_fin    segments outside the receive window, or acking
+     *                    bytes never sent: answered with an ACK, dropped */
+    unsigned int  tcp_challenge;
+    unsigned int  tcp_rst_ignorati;
+    unsigned int  tcp_fuori_fin;
 } IpStato;
 
 /* Una voce della tabella ARP, come la vede un client */

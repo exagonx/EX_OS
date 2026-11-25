@@ -1,0 +1,291 @@
+BUG EXEDIT001 - exeditor: il salvataggio puo' distruggere il file, i byte
+                 NUL e le righe lunghe si perdono, gli a capo DOS e l'ultimo
+                 a capo cambiano in silenzio, Annulla tronca le righe
+===============================================================================
+Gravita':   ALTA (perdita di dati in un editor di testo)
+Programma:  exwin/bin/exeditor (exeditor 0.009), modo testo (non RTF)
+Sorgenti:   exwin/bin/exeditor/exeditor.c  carica, salva, testo_di_adesso,
+                                           annulla_segna, annulla_fai
+            lib/exwin/exwin.c              ex_textarea_add_line (la riga
+                                           cresce: area_col_posto)
+Rilevato su: albero del 25/11/2026.
+
+-------------------------------------------------------------------------------
+1. I DIFETTI
+-------------------------------------------------------------------------------
+a) SALVATAGGIO NON ATOMICO. salva() apre il file con O_TRUNC e lo
+   riscrive riga per riga. Se una write fallisce (disco pieno, chiavetta
+   tolta, modulo ext4 che muore, mancanza di corrente) il file sul disco e'
+   gia' troncato: il messaggio "scrittura interrotta: il file e'
+   incompleto" e' vero, ma l'originale non c'e' piu'. Nessun fsync: dopo
+   "salvato" un riavvio puo' lasciare il file vuoto (cache write-back,
+   voce 58).
+
+b) I BYTE NUL. Le righe sono stringhe C: un byte 0 dentro un file
+   (file binari aperti per sbaglio, UTF-16, file di configurazione con
+   separatori NUL) tronca la riga in ex_textarea_add_line (strlen), e al
+   salvataggio la parte dopo lo 0 sparisce SENZA che g_parziale sia
+   alzato: nessun avviso.
+
+c) RIGHE OLTRE 255 CARATTERI. carica() usa char riga[256]: i caratteri in
+   piu' si scartano e g_parziale = 1, quindi poi salva() rifiuta ("letto
+   solo in parte"). Non si perde niente, ma un file con una riga lunga
+   (JSON minimizzato, CSV, un .html generato, un registro) non si puo' piu'
+   modificare. Il controllo areatesto invece accetta righe di qualunque
+   lunghezza (area_col_posto le fa crescere): il limite e' solo qui.
+
+d) A CAPO DOS E ULTIMO A CAPO. carica() salta ogni '\r'; salva() scrive
+   '\n' dopo ogni riga, compresa l'ultima. Un file Windows (CRLF) salvato
+   diventa LF senza dirlo; un file senza a capo finale ne guadagna uno; un
+   '\r' isolato (Mac classico, o un \r dentro una riga) sparisce.
+   Per i file di altri sistemi, i diff di git e gli script
+   (#!/bin/sh con CRLF) e' un cambiamento non chiesto.
+
+e) ANNULLA TRONCA. annulla_fai() ricostruisce il testo con char
+   riga[512]: una riga piu' lunga di 511 caratteri (scritta nell'editor, o
+   incollata) torna troncata dopo un Annulla, senza avviso.
+
+f) COSTO DI ANNULLA. annulla_segna() copia TUTTO il testo prima di ogni
+   modifica (fino a ANNULLA_MAX = 16 passi e ANNULLA_BYTE): su un file da
+   1 MB ogni modifica alloca e copia 1 MB. Non e' perdita di dati, e'
+   lentezza (e frammentazione dello heap) su file grandi.
+
+g) UTF-8. Il testo si mostra col font 8x16 CP437 del sistema: un file
+   UTF-8 con lettere accentate si vede con due simboli per lettera, e il
+   cursore puo' finire in mezzo a una sequenza (Canc ne toglie un byte e
+   lascia un byte non valido). Non e' trattato qui come difetto: e'
+   implementazione_EXEDIT002 (codifica), citata per completezza.
+
+-------------------------------------------------------------------------------
+2. CORREZIONE
+-------------------------------------------------------------------------------
+2.1 Caricare senza limiti e ricordando com'era fatto il file
+
+    typedef struct {
+        int crlf;          /* le righe finivano con \r\n (maggioranza) */
+        int a_capo_finale; /* l'ultimo byte era \n */
+        int nul;           /* c'erano byte 0: il file non e' testo */
+    } FormaFile;
+    static FormaFile g_forma;           /* per documento: in Doc, se multi-scheda */
+
+    static int carica(const char *percorso)
+    {
+        char   buf[4096];
+        char  *riga = 0;
+        size_t col = 0, posti = 0;
+        int    fd, n, i, cr = 0, lf = 0, ultimo = -1;
+
+        ex_textarea_clear(g_area);
+        g_parziale = 0;
+        memset(&g_forma, 0, sizeof g_forma);
+        fd = open(percorso, O_RDONLY, 0);
+        if (fd < 0) return 0;
+        while ((n = (int)read(fd, buf, sizeof buf)) > 0) {
+            for (i = 0; i < n; i++) {
+                char c = buf[i];
+                ultimo = (unsigned char)c;
+                if (c == '\0') { g_forma.nul = 1; continue; }   /* vedi sotto */
+                if (c == '\n') {
+                    if (col && riga[col - 1] == '\r') { col--; cr++; }
+                    lf++;
+                    if (!aggiungi(&riga, &col, &posti, 0)) goto fine_male;
+                    continue;
+                }
+                if (!metti_car(&riga, &col, &posti, c)) goto fine_male;
+            }
+        }
+        if (n < 0) goto fine_male;                 /* errore di lettura: parziale */
+        if (col && !aggiungi(&riga, &col, &posti, 0)) goto fine_male;
+        g_forma.crlf = (cr * 2 > lf);              /* maggioranza */
+        g_forma.a_capo_finale = (ultimo == '\n');
+        close(fd);
+        free(riga);
+        ex_textarea_set_unmodified(g_area);
+        if (g_forma.nul) {
+            strcpy(g_avviso, "il file contiene byte 0: aperto in sola lettura");
+            g_parziale = 1;                        /* salva() rifiuta */
+        }
+        return 1;
+    fine_male:
+        close(fd); free(riga);
+        g_parziale = 1;
+        strcpy(g_avviso, "letto solo in parte (memoria o errore di lettura)");
+        return 1;
+    }
+
+    /* la riga cresce col malloc: nessun limite tranne la memoria */
+    static int metti_car(char **r, size_t *col, size_t *posti, char c)
+    {
+        if (*col + 2 > *posti) {
+            size_t nuovi = *posti ? *posti * 2 : 256;
+            char  *p = (char *)realloc(*r, nuovi);
+            if (!p) return 0;
+            *r = p; *posti = nuovi;
+        }
+        (*r)[(*col)++] = c;
+        return 1;
+    }
+    static int aggiungi(char **r, size_t *col, size_t *posti, int dummy)
+    {
+        (void)dummy;
+        if (!metti_car(r, col, posti, '\0')) return 0;
+        (*col)--;
+        if (!ex_textarea_add_line(g_area, *r)) return 0;
+        *col = 0;
+        return 1;
+    }
+
+  I byte 0 non si possono rappresentare in una riga del toolkit: il file
+  si apre per guardarlo, e salvare e' rifiutato con il motivo (meglio che
+  rovinarlo). Un vero editor binario e' un'altra cosa (un visore
+  esadecimale: fuori da qui).
+
+2.2 Salvare senza mai distruggere l'originale
+
+    static int salva(void)
+    {
+        char   tmp[PERC_MAX + 16];
+        struct stat st;
+        int    fd, esisteva;
+        unsigned int i, n;
+        const char *fine = g_forma.crlf ? "\r\n" : "\n";
+        unsigned int lf = g_forma.crlf ? 2u : 1u;
+
+        if (g_parziale) { ...come oggi... }
+        if (g_perc[0] == '\0') return salva_come();
+        if (g_rtf) return rtf_salva();
+
+        esisteva = (stat(g_perc, &st) == 0);
+        snprintf(tmp, sizeof tmp, "%s.exed~", g_perc);   /* stessa directory:
+                                                            rename resta sullo
+                                                            stesso volume */
+        fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_EXCL, 0600);
+        if (fd < 0 && errno == EEXIST) { unlink(tmp); fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL, 0600); }
+        if (fd < 0) { sprintf(g_avviso, "non riesco a scrivere accanto a %s", g_perc); return 0; }
+
+        n = ex_textarea_line_count(g_area);
+        for (i = 0; i < n; i++) {
+            const char  *r = ex_textarea_line(g_area, i);
+            unsigned int l = (unsigned int)strlen(r);
+            int ultima = (i + 1 == n);
+            if ((l && scrivi_tutto(fd, r, l) != 0) ||
+                ((!ultima || g_forma.a_capo_finale || g_forma_nuovo) &&
+                 scrivi_tutto(fd, fine, lf) != 0)) {
+                close(fd); unlink(tmp);
+                strcpy(g_avviso, "scrittura non riuscita: il file su disco e' quello di prima");
+                return 0;
+            }
+        }
+        if (fsync(fd) != 0) { close(fd); unlink(tmp); strcpy(g_avviso, "il disco non conferma: file non salvato"); return 0; }
+        /* modo e proprietario del file di prima (chmod/chown: il nuovo nasce
+           0600 del chiamante) */
+        if (esisteva) { fchmod(fd, st.st_mode & 07777); fchown(fd, st.st_uid, st.st_gid); }
+        else fchmod(fd, 0644 & ~umask_corrente());
+        close(fd);
+        if (rename(tmp, g_perc) != 0) {
+            unlink(tmp);
+            sprintf(g_avviso, "non riesco a sostituire %s", g_perc);
+            return 0;
+        }
+        ex_textarea_set_unmodified(g_area);
+        sprintf(g_avviso, "salvato: %u righe", n);
+        return 1;
+    }
+
+    static int scrivi_tutto(int fd, const char *p, unsigned int n)
+    {
+        while (n) {
+            ssize_t w = write(fd, p, n);
+            if (w < 0 && errno == EINTR) continue;
+            if (w <= 0) return -1;
+            p += w; n -= (unsigned int)w;
+        }
+        return 0;
+    }
+
+  Note:
+   - rename sopra un file esistente oggi non e' atomica su ext2 (voce 49 di
+     analisi_kernel): il file vecchio puo' sparire un istante prima che
+     arrivi il nuovo. E' comunque molto meglio di O_TRUNC (finestra di
+     microsecondi invece che di tutta la scrittura); si chiude del tutto
+     quando la voce 49 e' fatta.
+   - Se la directory non e' scrivibile ma il file si' (caso raro: file di
+     sistema 0666 in /boot 0755), si ripiega sul metodo di oggi, chiedendo
+     prima ("Salvare sovrascrivendo direttamente? Un errore a meta' perde il
+     file").
+   - fchown/fchmod: se la libc non le ha, chown/chmod sul percorso tmp
+     prima del rename.
+   - g_forma_nuovo: per un file nuovo si mette l'a capo finale (convenzione
+     POSIX).
+   - Riga di stato: "LF" o "CRLF" accanto al numero di riga, cliccabile per
+     cambiare (Formato > Fine riga).
+
+2.3 Annulla senza troncare, e meno caro
+
+  Subito: annulla_fai() con riga allocata come in 2.1 (metti_car), niente
+  char riga[512].
+  Poi: invece della copia intera a ogni modifica, i passi diventano
+  operazioni (riga, colonna, testo tolto, testo messo), registrate dal
+  controllo areatesto stesso: e' il posto giusto, perche' sa cosa ha
+  cambiato. Nel toolkit:
+
+    /* l'areatesto tiene la sua storia: Ctrl+Z/Ctrl+Y funzionano in OGNI
+       programma che la usa (exeditor, exide, gfedit grafico) */
+    int  ex_textarea_undo(ExWindow a);      /* 1 se ha annullato */
+    int  ex_textarea_redo(ExWindow a);
+    void ex_textarea_undo_limit(ExWindow a, unsigned int byte);
+    void ex_textarea_undo_group(ExWindow a, int apri);  /* piu' modifiche = un passo */
+
+  con una pila di record { tipo (inserisci/togli), riga, col, testo
+  (malloc), istante_ms }, e le battute consecutive dentro 1 s fuse in un
+  passo solo. exeditor allora toglie annulla_segna/annulla_fai/
+  testo_di_adesso (~120 righe) e chiama le due funzioni.
+
+-------------------------------------------------------------------------------
+3. PROVA
+-------------------------------------------------------------------------------
+  - Una chiavetta FAT quasi piena (o un ramdisk da 64 KB): aprire un file da
+    40 KB, aggiungere 40 KB, salvare: errore, e il file sulla chiavetta e'
+    ancora quello di prima (sha256sum prima e dopo).
+  - File con una riga da 5000 caratteri: si apre, si modifica, si salva; cmp
+    con l'originale modificato a mano sull'host.
+  - File CRLF (unix2dos sull'host), modificato e salvato: resta CRLF
+    (file(1) sull'host). File senza a capo finale: resta senza.
+  - File con byte 0: si apre, avviso, Salva rifiutato.
+  - Riga da 2000 caratteri, modifica, Annulla: riga intera.
+  - Modo e proprietario: file 0640 di uid 1000 modificato da root via
+    sudo exeditor: dopo il salvataggio ancora 0640 uid 1000.
+
+-------------------------------------------------------------------------------
+4. STATO (25/11/2026, notte)
+-------------------------------------------------------------------------------
+FATTO (exeditor 0.010):
+  - (a) salva in "nome.exed~" (O_EXCL, accanto al file), fsync, modo e
+    proprietario di prima (chmod/chown sul percorso: fchmod sui file in
+    EX-OS non fa niente), poi unlink + rename. ! rename di EX-OS NON
+    sostituisce (EEXIST, lib/libc.c): fra unlink e rename c'e' un
+    istante senza il nome, ma il testo intero e' gia' in nome.exed~ sul
+    disco. Se accanto non si puo' scrivere, o il proprietario non si
+    puo' tenere (un utente che modifica il file condiviso di un altro),
+    chiede e scrive al posto come prima, con fsync.
+  - (b) byte 0: il file si apre da guardare, Salva dice "il file ha byte
+    0" (prima la riga si troncava in silenzio).
+  - (c) righe senza limite (Riga che cresce con realloc).
+  - (d) \r\n ricordato per maggioranza e rimesso; \r da solo resta nella
+    riga; l'ultimo a capo resta com'era; un file vuoto resta vuoto; un
+    file nuovo con del testo prende l'a capo finale. La riga di stato
+    all'apertura dice "fine riga DOS".
+  - (e) Annulla, cambio di scheda e il segno "modificato" non troncano
+    piu' a 511 caratteri (area_segna_modificata troncava la PRIMA riga
+    a ogni cambio di scheda con un file modificato).
+  - Due sprintf di un percorso da 192 byte in g_avviso da 96: snprintf.
+  - Prova sull'host: carica/salva estratte da exeditor.c con un'area
+    finta (scratchpad, non nel repository): CRLF senza a capo finale
+    identico, riga da 5000, byte 0 rifiutato, \r isolato, file vuoto,
+    file nuovo, modo 0640 tenuto.
+DA FARE: provarlo in EX-OS (chiavetta FAT piena, sudo exeditor su un
+  file di un altro utente).
+NON FATTO, DA DECIDERE:
+  - (f) la storia degli annullamenti dentro l'areatesto (ex_textarea_undo/
+    redo per tutti i programmi): e' un cambiamento di exwin.so.
+  - (g) UTF-8: e' implementazione_EXEDIT002.

@@ -6,6 +6,10 @@
 
 **Contents**
 
+- [Kernel 0.367 and the network: su, terminals, shared memory and the kernel log have an owner; signed updates; sshd, TCP and DNS against blind attacks — tested in QEMU](#kernel-0367-and-the-network-su-terminals-shared-memory-and-the-kernel-log-have-an-owner-signed-updates-sshd-tcp-and-dns-against-blind-attacks--tested-in-qemu)
+- [exeditor saves without destroying the file, exide chooses more controls at once, EXBrowser cookies as today's browsers, USB sticks refuse short transfers — tested in QEMU](#exeditor-saves-without-destroying-the-file-exide-chooses-more-controls-at-once-exbrowser-cookies-as-todays-browsers-usb-sticks-refuse-short-transfers--tested-in-qemu)
+- [Firefox's frozen shared memory is read-only for real (kernel 0.366, voce 115) — tested in QEMU](#firefoxs-frozen-shared-memory-is-read-only-for-real-kernel-0366-voce-115--tested-in-qemu)
+- [How long the file lock waits for the disk (kernel 0.364-0.365, voce 117) — tested in QEMU and on the test PC](#how-long-the-file-lock-waits-for-the-disk-kernel-0364-0365-voce-117--tested-in-qemu-and-on-the-test-pc)
 - [Mounting over an empty folder (kernel 0.363) — tested in QEMU and on the test PC](#mounting-over-an-empty-folder-kernel-0363--tested-in-qemu-and-on-the-test-pc)
 - [Disks in PIO no longer stop the system; optical drives on AHCI (kernel 0.362, voce 117) — tested in QEMU and on the test PC](#disks-in-pio-no-longer-stop-the-system-optical-drives-on-ahci-kernel-0362-voce-117--tested-in-qemu-and-on-the-test-pc)
 - [Firefox uses the programs of the system: Show in folder, the program of each file type, the ExWin file dialog (exwin 0.024, pm 0.030, kernel 0.361, voce 118) — tested in QEMU](#firefox-uses-the-programs-of-the-system-show-in-folder-the-program-of-each-file-type-the-exwin-file-dialog-exwin-0024-pm-0030-kernel-0361-voce-118--tested-in-qemu)
@@ -252,6 +256,80 @@
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### Kernel 0.367 and the network: su, terminals, shared memory and the kernel log have an owner; signed updates; sshd, TCP and DNS against blind attacks — tested in QEMU
+
+- **Why**: the reports in `debug/` (24-25 November) listed holes a user, a web page or a
+  machine on the network could use. Each one is now in `debug/in_lavorazione` with a STATO
+  section: what is done, what is left, what needs a decision.
+- **su and sudo**: every wrong password costs a second, and from the third in a row the kernel
+  does not even look for a while (1, 2, 4... up to 300 seconds); the right one or 15 quiet
+  minutes reset it. sudo says "troppi tentativi sbagliati".
+- **Terminals**: every `/dev/pts/N` has an owner and mode 0620, as on Linux; login gives it to
+  whoever logs in. `fchown` and `fchmod` work on terminals.
+- **Named shared memory** (`shm_apri`, `shm_open`): an owner and a mode, 0600 unless the creator
+  says otherwise; until 0.367 anybody attached to anybody's windows and clipboard.
+- **Descriptors sent over unix sockets** have a ceiling per user (RLIMIT_NOFILE, at most one per
+  128 KB of RAM): ETOOMANYREFS instead of eating the kernel's memory.
+- **dmesg and text mode**: root and whoever sits at the console; from telnet or ssh, `sudo dmesg`.
+- **netupdate 0.053**: `versione.txt` is signed (ed25519), with a series and a 30-day expiry;
+  nothing is touched if the signature is missing or wrong. The ed25519 of the system checked
+  only messages up to 448 bytes: fixed.
+- **sshd 0.004**: every field read within the packet, Terrapin closed (strict key exchange), a
+  client that drops no longer blocks the next login.
+- **ip.drv 0.029**: random initial sequence numbers and ports, blind RST, SYN and ACK refused
+  (RFC 5961, challenge ACK), three new counters in `ipcfg`; `ipcfg -d` sets the DNS by hand.
+  The DNS resolver believes only the server it asked, from port 53, about the question it asked.
+- **TLS**: keyUsage, extendedKeyUsage, pathLen and nameConstraints in the certificate chain.
+- Tested in QEMU at 32 and 64 bit: prova_permessi, prova_ssh with malformed packets,
+  prova_tcp_cieca (a fake host sending raw frames), prova_verifiche, make prova-excert 31 of 31.
+
+### exeditor saves without destroying the file, exide chooses more controls at once, EXBrowser cookies as today's browsers, USB sticks refuse short transfers — tested in QEMU
+
+- **exeditor 0.010**: saving writes `name.exed~` beside the file, waits for the disk, and only
+  then puts it in place: a full disk or a stick pulled halfway leaves the old file. Lines of any
+  length (they stopped at 255), DOS line ends and the last newline kept as they were, a file with
+  zero bytes opens only to look at, Undo no longer cuts lines at 511.
+- **exide 0.028-0.029**: closing the source editor, the compiler, the libraries or the project
+  card no longer leaves the designer grey; dragging redraws only the canvas. More controls at
+  once, as in Visual Basic: Ctrl+click, Shift+click, a rubber band on the empty form, Ctrl+A,
+  Esc, arrows (Shift: the grid), Ctrl+arrows for the size, Del, copy and paste of the group.
+- **EXBrowser 0.034**: no cookie for a public suffix ("com", "co.uk", "github.io") or for an IP
+  address, a script cannot touch an HttpOnly cookie, an http page neither makes nor overwrites a
+  Secure one, `__Secure-` and `__Host-` names must be true (make prova-biscotti 75 of 75).
+- **USB storage** (uhci 0.008, ehci 0.005, ohci 0.012, xhci 0.007): a read or write the device
+  does only in part is an error, tried once more; before, the filesystem got the previous read's
+  bytes instead. Disks over 2 TB are used up to 2 TB instead of being seen empty; configuration
+  descriptors are read within their length.
+- **exwin.so 0.025**: `ex_update_rect`, to hand the server one rectangle.
+
+### Firefox's frozen shared memory is read-only for real (kernel 0.366, voce 115) — tested in QEMU
+
+- **Why**: Firefox hands its content processes some memory "frozen", read-only. On EX-OS that
+  handle was a plain copy of the descriptor: a content process could map it for writing and
+  change memory the main process trusts.
+- **`open("/proc/self/fd/N", O_RDONLY)`** of a memory descriptor is now the same memory
+  read-only, as on Linux, and never with more access than the original.
+- **Pages mapped from a read-only descriptor stay read-only**: `mmap` and `mprotect` for
+  writing answer EACCES (before, `mprotect` made any shared page writable), the size does not
+  change, and a program that writes there dies of a page fault.
+- **Exilla** makes its frozen handle that way (patch of `ipc/glue/SharedMemoryPlatform_posix.cpp`).
+- Tested in QEMU at 32 and 64 bit: unixprova 82 of 82 (prova_permessi 14 of 14),
+  Firefox with more processes loads the page.
+
+### How long the file lock waits for the disk (kernel 0.364-0.365, voce 117) — tested in QEMU and on the test PC
+
+- **Why**: on the test PC a `stat("/")` waited up to 1.8 s while the CD was read, and 345 ms
+  behind the disk. Before choosing a cure: is it the device or the kernel's own work?
+- **The block layer counts device time**, commands and sectors (every disk command, FLUSH CACHE
+  and every packet to an optical drive), and the file lock says, for its long holds, how much of
+  them was the device. The line `VFS 1s: ...` is at debug level: `loglevel = 4` in
+  `/boot/kernel.cfg` shows it.
+- **At boot the disk's APM level is in the log** (`ATA: ... APM acceso, livello N`).
+- **Measured on the test PC**: the long holds are 98-100% device time. Reading 64 KB from
+  the CD takes 1.4-1.9 s (the drive spinning up again), a 4 KB read from the disk 355 ms after a
+  pause (APM 128: the heads unload), sync and the ext4 journal 600-750 ms of FLUSH CACHE. The
+  cure is queued (voce 117).
 
 ### Mounting over an empty folder (kernel 0.363) — tested in QEMU and on the test PC
 

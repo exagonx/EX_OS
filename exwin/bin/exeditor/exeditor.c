@@ -27,6 +27,8 @@
  * ============================================================================= */
 
 #include "libc.h"
+#include "fcntl.h"
+#include "unistd.h"
 #include "exwin.h"
 #include "exdlg.h"
 #include "exinfo.h"
@@ -34,7 +36,7 @@
 #include "exrtf_vista.h"
 
 /* +0.001 a ogni modifica: `exeditor -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.009"
+#define VERSIONE_APP "0.010"
 EX_VERSIONE("exeditor", VERSIONE_APP);
 
 /* ! LA FINESTRA NASCE LARGA QUANTO UNA COLONNA DI A4, se lo schermo lo
@@ -122,6 +124,11 @@ static int g_w0 = 640, g_h0 = 420;
 static char g_perc[PERC_MAX] = "";
 static int  g_parziale = 0;     /* letto SOLO IN PARTE: non si salva */
 static char g_avviso[96] = "";
+/* (debug/bug_EXEDIT001) how the file was made, so saving gives it back the
+ * same: \r\n line ends (majority), the last byte a \n, NUL bytes inside
+ * (then it opens to look at, never to save). g_finale 2: a new or empty file,
+ * the final \n comes only with some text (an empty file stays empty). */
+static int  g_crlf = 0, g_finale = 2, g_nul = 0;
 
 static ExWindow g_f, g_area, g_stato, g_menu, g_barra, g_schede;
 
@@ -149,14 +156,38 @@ static void vista_disegna_se(void);
  * un editor abbia di distruggere dei dati. E' anche perche' ex_textarea_add_line()
  * rende 0 quando l'area e' piena, invece di smettere in silenzio.
  * --------------------------------------------------------------------------- */
+/* A line that grows with malloc: no limit but memory. 0 = no memory. */
+typedef struct { char *p; unsigned int n, posti; } Riga;
+
+static int riga_metti(Riga *r, char c)
+{
+    if (r->n + 2 > r->posti) {
+        unsigned int nuovi = r->posti ? r->posti * 2 : 256;
+        char        *q = (char *)realloc(r->p, nuovi);
+
+        if (!q) return 0;
+        r->p = q; r->posti = nuovi;
+    }
+    r->p[r->n++] = c;
+    r->p[r->n] = '\0';
+    return 1;
+}
+
+/* ! (debug/bug_EXEDIT001) NO MORE char riga[256]: the bytes past 255 were
+ * dropped and the file became read-only - a minified JSON could not be
+ * edited. A \r goes only before a \n (and is remembered); an isolated one
+ * stays in the line. A NUL cannot live in a C string line: the file opens to
+ * look at and saving says why. */
 static int carica(const char *percorso)
 {
-    char buf[512], riga[256];
-    int  fd, n, i;
-    unsigned int col = 0;
+    char buf[4096];
+    int  fd, n, i, ultimo = -1;
+    unsigned int cr = 0, lf = 0;
+    Riga r = { 0, 0, 0 };
 
     ex_textarea_clear(g_area);
     g_parziale = 0;
+    g_crlf = 0; g_finale = 2; g_nul = 0;
 
     fd = open(percorso, O_RDONLY, 0);
     if (fd < 0) return 0;               /* non c'e': e' un file nuovo */
@@ -165,24 +196,28 @@ static int carica(const char *percorso)
         for (i = 0; i < n; i++) {
             char c = buf[i];
 
-            if (c == '\r') continue;    /* i fine-riga di DOS non si vedono */
-
+            ultimo = (unsigned char)c;
+            if (c == '\0') { g_nul = 1; continue; }
             if (c == '\n') {
-                riga[col] = '\0';
-                if (!ex_textarea_add_line(g_area, riga)) { g_parziale = 1; goto fine; }
-                col = 0;
+                if (r.n && r.p[r.n - 1] == '\r') { r.p[--r.n] = '\0'; cr++; }
+                lf++;
+                if (!ex_textarea_add_line(g_area, r.p ? r.p : "")) { g_parziale = 1; goto fine; }
+                r.n = 0;
+                if (r.p) r.p[0] = '\0';
                 continue;
             }
-
-            if (col + 1 < sizeof(riga)) riga[col++] = c;
-            else                        g_parziale = 1;
+            if (!riga_metti(&r, c)) { g_parziale = 1; goto fine; }
         }
     }
-    riga[col] = '\0';
-    if (col && !ex_textarea_add_line(g_area, riga)) g_parziale = 1;
+    if (n < 0) g_parziale = 1;          /* a read error: what came is not all */
+    if (r.n && !ex_textarea_add_line(g_area, r.p)) g_parziale = 1;
+    g_crlf   = (lf > 0 && cr * 2 > lf);
+    g_finale = ultimo < 0 ? 2 : (ultimo == '\n');
 
 fine:
     close(fd);
+    free(r.p);
+    if (g_nul) g_parziale = 1;
     ex_textarea_set_unmodified(g_area);
     return 1;
 }
@@ -232,11 +267,59 @@ static void apri_con_dialogo(void)
     doc_apri(nuovo);
 }
 
+static const char *base_nome(const char *p);
+
+static int scrivi_tutto(int fd, const char *p, unsigned int n)
+{
+    while (n) {
+        ssize_t w = write(fd, p, n);
+
+        if (w < 0 && errno == EINTR) continue;
+        if (w <= 0) return -1;
+        p += w; n -= (unsigned int)w;
+    }
+    return 0;
+}
+
+/* Every line, with the file's own line end; the last one gets it only if the
+ * file had it. 0 = all written and confirmed by the disk. */
+static int scrivi_righe(int fd, unsigned int *righe)
+{
+    unsigned int i, n = ex_textarea_line_count(g_area);
+    const char  *fine = g_crlf ? "\r\n" : "\n";
+
+    for (i = 0; i < n; i++) {
+        const char  *r = ex_textarea_line(g_area, i);
+        unsigned int l = (unsigned int)strlen(r);
+
+        if (l && scrivi_tutto(fd, r, l) != 0) return -1;
+        if ((i + 1 < n || g_finale == 1 || (g_finale == 2 && (n > 1 || l > 0))) &&
+            scrivi_tutto(fd, fine, g_crlf ? 2u : 1u) != 0) return -1;
+    }
+    *righe = n;
+    return fsync(fd);
+}
+
+/* ! (debug/bug_EXEDIT001) SAVING NEVER DESTROYS THE FILE. Until 0.009 it was
+ * opened with O_TRUNC and written line by line: a full disk, a pulled stick
+ * or a dead ext4 module halfway, and the original was already gone ("the file
+ * is incomplete" was true, and useless). Now the text goes to "name.exed~"
+ * beside it, fsync, the old mode and owner, then the swap. rename in EX-OS
+ * does not replace (EEXIST, see libc.c): the old name goes first, and if the
+ * machine dies in that instant the whole text is in name.exed~. Where the
+ * directory says no (a 0666 file in a 0755 directory, or another user's
+ * name.exed~ in /tmp) it asks, and writes in place as before. */
 static int salva(void)
 {
-    int fd;
-    unsigned int i, n;
+    char         tmp[PERC_MAX + 8];
+    struct stat  st;
+    int          fd, esisteva;
+    unsigned int n = 0;
 
+    if (g_nul) {
+        strcpy(g_avviso, "il file ha byte 0: salvarlo li perderebbe");
+        return 0;
+    }
     if (g_parziale) {
         strcpy(g_avviso, "letto solo in parte: salvare cancellerebbe il resto");
         return 0;
@@ -244,22 +327,65 @@ static int salva(void)
     if (g_perc[0] == '\0') return salva_come();
     if (g_rtf) return rtf_salva();
 
-    fd = open(g_perc, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0) {
-        sprintf(g_avviso, "non riesco a scrivere %s", g_perc);
-        return 0;
-    }
-
-    n = ex_textarea_line_count(g_area);
-    for (i = 0; i < n; i++) {
-        const char  *r = ex_textarea_line(g_area, i);
-        unsigned int l = (unsigned int)strlen(r);
-
-        if ((l && write(fd, r, l) != (ssize_t)l) || write(fd, "\n", 1) != 1) {
-            close(fd);
-            strcpy(g_avviso, "scrittura interrotta: il file e' incompleto");
+    esisteva = (stat(g_perc, &st) == 0);
+    snprintf(tmp, sizeof(tmp), "%s.exed~", g_perc);
+    fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if (fd < 0 && errno == EEXIST && unlink(tmp) == 0)
+        fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if (fd >= 0) {
+        if (scrivi_righe(fd, &n) != 0) {
+            close(fd); unlink(tmp);
+            strcpy(g_avviso, "scrittura non riuscita: il file su disco e' quello di prima");
             return 0;
         }
+        close(fd);
+        if (esisteva) {
+            chmod(tmp, st.st_mode & 07777);
+            /* another user's file (root with sudo, or a shared one): if it
+             * cannot keep its owner it is not swapped, it is written in place */
+            if (st.st_uid != (uid_t)getuid() &&
+                chown(tmp, st.st_uid, st.st_gid) != 0 && errno != ENOSYS) {
+                unlink(tmp);
+                fd = -1;
+            }
+        } else {
+            chmod(tmp, 0644);
+        }
+        if (fd >= 0) {
+            if (esisteva && unlink(g_perc) != 0) {
+                unlink(tmp);
+            } else if (rename(tmp, g_perc) != 0) {
+                snprintf(g_avviso, sizeof(g_avviso), "non riesco a rinominare: il testo e' in %s",
+                         base_nome(tmp));
+                return 0;
+            } else {
+                ex_textarea_set_unmodified(g_area);
+                sprintf(g_avviso, "salvato: %u righe", n);
+                return 1;
+            }
+        }
+    }
+
+    /* the old way, asked first: a failure halfway loses the file */
+    {
+        char q[PERC_MAX + 96];
+
+        snprintf(q, sizeof(q), "Non riesco a scrivere accanto a %s. Sovrascriverlo direttamente? "
+                 "Un errore a meta' lo perde.", base_nome(g_perc));
+        if (!ex_dlg_conferma("Salvare", q, "Sovrascrivi", "Annulla")) {
+            strcpy(g_avviso, "non salvato");
+            return 0;
+        }
+    }
+    fd = open(g_perc, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        snprintf(g_avviso, sizeof(g_avviso), "non riesco a scrivere %s", base_nome(g_perc));
+        return 0;
+    }
+    if (scrivi_righe(fd, &n) != 0) {
+        close(fd);
+        strcpy(g_avviso, "scrittura interrotta: il file e' incompleto");
+        return 0;
     }
     close(fd);
 
@@ -506,25 +632,13 @@ static void area_segna_modificata(void);
 static void area_segna_modificata_presto(void) { area_segna_modificata(); }
 
 /* Rimette il testo del passo piu' recente. Rende 0 se non c'era niente. */
+static void area_da_testo(const char *t);
+
 static int annulla_fai(void)
 {
-    char        *t;
-    unsigned int i, a;
-    char         riga[512];
-
     if (g_passi_n == 0) return 0;
 
-    t = g_passi[g_passi_n - 1].testo;
-    ex_textarea_clear(g_area);
-
-    i = 0;
-    while (t[i]) {
-        a = 0;
-        while (t[i] && t[i] != '\n' && a < sizeof(riga) - 1) riga[a++] = t[i++];
-        riga[a] = '\0';
-        ex_textarea_add_line(g_area, riga);
-        if (t[i] == '\n') i++;
-    }
+    area_da_testo(g_passi[g_passi_n - 1].testo);
 
     g_passi_n--;
     passo_libera(g_passi_n);
@@ -561,6 +675,7 @@ typedef struct {
     int          usato;
     char         perc[PERC_MAX];
     int          parziale;
+    int          crlf, finale, nul;     /* see g_crlf */
     char        *testo;             /* le righe unite da '\n', mentre aspetta */
     int          modificato;
     unsigned int riga, col, vista;
@@ -994,7 +1109,7 @@ static int rtf_salva(void)
     n = exrtf_scrivi(&D->rd, b, max);
     if (!n) { free(b); strcpy(g_avviso, "non salvato: l'RTF non entra nella memoria"); return 0; }
     fd = open(g_perc, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0) { free(b); sprintf(g_avviso, "non riesco a scrivere %s", g_perc); return 0; }
+    if (fd < 0) { free(b); snprintf(g_avviso, sizeof(g_avviso), "non riesco a scrivere %s", base_nome(g_perc)); return 0; }
     if (write(fd, b, n) != (ssize_t)n) {
         close(fd);
         free(b);
@@ -1635,6 +1750,7 @@ static int doc_metti_via(void)
     strncpy(D->perc, g_perc, PERC_MAX - 1);
     D->perc[PERC_MAX - 1] = '\0';
     D->parziale   = g_parziale;
+    D->crlf = g_crlf; D->finale = g_finale; D->nul = g_nul;
     D->modificato = ex_textarea_is_modified(g_area);
     ex_textarea_get_cursor(g_area, &D->riga, &D->col);
     D->vista      = ex_textarea_get_view(g_area, 0);
@@ -1652,30 +1768,39 @@ static int doc_metti_via(void)
 }
 
 /* Rimette nell'area il testo t (righe unite da '\n'). */
+/* ! (debug/bug_EXEDIT001) a line longer than 511 came back cut after an
+ * undo or a change of tab: the line is copied whole, in place, between the
+ * \n of the text (it is ours, made by testo_di_adesso). */
 static void area_da_testo(const char *t)
 {
-    char         riga[512];
     unsigned int i = 0, a;
+    Riga         r = { 0, 0, 0 };
 
     ex_textarea_clear(g_area);
     while (t && t[i]) {
-        a = 0;
-        while (t[i] && t[i] != '\n' && a < sizeof(riga) - 1) riga[a++] = t[i++];
-        riga[a] = '\0';
-        ex_textarea_add_line(g_area, riga);
+        r.n = 0;
+        if (r.p) r.p[0] = '\0';
+        for (a = i; t[a] && t[a] != '\n'; a++)
+            if (!riga_metti(&r, t[a])) break;
+        ex_textarea_add_line(g_area, r.p ? r.p : "");
+        i = a;
+        while (t[i] && t[i] != '\n') i++;
         if (t[i] == '\n') i++;
     }
+    free(r.p);
 }
 
 /* Il testo e' cambiato rispetto al file: l'area lo deve sapere. Si
- * riscrive la prima riga uguale a se stessa, che accende il segno. */
+ * riscrive la prima riga uguale a se stessa, che accende il segno.
+ * (debug/bug_EXEDIT001) whole: a copy of 512 cut the first line. */
 static void area_segna_modificata(void)
 {
-    char r[512];
+    const char *p = ex_textarea_line(g_area, 0);
+    char       *r = strdup(p ? p : "");
 
-    strncpy(r, ex_textarea_line(g_area, 0), sizeof(r) - 1);
-    r[sizeof(r) - 1] = '\0';
+    if (!r) return;
     ex_textarea_set_line(g_area, 0, r);
+    free(r);
 }
 
 /* La scheda i torna nell'area. */
@@ -1707,6 +1832,7 @@ static void doc_riprendi(int i)
     strncpy(g_perc, D->perc, PERC_MAX - 1);
     g_perc[PERC_MAX - 1] = '\0';
     g_parziale = D->parziale;
+    g_crlf = D->crlf; g_finale = D->finale; g_nul = D->nul;
     memcpy(g_passi, D->passi, sizeof(g_passi));
     g_passi_n    = D->passi_n;
     g_passi_byte = D->passi_byte;
@@ -1743,6 +1869,7 @@ static int doc_nuovo(void)
     ex_textarea_set_unmodified(g_area);
     g_perc[0] = '\0';
     g_parziale = 0;
+    g_crlf = 0; g_finale = 2; g_nul = 0;
     g_rtf = 0;
     ex_item_select(g_schede, (unsigned int)g_attivo);
     modo_mostra();
@@ -1783,7 +1910,10 @@ static void doc_apri(const char *perc)
             strcpy(g_avviso, "non c'era: documento RTF nuovo");
         return;
     }
-    if (carica(g_perc)) sprintf(g_avviso, "aperto: %u righe", ex_textarea_line_count(g_area));
+    if (carica(g_perc))
+        sprintf(g_avviso, "aperto: %u righe%s%s", ex_textarea_line_count(g_area),
+                g_crlf ? ", fine riga DOS" : "",
+                g_nul ? ", BYTE 0: solo da guardare" : (g_parziale ? ", SOLO IN PARTE" : ""));
     else                strcpy(g_avviso, "non c'era: file nuovo");
     passo_tutti_via();
 }
@@ -1816,6 +1946,7 @@ static void doc_chiudi(int i)
         ex_textarea_set_unmodified(g_area);
         g_perc[0] = '\0';
         g_parziale = 0;
+        g_crlf = 0; g_finale = 2; g_nul = 0;
         strcpy(g_avviso, "chiuso");
         return;
     }

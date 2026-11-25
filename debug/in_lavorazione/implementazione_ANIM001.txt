@@ -1,0 +1,239 @@
+IMPLEMENTAZIONE ANIM001 - Animazioni di ExWin: undici effetti tra cui
+                          scegliere, il ciclo dei fotogrammi nel server e nel
+                          toolkit
+===============================================================================
+Priorita':  BASSA-MEDIA (estetica; va fatta dopo implementazione_TEMA001,
+            da cui dipende: usa ExTela ed ExTema)
+Programma:  drivers/wserver (effetti di finestra), lib/exwin (effetti di
+            controllo), pm (la scelta)
+Sorgenti nuovi (scritti, compilati e provati sull'host):
+            debug/grafica/extanim.h, extanim.c     curve e copie comuni
+            debug/grafica/anim_NN_*.c              un effetto per file
+            debug/grafica/anim_NN_*.png            PNG ANIMATO dell'effetto
+            debug/grafica/anim_NN_*_fotogrammi.png sei fotogrammi in griglia
+            debug/grafica/anim_anteprima.c, anim_png.py, fa_anteprime.sh
+Sorgenti da toccare:
+            drivers/wserver/wserver.c  il ciclo principale (ipc_scegli),
+                                 sporca(), mostra(), crea/distruggi/riduci
+            lib/exwin/exwin.c    il giro dei timer (sveglia_ms/sveglia_quando,
+                                 ex_set_timer), disegna_oggetto_nudo
+Rilevato su: albero del 25/11/2026.
+
+-------------------------------------------------------------------------------
+1. GLI EFFETTI (guardare i PNG animati: si aprono con un navigatore o con
+   qualunque visore che legga gli APNG; i _fotogrammi.png con tutto)
+-------------------------------------------------------------------------------
+ N  file / funzione          dove     quando                      durata
+ -- ------------------------ -------- --------------------------- --------
+ 01 anim_01_dissolvenza      server   apri / chiudi finestra      160/120
+    exa_dissolvenza                   (il piu' leggero)
+ 02 anim_02_zoom             server   apri (rimbalzo) / chiudi    220/150
+    exa_zoom
+ 03 anim_03_scivola          server   dialoghi (sale con la molla) 280
+    exa_scivola
+ 04 anim_04_genio (imbuto)   server   riduci a icona / ripristina  380
+    exa_genio
+ 05 anim_05_cristallo        server   finestra principale e avvio  420
+    exa_cristallo                     della sessione (dal logo)
+ 06 anim_06_onda             toolkit  clic sui pulsanti            450
+    exa_onda
+ 07 anim_07_respiro          toolkit  pulsante predefinito (ciclica) 1800/periodo
+    exa_respiro
+ 08 anim_08_tendina          server o menu, elenchi a discesa,     140
+    exa_tendina              toolkit  menu contestuali
+ 09 anim_09_selezione        toolkit  liste, menu, linguette        120
+    exa_selezione
+ 10 anim_10_luccichio        toolkit  progresso senza misura (ciclica) 1200/periodo
+    exa_luccichio
+ 11 anim_11_cambio           server o linguette, pannelli, modale    180
+    exa_cambio               toolkit  che sostituisce modale
+
+Si possono scegliere indipendentemente: uno per l'apertura delle finestre
+(01, 02, 03 o 05), uno per la riduzione (04 o 01 al contrario), e i
+controlli (06-10) accesi o spenti uno per uno. Proposta di predefiniti:
+apertura 02, dialoghi 03, riduzione 04, controlli 06 08 09 10 11, respiro
+07 spento (e' l'unico ciclico sempre visibile).
+
+-------------------------------------------------------------------------------
+2. IL CICLO DEI FOTOGRAMMI NEL SERVER
+-------------------------------------------------------------------------------
+Il server non ha un orologio di disegno: ridisegna quando un messaggio
+sporca qualcosa. Le animazioni ne vogliono uno, ma SOLO mentre ce n'e' una
+in corso: a riposo il server deve continuare a dormire (BLOCKED) come oggi.
+
+2.1 Lo stato per finestra
+
+    typedef struct {
+        unsigned char tipo;          /* ANIM_NESSUNA, ANIM_APRE, ANIM_CHIUDE,
+                                        ANIM_RIDUCE, ANIM_RIPRISTINA */
+        unsigned char effetto;       /* 1..5 (anim_01..05) */
+        unsigned int  inizio_ms;     /* uptime_ms all'avvio */
+        unsigned int  durata_ms;
+        int           ix, iy;        /* bersaglio (icona) per 04 */
+    } AnimFin;
+    /* in Finestra: */  AnimFin anim;
+
+2.2 L'orologio
+
+    static unsigned int g_anim_vive = 0;    /* quante animazioni in corso */
+
+    /* nel ciclo principale, prima di ipc_scegli: */
+    unsigned int attesa = g_anim_vive ? 16u : ATTESA_DI_OGGI;   /* ~60 Hz */
+    ... ipc_scegli(..., attesa) ...
+    if (g_anim_vive) anim_passo();
+
+    static void anim_passo(void)
+    {
+        unsigned int ora = uptime_ms(), i;
+        for (i = 0; i < g_fin_posti; i++) {
+            Finestra *f = &g_fin[i];
+            int t;
+            if (!f->usata || f->anim.tipo == ANIM_NESSUNA) continue;
+            t = (int)((ora - f->anim.inizio_ms) * 1000u / f->anim.durata_ms);
+            if (t >= 1000) { anim_fine(f); continue; }     /* g_anim_vive-- */
+            sporca_con_margine(f);       /* rettangolo che l'effetto tocca:
+                                            02 e 03 escono dal rettangolo
+                                            della finestra (rimbalzo +5%,
+                                            scivola +48 px), 04 arriva fino
+                                            all'icona */
+        }
+        componi_sporco();               /* il giro normale, che per le
+                                           finestre animate chiama
+                                           anim_posa() invece della copia */
+    }
+
+  ! IL TEMPO SI PRENDE DALL'OROLOGIO, NON DAL NUMERO DI FOTOGRAMMI: se il
+  server e' in ritardo (un client che manda tanti AGGIORNA, la CPU presa da
+  una compilazione) l'animazione salta fotogrammi e finisce in tempo, non
+  si allunga. Mai Sleep fra un fotogramma e l'altro.
+
+2.3 Il posare
+
+    static void anim_posa(Finestra *f, ExTela *t, int t1000)
+    {
+        const unsigned int *src = f->zona;          /* 32 bit, la zona condivisa */
+        int sw = f->w, sh = f->h, passo = f->w;
+        switch (f->anim.effetto) {
+        case 1: exa_dissolvenza(t, f->x, f->y, src, sw, sh, passo, t1000,
+                                f->anim.tipo == ANIM_APRE); break;
+        case 2: exa_zoom(t, f->x, f->y, src, sw, sh, passo, t1000,
+                         f->anim.tipo == ANIM_APRE); break;
+        case 3: exa_scivola(t, f->x, f->y, src, sw, sh, passo, t1000); break;
+        case 4: exa_genio(t, f->x, f->y, src, sw, sh, passo, f->anim.ix, f->anim.iy,
+                          f->anim.tipo == ANIM_RIDUCE ? t1000 : 1000 - t1000); break;
+        case 5: exa_cristallo(t, g_tema, f->x, f->y, src, sw, sh, passo, t1000); break;
+        }
+    }
+
+  ! LA ZONA DEL CLIENT E' IL SOLO CONTENUTO, NON IL TELAIO. Perche'
+  l'effetto prenda la finestra intera (barra del titolo compresa), il
+  server compone telaio + zona in un buffer a 32 bit della misura
+  esterna (una volta, all'avvio dell'animazione: f->anim_img) e anima
+  quello. Costo: w*h*4 byte per la durata dell'animazione, poi si libera.
+
+  ! IN CHIUSURA LA ZONA STA MORENDO: WIN_MSG_DISTRUGGI arriva e oggi il
+  server chiude la zona subito (shm_chiudi). Con l'animazione di chiusura
+  il server fa prima la copia in anim_img e solo dopo chiude la zona; la
+  finestra resta in g_fin come "fantasma" (non riceve eventi, non e' in
+  g_ordine per i clic) finche' l'animazione finisce.
+
+2.4 Interazioni
+
+  - Il clic durante un'apertura va alla finestra (e' gia' al suo posto: le
+    coordinate di destinazione sono quelle vere). Durante una chiusura o
+    una riduzione no.
+  - Una seconda richiesta sulla stessa finestra (ripristina mentre riduce)
+    riparte dal punto in cui e' l'animazione: t_nuovo = 1000 - t_attuale.
+  - Le applicazioni a schermo pieno (WIN_ST_* "massimizzata") e quelle con
+    WIN_ST_NOANIM (flag nuovo, per i giochi e i video) non si animano.
+
+-------------------------------------------------------------------------------
+3. IL CICLO NEL TOOLKIT (effetti di controllo 06-10, e 11 per le linguette)
+-------------------------------------------------------------------------------
+Il toolkit ha gia' i timer per finestra (Oggetto.sveglia_ms /
+sveglia_quando, ex_set_timer, il giro in exwin.c che manda EXM_TIMER). Per
+le animazioni serve un timer INTERNO, che non arrivi all'applicazione:
+
+    /* in Oggetto */
+    unsigned int  anim_inizio;      /* uptime_ms; 0 = nessuna */
+    unsigned char anim_effetto;     /* 6..11 */
+    short         anim_px, anim_py; /* onda: il punto del clic */
+    int           anim_da;          /* selezione: y di partenza */
+
+    static unsigned int g_anim_ctrl = 0;   /* quante in corso, per l'attesa */
+
+  - Nel punto in cui il toolkit sceglie quanto aspettare i messaggi (lo
+    stesso dei timer, exwin.c intorno a "if (o->sveglia_ms == 0)
+    continue;"): se g_anim_ctrl > 0 l'attesa e' al massimo 16 ms.
+  - A ogni giro: per ogni oggetto con anim_inizio, t = (ora - inizio) *
+    1000 / durata; se t >= 1000 (e non ciclica) anim_inizio = 0; in ogni
+    caso disegna_oggetto(o) e aggiorna il suo rettangolo (WIN_MSG_AGGIORNA
+    del solo rettangolo: costa poco).
+  - disegna_oggetto_nudo, alla fine del case del controllo:
+
+        if (o->anim_inizio) {
+            int t = anim_t(o);
+            switch (o->anim_effetto) {
+            case 6: exa_onda(&tt, g_tema, x, y, o->w, o->h, o->anim_px, o->anim_py, t); break;
+            case 9: /* gia' fatto dentro ext_lista: vedi sotto */ break;
+            }
+        }
+        if (o->predefinito && anim_accesa(7) && finestra_ha_fuoco(o))
+            /* PRIMA del pulsante: */ exa_respiro(...)
+
+  - Liste (09): ext_lista va chiamata con scelta = -1 quando l'animazione
+    e' in corso, poi exa_selezione fra la y vecchia e la nuova, poi il
+    testo delle righe (lo fa anim_anteprima.c, scena 09: e' l'esempio).
+    Se arriva un'altra freccia durante l'animazione: anim_da = la y
+    ATTUALE (exa_lerp(da, a, exa_esce(t))), anim_inizio = adesso.
+  - Linguette: lo stesso con x/w (la sottolineatura scorre) per
+    EXT_LING_SOTTOLINEA e EXT_LING_PILLOLA; il contenuto della pagina con
+    exa_cambio (11): il toolkit fotografa il rettangolo del contenitore
+    prima di cambiare pagina (memcpy delle righe da r->pix), disegna la
+    pagina nuova in un buffer fuori schermo, e per 180 ms posa
+    exa_cambio(vecchia, nuova, verso = +1/-1).
+  - Menu (08): il toolkit disegna la EX_POPUP intera e la consegna; e' il
+    server che la anima con exa_tendina all'apertura (stesso meccanismo
+    delle finestre, effetto 8, durata 140).
+
+-------------------------------------------------------------------------------
+4. LA SCELTA
+-------------------------------------------------------------------------------
+$HOME/.exwin/config/tema.cfg (lo stesso di TEMA001):
+
+    animazioni = piene           # piene | ridotte | spente
+    anim_apri = 2                # 0 = nessuna, 1, 2, 3, 5
+    anim_dialogo = 3
+    anim_riduci = 4              # 0, 1, 4
+    anim_controlli = 6,8,9,10,11 # quali effetti di controllo
+    anim_respiro = 0
+
+  "ridotte" = durate a meta' e niente effetti ciclici; "spente" = nessuna
+  (anche per l'accessibilita' e per le sessioni remote: un client che
+  disegna attraverso la rete non deve pagare 60 fotogrammi al secondo).
+  pm, pannello "Aspetto": tre elenchi a discesa (apertura, dialoghi,
+  riduzione) e caselle per i controlli; accanto a ciascuno, "Prova" fa
+  partire l'effetto su una finestrella di prova.
+  Il server spegne tutto da solo se misura che un fotogramma costa piu' di
+  40 ms (macchina lenta): una riga nel registro e "ridotte".
+
+-------------------------------------------------------------------------------
+5. PROVA
+-------------------------------------------------------------------------------
+  - sh debug/grafica/fa_anteprime.sh: i PNG si rifanno dagli stessi file;
+    ogni modifica a un effetto si guarda prima li'.
+  - QEMU 1024x768x32: aprire/chiudere/ridurre 20 finestre di fila: nessun
+    resto sullo schermo (rettangoli sporchi giusti, ombre comprese), nessuna
+    finestra "fantasma" che resta in g_fin (contarle con un messaggio di
+    diagnosi del server).
+  - Durante una compilazione (make dentro EX-OS): le animazioni finiscono
+    in tempo (saltano fotogrammi), il server non si ferma.
+  - wserver a riposo: BLOCKED come oggi (ps), nessun risveglio a 60 Hz.
+  - animazioni = spente: identico a oggi, misurato con
+    tools/misura_finestre.py.
+
+-------------------------------------------------------------------------------
+STATO (25/11/2026, notte)
+-------------------------------------------------------------------------------
+LETTO, NON COMINCIATO: dipende da TEMA001 (ExTela, ExTema) e tocca il
+ciclo principale di wserver e i timer del toolkit. Dopo TEMA001.

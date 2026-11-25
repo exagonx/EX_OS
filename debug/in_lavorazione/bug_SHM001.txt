@@ -1,0 +1,274 @@
+BUG SHM001 - Le zone condivise per nome non hanno proprietario: chiunque
+              legge e scrive le finestre e gli appunti di un altro utente,
+              occupa i nomi prima di wserver e lo fa cadere
+===============================================================================
+Gravita':   ALTA (sicurezza fra utenti + DoS del server grafico)
+Programma:  kernel EX-OS (SYS_SHM_APRI 242), wserver, libexwin
+Sorgenti:   kernel/mm/shm.c               shm_apri_dentro, cerca_nome,
+                                          zona_crea, aggancia
+            kernel/include/shm.h          ShmZonaK, SHM_CREA
+            kernel/syscall/syscall_impl.c sys_shm_apri
+            drivers/wserver/wserver.c     crea finestra (win_nome_zona(...,
+                                          g_prossimo_id, 0) + SHM_CREA),
+                                          ridimensiona (giro + 1), foto
+            drivers/wserver/win_proto.h   win_nome_zona ("win<id>.<giro>")
+            lib/exwin/exwin.c             appunti() -> zona "exappunti"
+Rilevato su: albero del 24/11/2026. Cercare le funzioni per nome.
+
+-------------------------------------------------------------------------------
+1. IL DIFETTO
+-------------------------------------------------------------------------------
+a) NESSUN CONTROLLO D'ACCESSO. ShmZonaK ha nome, pagine, fisico, proc:
+   niente uid/gid/modo. shm_apri_dentro trova la zona con cerca_nome() e
+   la aggancia a chiunque la chieda. La voce 111 (kernel 0.359) ha chiuso
+   wserver "solo al suo utente" a livello di IPC, ma i PIXEL delle finestre
+   non passano dall'IPC: stanno in zone il cui nome e' deducibile.
+
+b) NOMI PREVEDIBILI. win_nome_zona produce "win" + id decimale + "." +
+   giro; id = g_prossimo_id++ (sequenziale dall'avvio), giro parte da 0 e
+   cresce di 1 a ogni ridimensionamento. Lo spazio dei nomi vivi si
+   enumera in pochi millisecondi: id 1..N, giro 0..G.
+
+c) NESSUNA CREAZIONE ESCLUSIVA. SHM_CREA vuol dire "creala se non c'e',
+   altrimenti attaccati". Manca l'equivalente di O_EXCL: chi crea non sa
+   se ha creato o si e' attaccato a una zona altrui (wserver non lo
+   chiede: non c'e' modo di chiederlo).
+
+d) LA MISURA RESA NON VIENE CONTROLLATA. "byte conta solo quando la zona
+   viene creata" (shm.h). wserver, in crea e nel ridimensionamento, chiede
+   larghezza*altezza*4 e usa z.virt senza confrontare z.byte con quanto
+   chiesto. (Il ramo "foto" invece lo fa: "the zone is the client's: its
+   true size decides".)
+
+e) NESSUN TETTO PER UTENTE. pagine_max() limita la singola zona allo
+   schermo (es. 1920x1080x4 = 2025 pagine, 8 MB), ma il numero di zone non
+   ha limite (tabella_cresci) e le pagine sono fisiche, azzerate subito
+   (zona_crea alloca tutto), non contate in nessun RLIMIT, e non vanno
+   nello swap se condivise.
+
+f) "exappunti" (gli appunti di ExWin) e' una zona sola, globale, di 4096
+   byte, creata dal primo che la chiede.
+
+-------------------------------------------------------------------------------
+2. COSA COMPORTA
+-------------------------------------------------------------------------------
+  - LETTURA: un processo di un altro utente (o un processo di contenuto di
+    Firefox compromesso, o un CGI) si aggancia a "win<id>.<giro>" e legge i
+    pixel delle finestre: terminale, editor, dialogo della password di
+    sudo grafico, pagine del browser. Screen scraping senza permessi.
+  - SCRITTURA: scrive nei pixel delle finestre altrui: falsi dialoghi
+    dentro la finestra di un altro programma.
+  - OCCUPAZIONE DEL NOME (squatting): l'attaccante crea in anticipo
+    "win<g_prossimo_id>.0" (e i successivi) e li tiene aperti. Quando
+    wserver crea la finestra si attacca alla zona dell'attaccante, che
+    vedra' per sempre il contenuto di quella finestra.
+  - CRASH DI wserver: se la zona pre-creata e' di 1 pagina, wserver la usa
+    come se fosse larghezza*altezza*4; la composizione legge oltre la
+    mappatura -> page fault in wserver -> la grafica muore (direttiva 2:
+    sopravvive il sistema, ma la scrivania e' giu' per tutti).
+  - APPUNTI: qualunque utente legge cio' che un altro copia (password
+    copiate da un gestore di password, token), e lo sostituisce (incolla
+    di un comando diverso nel terminale della vittima). Se l'attaccante
+    crea "exappunti" per primo, la zona e' sua.
+  - ESAURIMENTO DELLA MEMORIA: un ciclo di shm_apri con nomi diversi e
+    SHM_CREA alloca 8 MB fisici a ogni giro, senza limite; il sistema
+    resta senza RAM non scambiabile (OOM per tutti i processi, driver
+    ring 3 compresi).
+
+-------------------------------------------------------------------------------
+3. RIPRODUZIONE
+-------------------------------------------------------------------------------
+    /* come uid 1000, con ExWin acceso da root */
+    ShmZona z; unsigned id, g;
+    for (id = 1; id < 4096; id++) for (g = 0; g < 8; g++) {
+        memset(&z, 0, sizeof z);
+        snprintf(z.nome, sizeof z.nome, "win%u.%u", id, g);
+        if (shm_apri(&z) == 0) {
+            printf("%s: %u byte, primo pixel %08x\n", z.nome, z.byte,
+                   ((unsigned *)z.virt)[0]);
+            /* qui si puo' salvare la finestra in PPM */
+        }
+    }
+
+    /* crash di wserver */
+    for (id = cur + 1; id < cur + 64; id++) {
+        memset(&z, 0, sizeof z);
+        snprintf(z.nome, sizeof z.nome, "win%u.0", id);
+        z.byte = 4096; z.flag = SHM_CREA;
+        shm_apri(&z);           /* resta aperta: il processo dorme */
+    }
+    pause();                    /* poi si apre una finestra qualunque */
+
+-------------------------------------------------------------------------------
+4. CORREZIONE
+-------------------------------------------------------------------------------
+Tre interventi indipendenti; il primo chiude la falla, gli altri due la
+rendono robusta. Ordine consigliato: 4.1 + 4.3 subito, 4.2 dopo.
+
+4.1 Proprietario, modo e creazione esclusiva nel kernel
+
+kernel/include/shm.h
+
+    #define SHM_CREA     0x0001  /* creala se non c'e' */
+    #define SHM_ESCL     0x0002  /* con SHM_CREA: EEXIST se c'e' gia' */
+    #define SHM_MODO(m)  (((uint32_t)(m) & 0777u) << 16)  /* modo alla
+                                    creazione; 0 = 0600 */
+
+    typedef struct {
+        char      nome[SHM_NOME_LEN];
+        uint32_t  pagine;
+        uint32_t *fisico;
+        uint32_t  proc;
+        uint32_t  uid, gid;     /* creatore */
+        uint32_t  modo;         /* 0600 predefinito */
+        uint32_t  concessi[SHM_CONCESSI];   /* vedi 4.2, opzionale */
+    } ShmZonaK;
+
+kernel/mm/shm.c, shm_apri_dentro
+
+    static int zona_permette(const ShmZonaK *z, const Process *p)
+    {
+        uint32_t ha;
+        if (p->uid == 0) return 1;
+        if (p->uid == z->uid)               ha = (z->modo >> 6) & 7u;
+        else if (proc_nel_gruppo(p, z->gid)) ha = (z->modo >> 3) & 7u;
+        else                                 ha =  z->modo       & 7u;
+        return (ha & 6u) == 6u;      /* la mappatura e' sempre RW */
+    }
+
+    ...
+    idx = cerca_nome(nome);
+    if (idx >= 0) {
+        if ((flag & (SHM_CREA | SHM_ESCL)) == (SHM_CREA | SHM_ESCL))
+            return ERR(EEXIST);
+        if (!zona_permette(&g_zone[idx], proc))
+            return ERR(EACCES);
+        ... (controllo "gia' aperta da questo processo" invariato)
+    }
+    if (idx < 0) {
+        ...
+        rc = zona_crea(i, nome, pagine);
+        if (rc != 0) return rc;
+        g_zone[i].uid  = proc->uid;
+        g_zone[i].gid  = proc->gid;
+        g_zone[i].modo = (flag >> 16) & 0777u;
+        if (g_zone[i].modo == 0) g_zone[i].modo = 0600u;
+        ...
+    }
+
+   Compatibilita': i client ExWin girano con lo stesso uid di wserver
+   (voce 111: "wserver solo al suo utente"), quindi 0600 non rompe nulla.
+   Il caso root che apre una finestra sul wserver di un utente passa
+   comunque (uid 0). audio/exsuono: verificare l'uid del servizio audio;
+   se e' un driver di root che condivide con utenti, crea con
+   SHM_MODO(0660) e gid del gruppo audio, oppure usa 4.2.
+
+   sys_shm_apri: passare u->flag intero (gia' lo fa), nient'altro.
+
+4.2 Concessione a un PID (consigliata per wserver)
+
+Il server non dovrebbe fidarsi di "stesso uid": un processo di contenuto
+di Firefox gira come l'utente ma non dovrebbe leggere le altre finestre.
+La zona va concessa al solo client che l'ha chiesta:
+
+    #define SHM_CONCESSI 4
+    /* SYS_SHM_CONCEDI (nuovo numero): solo il creatore o root; pid = 0
+     * svuota l'elenco */
+    int32_t shm_concedi(Process *me, uint32_t virt, uint32_t pid);
+
+   zona_permette diventa: creatore (stesso PROCESSO creatore, non uid),
+   oppure pid in concessi[], oppure uid 0. wserver, in crea():
+
+        z.flag = SHM_CREA | SHM_ESCL;
+        if (shm_apri(&z) != 0) { ...rispondi errore...; return; }
+        shm_concedi(z.virt, pid_del_client);
+
+   In alternativa, piu' vicino a Linux e gia' disponibile: creare la zona
+   come FD_SHM (SYS_SHMFD_CREA, memfd) e mandarla al client con
+   SCM_RIGHTS su un socketpair (sys_unix_manda). Nessun nome, nessuna
+   enumerazione possibile. E' la strada di Wayland (wl_shm) e del
+   multi-processo di Firefox (voce 115) gia' implementata nel kernel.
+
+4.3 wserver: controllare cio' che il kernel rende
+
+drivers/wserver/wserver.c, in crea() e nel ridimensionamento:
+
+        z.byte = r.larghezza * r.altezza * 4;
+        z.flag = SHM_CREA | SHM_ESCL;
+        if (shm_apri(&z) != 0 ||
+            z.byte < r.larghezza * r.altezza * 4u) {
+            if (z.virt) shm_chiudi(z.virt);
+            (void)ipc_send(pid, WIN_MSG_CREATA, &r, sizeof(r));  /* id 0 */
+            return;
+        }
+
+   E il nome non deve essere deducibile: aggiungere 64 bit casuali
+   (getrandom / SYS_ENTROPIA) al nome e mandarlo nel WIN_MSG_CREATA
+   invece di farlo ricostruire al client:
+
+        "w%08x%08x.%u"  (SHM_NOME_LEN deve bastare: verificarlo)
+
+   Il nome casuale da solo NON basta (resta enumerabile se c'e' un modo di
+   elencare le zone, e shm_stato/proc potrebbero esporlo): e' una difesa in
+   profondita' dietro 4.1/4.2.
+
+4.4 Appunti
+
+"exappunti" non deve essere una zona aperta a tutti. Due strade:
+  - per sessione: nome "exappunti.<uid>" creato con SHM_ESCL dal wserver
+    all'avvio (modo 0600), i client lo aprono senza SHM_CREA;
+  - meglio: gli appunti passano da wserver via IPC (WIN_MSG_COPIA /
+    WIN_MSG_INCOLLA), che ha gia' il mittente timbrato dal kernel
+    (SYS_IPC_RECV_CHI, kernel 0.356) e puo' decidere chi incolla.
+  In libexwin appunti(): se shm_apri ritorna z.byte < APPUNTI_BYTE,
+  chiudere e non usarla (oggi g_appunti->n viene letto da una zona di
+  qualunque misura).
+
+4.5 Tetto per utente
+
+In shm_apri_dentro, alla creazione:
+
+        if (proc->uid != 0 &&
+            shm_pagine_di(proc->uid) + pagine > shm_tetto_utente())
+            return ERR(ENOSPC);
+
+   con shm_pagine_di() che somma g_zone[i].pagine per uid (scorrimento
+   lineare: le zone sono poche decine) e shm_tetto_utente() = una frazione
+   della RAM (es. pmm_pagine_totali() / 4) o un valore da kernel.cfg.
+   Stesso tetto per FD_SHM/memfd (kernel/mm/shmfd.c), che consuma la
+   stessa memoria.
+
+-------------------------------------------------------------------------------
+5. PROVA
+-------------------------------------------------------------------------------
+  - tools/prove/shmperm.c: come uid 1000 con ExWin di root acceso, il
+    ciclo del punto 3: atteso EACCES su ogni win*, 0 agganci.
+  - Squatting: pre-creare win<id>.0 come uid 1000, poi aprire una
+    finestra: wserver deve rifiutare (SHM_ESCL -> EEXIST) e la finestra
+    o non nasce (con messaggio) o nasce con un nome casuale; wserver vivo.
+  - bin/shmtest (padre/figlio stesso uid): deve passare invariato.
+  - audio: tools/prova-media 8 su 8 come prima.
+  - Tetto: ciclo di creazione come uid 1000 -> ENOSPC prima di finire la
+    RAM; mem prima e dopo identica alla morte del processo.
+-------------------------------------------------------------------------------
+6. STATO (25/11/2026, notte)
+-------------------------------------------------------------------------------
+FATTO (kernel 0.367, wserver 0.018):
+  - ogni zona ha uid, gid e modo (SHM_MODO(m), 0600 se non detto); per
+    aprirla servono r e w come per un file; root passa. SHM_ESCL con
+    SHM_CREA: EEXIST se c'e' gia'.
+  - il driver audio crea la sua zona 0666 (chi suona lo decide l'IPC
+    della console, voce 111); wserver crea le zone delle finestre con
+    SHM_ESCL e controlla la misura (un nome gia' preso salta all'id
+    dopo); exwin rifiuta appunti di misura sbagliata; shm_open passa il
+    suo modo al kernel.
+  - Prova: tools/prove/shmperm.c (da mettere in prova_permessi al giro
+    dopo la notte).
+DA DECIDERE: 4.2 una zona audio per cliente (oggi 0666 come prima),
+  4.4 appunti via IPC del server, 4.5 tetto per utente (legato a LIM001).
+DA GUARDARE: gli appunti "exappunti" sono di chi li crea per primo
+  (0600): se il primo e' un programma di root, gli altri utenti restano
+  senza appunti (non si rompe niente, si perde il copia-incolla).
+
+ESITO (25/11, 06:36): prova_permessi 17 su 17 a 32 e 64 bit, shmperm
+compreso. Resta qui per 4.2, 4.4, 4.5.

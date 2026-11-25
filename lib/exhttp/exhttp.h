@@ -190,6 +190,14 @@ typedef void (*ExHttpBiscottoArrivato)(void *dato, const char *host,
 void exhttp_biscotti(ExHttpBiscottiChiedi chiedi,
                      ExHttpBiscottoArrivato arrivato, void *dato);
 
+/* The same, with `cifrata` (1 = the answer came over https) for the cookies
+ * that arrive: a browser needs it to leave Secure cookies alone
+ * (debug/bug_BROWSER001). The old hook stays for the programs built before. */
+typedef void (*ExHttpBiscottoArrivatoS)(void *dato, const char *host,
+                                        const char *riga, int cifrata);
+void exhttp_biscotti_schema(ExHttpBiscottiChiedi chiedi,
+                            ExHttpBiscottoArrivatoS arrivato, void *dato);
+
 /* =============================================================================
  * L'ATTESA — leggere a pezzi senza smettere di essere vivi
  *

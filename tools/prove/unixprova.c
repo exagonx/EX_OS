@@ -419,14 +419,76 @@ int main(void)
             }
             close(sv[1]);
             prova(manda_fd(sv[0], 'R', &r, 1) == 1, "la copia va a un figlio");
-            prova(waitpid(figlio, &st, 0) == figlio && WIFSIGNALED(st) && WTERMSIG(st) == SIGSEGV,
-                  "il figlio che scrive nella copia muore di SIGSEGV");
+            /* EX-OS: the status is the exit code, and a fault kills with -11
+             * (proc_esci_fatale; WIFSIGNALED is always 0, libc.h). Linux:
+             * killed by SIGSEGV. */
+            prova(waitpid(figlio, &st, 0) == figlio &&
+                  (st == -11 || (WIFSIGNALED(st) && WTERMSIG(st) == SIGSEGV)),
+                  "il figlio che scrive nella copia muore (fault, -11)");
             prova(aw[0] == 7, "e la memoria non e' cambiata");
             close(sv[0]);
         }
         if (aw) munmap(aw, 4096);
         if (r > 2) close(r);
         if (w > 2) close(w);
+    }
+
+    /* 9. (kernel 0.367, debug/bug_UNIX001) descriptors on the way have a
+     * ceiling per uid: sent and received they give it back; cycles (an end
+     * sent over itself, then closed) stop with ETOOMANYREFS instead of
+     * eating the kernel's memory. As uid 1003, which nothing else uses: its
+     * cycles stay until reboot. */
+    if (getuid() == 0) {
+        figlio = fork();
+        if (figlio == 0) {
+            int k, n, tr, f[4], cicli, massimo;
+
+            if (setgid(1003) != 0 || setuid(1003) != 0) _exit(10);
+            if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0 || pipe(pp) != 0) _exit(11);
+            for (k = 0; k < 3000; k++) {
+                if (manda_fd(sv[0], 'V', &pp[0], 1) != 1) _exit(12);
+                if (ricevi_fd(sv[1], c, sizeof(c), f, 4, &n, &tr) != 1 || n != 1) _exit(13);
+                close(f[0]);
+            }
+            /* the kernel's ceiling is one per 128 KB of RAM: twice that and
+             * no ETOOMANYREFS is a fail, before an older kernel runs out */
+            {
+                long pg = sysconf(_SC_PHYS_PAGES);
+
+                massimo = pg > 0 ? (int)(pg / 16) : 4096;
+                if (massimo < 256) massimo = 256;
+            }
+            for (cicli = 0; cicli < massimo; cicli++) {
+                int s2[2];
+
+                if (socketpair(AF_UNIX, SOCK_STREAM, 0, s2) != 0) _exit(14);
+                k = manda_fd(s2[0], 'C', &s2[1], 1);
+                close(s2[0]);
+                close(s2[1]);
+                if (k != 1) {
+                    if (errno != ETOOMANYREFS) _exit(15);
+                    break;
+                }
+            }
+            printf("      uid 1003: %d cicli, poi ETOOMANYREFS\n", cicli);
+            if (cicli >= massimo || cicli < 16) _exit(16);
+            _exit(0);
+        }
+        prova(figlio > 0 && waitpid(figlio, &st, 0) == figlio && WIFEXITED(st) &&
+              WEXITSTATUS(st) == 0,
+              "SCM_RIGHTS: 3000 mandati e ricevuti senza consumare, i cicli si fermano (ETOOMANYREFS)");
+        if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0))
+            printf("      uscita del figlio %d\n", WIFEXITED(st) ? WEXITSTATUS(st) : -1);
+        /* root is not counted */
+        if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0) {
+            int n, tr, f[4];
+
+            prova(manda_fd(sv[0], 'R', &sv[1], 1) == 1 &&
+                  ricevi_fd(sv[1], c, sizeof(c), f, 4, &n, &tr) == 1 && n == 1,
+                  "root manda ancora");
+            if (n == 1) close(f[0]);
+            close(sv[0]); close(sv[1]);
+        }
     }
 
     printf("unixprova: %d prove, %d fallite\n", g_prove, g_fallite);

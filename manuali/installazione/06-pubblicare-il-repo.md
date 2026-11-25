@@ -89,6 +89,48 @@ elenco.txt       un file per riga: percorso, byte, impronta, pacchetto
 
 ---
 
+## 6.3.1 versione.txt è firmato (netupdate 0.053)
+
+L'ultima riga di `versione.txt` è la firma ed25519 di tutto ciò che la
+precede, insieme a due righe nuove:
+
+```
+serie     = 1795563538     quando è stato firmato: mai più basso di quello installato
+scade     = 1798155538     dopo questa data netupdate lo rifiuta (30 giorni)
+firma     = 6e14251a...    128 cifre esadecimali
+```
+
+`mknetinst.sh` lo firma da solo con `tools/netinst/firma.py`. La chiave
+privata sta **fuori dal progetto e fuori da MEGA**, in
+`~/ex_os/chiavi/netupdate-ed25519.key` (o dove dice `EXOS_CHIAVE`); quella
+pubblica è compilata in netupdate (`bin/netupdate/chiave_netupdate.h`).
+
+! **PERCHÉ.** `versione.txt` porta l'impronta di tutti gli altri file e
+  viaggia in HTTP in chiaro: chi stava sulla rete (o falsificava una risposta
+  DNS) poteva dare il suo, e netupdate installava un kernel suo ed eseguiva
+  le sue verifiche come root.
+
+! **LA CHIAVE PRIVATA NON SI PERDE E NON SI PUBBLICA.** Fanne una copia su un
+  supporto separato. Senza, le macchine installate non accettano più un
+  repository nuovo: ci vuole un netupdate con un'altra chiave, portato a mano.
+  Chi la ha può far installare qualunque cosa a ogni macchina.
+
+! **UN REPOSITORY CHE NON SI RIPUBBLICA PER 30 GIORNI SCADE.** Le macchine lo
+  rifiutano («l'albero del server è scaduto»): si rifà `make netinst` e si
+  ricarica. È voluto: protegge chi viene tenuto fermo su un albero vecchio.
+
+! **UN REPOSITORY TUO.** `tools/netinst/firma.py crea` fa la tua chiave,
+  `firma.py pub netupdate.pub` ne scrive la metà pubblica: va in
+  `/boot/netupdate.pub` sulle tue macchine, di root e non scrivibile da
+  altri. Da lì netupdate accetta solo i tuoi alberi.
+
+! **IL PASSAGGIO.** Un netupdate più vecchio della 0.053 ignora la firma:
+  l'aggiornamento che porta la 0.053 è l'ultimo non controllato. Un
+  repository non firmato si accetta solo con `netupdate -check -insicuro`,
+  e solo se non c'è `/boot/netupdate.pub`.
+
+---
+
 ## 6.4 Quanto pesa
 
 ```

@@ -43,7 +43,7 @@
 #include "rete.h"
 
 /* +0.001 a ogni modifica: `ipcfg -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("ipcfg", "0.006");
+EX_VERSIONE("ipcfg", "0.007");
 
 static int pid_ip = 0;
 
@@ -128,6 +128,9 @@ static int mostra_stato(void)
     printf("TCP rimandati      %u subito, %u a tempo scaduto\n",
            s.tcp_rit_veloci, s.tcp_scadenze);
     printf("TCP code grandi    %u\n", s.tcp_code_grandi);
+    /* ip.drv 0.029: zero with honest traffic (debug/bug_IP001) */
+    printf("TCP fuori finestra %u (RST ignorati %u, challenge ACK %u)\n",
+           s.tcp_fuori_fin, s.tcp_rst_ignorati, s.tcp_challenge);
     return 0;
 }
 
@@ -266,9 +269,13 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[i], "-g") == 0 && i + 1 < argc) {
             if (!ip_da_stringa(argv[++i], c.gateway)) goto malformato;
             cambia = 1;
+        } else if (strcmp(argv[i], "-d") == 0 && i + 1 < argc) {
+            /* the DNS server by hand: with a static address only DHCP set it */
+            if (!ip_da_stringa(argv[++i], c.dns)) goto malformato;
+            cambia = 1;
         } else {
             printf("uso: ipcfg                     indirizzo e contatori\n");
-            printf("     ipcfg -a IND [-m MASC] [-g GW]   cambia la configurazione\n");
+            printf("     ipcfg -a IND [-m MASC] [-g GW] [-d DNS]   cambia la configurazione\n");
             printf("     ipcfg -r                  tabella ARP\n");
             printf("     ipcfg -tcp                le connessioni TCP\n");
             printf("     ipcfg -l SCHEDA           lo stack su un'altra scheda (rete0, wifi0)\n");

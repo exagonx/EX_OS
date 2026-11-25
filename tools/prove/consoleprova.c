@@ -79,6 +79,32 @@ static int mappa_fb(int x)
     return errno == EPERM ? 1 : 2;
 }
 
+/* (kernel 0.367, debug/bug_PRIV001) children: 0 allowed, 1 EPERM, 2 other */
+static char g_klog[4096];
+static int leggi_klog(int x)
+{
+    int r = klog_leggi(g_klog, sizeof(g_klog), 1);
+
+    (void)x;
+    return r >= 0 ? 0 : (r == -EPERM ? 1 : 2);
+}
+static int testo(int x)
+{
+    int r = modo_testo();
+
+    (void)x;
+    return r == 0 ? 0 : (r == -EPERM ? 1 : 2);
+}
+/* reboot with a command that does not exist: EPERM before looking at it if
+ * not allowed, EINVAL if allowed - nothing goes down either way */
+static int spegne(int x)
+{
+    int r = reboot(99);
+
+    (void)x;
+    return r == -EINVAL ? 0 : (r == -EPERM ? 1 : 2);
+}
+
 /* child: bind port arg (negative = UDP): 0 ok, 1 EACCES, 2 other */
 static int lega(int porta)
 {
@@ -163,6 +189,17 @@ int main(void)
     esito("1002 alla casella CONSOLE, 1001 alla console", r == 1, v);
     r = come(1001, dice_console, 0);
     esito("1001 non puo' dire chi siede alla console", r == 1, r == 1 ? "EPERM" : "accettato");
+    /* PRIV001: the kernel's log, text mode, reboot */
+    r = come(1001, leggi_klog, 0);
+    esito("1001 alla console legge il registro del kernel", r == 0, r == 0 ? "letto" : "rifiutato");
+    r = come(1002, leggi_klog, 0);
+    esito("1002 (da rete) non legge il registro del kernel", r == 1, r == 1 ? "EPERM" : "letto");
+    r = come(1002, testo, 0);
+    esito("1002 non rimette lo schermo in testo", r == 1, r == 1 ? "EPERM" : "fatto");
+    r = come(1001, spegne, 0);
+    esito("1001 alla console, fd 0 della console: puo' spegnere", r == 0, r == 0 ? "EINVAL" : "EPERM");
+    r = come(1002, spegne, 0);
+    esito("1002 con lo stesso fd 0 ereditato: non spegne", r == 1, r == 1 ? "EPERM" : "ammesso");
     console_utente(2, 0);
     r = come(1001, manda, io);
     snprintf(v, sizeof(v), "%s", r == 1 ? "EPERM" : r == 0 ? "passato" : "altro");

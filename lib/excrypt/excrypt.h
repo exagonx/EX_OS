@@ -151,6 +151,18 @@ int  x25519_pubblica(unsigned char fuori[32], const unsigned char privata[32]);
  * tutto insieme: qui non si firmano file, si firmano scambi di chiavi. */
 void sha512(const unsigned char *m, unsigned int n, unsigned char out[64]);
 
+/* The same in pieces, for a message that is not in one buffer (Ed25519 hashes
+ * R || A || message: since 25/11/2026 at any length, not 448 bytes at most). */
+typedef struct {
+    unsigned long long h[8];
+    unsigned char      buf[128];
+    unsigned int       n;
+    unsigned long long tot;
+} Sha512;
+void sha512_inizia(Sha512 *c);
+void sha512_aggiungi(Sha512 *c, const unsigned char *m, unsigned int n);
+void sha512_finisci(Sha512 *c, unsigned char out[64]);
+
 /* SHA-384: stesso motore, altro valore iniziale, 48 byte in uscita. Serve alle
  * firme ECDSA su P-384 — che sul web sono tutt'altro che rare. */
 void sha384(const unsigned char *m, unsigned int n, unsigned char out[48]);

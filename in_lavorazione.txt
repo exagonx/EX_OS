@@ -10925,6 +10925,29 @@ tools/netinst/velocita tolto da netinst.
       GUARDATO (23/11): libevent di Exilla usa poll, non epoll (exos/event2/
       event-config.h: EVENT__HAVE_POLL 1, niente EPOLL); l'epoll della libc
       vale solo per i socket di ip.drv. Basta FD_UNIX in sys_poll.
+      24/11 sera, l'utente: "continua con ex_os" -> PASSO 4. Guardato prima
+      cosa chiede Gecko: nel suo IPC NON usa SOCK_SEQPACKET, MSG_PEEK ne'
+      shutdown (grep in ipc/, mozglue, xpcom, widget, dom/ipc); posix_spawn
+      con le azioni sui descrittori c'e' gia' nella libc. Cio' che mancava
+      davvero: la copia CONGELATA in sola lettura (Exilla la faceva con dup:
+      un processo dei contenuti poteva scrivere nella memoria che il padre
+      crede congelata). FATTO nel kernel 0.366: open("/proc/self/fd/N") di un
+      FD_SHM e' la stessa memoria, mai con piu' accesso dell'originale
+      (EACCES); le sue pagine si mappano PG_CONDIVISA_RO (bit 10 su una
+      pagina condivisa presente; PTE_E_COW le esclude) e mprotect non le
+      rende scrivibili (EACCES) - prima mprotect rendeva scrivibile
+      qualunque pagina condivisa. Exilla: SharedMemoryPlatform_posix.cpp,
+      ramo XP_EXOS, la copia con open di /proc/self/fd come su Linux (patch
+      rifatta). unixprova 82 (sezione 20: mappa e mprotect in scrittura
+      EACCES, ftruncate no, open O_RDWR dalla copia EACCES, il figlio che
+      ha solo la copia e scrive muore). prova_permessi 14 su 14 a 32 e 64.
+      TROVATO: waitpid da' il codice d'uscita (un fault = -11), WIFSIGNALED
+      sempre 0 (lib/include/libc.h dice "EX-OS non consegna segnali", ma
+      kernel/sched/segnali.c esiste): da chiedere all'utente se passare
+      alla codifica di Unix (tocca l'ABI della shell e di chi legge lo
+      stato).
+      RESTANO del passo 4 (nessuno li chiede ora): shutdown su un capo,
+      SOCK_SEQPACKET, MSG_PEEK.
 
   114. FILE MANAGER: MENU OPZIONI > VISUALIZZAZIONE E IL TRASCINAMENTO CHE SI
       VEDE (l'utente, 23/11/2026: "su file manager implementa la voce

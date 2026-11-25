@@ -1,0 +1,114 @@
+IMPLEMENTAZIONE EXEDIT002 - Testo UTF-8 nell'areatesto del toolkit e in
+                             exeditor
+===============================================================================
+Priorita':  MEDIA (ogni file di testo moderno e' UTF-8: un file italiano con
+            accenti oggi si vede e si modifica male)
+Programma:  lib/exwin (controllo "areatesto", CL_AREA), exwin/bin/exeditor
+Sorgenti:   lib/exwin/exwin.c   Area, area_riga, il disegno di CL_AREA, il
+                                cursore (colonna = byte), Canc/Backspace,
+                                frecce, selezione
+            exwin/bin/exeditor/exeditor.c   carica (vedi bug_EXEDIT001)
+Rilevato su: albero del 25/11/2026.
+
+-------------------------------------------------------------------------------
+1. COSA MANCA
+-------------------------------------------------------------------------------
+Il font di sistema e' 8x16 CP437 (256 glifi); l'areatesto tratta ogni byte
+come un carattere: colonna = byte, larghezza = 8 px per byte. Un file UTF-8
+"perche' citta'" con "e'" scritto come U+00E8 (C3 A8) si vede con due
+simboli, il cursore si ferma fra C3 e A8, Backspace toglie A8 e lascia C3
+(sequenza non valida), e la colonna nella riga di stato e' sbagliata.
+
+-------------------------------------------------------------------------------
+2. PROGETTO
+-------------------------------------------------------------------------------
+2.1 Le righe restano byte UTF-8 (nessuna conversione in memoria: il file si
+    riscrive identico se non lo si tocca), ma l'areatesto ragiona per
+    CODE POINT:
+
+    /* lunghezza della sequenza che comincia con b; 1 per byte non validi
+       (si mostrano come U+FFFD e si muovono come un carattere) */
+    static int u8_len(unsigned char b)
+    {
+        if (b < 0x80) return 1;
+        if ((b & 0xE0) == 0xC0) return 2;
+        if ((b & 0xF0) == 0xE0) return 3;
+        if ((b & 0xF8) == 0xF0) return 4;
+        return 1;
+    }
+    static unsigned int u8_dec(const char *s, int *n)     /* code point */
+    {
+        const unsigned char *p = (const unsigned char *)s;
+        int l = u8_len(p[0]), i;
+        unsigned int c;
+        if (l == 1) { *n = 1; return p[0] < 0x80 ? p[0] : 0xFFFD; }
+        c = p[0] & (0x7F >> l);
+        for (i = 1; i < l; i++) {
+            if ((p[i] & 0xC0) != 0x80) { *n = 1; return 0xFFFD; }
+            c = (c << 6) | (p[i] & 0x3F);
+        }
+        *n = l;
+        /* overlong e surrogati: non validi */
+        if ((l == 2 && c < 0x80) || (l == 3 && c < 0x800) || (l == 4 && c < 0x10000) ||
+            (c >= 0xD800 && c <= 0xDFFF) || c > 0x10FFFF) { *n = 1; return 0xFFFD; }
+        return c;
+    }
+    /* byte -> colonna visiva e ritorno */
+    static unsigned int u8_col(const char *r, unsigned int byte);
+    static unsigned int u8_byte(const char *r, unsigned int col);
+    /* passo a sinistra/destra di un carattere intero */
+    static unsigned int u8_prec(const char *r, unsigned int byte);
+    static unsigned int u8_succ(const char *r, unsigned int byte);
+
+    Il cursore (Oggetto.cursore e la colonna dell'area) resta un indice di
+    BYTE, ma si muove con u8_prec/u8_succ; Backspace e Canc tolgono
+    u8_len byte; la selezione si allinea ai confini; il disegno avanza di 8
+    px per code point, non per byte.
+
+2.2 Il glifo: da code point a CP437 per i caratteri che CP437 ha (lettere
+    accentate latine, simboli di riquadro, greco minuscolo comune), tabella
+    di 128 voci (0x80..0xFF di CP437 -> Unicode, invertita all'avvio in una
+    tabella di ricerca ordinata); il resto si disegna col TrueType se il
+    controllo ne ha uno (exfont.so, che il toolkit gia' sa aprire), o come
+    un quadratino. Inserimento da tastiera: il driver della tastiera manda
+    oggi codici CP437 per le lettere accentate italiane (keymap): si
+    convertono in UTF-8 al momento dell'inserimento.
+
+2.3 exeditor
+    - Rilevazione all'apertura: se il file e' UTF-8 valido (nessuna
+      sequenza rotta, o BOM EF BB BF) -> modo UTF-8; altrimenti modo
+      "8 bit" (Latin-1 / CP437, come oggi), scritto nella riga di stato.
+      Il BOM si ricorda e si riscrive se c'era.
+    - Formato > Codifica: UTF-8 / 8 bit, con conversione esplicita.
+    - Nuovi file: UTF-8 senza BOM.
+
+-------------------------------------------------------------------------------
+3. PROVA
+-------------------------------------------------------------------------------
+  - File UTF-8 "perche' citta' giu' piu' nave" (con le vere lettere
+    accentate) dall'host: si legge giusto; il cursore attraversa ogni
+    lettera con una freccia; Backspace su "e'" toglie entrambi i byte; il
+    file salvato senza modifiche e' identico byte per byte (cmp).
+  - File con una sequenza rotta (C3 41): si vede un quadratino e "A", si
+    salva senza toccare i byte.
+  - File CP437 vecchio (dal floppy): modo 8 bit, nessun cambiamento.
+
+-------------------------------------------------------------------------------
+4. STATO (25/11/2026, notte)
+-------------------------------------------------------------------------------
+NON FATTO, DA DECIDERE prima di scrivere codice (exwin.c, CL_AREA):
+  a) Per tutti o a richiesta? Se l'areatesto diventa UTF-8 per tutti,
+     cambia cosa ricevono exide, il browser (moduli), gfedit, il
+     terminale...: un tasto accentato oggi arriva come un byte CP437 e
+     diventerebbe due byte UTF-8 dentro file che quei programmi scrivono
+     come prima. Proposta: ex_textarea_set_utf8(area, 1) a richiesta,
+     acceso solo da exeditor quando il file e' UTF-8 valido; gli altri
+     programmi restano come oggi finche' non lo chiedono.
+     Pro: nessun programma cambia senza saperlo. Contro: due modi da
+     tenere nel controllo.
+  b) I caratteri che CP437 non ha: quadratino subito, TrueType (exfont)
+     in un secondo passo?
+  c) Il BOM: ricordato e riscritto (proposta del file) va bene?
+  Con le risposte e' un lavoro di una sessione: exwin.c (cursore, Canc,
+  Backspace, frecce, selezione, disegno), exeditor (rilevazione, riga di
+  stato, Formato > Codifica), prova sull'host per u8_dec/u8_prec/u8_succ.

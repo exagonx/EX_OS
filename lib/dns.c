@@ -151,6 +151,54 @@ static unsigned int salta_nome(const unsigned char *m, unsigned int len,
     return 0;
 }
 
+/* (debug/bug_DNS001) A name as it is, pointers followed, into out in the
+ * same form as scrivi_nome writes: the length written, 0 if malformed. At
+ * most SALTI_MAX pointers, and only backwards: a hostile message does not
+ * make us go round in circles. */
+static unsigned int nome_espandi(const unsigned char *m, unsigned int len,
+                                 unsigned int o, unsigned char *out, unsigned int cap)
+{
+    unsigned int n = 0, salti = 0;
+
+    while (o < len) {
+        unsigned char b = m[o];
+
+        if ((b & 0xC0) == 0xC0) {
+            unsigned int dove;
+
+            if (o + 2 > len || ++salti > SALTI_MAX) return 0;
+            dove = ((unsigned int)(b & 0x3F) << 8) | m[o + 1];
+            if (dove >= o) return 0;
+            o = dove;
+            continue;
+        }
+        if ((b & 0xC0) != 0) return 0;
+        if (n + 1u + b > cap || o + 1u + b > len) return 0;
+        memcpy(out + n, m + o, 1u + b);
+        n += 1u + b;
+        if (b == 0) return n;
+        o += 1u + b;
+    }
+    return 0;
+}
+
+/* Two names in the form above, letters in either case */
+static int nome_uguale(const unsigned char *a, unsigned int an,
+                       const unsigned char *b, unsigned int bn)
+{
+    unsigned int i;
+
+    if (an != bn || an == 0) return 0;
+    for (i = 0; i < an; i++) {
+        unsigned char x = a[i], y = b[i];
+
+        if (x >= 'A' && x <= 'Z') x = (unsigned char)(x + 32);
+        if (y >= 'A' && y <= 'Z') y = (unsigned char)(y + 32);
+        if (x != y) return 0;
+    }
+    return 1;
+}
+
 /* =============================================================================
  * Dialogo con lo stack
  * ============================================================================= */
@@ -219,7 +267,8 @@ int dns_risolvi_entro(const char *nome, unsigned char *ip, unsigned char *da,
     IpUdpInvia     inv;
     IpUdpApri      apri;
     IpStato        st;
-    unsigned int   len, n, id, porta;
+    unsigned int   len, n = 0, id, porta, cn;
+    unsigned char  corrente[256];      /* the name whose A we take (DNS001) */
     unsigned int   fine_tutto = uptime_ms() + ms;
     int            pid_ip, tentativo, rc;
 
@@ -252,10 +301,24 @@ int dns_risolvi_entro(const char *nome, unsigned char *ip, unsigned char *da,
     porta = (unsigned int)rc;
     apri.porta = porta;
 
-    /* Un identificativo che cambi fra una richiesta e l'altra: il tempo
-     * mescolato al PID. Serve solo a riconoscere la NOSTRA risposta fra
-     * quelle che arrivano alla stessa porta. */
-    id = (uptime_ms() ^ ((unsigned int)getpid() << 7)) & 0xFFFF;
+    /* ! AN IDENTIFIER NOBODY CAN GUESS (debug/bug_DNS001). Until November
+     * 2026 it was the clock mixed with the pid: a few hundred values, and
+     * whoever answered first with the right one sent netupdate, scarica and
+     * the browser where he liked. Now 16 random bits, with the random port
+     * of ip.drv 0.029 next to them (RFC 5452). At boot the entropy may come
+     * late: then the old one, said on stderr - the checks below of who
+     * answers and to what still hold. */
+    {
+        unsigned char rnd[2];
+        int t;
+
+        for (t = 0; t < 5 && getentropy(rnd, 2) != 0; t++) usleep(20000);
+        if (t < 5) id = (unsigned int)rnd[0] << 8 | rnd[1];
+        else {
+            id = (uptime_ms() ^ ((unsigned int)getpid() << 7)) & 0xFFFF;
+            fprintf(stderr, "dns: ! niente entropia: identificativo debole\n");
+        }
+    }
 
     rc = -ETIMEDOUT;
 
@@ -331,6 +394,16 @@ int dns_risolvi_entro(const char *nome, unsigned char *ip, unsigned char *da,
                 /* Non è la nostra risposta: si riprenota e si aspetta. */
                 if (((unsigned int)r[0] << 8 | r[1]) != id) goto riprenota;
                 if ((r[2] & 0x80) == 0) goto riprenota;      /* non è una risposta */
+                /* (DNS001) from the server asked, from port 53, and to our
+                 * question: anybody else is waited out, not believed */
+                if (memcmp(d.ip, inv.ip, 4) != 0 || d.porta != PORTA_DNS) goto riprenota;
+                if (((unsigned int)r[4] << 8 | r[5]) != 1) goto riprenota;
+                {
+                    unsigned char q[256];
+                    unsigned int  qn = nome_espandi(r, d.len, 12, q, sizeof(q));
+
+                    if (!nome_uguale(q, qn, dom + 12, n)) goto riprenota;
+                }
 
                 {
                     unsigned int rcode = r[3] & 0x0F;
@@ -339,22 +412,29 @@ int dns_risolvi_entro(const char *nome, unsigned char *ip, unsigned char *da,
                     if (rcode != RCODE_OK)       { rc = -EIO;    goto fine; }
                 }
 
-                /* Si saltano le domande ripetute nella risposta. */
-                p = 12;
-                for (k = 0; k < ((unsigned int)r[4] << 8 | r[5]); k++) {
-                    p = salta_nome(r, d.len, p);
-                    if (p == 0 || p + 4 > d.len) { rc = -EIO; goto fine; }
-                    p += 4;
-                }
+                /* La domanda ripetuta: una sola, la nostra, di tipo A. */
+                p = salta_nome(r, d.len, 12);
+                if (p == 0 || p + 4 > d.len) goto riprenota;
+                if (((unsigned int)r[p] << 8 | r[p + 1]) != TIPO_A ||
+                    ((unsigned int)r[p + 2] << 8 | r[p + 3]) != CLASSE_IN) goto riprenota;
+                p += 4;
 
                 ancount = (unsigned int)r[6] << 8 | r[7];
                 if (ancount == 0) { rc = -ENOENT; goto fine; }
 
+                /* (DNS001) an address counts only if it belongs to the name
+                 * asked, or to the alias it points to: until November 2026
+                 * the first A of any name was taken */
+                memcpy(corrente, dom + 12, n);
+                cn = n;
                 for (k = 0; k < ancount; k++) {
-                    unsigned int tipo, classe, rdlen;
+                    unsigned int tipo, classe, rdlen, q0 = p;
+                    unsigned char proprio[256];
+                    unsigned int  pn;
 
                     p = salta_nome(r, d.len, p);
                     if (p == 0 || p + 10 > d.len) { rc = -EIO; goto fine; }
+                    pn = nome_espandi(r, d.len, q0, proprio, sizeof(proprio));
 
                     tipo   = (unsigned int)r[p]     << 8 | r[p + 1];
                     classe = (unsigned int)r[p + 2] << 8 | r[p + 3];
@@ -370,7 +450,15 @@ int dns_risolvi_entro(const char *nome, unsigned char *ip, unsigned char *da,
                      * vorrebbe dire fare altre domande. Se il record A non
                      * c'è, si dice che il nome non si risolve — che è vero
                      * per questo risolutore. */
-                    if (tipo == TIPO_A && classe == CLASSE_IN && rdlen == 4) {
+                    if (tipo == TIPO_CNAME && classe == CLASSE_IN &&
+                        nome_uguale(proprio, pn, corrente, cn)) {
+                        unsigned int nn = nome_espandi(r, d.len, p, corrente, sizeof(corrente));
+
+                        if (nn == 0) { rc = -EIO; goto fine; }
+                        cn = nn;
+                    }
+                    if (tipo == TIPO_A && classe == CLASSE_IN && rdlen == 4 &&
+                        nome_uguale(proprio, pn, corrente, cn)) {
                         memcpy(ip, r + p, 4);
                         if (da) memcpy(da, d.ip, 4);
                         rc = 0;

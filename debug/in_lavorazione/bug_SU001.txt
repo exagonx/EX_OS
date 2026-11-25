@@ -1,0 +1,287 @@
+BUG SU001 - SYS_SU: tentativi di password illimitati alla velocita' del
+             kernel, impronta SHA-256 singola, sale prevedibile, buffer
+             statico condiviso fra chiamate concorrenti
+===============================================================================
+Gravita':   ALTA (scalata a root da qualunque processo locale)
+Programma:  kernel EX-OS (SYS_SU 254), libexuser, sudo, login
+Sorgenti:   kernel/syscall/syscall_impl.c  sys_su, su_leggi, su_campo,
+                                           su_amministratore, SU_FILE_MAX
+            lib/exuser/exuser.c            sale_nuovo, impronta_di,
+                                           aggiungi utente (scrivi_riga ombra)
+            lib/libc.c                     diventa_root
+            bin/sudo/sudo.c                main
+Rilevato su: albero del 24/11/2026.
+
+-------------------------------------------------------------------------------
+1. IL DIFETTO
+-------------------------------------------------------------------------------
+sys_su(nome, password) legge /boot/utenti e /boot/ombra con
+vfs_open_autorita, calcola SHA-256("sale:password") e, se coincide e
+l'utente e' in /boot/amministratori (o e' root), mette self->uid = 0.
+
+a) NESSUN FRENO. La chiamata e' raggiungibile da qualunque processo senza
+   privilegi (non serve un terminale, non serve sudo: _syscall2(SYS_SU,..)).
+   Non c'e' ritardo dopo un fallimento, ne' contatore per uid/pid, ne'
+   blocco. Il solo freno e' quello di sudo/login in spazio utente
+   (sleep(2), sleep(3) in bin/login), che l'attaccante non usa. Ogni
+   tentativo costa: due letture da cache (8 KB), uno SHA-256, un klog.
+   Qualche migliaio di tentativi al secondo per processo, moltiplicabile
+   con fork e piu' CPU (BKL a parte).
+
+b) IMPRONTA VELOCE. SHA-256 singolo con sale: una GPU fa ~10^9-10^10
+   tentativi al secondo se /boot/ombra esce dalla macchina (copia di
+   sicurezza, disco tolto, immagine fixsys, repository netupdate di un
+   sistema preconfigurato). Non e' una funzione per password (PBKDF2,
+   bcrypt, scrypt, Argon2).
+
+c) SALE PREVEDIBILE. sale_nuovo() = primi 16 esadecimali di
+   SHA-256("time:uptime_ms:pid"): 64 bit apparenti, in pratica poche
+   decine di bit (l'ora di creazione si sa da install/il log, pid e uptime
+   dell'installatore sono piccoli). Permette tabelle precalcolate per le
+   installazioni fatte con lo stesso supporto. Il kernel ha un generatore
+   vero (arch/x86/entropia.c, RDRAND + serbatoio, voce 67).
+
+d) CONFRONTO A TEMPO NON COSTANTE: il ciclo esce al primo esadecimale
+   diverso. Con l'impronta del sale ignota il vantaggio e' teorico, ma e'
+   gratis chiuderlo.
+
+e) ORACOLO SUI NON AMMINISTRATORI. Con la password giusta di un utente che
+   non e' amministratore la chiamata legge /boot/amministratori prima di
+   rendere EPERM; con quella sbagliata no. Stesso codice d'errore, tempi e
+   log diversi ("ha dato la password giusta ma non e' amministratore"):
+   chi vede dmesg (o misura il tempo) verifica le password di TUTTI gli
+   utenti, non solo di quelli che possono fare root.
+
+f) BUFFER STATICO. `static char testo[SU_FILE_MAX]` in sys_su e
+   `static char testo[1024]` in su_amministratore sono comuni a tutte le
+   chiamate. Il kernel e' prelazionabile (analisi_kernel, "il fatto da cui
+   discendono le prime voci") e vfs_read puo' dormire sul lucchetto dei
+   file o sul disco: due sys_su concorrenti si sovrascrivono il testo fra
+   su_leggi e su_campo. L'esito osservato e' un rifiuto con la password
+   giusta (si confronta l'impronta presa da /boot/utenti, o un misto dei
+   due file). Non porta a un'entrata indebita (le impronte sono 64
+   esadecimali e un campo di /boot/utenti non lo e'), ma e' instabile ed
+   e' lo stesso difetto della voce 69 (buffer unico): non deve esistere.
+
+g) FILE TRONCATI IN SILENZIO. su_leggi legge al piu' SU_FILE_MAX-1 = 8191
+   byte: con ~90 utenti (righe da ~90 byte in ombra) gli ultimi non
+   possono piu' fare su/sudo, e l'ultima riga letta puo' essere tagliata
+   a meta' dell'impronta. Nessun avviso.
+
+-------------------------------------------------------------------------------
+2. COSA COMPORTA
+-------------------------------------------------------------------------------
+Un processo qualunque (utente, CGI di Apache, un processo di Firefox
+compromesso) indovina la password di root o di un amministratore con un
+dizionario, senza che nessuno se ne accorga se non nel log, e diventa
+root. Con (b)+(c) un'ombra uscita dalla macchina si rompe offline in
+tempi brevi per password umane.
+
+-------------------------------------------------------------------------------
+3. RIPRODUZIONE
+-------------------------------------------------------------------------------
+    /* uid 1000 */
+    static const char *diz[] = { "123456", "password", "exos", ... };
+    for (i = 0; diz[i]; i++)
+        if (diventa_root("root", diz[i]) == 0) {
+            printf("root con '%s' (uid ora %d)\n", diz[i], getuid());
+            execl("/bin/sh", "sh", 0);
+        }
+    /* misurare: tentativi/secondo con uptime_ms() prima e dopo 10000
+     * chiamate; atteso oggi migliaia/s */
+
+-------------------------------------------------------------------------------
+4. CORREZIONE
+-------------------------------------------------------------------------------
+4.1 Freno nel kernel (la parte che chiude la falla)
+
+Stato per uid chiamante, in sys_su (kernel/syscall/syscall_impl.c):
+
+    #define SU_FRENI      32
+    typedef struct { uint32_t uid; uint32_t falliti; uint32_t fino_a; } SuFreno;
+    static SuFreno g_su_freni[SU_FRENI];      /* protetto da g_su_lucchetto */
+
+    static SuFreno *su_freno(uint32_t uid)
+    {
+        uint32_t i, vecchio = 0;
+        for (i = 0; i < SU_FRENI; i++)
+            if (g_su_freni[i].uid == uid && g_su_freni[i].falliti)
+                return &g_su_freni[i];
+        for (i = 1; i < SU_FRENI; i++)          /* sostituisce il piu' vecchio */
+            if (g_su_freni[i].fino_a < g_su_freni[vecchio].fino_a) vecchio = i;
+        g_su_freni[vecchio].uid = uid;
+        g_su_freni[vecchio].falliti = 0;
+        g_su_freni[vecchio].fino_a = 0;
+        return &g_su_freni[vecchio];
+    }
+
+    int32_t sys_su(InterruptFrame *frame)
+    {
+        ...
+        su_entra();                              /* vedi 4.4 */
+        f = su_freno(self->uid);
+        if (f->falliti && (int32_t)(g_ticks - f->fino_a) < 0) {
+            su_esci();
+            return ERR(EAGAIN);                  /* oppure dormire, vedi sotto */
+        }
+        ... verifica ...
+        if (!giusta) {
+            uint32_t att = 1u << (f->falliti < 10 ? f->falliti : 10);  /* tick */
+            f->falliti++;
+            f->fino_a = g_ticks + att * 100u;    /* 1 s, 2 s, 4 s ... 1024 s */
+            su_esci();
+            sched_sleep_ms(1000);                /* ritardo fisso anche al primo */
+            return ERR(EPERM);
+        }
+        f->falliti = 0;
+        ...
+    }
+
+   - Il freno e' per uid e non per pid: fork() non lo aggira.
+   - g_ticks a 32 bit: confronto con differenza con segno (voce 26).
+   - Il ritardo fisso si fa DOPO aver lasciato ogni lucchetto, con la
+     sleep del kernel (dorme, non gira a vuoto: voce 28).
+   - root (self->uid == 0) non passa dal freno: e' gia' root.
+
+4.2 Funzione per password (kernel e libexuser, formato nuovo e vecchio)
+
+Formato nuovo della riga di /boot/ombra, compatibile all'indietro dal
+prefisso:
+
+    nome:$p5$<iter>$<sale32esa>:<impronta64esa>
+
+PBKDF2-HMAC-SHA256 con kernel/crypto/sha256.c (serve aggiungere HMAC:
+~40 righe). iter = 100000 su una macchina moderna; sul Pentium 166 di
+prova misurare e scegliere un valore che costi ~0,3 s (il numero sta nella
+riga, quindi ogni riga ha il suo).
+
+    static void hmac_sha256(const uint8_t *k, uint32_t kl,
+                            const uint8_t *m, uint32_t ml, uint8_t out[32])
+    {
+        uint8_t kb[64], ip[64], op[64], t[32];
+        Sha256 c; uint32_t i;
+        memset(kb, 0, 64);
+        if (kl > 64) { sha256(k, kl, kb); kl = 32; } else memcpy(kb, k, kl);
+        for (i = 0; i < 64; i++) { ip[i] = kb[i] ^ 0x36; op[i] = kb[i] ^ 0x5c; }
+        sha256_init(&c); sha256_update(&c, ip, 64); sha256_update(&c, m, ml);
+        sha256_final(&c, t);
+        sha256_init(&c); sha256_update(&c, op, 64); sha256_update(&c, t, 32);
+        sha256_final(&c, out);
+    }
+
+    /* un solo blocco: dkLen = 32 */
+    static void pbkdf2_sha256(const char *pw, uint32_t pl,
+                              const uint8_t *sale, uint32_t sl,
+                              uint32_t iter, uint8_t out[32])
+    {
+        uint8_t u[32], blk[64 + 4]; uint32_t i, j;
+        memcpy(blk, sale, sl);
+        blk[sl] = 0; blk[sl+1] = 0; blk[sl+2] = 0; blk[sl+3] = 1;
+        hmac_sha256((const uint8_t *)pw, pl, blk, sl + 4, u);
+        memcpy(out, u, 32);
+        for (i = 1; i < iter; i++) {
+            hmac_sha256((const uint8_t *)pw, pl, u, 32, u);
+            for (j = 0; j < 32; j++) out[j] ^= u[j];
+        }
+    }
+
+   ! 100000 iterazioni nel kernel tengono la CPU (e il BKL) per decine o
+   centinaia di ms. Due possibilita':
+     - farle a pezzi da 1000 iterazioni con un punto di cessione fra un
+       pezzo e l'altro (bkl_lascia/bkl_entra o sched_yield nel kernel);
+     - oppure spostare la verifica in un servente ring 3 di root
+       (direttiva 1 di DIREZIONE.md): sys_su diventa "il servizio auth ha
+       detto si' per il pid X", con il mittente timbrato dal kernel
+       (SYS_IPC_RECV_CHI). E' la soluzione coerente con la direzione del
+       progetto, e il freno 4.1 resta nel kernel o nel servente.
+
+   lib/exuser/exuser.c: impronta_di scrive il formato nuovo; la verifica
+   (riga 528 circa) e sys_su accettano entrambi: senza "$p5$" e' il
+   formato vecchio. Alla prima entrata riuscita con il formato vecchio,
+   login riscrive la riga nel formato nuovo (serve la funzione "cambia
+   riga" che il commento di exuser dice mancante).
+
+4.3 Sale vero
+
+    static void sale_nuovo(char out[33])
+    {
+        uint8_t b[16]; int i;
+        if (getrandom(b, sizeof b, 0) != sizeof b) { /* rifiutare, non
+                                                        ripiegare sull'ora */ }
+        for (i = 0; i < 16; i++) { out[2*i] = hex[b[i] >> 4];
+                                   out[2*i+1] = hex[b[i] & 15]; }
+        out[32] = '\0';
+    }
+
+   (getrandom o la syscall dell'entropia del kernel, quella che usa
+   libssl/sshd.) I buffer char sale[17] in exuser.c (389, 528) e
+   char sale[32] in sys_su vanno portati a 33 e oltre.
+
+4.4 Niente buffer statico, niente oracolo, confronto costante
+
+    int32_t sys_su(InterruptFrame *frame)
+    {
+        char *testo = kmalloc(SU_FILE_MAX);    /* per chiamata */
+        if (!testo) return ERR(ENOMEM);
+        ...
+        uint8_t diff = 0;
+        for (j = 0; j < 64; j++) diff |= (uint8_t)(prova[j] ^ imp[j]);
+        giusta = (diff == 0) && imp[64] == '\0';
+        amm    = su_amministratore(nome, testo);   /* SEMPRE, anche se
+                                                      sbagliata: stesso
+                                                      costo, stesso esito */
+        if (!giusta || (uid != 0 && !amm)) { ... un solo klog generico:
+            "su: rifiutato per '%s' (PID %u, uid %u)" ...; return EPERM; }
+        ...
+        kfree(testo);   /* azzerandolo prima: contiene le impronte */
+    }
+
+   su_amministratore riceve il buffer invece di avere il suo statico.
+   Azzerare anche `misto` (contiene la password in chiaro) prima di uscire:
+   oggi resta sulla pila del kernel.
+
+4.5 File che crescono
+
+   su_leggi: se vfs_read rende max-1 byte, il file e' piu' grande del
+   buffer -> leggere a pezzi cercando la riga del nome invece di caricare
+   tutto, oppure kmalloc della misura vera (vfs_fstat) con tetto alto
+   (1 MB), e klog se il tetto si tocca.
+
+-------------------------------------------------------------------------------
+5. PROVA
+-------------------------------------------------------------------------------
+  - Il programma del punto 3 con 100 password sbagliate: dopo la 1a deve
+    costare >= 1 s, dopo la 5a EAGAIN per 32 s; con fork() 8 figli non va
+    piu' veloce (freno per uid).
+  - sudo con la password giusta funziona al primo colpo, anche subito dopo
+    un errore fatto da un'altra sessione dello stesso utente? -> scegliere:
+    il freno vale per uid, quindi no; dichiararlo nel manuale.
+  - Utente con riga vecchia: entra, la riga diventa $p5$ (debugfs
+    dall'host su /boot/ombra).
+  - Due sys_su concorrenti con la password giusta (due fili, 10000 giri):
+    0 rifiuti spuri (oggi, a carico, se ne vedono).
+  - Tempi: password giusta di non amministratore e password sbagliata
+    hanno lo stesso costo (+-1 tick) e lo stesso messaggio nel log.
+-------------------------------------------------------------------------------
+6. STATO (25/11/2026, notte)
+-------------------------------------------------------------------------------
+FATTO (kernel 0.367, sudo 0.002):
+  - freno per uid chiamante: ogni errore costa 1 s; dalla terza di fila
+    EAGAIN per 2^(n-3) s (fino a 300) senza guardare la password; si
+    azzera con la giusta o dopo 15 minuti; root non frenato. sudo dice
+    "troppi tentativi sbagliati".
+  - file letti in kmalloc della loro misura (tetto 1 MB, detto nel log),
+    confronto a tempo costante, su_amministratore letto sempre, un solo
+    messaggio "rifiutato per", segreti azzerati dopo l'uso.
+  - libexuser: sale di 32 cifre da getrandom (ripiego al vecchio con
+    avviso se l'entropia non arriva), confronto a tempo costante.
+  - Prova: tools/prove/suprova.c in prova_permessi (passo 11): 9 prove,
+    OK a 32 bit (64 bit nella notte).
+DA DECIDERE (utente): 4.2 PBKDF2/hash lento. Cambia il formato di
+  /boot/ombra (le password vecchie vanno riconosciute e convertite al
+  primo accesso) e il tempo col BKL in mano dentro SYS_SU; oppure un
+  servizio di autenticazione in ring 3. Il freno copre gia' gli attacchi
+  in linea; l'hash lento serve se /boot/ombra esce dalla macchina.
+
+ESITO (25/11, 06:36): prova_permessi 17 su 17 (suprova). Resta qui per
+l hash lento da decidere.

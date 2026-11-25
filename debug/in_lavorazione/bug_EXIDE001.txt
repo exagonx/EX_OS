@@ -1,0 +1,181 @@
+BUG EXIDE001 - Chiudendo una finestra modale, la tela del disegnatore e il
+                pannello degli strumenti spariscono (refresh "sporco" quando
+                si passa da un modale all'altro)
+===============================================================================
+Gravita':   MEDIA (grafica; nessuna perdita di dati, ma il disegnatore resta
+            grigio o a meta' finche' qualcos'altro lo ridisegna)
+Programma:  exwin/bin/exide (exide 0.027)
+Sorgenti:   exwin/bin/exide/exide.c  proc (EXM_PAINT, EXM_SIZE), proc_ed,
+                                     proc_cc, proc_lib, proc_prg, proc_fe,
+                                     proc_fl, main; disegna_tela,
+                                     disegna_strumenti
+            lib/exwin/exwin.c        ex_default_proc(EXM_PAINT)
+Rilevato su: albero del 25/11/2026 (13 punti; trovarli con
+            grep -n 'ex_default_proc(g_f, EXM_PAINT' exwin/bin/exide/exide.c).
+
+-------------------------------------------------------------------------------
+1. IL DIFETTO
+-------------------------------------------------------------------------------
+La finestra principale di exide ha una parte disegnata dal programma, non
+da controlli: il pannello degli strumenti (disegna_strumenti) e la tela con
+la maschera (disegna_tela). La sua proc lo sa e su EXM_PAINT fa:
+
+        ex_default_proc(f, EXM_PAINT, 0, 0);     /* fondo + controlli */
+        disegna_tela();                          /* strumenti + tela */
+        ex_update(f);
+
+Ma ogni finestra secondaria (editor, compilatore, librerie, scheda del
+progetto, editor dei file, elenco dei file), quando si chiude, fa:
+
+        ex_destroy(f);
+        g_xxx = 0;
+        ex_default_proc(g_f, EXM_PAINT, 0, 0);   /* <-- solo meta' */
+
+cioe' chiama DIRETTAMENTE il disegno predefinito della finestra principale,
+saltando la sua proc: il fondo grigio viene ridipinto sopra la tela e sopra
+il pannello degli strumenti, i controlli (lista delle proprieta', casella,
+pulsanti, stato) vengono ridisegnati, e la tela no. Il risultato resta a
+schermo finche' un altro evento non chiama disegna_tela (un movimento del
+mouse sugli strumenti, un clic sulla tela, un ridimensionamento): a volte
+subito, a volte mai.
+
+Lo stesso in main() (una volta, all'avvio) e in proc_ed (2 punti).
+
+E il ridisegno e' anche INUTILE: il server tiene i pixel di ogni finestra
+nella sua zona condivisa; quando una finestra sopra sparisce, ricompone lo
+schermo dalla zona della finestra sotto, che e' intatta. Non c'e' niente da
+ridisegnare - e' proprio la chiamata a sporcarla.
+
+Quando "si passa da un modale all'altro" (Files -> doppio clic -> editor del
+file; Compila -> chiudi -> Librerie) il difetto si vede di piu': il primo
+modale si chiude, la tela diventa grigia, il secondo si apre sopra una tela
+grigia, e alla sua chiusura succede di nuovo.
+
+-------------------------------------------------------------------------------
+2. CORREZIONE
+-------------------------------------------------------------------------------
+2.1 In exide (la cura)
+
+  Una funzione sola per "la finestra principale va rifatta", che passa
+  dalla proc:
+
+    /* Ridisegna TUTTA la finestra principale: fondo, controlli, strumenti,
+     * tela, e un solo ex_update alla fine. Da usare al posto di
+     * ex_default_proc(g_f, EXM_PAINT...) che salta la tela. */
+    static void principale_ridisegna(void)
+    {
+        if (!g_f) return;
+        proc(g_f, EXM_PAINT, 0, 0);
+    }
+
+  (proc e' dichiarata sotto: serve un prototipo
+     static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp);
+   in testa al file.)
+
+  Poi, nei 13 punti:
+    - dopo ex_destroy(<finestra secondaria>): TOGLIERE la chiamata.
+      Il server ricompone dalla zona della principale, che e' giusta.
+    - dove serve davvero ridisegnare perche' lo stato della principale e'
+      cambiato mentre il modale era aperto (Progetto: autore/titolo cambiati
+      -> progetto_titolo(); Librerie: niente; Compila: lo stato in basso con
+      dico()): chiamare principale_ridisegna() UNA volta, dopo ex_destroy.
+    - in main(): sostituire con principale_ridisegna().
+
+  Elenco dei punti (righe del 25/11, cercare per funzione):
+    proc_ed      (3151, 3223)  editor del sorgente: dopo la chiusura
+                               il sorgente e' salvato, la tela non cambia ->
+                               togliere
+    proc_cc      (4537, 4546)  compilatore -> togliere; lo stato lo aggiorna
+                               dico() (e' un controllo: si ridisegna da se')
+    proc_lib     (4659, 4667)  librerie -> togliere
+    proc_prg     (4880, 4893)  progetto -> progetto_titolo() e basta
+    proc_fe      (5102, 5153)  editor dei file -> togliere
+    proc_fl      (5304, 5312)  elenco dei file -> togliere
+    main         (5899)        -> principale_ridisegna()
+
+2.2 Nella tela: niente ex_update(g_f) intero per ogni movimento
+
+  Nel trascinamento (EXM_MOUSE_MOVE) exide chiama disegna_tela() +
+  ex_update(g_f): ridisegna strumenti + tela + maniglie e consegna TUTTA la
+  finestra al server 60-100 volte al secondo. E' la causa dello sfarfallio
+  durante il trascinamento su macchine lente. Consegnare solo il
+  rettangolo della tela:
+
+    /* exwin.h, se non c'e' gia': consegna solo un rettangolo */
+    void ex_update_rect(ExWindow f, int x, int y, int w, int h);
+
+    ... nel trascinamento:
+        disegna_tela_solo();          /* senza disegna_strumenti() */
+        ex_update_rect(g_f, TELA_X, TELA_Y, TELA_W, TELA_H);
+
+  Se ex_update_rect non esiste nel toolkit: WIN_MSG_AGGIORNA porta gia' un
+  rettangolo (WinRegione); l'API e' una funzione di cinque righe in
+  exwin.c che manda quel messaggio con il rettangolo dato invece che con
+  la finestra intera. Il server ricompone solo li'.
+
+  E disegna_tela sopra un buffer fuori schermo (doppio buffer): oggi
+  ex_fill_rect del ripiano cancella la tela e poi ci si ridisegna sopra,
+  ma il server puo' comporre fra le due cose (riceve un AGGIORNA di un
+  altro evento): si vede il ripiano vuoto per un fotogramma. Con
+  ex_update_rect consegnato SOLO alla fine di disegna_tela il problema
+  sparisce (il server legge la zona solo quando glielo si dice).
+
+2.3 Nel toolkit (difesa per tutte le applicazioni)
+
+  Lo stesso errore si puo' fare in ogni programma che disegna da se'
+  (pm lo fa in scheda_mostra: ex_default_proc(g_impost, EXM_PAINT...),
+  filemgr da verificare). Due aggiunte a exwin:
+
+    /* chiede un EXM_PAINT alla proc della finestra, al prossimo giro del
+     * ciclo dei messaggi; piu' richieste prima del giro diventano una */
+    void ex_invalidate(ExWindow f);
+
+  implementata con un flag "da_dipingere" nell'Oggetto di primo livello,
+  guardato dal ciclo dei messaggi del toolkit prima di aspettare: se e'
+  alzato, lo abbassa e chiama o->proc(f, EXM_PAINT, 0, 0). E nel commento
+  di ex_default_proc in exwin.h: "! non chiamarla con EXM_PAINT su una
+  finestra la cui proc disegna qualcosa da se': usare ex_invalidate".
+
+  Con la transizione morbida fra due contenuti (anim_11_cambio,
+  implementazione_ANIM001) il server dissolve dalla vecchia immagine alla
+  nuova solo quando il client ha consegnato un fotogramma completo: e'
+  l'estetica sopra la correzione, non al posto suo.
+
+-------------------------------------------------------------------------------
+3. PROVA
+-------------------------------------------------------------------------------
+  - Progetto con 10 controlli sulla maschera. Aprire e chiudere in fila:
+    Sorgente, Compila, Librerie, Progetto, Files -> doppio clic su un file
+    -> chiudere l'editor -> chiudere Files. Dopo ogni chiusura la tela e
+    gli strumenti sono al loro posto senza muovere il mouse.
+  - Foto in QEMU (qemu_drive.py foto:) dopo ogni chiusura, confrontate con
+    quella di prima dell'apertura: identiche.
+  - Trascinare un controllo per 5 secondi con il Pentium 166: niente
+    sfarfallio del pannello strumenti (che non si ridisegna piu').
+
+-------------------------------------------------------------------------------
+4. STATO (25/11/2026, notte)
+-------------------------------------------------------------------------------
+FATTO (exide 0.028, exwin.so 0.025):
+  - principale_ridisegna(): la finestra principale passa dalla sua proc
+    (fondo, controlli, strumenti, tela, un ex_update). Nei 13 punti
+    ex_default_proc(g_f, EXM_PAINT) diventa principale_ridisegna().
+    ! NON li ho tolti come proponeva 2.1: il server ricompone dalla
+    zona e il ridisegno costa poco; chiamare la proc e' giusto in ogni
+    caso, anche dove la principale e' cambiata mentre il modale era
+    aperto (Progetto). Se si vuole risparmiare, si tolgono dopo averlo
+    visto sullo schermo.
+  - trascinamento: disegna_tela_solo() (senza il pannello strumenti) e
+    ex_update_rect(g_f, TELA_X, TELA_Y, TELA_W, TELA_H).
+  - exwin.so: ex_update_rect (in exwin.ver), e in exwin.h l'avviso su
+    ex_default_proc con EXM_PAINT.
+  - Nota: il doppio buffer di exwin (pix -> zona con presenta) c'e' gia':
+    il "ripiano vuoto per un fotogramma" di 2.2 non puo' succedere; il
+    guadagno di ex_update_rect e' la copia e la ricomposizione piu'
+    piccole.
+DA FARE: la prova a schermo (aprire e chiudere i sei modali, foto).
+NON FATTO, DA DECIDERE: 2.3 ex_invalidate nel ciclo dei messaggi del
+  toolkit (tocca tutti i programmi) e pm scheda_mostra.
+
+ESITO (25/11, 06:36): prova_exide_uso tutto bene, prova_finestre a posto.
+Resta qui per 2.3.

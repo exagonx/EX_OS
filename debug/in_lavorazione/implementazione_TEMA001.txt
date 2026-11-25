@@ -1,0 +1,331 @@
+IMPLEMENTAZIONE TEMA001 - I temi grafici di ExWin: dieci aspetti
+                          selezionabili per toolkit e server delle finestre
+===============================================================================
+Priorita':  MEDIA (estetica; nessun effetto sulla stabilita' se fatta a passi)
+Programma:  lib/exwin (exwin.so), drivers/wserver (wserver.drv), exwin/bin/pm
+            (Impostazioni), tools di costruzione
+Sorgenti nuovi (gia' scritti, compilati e provati sull'host):
+            debug/grafica/extema.h, extema.c      il motore e l'interfaccia
+            debug/grafica/tema_NN_*.c             i dieci temi
+            debug/grafica/tema_NN_*.png           cio' che ognuno disegna
+            debug/grafica/tema_0[234]_*_scrivania.png  gli sfondi disegnati
+            debug/grafica/anteprima.c, fa_anteprime.sh  come rifare i PNG
+Sorgenti da toccare:
+            lib/exwin/exwin.c    disegna_oggetto_nudo (ogni case CL_*),
+                                 struct Oggetto, ritaglia/g_clip, ex_init
+            drivers/wserver/wserver.c  cornice(), le costanti C_*, BARRA_H,
+                                 BORDO, il compositore (mostra, sporca)
+            drivers/wserver/win_proto.h  un messaggio nuovo (WIN_MSG_TEMA)
+            exwin/bin/pm/        il pannello "Aspetto"
+            Makefile             extema.o in exwin.so e in wserver.drv
+Rilevato su: albero del 25/11/2026.
+
+-------------------------------------------------------------------------------
+1. COSA MANCA OGGI
+-------------------------------------------------------------------------------
+Ogni controllo e' disegnato dentro disegna_oggetto_nudo() (exwin.c) con
+colori scritti nel codice (EX_GRAY, EX_BLUE, EX_BLACK, EX_DARK_GRAY) e
+ex_draw_raised/ex_draw_sunken a un anello; il telaio e la barra del titolo
+dentro cornice() (wserver.c) con le costanti C_TELAIO, C_BARRA_ATT ecc.
+Non c'e' modo di cambiare aspetto senza ricompilare, gli angoli sono
+tutti vivi, non c'e' antialias, non c'e' stato "mouse sopra" (il toolkit
+manda EXM_MOUSE_OVER all'applicazione ma l'Oggetto non lo ricorda), e il
+toolkit e il server hanno due palette diverse da tenere d'accordo a mano.
+
+-------------------------------------------------------------------------------
+2. I DIECI TEMI (scegliere guardando i PNG in debug/grafica/)
+-------------------------------------------------------------------------------
+  01 classico   Classico rifinito: l'aspetto di oggi con rilievo a due anelli,
+                barra sfumata. Il piu' veloce. Consigliato come predefinito
+                su macchine lente (il Pentium 166 di prova).
+  02 cristallo  Dal logo: blu notte, barra viola-blu col riflesso, alone
+                ciano sul fuoco, scrivania con orbita, piattaforma esagonale
+                e tracce (tema_02_cristallo_scrivania.png).
+  03 ghiaccio   Il logo in chiaro: bianco-ghiaccio, accenti viola/ciano,
+                trama di esagoni sulla scrivania.
+  04 circuito   Le tracce del logo: quasi nero, pulsanti vuoti col bordo
+                ciano e l'alone, scrivania a scheda elettronica.
+  05 chiaro     Piatto chiaro moderno, accento blu, ombre larghe.
+  06 scuro      Modo scuro grafite, accento verde acqua.
+  07 vetro      Superfici lucide, pulsanti a gel, tre tondi nella barra.
+  08 pastello   Morbido, angoli larghi, ombre colorate.
+  09 ambra      Terminale a fosfori ambra: cornici doppie, righe di scansione.
+  10 metallo    Acciaio spazzolato, rilievo profondo, accento arancio.
+
+Ogni PNG e' l'uscita del codice C del tema compilato sull'host con lo
+stesso extema.c che andra' in exwin.so: cio' che si vede e' cio' che il
+toolkit disegnera' (a parte il carattere TrueType, vedi 5.4).
+Per rifare le immagini dopo una modifica: sh debug/grafica/fa_anteprime.sh.
+
+-------------------------------------------------------------------------------
+3. ARCHITETTURA
+-------------------------------------------------------------------------------
+   +-----------------+      +-------------------+      +---------------+
+   | ExTema (dati)   | ---> | extema.c (motore) | ---> | ExTela        |
+   | tavolozza+forma |      | ext_pulsante, ... |      | pix,passo,clip|
+   | + funzioni opz. |      +-------------------+      +---------------+
+   +-----------------+          ^             ^            ^        ^
+                                |             |            |        |
+                       exwin.c (controlli)  wserver.c (telaio, sfondo,
+                                             ombre, animazioni)
+
+- extema.c non conosce ExWindow ne' Oggetto: lavora su ExTela (puntatore ai
+  pixel 0x00RRGGBB, misura, passo, ritaglio).
+- Solo interi: angoli antialias a 4x4 campioni, ombre con radice intera,
+  seno da tabella. Compila freestanding come exwin.c (verificato con -Wall
+  -Wextra senza avvisi sull'host; da ricompilare con la toolchain i386-exos
+  e a 64 bit).
+- Unica dipendenza esterna: il simbolo font8x16 (gia' presente in exwin.so
+  e in wserver).
+
+-------------------------------------------------------------------------------
+4. PASSI
+-------------------------------------------------------------------------------
+PASSO 1 - I file e la costruzione
+
+    lib/exwin/extema.h, lib/exwin/extema.c          (da debug/grafica)
+    lib/exwin/temi/tema_classico.c ... tema_metallo.c (i dieci tema_NN_*.c,
+                                                      rinominati)
+
+  Makefile: aggiungere extema.o e temi/*.o agli oggetti di exwin.so (stesse
+  opzioni di exwin.o) e a wserver.drv. Esportare da exwin.so i simboli
+  ext_* (lib/exwin/exwin.ver: sezione globale) solo se si vuole che le
+  applicazioni disegnino controlli propri col tema (consigliato: exide ne
+  ha bisogno per la tela, vedi implementazione_EXIDE001).
+
+  Un .h pubblico: extema.h va negli header installati sul CD degli
+  strumenti accanto a exwin.h.
+
+PASSO 2 - La tela di un Oggetto (exwin.c)
+
+    #include "extema.h"
+
+    static const ExTema *g_tema = &extema_classico;
+
+    /* la tela della finestra di primo livello di f, col ritaglio corrente
+       (g_clip) gia' applicato */
+    static int tela_di(ExWindow f, ExTela *t)
+    {
+        Oggetto *r = radice(f);
+
+        if (!r || !r->pix) return 0;
+        ext_tela(t, r->pix, r->w, r->h, (int)r->passo_px);
+        if (g_clip) ext_ritaglio(t, g_clip_x1, g_clip_y1,
+                                 g_clip_x2 - g_clip_x1, g_clip_y2 - g_clip_y1);
+        return 1;
+    }
+
+    /* gli stati EXT_* di un controllo */
+    static unsigned int stato_di(const Oggetto *o)
+    {
+        Oggetto     *rd = radice(o->padre);
+        unsigned int st = 0;
+
+        if (o->premuto)                         st |= EXT_PREMUTO;
+        if (o->sopra)                           st |= EXT_SOPRA;     /* nuovo campo */
+        if (o->stile & EX_DISABLED)             st |= EXT_SPENTO;
+        if (rd && rd->fuoco == (ExWindow)o->maniglia) st |= EXT_FUOCO;
+        if (o->predefinito)                     st |= EXT_PREDEFINITO; /* nuovo */
+        if (o->valore)                          st |= EXT_SCELTO;    /* spunta/radio */
+        return st;
+    }
+
+  Campi nuovi in Oggetto:
+        unsigned char sopra;        /* il puntatore e' sopra: lo alza chi
+                                       manda EXM_MOUSE_OVER, lo abbassa chi
+                                       vede uscire il puntatore */
+        unsigned char predefinito;  /* ex_set_default(btn): Invio lo preme */
+        unsigned int  sopra_riga;   /* liste e menu: la riga sotto il mouse */
+
+  "sopra": nel punto dove il toolkit decide EXM_MOUSE_OVER (cercare
+  EXM_MOUSE_OVER in exwin.c), tenere l'ultimo oggetto sotto il puntatore
+  (static ExWindow g_sotto_mouse); quando cambia, abbassare sopra al
+  vecchio, alzarlo al nuovo, e ridisegnare SOLO quei due controlli
+  (disegna_oggetto + aggiorna del loro rettangolo). Questo e' anche il
+  primo pezzo della "dinamicita'" che manca alle applicazioni.
+
+PASSO 3 - disegna_oggetto_nudo: ogni case diventa una chiamata
+
+    case CL_PULSANTE: {
+        ExTela t;
+        if (!tela_di(o->padre, &t)) break;
+        ext_pulsante(&t, g_tema, x, y, o->w, o->h, o->titolo, stato_di(o));
+        /* l'icona: resta del toolkit, dopo il pulsante, centrata col testo
+           come oggi (il motore non conosce ExIcon). Per farlo,
+           ext_pulsante_icona() (da aggiungere) che lascia uno spazio di
+           `lato + 6` a sinistra del testo e rende la x dove posare l'icona. */
+        break;
+    }
+    case CL_TESTO:
+        ext_casella(&t, g_tema, x, y, o->w, o->h, testo_visibile(o),
+                    cursore_visibile(o), stato_di(o));
+        /* la selezione del testo (c_sel/ancora): dopo, con ext_riempi_alfa
+           dell'accento a 110, poi il testo selezionato in accento_testo */
+        break;
+    case CL_SPUNTA:   ext_spunta(&t, g_tema, x, y + (o->h - 15) / 2, o->titolo, stato_di(o)); break;
+    case CL_RADIO:    ext_radio (&t, g_tema, x, y + (o->h - 14) / 2, o->titolo, stato_di(o)); break;
+    case CL_COMBO:    ext_combo (&t, g_tema, x, y, o->w, o->h, o->titolo, stato_di(o)); break;
+    case CL_LISTA:    ext_lista (&t, g_tema, x, y, o->w, o->h, righe, n, scelta,
+                                 o->sopra_riga, o->vista, stato_di(o)); break;
+    case CL_SCORRI:   ext_scorri(&t, g_tema, x, y, o->w, o->h, o->h > o->w,
+                                 o->valore, o->pagina, o->massimo + o->pagina, stato_di(o)); break;
+    case CL_TAB:      ext_linguette(&t, g_tema, x, y, o->w, o->h, voci, n,
+                                    o->valore, o->sopra_riga); break;
+    case CL_RIQUADRO: ext_riquadro(&t, g_tema, x, y, o->w, o->h, o->titolo); break;
+    case CL_INTESTAZIONE: ext_intestazione(&t, g_tema, x, y, o->w, o->h, o->titolo); break;
+    case CL_SEPARATORE:   ext_separatore(&t, g_tema, x, y, o->w); break;
+    case CL_MENU:     ext_barra_menu / ext_tendina (la tendina e' una EX_POPUP)
+
+  ! I controlli che oggi disegnano cose che il motore non ha (CL_AREA con
+  l'evidenziazione del C, CL_TERMINALE, CL_MDI) cambiano solo i COLORI:
+  sostituire EX_WHITE/EX_BLACK/EX_GRAY con g_tema->c.campo, campo_testo,
+  fondo. CL_LISTA con colonne (@LISTA-MULTI): ext_lista va estesa con un
+  parametro "colonne" (posizioni x) o il toolkit chiama ext_lista per il
+  fondo e scrive lui le colonne con ext_testo.
+
+  ! ex_draw_raised/ex_draw_sunken (API pubblica) restano, ma prendono i
+  colori dal tema: bordo3d(f, ..., g_tema->c.luce, g_tema->c.ombra). Cosi'
+  anche le applicazioni che disegnano a mano (exide, filemgr) seguono il
+  tema senza essere riscritte. Nuove funzioni pubbliche consigliate:
+        unsigned int ex_tema_colore(int quale);   /* EX_TC_FONDO, ... */
+        const char  *ex_tema_nome(void);
+  e le costanti EX_GRAY ecc. restano per compatibilita' (non cambiano).
+
+PASSO 4 - Il server (wserver.c)
+
+  4.1 Il telaio: cornice() diventa
+
+    static void cornice(const Finestra *f, unsigned int attiva)
+    {
+        ExTela t;
+        int ox, oy, ow, oh;      /* rettangolo esterno della finestra */
+        unsigned int st = attiva ? EXT_ATTIVA : 0;
+
+        if (f->stile & WIN_ST_TITOLO) { ... }
+        if (g_fb_bit == 32) {
+            ext_tela(&t, (unsigned int *)g_fb, g_fb_w, g_fb_h, g_fb_passo / 4);
+            if (g_clip_w) ext_ritaglio(&t, g_clip_x, g_clip_y, g_clip_w, g_clip_h);
+            if (f->sopra_chiudi) st |= EXT_SOPRA;
+            ext_finestra(&t, g_tema, ox, oy, ow, oh, f->titolo, st);
+            return;
+        }
+        ... il codice di oggi, a 16/24 bit (vedi 4.3) ...
+    }
+
+  BARRA_H e BORDO diventano funzioni del tema: g_tema->f.barra_h e lo
+  spessore del telaio (spessore_telaio, da esportare come
+  ext_telaio_spessore(m)). Tutti i calcoli di posizione che oggi usano le
+  costanti (dove_cade: barra/chiudi/riduci, puo_ingrandirsi, sporca del
+  telaio, la presa nell'angolo) vanno su ext_finestra_client() e su una
+  funzione nuova del motore che dice DOVE sono i tre pulsanti:
+
+        /* rettangoli dei pulsanti chiudi/riduci/ingrandisci per la
+           finestra esterna (x,y,w,h); -1 se lo stile non li mette li' */
+        void ext_finestra_pulsanti(const ExTema *m, int x, int y, int w, int h,
+                                   int r_chiudi[4], int r_riduci[4], int r_ingr[4]);
+
+  ! ATTENZIONE: con EXT_CHIUDI_TONDI i pulsanti stanno a SINISTRA. Il
+  clic che oggi cerca la chiusura a destra deve usare questi rettangoli.
+
+  4.2 L'ombra delle finestre: va disegnata nel compositore, sotto la
+  finestra, prima di posarla: ext_ombra sul rettangolo esterno con
+  ombra_finestra/ombra_alfa del tema. Il rettangolo "sporco" di una
+  finestra si allarga di ombra_finestra px per lato (sporca()). Su una
+  finestra spostata, l'area da ricomporre e' vecchia+nuova con l'ombra.
+
+  4.3 16 e 24 bit: il motore scrive 32 bit. Due vie:
+     a) (consigliata) il server compone SEMPRE in un'ombra a 32 bit
+        (g_fb puntato a un buffer 32 bit) e converte nello schermo in
+        mostra(), che copia gia' i rettangoli sporchi: la conversione
+        32->16 (RGB565) e 32->24 sta in un posto solo;
+     b) senza ombra a 32 bit (poca RAM): tema forzato a "classico" con
+        ombre spente e il disegno di oggi.
+
+  4.4 La scrivania: ext_scrivania una volta per misura dello schermo, in un
+  buffer a 32 bit (g_sfondo), poi copiata dove non ci sono finestre (oggi
+  riempi con C_SFONDO). Lo sfondo scelto dall'utente in pm (@PM-SFONDO)
+  vince sul disegno del tema se c'e'.
+
+PASSO 5 - Velocita'
+
+  - Angoli: copertura() costa 16 campioni per pixel d'angolo; per un
+    pulsante 100x30 con raggio 6 sono 4 x 36 pixel = 2304 campioni: niente.
+    Le ombre (ext_ombra) costano una radice per pixel di bordo: una finestra
+    740x500 con ombra 20 sono ~50000 radici. Nel server l'ombra va messa in
+    cache per misura (buffer alfa w+2s x h+2s per finestra, rifatto solo
+    quando la misura cambia) e posata con una fusione per pixel.
+  - I pulsanti lucidi (riflesso()) disegnano il rettangolo arrotondato una
+    volta per riga della meta' alta: per pulsanti grandi conviene una cache
+    per (w, h, stato) nel toolkit, o ridurre il riflesso a 4 bande.
+  - Misurare con tools/misura_finestre.py prima/dopo; il tema classico deve
+    restare entro il 10% di oggi.
+
+PASSO 6 - Scelta del tema
+
+  - File: $HOME/.exwin/config/tema.cfg (regola della casa di SVILUPPO.md 7)
+
+        tema = cristallo
+        animazioni = piene        # piene | ridotte | spente (ANIM001)
+
+  - exwin: in ex_init legge il file (HOME del processo) e mette g_tema =
+    extema_per_nome(); nome sconosciuto -> classico, con un avviso nel
+    registro di ExWin (@EXWIN-LOG).
+  - wserver: lo legge per l'utente a cui appartiene (voce 111: "wserver solo
+    al suo utente").
+  - Cambio a caldo: pm scrive il file e manda WIN_MSG_TEMA al server; il
+    server lo rilegge, ridisegna telai e scrivania, e inoltra WIN_EV_TEMA a
+    ogni client; il client rilegge il file, cambia g_tema e ridisegna tutte
+    le sue finestre (ex_redraw su ogni primo livello). Un client vecchio che
+    non conosce l'evento lo ignora: cambia tema al riavvio.
+
+    /* win_proto.h */
+    #define WIN_MSG_TEMA   0x5741   /* client -> server: rileggi tema.cfg */
+    #define WIN_EV_TEMA    0x0041   /* server -> client: il tema e' cambiato */
+
+  - pm, pannello "Aspetto": una lista dei temi (extema_elenco), accanto
+    un'anteprima VERA disegnata con ext_* in una image di 320x200 (la
+    stessa scena di anteprima.c in piccolo: finestra, pulsanti, lista),
+    pulsanti "Applica" e "Ripristina". Sotto: "Animazioni: piene /
+    ridotte / spente".
+
+PASSO 6 bis - Il carattere
+
+  Il motore scrive col font di sistema 8x16. Il toolkit usa anche i
+  TrueType (exfont.so) per chi li chiede: ext_testo deve diventare un
+  puntatore a funzione nella ExTela (t->testo) che il toolkit imposta sul
+  proprio ex_draw_text con il font corrente, e l'host lascia a 8x16. Cosi'
+  i temi non cambiano quando cambia il carattere.
+
+-------------------------------------------------------------------------------
+5. PROVA
+-------------------------------------------------------------------------------
+  - Ogni tema, in QEMU a 32 e 64 bit con -vga std a 1024x768x32: le stesse
+    applicazioni (pm, filemgr, exide, exbrowser, gfedit, calcolatrice):
+    fotografia (qemu_drive.py foto:) e confronto a occhio con il PNG del
+    tema. I PNG sono il riferimento.
+  - Lo stesso a 16 bit (-vga cirrus o 1024x768x16): via 4.3 a) senza
+    differenze visibili, o via b) col classico.
+  - Cambio a caldo da pm con cinque applicazioni aperte: tutte cambiano
+    entro un secondo, nessun resto del tema di prima (telai compresi).
+  - tools/misura_finestre.py: tempi di disegno per tema, nel diario.
+  - Pentium 166 con 8 MB: classico predefinito, nessun rallentamento
+    rispetto a oggi; con "cristallo" la scrivania si disegna una volta sola
+    all'avvio (misurare quanto: e' la scena piu' cara).
+
+-------------------------------------------------------------------------------
+STATO (25/11/2026, notte)
+-------------------------------------------------------------------------------
+LETTO, NON COMINCIATO. Proposta: dopo che la 0.367 e' provata e
+pubblicata, come lavoro a se'.
+Perche' non stanotte: cambia il disegno di ogni controllo (exwin.c) e il
+telaio del server, dove cade il clic (chiudi/riduci/ingrandisci, con
+EXT_CHIUDI_TONDI a sinistra), la composizione a 16/24 bit (4.3) e il
+Makefile di exwin.so e wserver.drv. Stanotte ci sono in prova kernel,
+sshd, ip.drv, i driver USB, wserver 0.018 (zone con proprietario) ed
+exwin 0.025: con il tema insieme, un guasto a schermo non si saprebbe a
+chi darlo. "Niente regressioni sul ferro": va provato in QEMU a
+1366x768 e sul portatile prima di pubblicarlo.
+Ordine proposto: passo 1-2-3 col solo tema classico (COLORI001 lo
+vuole), misura con misura_finestre.py (entro il 10%), poi passo 4
+(server, 32 bit prima; 16/24 con l'ombra a 32 bit), poi COLORI001.
+DA DECIDERE: va bene cominciare cosi' alla prossima sessione?

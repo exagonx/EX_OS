@@ -306,30 +306,34 @@ void ed25519_firma(unsigned char firma[64], const unsigned char *m,
                    unsigned int n, const unsigned char seme[32],
                    const unsigned char pub[32])
 {
-    unsigned char h[64], r[64], hram[64], buf[512];
+    unsigned char h[64], r[64], hram[64];
     i64  x[64];
     gf   p[4];
+    Sha512 c;
     unsigned int i;
 
-    if (n > sizeof(buf) - 64) n = sizeof(buf) - 64;
-
+    /* ! UNTIL 25/11/2026 A 512-BYTE BUFFER: past 448 bytes the message was
+     * cut and the signature covered only its start, silently. In pieces now
+     * (sha512_aggiungi), at any length. */
     sha512(seme, 32, h);
     h[0] &= 248; h[31] &= 127; h[31] |= 64;
 
     /* r = SHA-512(meta' alta della chiave || messaggio): deterministico. */
-    for (i = 0; i < 32; i++) buf[i] = h[32 + i];
-    for (i = 0; i < n; i++)  buf[32 + i] = m[i];
-    sha512(buf, 32 + n, r);
+    sha512_inizia(&c);
+    sha512_aggiungi(&c, h + 32, 32);
+    sha512_aggiungi(&c, m, n);
+    sha512_finisci(&c, r);
     riduci(r);
 
     moltiplica_base(p, r);
     impacchetta(firma, p);
 
     /* hram = SHA-512(R || A || messaggio) */
-    for (i = 0; i < 32; i++) buf[i] = firma[i];
-    for (i = 0; i < 32; i++) buf[32 + i] = pub[i];
-    for (i = 0; i < n; i++)  buf[64 + i] = m[i];
-    sha512(buf, 64 + n, hram);
+    sha512_inizia(&c);
+    sha512_aggiungi(&c, firma, 32);
+    sha512_aggiungi(&c, pub, 32);
+    sha512_aggiungi(&c, m, n);
+    sha512_finisci(&c, hram);
     riduci(hram);
 
     /* S = r + hram * a  (mod l) */
@@ -345,11 +349,9 @@ void ed25519_firma(unsigned char firma[64], const unsigned char *m,
 int ed25519_verifica(const unsigned char firma[64], const unsigned char *m,
                      unsigned int n, const unsigned char pub[32])
 {
-    unsigned char hram[64], buf[512], t[32];
+    unsigned char hram[64], t[32];
     gf  p[4], q[4];
-    unsigned int i;
-
-    if (n > sizeof(buf) - 64) return -1;
+    Sha512 c;
 
     /* ! LA META' ALTA DELLA FIRMA DEV'ESSERE GIA' RIDOTTA. Accettarne una piu'
      * grande vuol dire accettare due firme diverse per lo stesso messaggio. */
@@ -357,10 +359,11 @@ int ed25519_verifica(const unsigned char firma[64], const unsigned char *m,
 
     if (spacchetta(q, pub) != 0) return -1;
 
-    for (i = 0; i < 32; i++) buf[i] = firma[i];
-    for (i = 0; i < 32; i++) buf[32 + i] = pub[i];
-    for (i = 0; i < n; i++)  buf[64 + i] = m[i];
-    sha512(buf, 64 + n, hram);
+    sha512_inizia(&c);                  /* any length: see ed25519_firma */
+    sha512_aggiungi(&c, firma, 32);
+    sha512_aggiungi(&c, pub, 32);
+    sha512_aggiungi(&c, m, n);
+    sha512_finisci(&c, hram);
     riduci(hram);
 
     moltiplica_punto(p, q, hram);

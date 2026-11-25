@@ -1,0 +1,188 @@
+IMPLEMENTAZIONE LIM001 - Limiti per utente su processi e memoria, e una
+                          riserva per root che regga davvero (RLIMIT_NPROC,
+                          RLIMIT_AS/DATA, contabilita' per uid, OOM)
+===============================================================================
+Priorita':  ALTA (stabilita' multiutente: un solo utente oggi puo' rendere
+            la macchina irrecuperabile senza riavvio)
+Programma:  kernel EX-OS, libc
+Sorgenti:   kernel/sched/sched.c     pcb_alloc (SLOT_RISERVATI_ROOT),
+                                     proc_tetto, proc_create
+            kernel/mm/pmm.c          pmm_alloc_page, pmm_alloc_page_utente
+            kernel/mm/paging.c       pagina_utente (il fault che non trova
+                                     RAM: "si torna 0 e il chiamante lo
+                                     termina")
+            kernel/mm/shm.c, shmfd.c zona_crea, shmfd_misura (pagine fisiche
+                                     allocate subito, senza conto)
+            kernel/syscall/syscall_impl.c  sys_mmap, sys_brk, sys_spawn,
+                                     fork, clone (fili)
+            lib/libc.c               getrlimit/setrlimit (oggi: STACK fisso,
+                                     NOFILE dal kernel, il resto infinito)
+Rilevato su: albero del 24/11/2026.
+
+-------------------------------------------------------------------------------
+1. COSA MANCA
+-------------------------------------------------------------------------------
+a) La riserva di root (pcb_alloc: SLOT_RISERVATI_ROOT = 8) conta POSTI,
+   non risorse. Dal kernel 0.282 la tabella cresce fino a proc_tetto(),
+   che e' il tetto hardware (RAM / KERNEL_STACK_SIZE, o la zona sotto
+   64 MB). I posti "liberi" includono quelli non ancora allocati
+   (tetto - g_proc_posti). Ma ogni posto vero costa 128 KB di pila del
+   kernel + la page directory + le pagine del programma: un utente che
+   riempie la RAM (o la RAM e lo swap) con i suoi processi lascia a root
+   otto posti teorici che non si possono creare, perche' le 32 pagine
+   della pila del kernel non ci sono. Il rimedio ("una shell, un id, un
+   kill") diventa impossibile proprio quando serve: la stessa situazione
+   che il commento del 17 agosto voleva evitare.
+
+b) Nessun tetto di processi per utente: 8 posti per root e il resto a
+   chiunque. Una fork-bomb di uid 1000 prende tutti gli altri posti a
+   tutti gli altri utenti e ai servizi (Apache, MariaDB non possono piu'
+   creare fili: la voce 111 ha separato gli utenti ma non le loro
+   risorse).
+
+c) Nessun tetto di memoria per processo o per utente. getrlimit risponde
+   RLIM_INFINITY per AS/DATA, setrlimit li ignora. Le pagine si allocano
+   al fault; quando non ce ne sono il fault uccide CHI LE CHIEDE in quel
+   momento, che puo' essere wserver, un driver ring 3, sshd, init: non
+   chi le sta consumando.
+
+d) Le memorie condivise (shm per nome e FD_SHM/memfd) e i buffer delle
+   pipe si allocano senza conto; vedi bug_SHM001 punto (e).
+
+-------------------------------------------------------------------------------
+2. PROGETTO
+-------------------------------------------------------------------------------
+2.1 Contabilita' per uid
+
+    /* kernel/include/sched.h */
+    typedef struct {
+        uint32_t uid;
+        uint32_t processi;        /* PCB vivi (fili compresi) */
+        uint32_t pagine;          /* pagine fisiche di cui e' unico
+                                     proprietario + quota delle condivise */
+        uint32_t tetto_processi;  /* 0 = nessuno */
+        uint32_t tetto_pagine;    /* 0 = nessuno */
+    } ContoUtente;
+
+    ContoUtente *conto_di(uint32_t uid);   /* tabella piccola, cresce;
+                                              protetta come la tabella dei
+                                              processi (interrupt spenti +
+                                              BKL) */
+
+   Il PCB porta un puntatore al suo conto (Process.conto), preso a
+   proc_create dall'uid ereditato e spostato in sys_setuid/sys_su
+   (decrementare il vecchio, incrementare il nuovo, per ogni filo del
+   gruppo: lo stesso ciclo che sys_setuid fa gia' su tgid).
+
+   Pagine: il punto unico e' dove una pagina utente viene data a un
+   processo (pagina_utente nel fault, la copia su scrittura del fork,
+   mmap MAP_POPULATE, shm_apri, shmfd_mappa) e dove gli viene tolta
+   (paging_unmap/pmm_free_page con proprietario). Conteggio semplice:
+   ogni mappatura di pagina in un processo incrementa il conto del suo
+   uid; le condivise contano per ognuno (sovrastima voluta, come RSS su
+   Linux). E' piu' semplice di una quota proporzionale e basta per un
+   tetto.
+
+2.2 I controlli
+
+   proc_create (o pcb_alloc):
+
+    if (self && self->uid != 0) {
+        ContoUtente *c = self->conto;
+        if (c->tetto_processi && c->processi >= c->tetto_processi)
+            return NULL;                       /* EAGAIN, come Linux */
+    }
+
+   Fault / allocazione di pagine utente:
+
+    if (proc->uid != 0 && c->tetto_pagine && c->pagine >= c->tetto_pagine)
+        -> ENOMEM a mmap/brk se l'allocazione e' esplicita;
+        -> al fault di una pagina gia' promessa: SIGSEGV/SIGBUS al
+           processo che sfora (e' il SUO conto), non a un altro.
+
+   RLIMIT_AS / RLIMIT_DATA per processo: sys_mmap e sys_brk confrontano
+   la somma delle VMA (gia' tenute: proc->vma*) con il limite del
+   processo, ENOMEM oltre. Il limite sta nel PCB (Process.rlim_as,
+   rlim_data), si eredita a fork/spawn, si cambia con una syscall nuova
+   SYS_RLIMIT (risorsa, cur, max), regole POSIX: chiunque abbassa, solo
+   root alza il max.
+
+2.3 La riserva di root che regge
+
+   Una riserva di PAGINE, non di posti:
+
+    #define RISERVA_ROOT_PAGINE  (2048u)   /* 8 MB: 8 pile del kernel da
+                                              128 KB + shell + id + kill */
+
+    paddr_t pmm_alloc_page_per(const Process *p)
+    {
+        if (p && p->uid != 0 && pmm_libere() <= RISERVA_ROOT_PAGINE) {
+            /* prima prova a liberare: swap, cache dei blocchi */
+            if (!pmm_fai_posto(1)) return 0;
+        }
+        return pmm_alloc_page();
+    }
+
+   La pila del kernel di un processo di root (proc_create con self->uid
+   == 0) si prende senza la soglia. pmm_alloc_page_utente diventa un
+   involucro di pmm_alloc_page_per(proc_get_current()).
+
+   Valore della riserva: da kernel.cfg (riserva_root = 8M), predefinito
+   min(8 MB, RAM/16): sul Pentium 166 da 8 MB di prova va ridotta a
+   ~1 MB o la riserva mangia la macchina.
+
+2.4 Valori predefiniti e configurazione
+
+   kernel.cfg:
+        proc_utente  = 512        (tetto processi per uid non root)
+        mem_utente   = 75%        (tetto pagine per uid non root, in % della
+                                   RAM + swap, oppure in MB)
+        riserva_root = 8M
+   0 = nessun tetto, come oggi. I servizi che girano come utente dedicato
+   (mysql, www-data) ereditano gli stessi tetti; per MariaDB con centinaia
+   di fili il valore di proc_utente va scelto sopra i suoi fili (prove di
+   carico esistenti: tools/stress).
+
+2.5 libc
+
+    int getrlimit(int r, struct rlimit *o)
+    {
+        switch (r) {
+        case RLIMIT_AS: case RLIMIT_DATA: case RLIMIT_NPROC:
+            return syscall3(SYS_RLIMIT, r | RLIM_LEGGI, (uintptr_t)o, 0);
+        ...
+        }
+    }
+    int setrlimit(int r, const struct rlimit *v) { ... SYS_RLIMIT ... }
+
+   bash/sh "ulimit -u/-v" funzionano da soli quando la libc risponde.
+
+2.6 Diagnostica
+
+   /proc/<pid>/limits mostra i valori veri (oggi procfs ne inventa una
+   parte); "mem" e /proc/meminfo aggiungono "per utente": uid, processi,
+   pagine. klog(LOG_WARN) una volta per uid quando un tetto morde.
+
+-------------------------------------------------------------------------------
+3. PROVA
+-------------------------------------------------------------------------------
+  - Fork-bomb come uid 1000 (while(1) fork();): si ferma a proc_utente;
+    root entra da telnet e dalla console, ps e kill funzionano, Apache e
+    MariaDB continuano a servire.
+  - "malloc fino alla fine" come uid 1000, con swap acceso e spento
+    (EX-OS_da_verificare.txt sezione 4): il programma riceve NULL o muore
+    LUI; wserver, i driver ring 3, sshd/telnetd restano vivi; mem torna
+    al valore di prima quando il programma muore.
+  - Lo stesso sul Pentium 166 con 8 MB: la riserva non impedisce l'avvio
+    di ExWin.
+  - Le prove di carico di MariaDB/Apache/Firefox (tools/stress,
+    tools/prova_*.sh) senza regressioni con i valori predefiniti.
+-------------------------------------------------------------------------------
+4. STATO (25/11/2026, notte)
+-------------------------------------------------------------------------------
+NON FATTO, DA DECIDERE: cambia chi muore quando la memoria finisce e
+  chiede dei valori predefiniti (proc_utente, mem_utente, riserva_root)
+  che vanno scelti contro le prove di carico (MariaDB con centinaia di
+  fili, i 32 mila client di tcp.drv, le macchine da 8 GB). La parte
+  minima e sicura sarebbe la riserva di PAGINE per root (2.3) con
+  kernel.cfg riserva_root: dimmi se partire da li'.

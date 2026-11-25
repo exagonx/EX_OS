@@ -23,6 +23,11 @@
 #   E. (netupdate 0.049) /boot/netupdate.avvio left by a map that failed:
 #      the next -check rewrites the map first and removes the file, even with
 #      nothing to update.
+#   F. (netupdate 0.053, debug/bug_NETUPD001) versione.txt is signed: without
+#      the signature, with a byte changed, expired, older than the serie
+#      already installed, or signed by another key than /boot/netupdate.pub,
+#      nothing is used and no script runs. B and D change versione.txt, so
+#      they sign it again (tools/netinst/firma.py, the key in ~/ex_os/chiavi).
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1
 RADICE=$PWD
@@ -36,6 +41,8 @@ else
 fi
 [ -f "$ISO" ] || { echo "manca $ISO" >&2; exit 1; }
 grep -q '^verifiche' "$REPO/versione.txt" || { echo "$REPO non ha verifiche: make netinst" >&2; exit 1; }
+grep -q '^firma' "$REPO/versione.txt" || { echo "$REPO non e' firmato: rifai make netinst (tools/netinst/firma.py)" >&2; exit 1; }
+FIRMA="python3 $RADICE/tools/netinst/firma.py"
 
 ok=0; no=0
 si() { echo "  [OK] $1"; ok=$((ok+1)); }
@@ -56,7 +63,7 @@ NOME=$(basename "$REPO")
 # ! HARD LINKS ONLY ON THE SAME FILESYSTEM: /tmp is a tmpfs here, and on
 # 6/11/2026 every `cp -al` failed and the three servers were empty. Symbolic
 # links work anywhere; sed -i and rm below replace the link, not the original.
-for g in a b c d; do
+for g in a b c d e f h; do
     mkdir -p "$D/srv-$g"
     cp -al "$RADICE/$REPO" "$D/srv-$g/$NOME" 2>/dev/null || {
         rm -rf "$D/srv-$g/$NOME"; cp -as "$RADICE/$REPO" "$D/srv-$g/$NOME"; } || {
@@ -65,6 +72,7 @@ done
 # B: another system version, versione.txt still the root of trust
 sed -i 's/^versione  = .*/versione  = 0.999/' "$D/srv-b/$NOME/versione.txt"
 rm "$D/srv-b/$NOME/versione.txt.tmp" 2>/dev/null
+$FIRMA firma "$D/srv-b/$NOME/versione.txt" || exit 1
 # C: sistema.sh changed after its fingerprint went in verifiche.txt
 rm "$D/srv-c/$NOME/verifiche/sistema.sh"
 { cat "$RADICE/$REPO/verifiche/sistema.sh"; echo "echo MODIFICATO-SUL-SERVER"; } > "$D/srv-c/$NOME/verifiche/sistema.sh"
@@ -102,6 +110,14 @@ v = os.path.join(r, "versione.txt")
 t = re.sub(r"(?m)^app *=.*$", "app       = " + hashlib.sha256(apl.encode()).hexdigest(), open(v).read())
 nuovo(v, t)
 PY
+$FIRMA firma "$D/srv-d/$NOME/versione.txt" || exit 1
+# F: e without the signature, f with a byte changed after it, h expired
+V="$D/srv-e/$NOME/versione.txt"; rm "$V"; grep -v '^firma' "$RADICE/$REPO/versione.txt" > "$V"
+V="$D/srv-f/$NOME/versione.txt"; rm "$V"; sed 's/^data      = /data      = X/' "$RADICE/$REPO/versione.txt" > "$V"
+V="$D/srv-h/$NOME/versione.txt"; rm "$V"; cp "$RADICE/$REPO/versione.txt" "$V"; $FIRMA firma "$V" -1 || exit 1
+# and two public keys to put in /boot/netupdate.pub: the right one, another
+$FIRMA pub "$D/srv-a/$NOME/giusta.pub" || exit 1
+EXOS_CHIAVE="$D/altra.key" $FIRMA crea > /dev/null && EXOS_CHIAVE="$D/altra.key" $FIRMA pub "$D/srv-a/$NOME/altra.pub" || exit 1
 
 L=("root@2" "root@6" "keymap us@3")
 gira() {    # $1 = run, then the commands
@@ -167,14 +183,46 @@ grep -aq -- "-- sistema.sh (sistema)" "$D/d.txt" && no "D: le verifiche sono par
 
 echo "=== 6. E: l'avvio rimasto da riscrivere ==="
 gira d "echo mappa da riscrivere > /boot/netupdate.avvio@2" "netupdate -check -yes@~300" \
-    "cat /boot/netupdate.avvio@3" "echo FINE""-E@2" "sync@5"
+    "cat /boot/netupdate.avvio@3" "cat /boot/netupdate.serie@3" "echo FINE""-E@2" "sync@5"
 E="$D/d.txt"; cp "$E" "$D/e.txt"; E="$D/e.txt"
 grep -aq "non ha riscritto l'avvio: ci riprovo" "$E" && si "E: -check vede l'avvio sospeso" || no "E: -check non lo vede ($E)"
 grep -aq "settore di avvio riscritto" "$E" && si "E: la mappa e' riscritta" || no "E: la mappa non e' riscritta ($E)"
+sed -n '/> cat \/boot\/netupdate.serie/,/FINE-E/p' "$E" | grep -aq "^[0-9]\{9,\}" \
+    && si "E: -check riuscito scrive /boot/netupdate.serie" || no "E: /boot/netupdate.serie non scritto ($E)"
 sed -n '/> cat \/boot\/netupdate.avvio/,/FINE-E/p' "$E" | grep -aq "^mappa da riscrivere" \
     && no "E: /boot/netupdate.avvio e' rimasto" || si "E: /boot/netupdate.avvio tolto"
 
-for g in a b c d; do
+echo "=== 7. F: la firma di versione.txt ==="
+pezzo() { sed -n "/> $1/,/> $2/p" "$3"; }
+gira e "netupdate -verifica@~120" "netupdate -verifica -insicuro@~120" "echo FINE""-F@2"
+F="$D/e.txt"
+pezzo "netupdate -verifica\$" "netupdate -verifica -insicuro" "$F" > "$D/f1.txt"
+grep -aq "versione.txt non e' firmato: non tocco niente" "$D/f1.txt" && ! grep -aq "^Verifiche" "$D/f1.txt" \
+    && si "F: senza firma: rifiutato, nessuna verifica" || no "F: senza firma non rifiuta ($D/f1.txt)"
+pezzo "netupdate -verifica -insicuro" "FINE-F" "$F" | grep -aq "Tutto a posto" \
+    && si "F: -insicuro lo accetta, e lo dice" || no "F: -insicuro non va ($F)"
+gira f "netupdate -verifica@~120"
+grep -aq "non porta la firma della chiave" "$D/f.txt" && ! grep -aq "^Verifiche" "$D/f.txt" \
+    && si "F: un byte cambiato dopo la firma: rifiutato" || no "F: byte cambiato accettato ($D/f.txt)"
+gira h "netupdate -verifica@~120"
+grep -aq "e' scaduto" "$D/h.txt" && si "F: scaduto: rifiutato" || no "F: scaduto accettato ($D/h.txt)"
+gira a "echo 99999999999 > /boot/netupdate.serie@2" "netupdate -verifica@~120" \
+    "netupdate -verifica -indietro@~120" "rm /boot/netupdate.serie@2" \
+    "scarica http://10.0.2.100/$NOME/altra.pub /boot/netupdate.pub@~20" "netupdate -verifica@~120" \
+    "scarica http://10.0.2.100/$NOME/giusta.pub /boot/netupdate.pub@~20" "netupdate -verifica@~120" \
+    "rm /boot/netupdate.pub@2" "echo FINE""-G@2" "sync@5"
+F="$D/a.txt"; cp "$F" "$D/g.txt"; F="$D/g.txt"
+awk '/> netupdate -verifica$/{n++} n==1' "$F" | sed '/> netupdate -verifica -indietro/,$d' > "$D/g1.txt"
+grep -aq "PIU' VECCHIO di quello" "$D/g1.txt" && si "F: serie piu' vecchia di quella installata: rifiutato" || no "F: serie vecchia accettata ($D/g1.txt)"
+pezzo "netupdate -verifica -indietro" "rm \/boot\/netupdate.serie" "$F" | grep -aq "Tutto a posto" \
+    && si "F: con -indietro si torna indietro" || no "F: -indietro rifiutato ($F)"
+awk '/> netupdate -verifica$/{n++} n==2' "$F" | sed '/> scarica .*giusta/,$d' > "$D/g2.txt"
+grep -aq "firma della chiave di questo" "$D/g2.txt" && grep -aq "netupdate.pub" "$D/g2.txt" \
+    && si "F: /boot/netupdate.pub di un'altra chiave: rifiutato" || no "F: un'altra chiave accettata ($D/g2.txt)"
+awk '/> netupdate -verifica$/{n++} n==3' "$F" | sed '/> rm \/boot\/netupdate.pub/,$d' | grep -aq "Tutto a posto" \
+    && si "F: /boot/netupdate.pub con la chiave giusta: accettato" || no "F: la chiave giusta in netupdate.pub rifiutata ($F)"
+
+for g in a b c d e f h; do
     grep -a "\[FAULT\]\|KERNEL PANIC" /tmp/exos/serialvf$ARCH$g.txt > /dev/null 2>&1 && no "$g: un [FAULT] sulla seriale"
 done
 echo "=== $ok riusciti, $no no ==="

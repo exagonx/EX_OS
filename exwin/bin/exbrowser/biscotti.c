@@ -167,6 +167,90 @@ static int dominio_copre(const char *dom, const char *host)
     return host[lh - ld - 1] == '.';
 }
 
+/* ! (debug/bug_BROWSER001) PUBLIC SUFFIXES: "Domain=com" from www.bad.com
+ * covers www.bad.com by labels, and until 25/11 the cookie went to EVERY .com
+ * site: session fixation for free. One label is always a public suffix; the
+ * two- and three-label ones below are the common part of the Public Suffix
+ * List (publicsuffix.org). The full list is phase 2 (psl.dat via netupdate). */
+static const char *const g_psl_corta[] = {
+    /* generic and country, second level */
+    "co.uk","org.uk","ac.uk","gov.uk","me.uk","ltd.uk","plc.uk","net.uk","sch.uk","nhs.uk",
+    "com.au","net.au","org.au","edu.au","gov.au","id.au","asn.au",
+    "co.jp","ne.jp","or.jp","ac.jp","go.jp","gr.jp","ed.jp","lg.jp",
+    "com.br","net.br","org.br","gov.br","edu.br","art.br",
+    "com.cn","net.cn","org.cn","gov.cn","edu.cn","ac.cn",
+    "co.in","net.in","org.in","gen.in","firm.in","ind.in","gov.in","ac.in","edu.in",
+    "co.nz","net.nz","org.nz","govt.nz","ac.nz","school.nz","geek.nz",
+    "co.za","org.za","gov.za","ac.za","net.za","web.za",
+    "com.mx","org.mx","gob.mx","edu.mx","net.mx",
+    "com.ar","org.ar","gob.ar","net.ar","edu.ar",
+    "com.tr","org.tr","net.tr","gov.tr","edu.tr","gen.tr",
+    "com.tw","org.tw","net.tw","gov.tw","edu.tw","idv.tw",
+    "com.hk","org.hk","net.hk","gov.hk","edu.hk","idv.hk",
+    "com.sg","org.sg","net.sg","gov.sg","edu.sg",
+    "co.kr","or.kr","ne.kr","go.kr","ac.kr","re.kr",
+    "co.il","org.il","net.il","gov.il","ac.il","muni.il",
+    "com.ru","org.ru","net.ru","msk.ru","spb.ru",
+    "com.ua","org.ua","net.ua","gov.ua","kiev.ua",
+    "com.pl","org.pl","net.pl","gov.pl","edu.pl","waw.pl",
+    "com.es","org.es","nom.es","gob.es","edu.es",
+    "com.pt","org.pt","gov.pt","edu.pt",
+    "com.gr","org.gr","gov.gr","edu.gr",
+    "co.at","or.at","gv.at","ac.at",
+    "co.id","or.id","go.id","ac.id","web.id",
+    "com.my","org.my","net.my","gov.my","edu.my",
+    "com.ph","org.ph","net.ph","gov.ph","edu.ph",
+    "com.vn","org.vn","net.vn","gov.vn","edu.vn",
+    "com.eg","org.eg","gov.eg","edu.eg",
+    "com.sa","org.sa","gov.sa","edu.sa",
+    "co.th","or.th","go.th","ac.th","in.th",
+    "com.co","org.co","net.co","gov.co","edu.co",
+    "com.pe","org.pe","gob.pe","edu.pe",
+    "com.ve","org.ve","gob.ve",
+    "com.ng","org.ng","gov.ng","edu.ng",
+    "co.ke","or.ke","go.ke","ac.ke",
+    "gov.it","edu.it","gov.fr","gouv.fr","asso.fr","nom.fr","com.fr",
+    "co.it","ag.it","bo.it","fi.it","ge.it","mi.it","na.it","pa.it","rm.it","roma.it",
+    "to.it","tn.it","bz.it","milano.it","torino.it","napoli.it","firenze.it",
+    "co.ca","gc.ca","on.ca","qc.ca","bc.ca","ab.ca",
+    "us.com","eu.com","uk.com","de.com","cn.com","br.com","jpn.com","za.com",
+    /* private: different users under one name */
+    "github.io","githubusercontent.com","gitlab.io","bitbucket.io",
+    "blogspot.com","wordpress.com","tumblr.com","herokuapp.com","herokussl.com",
+    "appspot.com","firebaseapp.com","web.app","pages.dev","workers.dev",
+    "netlify.app","netlify.com","vercel.app","now.sh","glitch.me","repl.co",
+    "azurewebsites.net","cloudapp.net","azurestaticapps.net","blob.core.windows.net",
+    "s3.amazonaws.com","cloudfront.net","elasticbeanstalk.com","amplifyapp.com",
+    "fly.dev","onrender.com","surge.sh","neocities.org","000webhostapp.com",
+    "dyndns.org","no-ip.org","ddns.net","duckdns.org","ngrok.io","ngrok-free.app",
+    "altervista.org","sourceforge.io","readthedocs.io","gitbook.io","myshopify.com",
+    0
+};
+
+static int e_suffisso_pubblico(const char *dom)
+{
+    int i;
+
+    for (i = 0; dom[i]; i++) if (dom[i] == '.') break;
+    if (!dom[i]) return 1;                               /* one label */
+    for (i = 0; g_psl_corta[i]; i++) if (ugu_min(dom, g_psl_corta[i])) return 1;
+    return 0;
+}
+
+/* RFC 6265 5.1.3: an IP host matches only itself. Dotted quad or IPv6. */
+static int e_indirizzo_ip(const char *h)
+{
+    int punti = 0, cifre = 0;
+
+    for (; *h; h++) {
+        if (*h == ':' || *h == '[') return 1;
+        if (*h == '.') { if (!cifre) return 0; punti++; cifre = 0; }
+        else if (cifra((unsigned char)*h)) cifre++;
+        else return 0;
+    }
+    return punti == 3 && cifre > 0;
+}
+
 /* ! IL PERCORSO PREDEFINITO E' LA DIRECTORY, NON LA PAGINA. Un biscotto messo
  * da «/conto/entra.html» senza `Path` vale per «/conto/», cioe' anche per
  * «/conto/esci.html»: e' quel che dice la specifica, ed e' anche l'unica cosa
@@ -354,22 +438,67 @@ static int posto_libero(Dispensa *d)
     return peggiore;
 }
 
+/* RFC 6265bis 4.1.3: the name says how it was born, so it must be true */
+static int prefisso(const char *nome, const char *pre)
+{
+    unsigned int i;
+
+    for (i = 0; pre[i]; i++)
+        if (minusc((unsigned char)nome[i]) != minusc((unsigned char)pre[i])) return 0;
+    return 1;
+}
+
 static int metti(Dispensa *d, const char *host, const char *richiesta,
-                 const Letto *L, int da_script)
+                 const Letto *L, int da_script, int cifrata)
 {
     const char *dom = L->dominio[0] ? L->dominio : host;
     char        perc[BIS_PERC_MAX];
-    int         k;
+    int         k, sotto = L->con_sottodomini;
 
     /* ! UN SITO NON PUO' METTERE BISCOTTI PER UN ALTRO, ed e' il controllo che
      * non si puo' saltare: senza, una pagina qualunque potrebbe scrivere un
      * biscotto «Domain=google.com» e farselo mandare da noi la volta dopo. */
-    if (L->dominio[0] && !dominio_copre(L->dominio, host)) return 0;
+    if (L->dominio[0]) {
+        /* ! (debug/bug_BROWSER001) AN IP IS NOT A DOMAIN: "Domain=0.0.1" from
+         * 10.0.0.1 covered it by labels and went to 192.0.0.1 too */
+        if (e_indirizzo_ip(host) || e_suffisso_pubblico(L->dominio)) {
+            /* the site IS the suffix (or the address): host-only, else no */
+            if (!ugu_min(L->dominio, host)) return 0;
+            dom = host; sotto = 0;
+        } else if (!dominio_copre(L->dominio, host)) return 0;
+    }
 
     if (L->percorso[0]) copia(perc, sizeof(perc), L->percorso, lung(L->percorso));
     else                percorso_predefinito(richiesta, perc, sizeof(perc));
 
+    /* ! (debug/bug_BROWSER001) LEAVE SECURE COOKIES ALONE (RFC 6265bis): a
+     * page in clear - maybe injected by whoever sits in the middle - neither
+     * makes a Secure cookie nor touches one with the same name that covers it;
+     * the next https visit would carry the attacker's value. */
+    if (L->sicuro && !cifrata) return 0;
+    if (!cifrata) {
+        int i;
+
+        for (i = 0; i < BIS_MAX; i++) {
+            const Biscotto *b = &d->b[i];
+
+            if (b->usato && b->sicuro && ugu(b->nome, L->nome) &&
+                (dominio_copre(b->dominio, dom) || dominio_copre(dom, b->dominio)) &&
+                percorso_copre(b->percorso, perc))
+                return 0;
+        }
+    }
+    if (prefisso(L->nome, "__Secure-") && !(L->sicuro && cifrata)) return 0;
+    if (prefisso(L->nome, "__Host-") &&
+        !(L->sicuro && cifrata && !L->dominio[0] && ugu(perc, "/"))) return 0;
+
     k = trova(d, dom, perc, L->nome);
+
+    /* ! (debug/bug_BROWSER001) A SCRIPT DOES NOT TOUCH AN HttpOnly COOKIE,
+     * neither changes nor removes it (RFC 6265 5.3 step 11): an XSS swapped the
+     * session for its own, and the new one was readable by scripts too. Exactly
+     * the bullshit HttpOnly exists to stop. */
+    if (k >= 0 && da_script && d->b[k].solo_http) return 0;
 
     if (L->togli) {
         if (k >= 0) { d->b[k].usato = 0; return 1; }
@@ -393,28 +522,28 @@ static int metti(Dispensa *d, const char *host, const char *richiesta,
      * `HttpOnly` diventerebbe una parola che chiunque puo' scrivere — cioe'
      * nessuna protezione. */
     d->b[k].solo_http       = (unsigned char)(!da_script && L->solo_http);
-    d->b[k].con_sottodomini = (unsigned char)(L->con_sottodomini != 0);
+    d->b[k].con_sottodomini = (unsigned char)(sotto != 0);
     return 1;
 }
 
 int bis_arrivato(Dispensa *d, const char *host, const char *percorso,
-                 const char *riga, unsigned int ora_s)
+                 const char *riga, unsigned int ora_s, int cifrata)
 {
     Letto L;
 
     if (!d || !host || !riga) return 0;
     if (!leggi_riga(riga, &L, ora_s)) return 0;
-    return metti(d, host, percorso, &L, 0);
+    return metti(d, host, percorso, &L, 0, cifrata);
 }
 
 int bis_da_script(Dispensa *d, const char *host, const char *percorso,
-                  const char *riga, unsigned int ora_s)
+                  const char *riga, unsigned int ora_s, int cifrata)
 {
     Letto L;
 
     if (!d || !host || !riga) return 0;
     if (!leggi_riga(riga, &L, ora_s)) return 0;
-    return metti(d, host, percorso, &L, 1);
+    return metti(d, host, percorso, &L, 1, cifrata);
 }
 
 static int vale_qui(const Biscotto *b, const char *host, const char *perc,

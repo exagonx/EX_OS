@@ -83,7 +83,7 @@
 #include "exuser.h"
 
 /* +0.001 a ogni modifica: `login -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("login", "0.007");
+EX_VERSIONE("login", "0.008");
 
 #define UTENTI     "/boot/utenti"    /* nome:uid:gid — pubblico */
 #define OMBRA      "/boot/ombra"     /* nome:sale:impronta — di root */
@@ -382,6 +382,10 @@ static void avvia_shell(const char *utente, unsigned int uid, unsigned int gid)
      * session from the network does not sit at the machine. Emptied when
      * the shell is gone, below. */
     if (!su_un_pty()) console_utente(1, (unsigned int)uid);
+    /* (0.008, kernel 0.367, debug/bug_PTY001) the terminal of a session from
+     * the network becomes the user's, 0620, as on Linux: /dev/pts/N is no
+     * longer open to anyone, and the user may reopen their own. */
+    if (su_un_pty()) { fchown(0, (unsigned int)uid, (unsigned int)gid); fchmod(0, 0620); }
     pid = spawn_utente(argv[0], argv, environ, uid, gid);
     if (pid < 0) {
         if (!su_un_pty()) console_utente(2, 0);

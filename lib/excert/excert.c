@@ -312,8 +312,144 @@ const char *excert_perche(int codice)
     case EXCERT_CHIAVE_RIFIUTATA:return "chiave di chi firma non gestita";
     case EXCERT_TROPPO_LUNGA:    return "catena troppo lunga";
     case EXCERT_ANNULLATO:       return "verifica interrotta da chi l'aveva chiesta";
+    case EXCERT_CRITICA_IGNOTA:  return "un'estensione critica che non conosco";
+    case EXCERT_USO_SBAGLIATO:   return "il certificato non e' per server TLS (keyUsage o EKU)";
+    case EXCERT_NOME_VINCOLATO:  return "la CA non puo' emettere per questo nome";
     default:                     return "motivo ignoto";
     }
+}
+
+/* =============================================================================
+ * WHAT A CA MAY DO (debug/bug_TLS001, November 2026)
+ *
+ * Until then a CA was a certificate with cA=TRUE and nothing more: one
+ * limited to "*.esempio.it" by nameConstraints, one with pathLen 0 that
+ * made another CA, one without keyCertSign, a code-signing certificate of
+ * a public CA - all of them passed for full CAs or TLS servers.
+ * ============================================================================= */
+static char giu(char c);
+
+/* A DNS name inside a constraint (RFC 5280 4.2.1.10): "esempio.it" takes
+ * itself and every name under it, ".esempio.it" only names under it, ""
+ * everything. Labels, not characters: "xesempio.it" is not under it. */
+static int dns_sotto(const unsigned char *v, unsigned int vn, const char *nome, unsigned int nn)
+{
+    unsigned int i;
+
+    if (vn == 0) return 1;
+    if (v[0] == '.') {
+        if (nn <= vn) return 0;
+    } else {
+        if (nn < vn) return 0;
+        if (nn > vn && nome[nn - vn - 1] != '.') return 0;
+    }
+    for (i = 0; i < vn; i++)
+        if (giu((char)v[i]) != giu(nome[nn - vn + i])) return 0;
+    return 1;
+}
+
+/* The dNSName subtrees of `alberi` that take `nome`: 1 if one does, 0 if
+ * none, -1 if there are no dNSName subtrees at all (the type is free) */
+static int alberi_dns(const ExDer *alberi, const char *nome, unsigned int nn)
+{
+    unsigned int o = 0;
+    int          visti = 0;
+
+    while (alberi->p && o < alberi->n) {
+        ExDerElem st, base;
+        unsigned int lung;
+
+        if (exder_leggi(alberi, o, &st) != 0 || st.tag != 0x30) return 0;
+        lung = st.intestazione + st.valore.n;
+        if (exder_leggi(&st.valore, 0, &base) == 0 && base.tag == 0x82) {
+            visti = 1;
+            if (dns_sotto(base.valore.p, base.valore.n, nome, nn)) return 1;
+        }
+        o += lung;
+    }
+    return visti ? 0 : -1;
+}
+
+/* Every dNSName of the leaf within the CA's constraints. Only DNS names
+ * matter here: excert_nome_combacia looks at nothing else - the subject DN,
+ * e-mail, URI and IP names never decide whether a site is the site. A
+ * wildcard "*.D" is weighed as a name one label under D, and is refused if
+ * an excluded subtree sits one label under D. */
+static int nomi_nei_vincoli(const ExCert *foglia, const ExCert *ca)
+{
+    unsigned int o = 0;
+
+    if (ca->nc_permessi.p == 0 && ca->nc_esclusi.p == 0) return 1;
+    while (foglia->san.p && o < foglia->san.n) {
+        ExDerElem g;
+        char      nome[260];
+        unsigned int nn;
+        int       jolly, r;
+
+        if (exder_leggi(&foglia->san, o, &g) != 0) return 0;
+        o += g.intestazione + g.valore.n;
+        if (g.tag != 0x82) continue;
+        if (g.valore.n == 0 || g.valore.n > 253) return 0;
+        jolly = g.valore.n > 2 && g.valore.p[0] == '*' && g.valore.p[1] == '.';
+        for (nn = 0; nn < g.valore.n; nn++) nome[nn] = (char)g.valore.p[nn];
+        if (jolly) nome[0] = 'x';           /* "*.D" -> "x.D" */
+        nome[nn] = '\0';
+
+        if (ca->nc_permessi.p != 0) {
+            r = alberi_dns(&ca->nc_permessi, nome, nn);
+            if (r == 0) return 0;
+            if (r < 0 && ca->nc_permessi.n == 0) return 0;     /* [0] empty: nothing */
+        }
+        if (ca->nc_esclusi.p != 0) {
+            if (alberi_dns(&ca->nc_esclusi, nome, nn) == 1) return 0;
+            if (jolly) {
+                /* an excluded "bad.D" is inside "*.D" */
+                unsigned int oo = 0;
+
+                while (oo < ca->nc_esclusi.n) {
+                    ExDerElem st, base;
+
+                    if (exder_leggi(&ca->nc_esclusi, oo, &st) != 0 || st.tag != 0x30) return 0;
+                    oo += st.intestazione + st.valore.n;
+                    if (exder_leggi(&st.valore, 0, &base) == 0 && base.tag == 0x82 &&
+                        base.valore.n > nn - 1 &&
+                        dns_sotto(g.valore.p + 2, nn - 2, (const char *)base.valore.p, base.valore.n))
+                        return 0;
+                }
+            }
+        }
+    }
+    return 1;
+}
+
+/* 1 if c is, byte for byte, one of the store: trusted as it is */
+static int nel_magazzino(const ExCert *c, const ExMagazzino *m)
+{
+    unsigned int k, j;
+
+    for (k = 0; k < m->n; k++) {
+        if (m->cert[k].tbs.n != c->tbs.n) continue;
+        for (j = 0; j < c->tbs.n && m->cert[k].tbs.p[j] == c->tbs.p[j]; j++) ;
+        if (j == c->tbs.n) return 1;
+    }
+    return 0;
+}
+
+/* `ca` signs catena[i]; what it may do (keyUsage, EKU, pathLen, names) */
+static int ca_puo(const ExCert *ca, const ExCert *catena, unsigned int i)
+{
+    unsigned int k, sotto = 0;
+
+    if (ca->critica_ignota) return EXCERT_CRITICA_IGNOTA;
+    if (ca->ha_ku && !(ca->ku & EXASN1_KU_FIRMA_CERT)) return EXCERT_USO_SBAGLIATO;
+    if (ca->ha_eku && !(ca->eku & (EXASN1_EKU_SERVER | EXASN1_EKU_QUALUNQUE)))
+        return EXCERT_USO_SBAGLIATO;
+    /* the CAs between it and the leaf, the self-issued ones not counted */
+    for (k = 1; k <= i; k++)
+        if (!excert_stesso_nome(&catena[k].emittente, &catena[k].soggetto)) sotto++;
+    if (ca->path_len >= 0 && sotto > (unsigned int)ca->path_len) return EXCERT_TROPPO_LUNGA;
+    if (!nomi_nei_vincoli(&catena[0], ca)) return EXCERT_NOME_VINCOLATO;
+    return EXCERT_OK;
 }
 
 int excert_catena_valida(const ExCert *catena, unsigned int quanti,
@@ -359,14 +495,32 @@ int excert_catena_valida(const ExCert *catena, unsigned int quanti,
         r = date_a_posto(figlio, adesso);
         if (r != EXCERT_OK) return r;
 
+        /* (TLS001) the leaf: its own critical extensions, and made for a
+         * TLS server - EKU serverAuth or any, keyUsage with
+         * digitalSignature (ECDHE and TLS 1.3 sign with it). A leaf that
+         * is itself one of the store is trusted as it is. */
+        if (i == 0 && !nel_magazzino(figlio, magazzino)) {
+            if (figlio->critica_ignota) return EXCERT_CRITICA_IGNOTA;
+            if (figlio->ha_eku && !(figlio->eku & (EXASN1_EKU_SERVER | EXASN1_EKU_QUALUNQUE)))
+                return EXCERT_USO_SBAGLIATO;
+            if (figlio->ha_ku && !(figlio->ku & EXASN1_KU_FIRMA)) return EXCERT_USO_SBAGLIATO;
+        }
+
         /* ! IL RESPIRO STA QUI, PRIMA DI OGNI CONTO E NON DOPO: chi ha una
          * barra di stato la aggiorna mentre il lavoro si fa, non a cose
          * fatte. */
         if (passo && !passo(passo_dato, i, quanti)) return EXCERT_ANNULLATO;
 
-        if (radice_di(figlio, magazzino) != 0) {
-            if (anello) *anello = 0;
-            return EXCERT_OK;
+        {
+            const ExCert *rad = radice_di(figlio, magazzino);
+
+            if (rad != 0) {
+                /* the root's limits hold too: some national roots have them */
+                r = ca_puo(rad, catena, i);
+                if (r != EXCERT_OK) return r;
+                if (anello) *anello = 0;
+                return EXCERT_OK;
+            }
         }
 
         if (i + 1 == quanti) return EXCERT_SENZA_RADICE;
@@ -382,6 +536,8 @@ int excert_catena_valida(const ExCert *catena, unsigned int quanti,
              * qualunque — che chiunque puo' farsi rilasciare — puo' firmare
              * il certificato di un altro sito. */
             if (!padre->e_ca) return EXCERT_NON_E_CA;
+            r = ca_puo(padre, catena, i);
+            if (r != EXCERT_OK) return r;
 
             r = excert_firma_valida(figlio, padre);
             if (r != EXCERT_OK) return r;

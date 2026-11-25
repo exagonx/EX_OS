@@ -252,6 +252,138 @@ il netupdate -check dopo la riscrive per prima cosa ("non ha riscritto
 l'avvio: ci riprovo"), e intanto tiene rdboot.lz4.old. Lo stesso a mano:
 netupdate -avvio. Fino alla 0.048 rilanciare netupdate non la riscriveva.
 
+[netupdate firma non firmato scaduto]
+netupdate: "non e' firmato", "non porta la firma", "scaduto"
+
+Dalla 0.053 versione.txt e' firmato (ed25519) e netupdate non tocca niente
+se la firma manca o non torna. "non e' firmato": il server e' stato fatto
+con un mknetinst vecchio; va rifatto (make netinst), oppure solo per
+quell'ultima volta netupdate -check -insicuro. "non porta la firma della
+chiave": versione.txt e' stato cambiato per strada, o il server e' di altri;
+per un repository tuo metti la sua chiave in /boot/netupdate.pub (32 byte,
+di root, chmod 644: tools/netinst/firma.py pub). "scaduto": il server non e'
+stato ripubblicato da 30 giorni, o l'orologio e' sbagliato (date). "PIU'
+VECCHIO di quello gia' installato": qualcuno ripropone un albero vecchio;
+per tornare indietro davvero, -indietro. La serie installata e' in
+/boot/netupdate.serie.
+
+[sudo su troppi tentativi password]
+sudo: "troppi tentativi sbagliati: riprova fra qualche minuto"
+
+Dal kernel 0.367 ogni password sbagliata costa un secondo, e dalla terza di
+fila il kernel non la guarda nemmeno per un po': 1 secondo, poi 2, 4, 8...
+fino a 5 minuti. Vale per l'utente, non per il terminale: aprire un'altra
+sessione non serve. Si riparte da zero con la password giusta o dopo 15
+minuti senza errori. root non ha il freno.
+
+[pty terminale permessi /dev/pts]
+"Permesso negato" aprendo /dev/pts/N, o un terminale che non scrive
+
+Dal kernel 0.367 ogni pseudo-terminale ha un proprietario e i permessi
+(0620, come su Linux): lo crea chi apre /dev/ptmx, e login lo da' all'utente
+che entra. Un altro utente non puo' piu' leggerlo ne' scriverci dentro. Un
+programma che apre un pty di un altro utente riceve EACCES: e' giusto. Uno
+che apre il suo e non scrive l'ha aperto in sola lettura (O_RDONLY): serve
+O_RDWR. ls -l /dev/pts/N mostra di chi e'.
+
+[dmesg registro kernel permesso]
+dmesg: "il registro del kernel e' di root e di chi siede alla console"
+
+Dal kernel 0.367 il registro del kernel lo leggono root e chi ha fatto
+l'accesso alla console della macchina (anche nelle finestre di ExWin). Da
+telnet o ssh: sudo dmesg. Dentro ci sono i nomi di chi sbaglia la password
+e gli indirizzi della memoria, che a un utente da rete non servono. Per lo
+stesso motivo "testo" (lo schermo rimesso in modo testo) funziona solo alla
+console, e un programma lanciato da un servizio non spegne piu' la macchina
+anche se il suo descrittore 0 e' la tastiera.
+
+[sendmsg SCM_RIGHTS ETOOMANYREFS descrittori]
+sendmsg: "Too many references" (ETOOMANYREFS)
+
+Dal kernel 0.367 un utente non puo' avere piu' di tanti descrittori in
+viaggio su un socket unix (mandati e non ancora ricevuti): il minore fra il
+suo RLIMIT_NOFILE e uno ogni 128 KB di RAM. Un programma normale ne ha
+qualche decina. Chi arriva al limite di solito manda un socket dentro se'
+stesso e poi lo chiude: quei descrittori restano fino al riavvio, e il
+registro del kernel lo dice una volta ("descrittori in viaggio").
+
+[shm memoria condivisa permessi shm_apri EACCES]
+"Permesso negato" (EACCES) su una memoria condivisa per nome
+
+Dal kernel 0.367 le zone per nome (shm_apri, shm_open) hanno un proprietario
+e un modo: 0600 se chi la crea non dice altro (SHM_MODO(0644), il terzo
+argomento di shm_open). Prima chiunque si attaccava a qualunque zona, anche
+alle finestre e agli appunti degli altri utenti. Un programma che deve
+condividere con un altro utente deve crearla con il modo giusto.
+
+[ipcfg dns statico -d]
+Indirizzo statico e nessun nome si risolve
+
+Con ipcfg -a (indirizzo a mano) il server DNS non lo mette nessuno: dalla
+ipcfg 0.007, ipcfg -a 192.168.0.10 -m 255.255.255.0 -g 192.168.0.1 -d
+192.168.0.1. ipcfg da solo mostra quale DNS e' in uso. Dal 25/11 il
+risolutore crede solo alla risposta che viene da quel server, dalla porta
+53, e alla domanda che ha fatto: un router che risponde da un altro
+indirizzo non funziona piu' (come su Linux).
+
+[https certificato critica uso vincolato]
+https: "un'estensione critica che non conosco", "non e' per server TLS",
+"la CA non puo' emettere per questo nome"
+
+Dal 25/11 la catena dei certificati rispetta anche keyUsage,
+extendedKeyUsage, pathLen e nameConstraints (RFC 5280). Il primo vuol dire
+un certificato con un'estensione segnata critica che EX-OS non sa leggere;
+il secondo un certificato fatto per altro (firmare codice o posta); il
+terzo una CA limitata ad altri nomi. Su un sito pubblico vuol dire che
+qualcuno sta in mezzo; su una rete aziendale, che la CA interna e' fatta
+male. I siti veri provati (wikipedia, github, amazon.it, poste.it,
+agenziaentrate...) si aprono come prima.
+
+[exeditor salvare exed~ byte 0 DOS]
+exeditor: "nome.exed~" accanto al file, "il file ha byte 0", "fine riga DOS"
+
+Dalla 0.010 exeditor salva prima in "nome.exed~" nella stessa cartella,
+aspetta che il disco confermi, e solo dopo lo mette al posto del file: un
+disco pieno o una chiavetta tolta a meta' lasciano il file di prima. Se
+trovi un "nome.exed~" dopo uno spegnimento brusco, dentro c'e' il testo
+intero dell'ultimo salvataggio: rinominalo. Se nella cartella non si puo'
+scrivere, exeditor chiede prima di sovrascrivere al posto. Un file con
+byte 0 (un binario, UTF-16) si apre solo da guardare. I file DOS (\r\n)
+restano DOS, e l'ultimo a capo resta com'era.
+
+[usb chiavetta trasferimento corto 2 TB]
+usb: "massa: trasferimento corto", "disco oltre 2 TB"
+
+Dal 25/11 (uhci 0.008, ehci 0.005, ohci 0.012, xhci 0.007) una lettura o
+una scrittura che il dispositivo fa solo in parte e' un errore, e si
+riprova una volta: prima il filesystem riceveva i dati della lettura
+precedente al posto di quelli giusti, senza un avviso. Se la riga torna
+spesso (usb -v la mostra), il cavo, l'hub o la chiavetta perdono pezzi:
+cambia porta o cavo, e copia altrove cio' che c'e' sopra. Un disco oltre
+2 TB si usa fino a 2 TB (il kernel indirizza 32 bit di settori).
+
+[exbrowser biscotti cookie dominio Secure HttpOnly]
+EXBrowser: un sito non riesce piu' a tenere l'accesso
+
+Dalla 0.034 i biscotti (cookie) seguono le regole dei navigatori di oggi:
+niente Domain su un suffisso pubblico ("com", "co.uk", "github.io"),
+niente Domain su un indirizzo IP, uno script non cambia un biscotto
+HttpOnly, una pagina http non mette ne' sovrascrive un biscotto Secure, e
+i nomi __Secure- e __Host- devono essere veri. Un sito fatto bene non se
+ne accorge. Uno che mette i biscotti da http e poi li chiede da https, o
+li scrive da script sopra quelli HttpOnly, va aperto sempre in https.
+
+[ssh sshd banner timed out bloccato]
+ssh: "Connection timed out during banner exchange"
+
+Fino a sshd 0.003, se un client cadeva senza chiudere il canale (rete
+staccata, finestra uccisa, kill del client), sshd restava sulla sessione
+morta: chi si collegava dopo non riceveva nemmeno la riga SSH-2.0 e il
+client finiva in "timed out during banner exchange". Dalla 0.004 sshd vede
+che l'altro ha chiuso e torna ad ascoltare. Su una macchina vecchia:
+telnet, poi "kill" del PID di sshd e di nuovo "sshd -s"; meglio ancora,
+netupdate.
+
 [netupdate expackage pacchetti]
 Installare e togliere le applicazioni del repository
 

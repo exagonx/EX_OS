@@ -101,7 +101,9 @@ int usb_desc_lungo(UsbControllo ctl, unsigned int dev, UsbDispositivo *d)
 int usb_configura_hid(UsbControllo ctl, unsigned int dev, UsbDispositivo *d,
                       unsigned int verboso)
 {
-    unsigned char b[64];
+    /* (debug/bug_USB001) 256 as usb_configura_hid_tutte: a composite keyboard
+     * puts its boot interface past the 64th byte */
+    static unsigned char b[256];
     unsigned int  tot, i, i_if = 0, trovato = 0;
 
     d->proto = 0;
@@ -114,6 +116,8 @@ int usb_configura_hid(UsbControllo ctl, unsigned int dev, UsbDispositivo *d,
     tot     = (unsigned int)b[2] | ((unsigned int)b[3] << 8);
     d->conf = b[5];
     if (tot > sizeof(b)) tot = sizeof(b);
+    if (tot < 9) return 0;
+    for (i = 0; i < sizeof(b); i++) b[i] = 0;   /* a short answer leaves zeros */
 
     if (ctl(dev, 0x80, USB_REQ_GET_DESC, (USB_DESC_CONFIG << 8), 0, b, tot, 1) != 0)
         return 0;
@@ -127,9 +131,12 @@ int usb_configura_hid(UsbControllo ctl, unsigned int dev, UsbDispositivo *d,
     while (i + 2 <= tot) {
         unsigned int len = b[i], tipo = b[i + 1];
 
-        if (len == 0) break;
+        /* ! (debug/bug_USB001) A FIELD ONLY IF len HOLDS IT AND THE
+         * DESCRIPTOR FITS: "i + 6 <= tot" then b[i + 6] read one byte past
+         * the buffer when a device built the chain to end there. */
+        if (len < 2 || len > tot - i) break;
 
-        if (tipo == 4 && i + 8 <= tot) {                /* INTERFACE */
+        if (tipo == 4 && len >= 9) {                /* INTERFACE */
             i_if = b[i + 2];
             if (b[i + 5] == USB_CLASSE_HID && b[i + 6] == USB_SUB_BOOT &&
                 (b[i + 7] == USB_PROTO_MOUSE || b[i + 7] == USB_PROTO_TASTIERA)) {
@@ -139,7 +146,7 @@ int usb_configura_hid(UsbControllo ctl, unsigned int dev, UsbDispositivo *d,
                 trovato = 0;    /* un'altra interfaccia: i suoi endpoint non
                                  * sono i nostri */
             }
-        } else if (tipo == 5 && trovato && i + 6 <= tot) {  /* ENDPOINT */
+        } else if (tipo == 5 && trovato && len >= 7) {      /* ENDPOINT */
             /* IN, e di tipo interruzione. */
             if ((b[i + 2] & 0x80) && (b[i + 3] & 0x03) == 3) {
                 d->ep            = b[i + 2] & 0x0F;
@@ -187,6 +194,8 @@ int usb_configura_hid_tutte(UsbControllo ctl, unsigned int dev, UsbDispositivo *
     tot     = (unsigned int)b[2] | ((unsigned int)b[3] << 8);
     d->conf = b[5];
     if (tot > sizeof(b)) tot = sizeof(b);
+    if (tot < 9) return 0;
+    for (i = 0; i < sizeof(b); i++) b[i] = 0;   /* a short answer leaves zeros */
     if (ctl(dev, 0x80, USB_REQ_GET_DESC, (USB_DESC_CONFIG << 8), 0, b, tot, 1) != 0)
         return 0;
 
@@ -194,8 +203,11 @@ int usb_configura_hid_tutte(UsbControllo ctl, unsigned int dev, UsbDispositivo *
     while (i + 2 <= tot) {
         unsigned int len = b[i], tipo = b[i + 1];
 
-        if (len == 0) break;
-        if (tipo == 4 && i + 8 <= tot) {                /* INTERFACE */
+        /* ! (debug/bug_USB001) A FIELD ONLY IF len HOLDS IT AND THE
+         * DESCRIPTOR FITS: "i + 6 <= tot" then b[i + 6] read one byte past
+         * the buffer when a device built the chain to end there. */
+        if (len < 2 || len > tot - i) break;
+        if (tipo == 4 && len >= 9) {                /* INTERFACE */
             dentro = -1;
             if (n < max && b[i + 5] == USB_CLASSE_HID && b[i + 6] == USB_SUB_BOOT &&
                 (b[i + 7] == USB_PROTO_MOUSE || b[i + 7] == USB_PROTO_TASTIERA)) {
@@ -205,7 +217,7 @@ int usb_configura_hid_tutte(UsbControllo ctl, unsigned int dev, UsbDispositivo *
                 out[n].ep          = 0;
                 out[n].ep_maxp     = 8;
             }
-        } else if (tipo == 5 && dentro >= 0 && i + 6 <= tot) {  /* ENDPOINT */
+        } else if (tipo == 5 && dentro >= 0 && len >= 7) {      /* ENDPOINT */
             if ((b[i + 2] & 0x80) && (b[i + 3] & 0x03) == 3 && out[dentro].ep == 0) {
                 out[dentro].ep      = b[i + 2] & 0x0F;
                 out[dentro].ep_maxp = (unsigned int)b[i + 4] |
@@ -252,7 +264,7 @@ int usb_configura_hid_tutte(UsbControllo ctl, unsigned int dev, UsbDispositivo *
 int usb_configura_massa(UsbControllo ctl, unsigned int dev, UsbDispositivo *d,
                         unsigned int verboso)
 {
-    unsigned char b[128];
+    static unsigned char b[256];                /* (debug/bug_USB001) was 128 */
     unsigned int  tot, i, i_if = 0, trovato = 0;
 
     d->ep_in  = 0;  d->ep_in_maxp  = 0;
@@ -264,6 +276,8 @@ int usb_configura_massa(UsbControllo ctl, unsigned int dev, UsbDispositivo *d,
     tot     = (unsigned int)b[2] | ((unsigned int)b[3] << 8);
     d->conf = b[5];
     if (tot > sizeof(b)) tot = sizeof(b);
+    if (tot < 9) return 0;
+    for (i = 0; i < sizeof(b); i++) b[i] = 0;   /* a short answer leaves zeros */
 
     if (ctl(dev, 0x80, USB_REQ_GET_DESC, (USB_DESC_CONFIG << 8), 0, b, tot, 1) != 0)
         return 0;
@@ -272,9 +286,12 @@ int usb_configura_massa(UsbControllo ctl, unsigned int dev, UsbDispositivo *d,
     while (i + 2 <= tot) {
         unsigned int len = b[i], tipo = b[i + 1];
 
-        if (len == 0) break;
+        /* ! (debug/bug_USB001) A FIELD ONLY IF len HOLDS IT AND THE
+         * DESCRIPTOR FITS: "i + 6 <= tot" then b[i + 6] read one byte past
+         * the buffer when a device built the chain to end there. */
+        if (len < 2 || len > tot - i) break;
 
-        if (tipo == 4 && i + 8 <= tot) {                    /* INTERFACE */
+        if (tipo == 4 && len >= 9) {                    /* INTERFACE */
             i_if    = b[i + 2];
             trovato = (b[i + 5] == USB_CLASSE_MASSA &&
                        b[i + 6] == USB_SUB_SCSI &&
@@ -285,7 +302,7 @@ int usb_configura_massa(UsbControllo ctl, unsigned int dev, UsbDispositivo *d,
                        "bulk-only, la lascio stare\n",
                        b[i + 5], b[i + 6], b[i + 7]);
 
-        } else if (tipo == 5 && trovato && i + 6 <= tot) {  /* ENDPOINT */
+        } else if (tipo == 5 && trovato && len >= 7) {      /* ENDPOINT */
             unsigned int ind  = b[i + 2];
             unsigned int attr = b[i + 3] & 0x03;
             unsigned int maxp = (unsigned int)b[i + 4] |

@@ -320,6 +320,18 @@ static uint32_t pagine_max(void)
     return (pagine < SHM_PAGINE_MIN) ? SHM_PAGINE_MIN : pagine;
 }
 
+/* 1 if `proc` may open zone z: read and write by its bits, as a file */
+static int zona_permette(const ShmZonaK *z, const Process *proc)
+{
+    uint32_t ha;
+
+    if (proc->uid == 0) return 1;
+    if (proc->uid == z->uid)      ha = (z->modo >> 6) & 7u;
+    else if (proc->gid == z->gid) ha = (z->modo >> 3) & 7u;
+    else                          ha =  z->modo       & 7u;
+    return (ha & 6u) == 6u;
+}
+
 static int32_t shm_apri_dentro(Process *proc, const char *nome, uint32_t byte,
                                uint32_t flag, uint32_t *out_virt, uint32_t *out_byte)
 {
@@ -340,6 +352,12 @@ static int32_t shm_apri_dentro(Process *proc, const char *nome, uint32_t byte,
     if (idx >= 0) {
         for (slot = 0; slot < proc->shm_posti; slot++)
             if (proc->shm[slot].zona == (uint32_t)idx + 1) return ERR(EEXIST);
+        if ((flag & (SHM_CREA | SHM_ESCL)) == (SHM_CREA | SHM_ESCL)) return ERR(EEXIST);
+        if (!zona_permette(&g_zone[idx], proc)) {
+            klog(LOG_WARN, "SHM: PID %u (uid %u) non puo' aprire '%s' (di uid %u, %03o)",
+                 proc->pid, proc->uid, g_zone[idx].nome, g_zone[idx].uid, g_zone[idx].modo);
+            return ERR(EACCES);
+        }
     }
 
     if (idx < 0) {
@@ -365,6 +383,10 @@ static int32_t shm_apri_dentro(Process *proc, const char *nome, uint32_t byte,
 
         rc = zona_crea(i, nome, pagine);
         if (rc != 0) return rc;
+        g_zone[i].uid  = proc->uid;
+        g_zone[i].gid  = proc->gid;
+        g_zone[i].modo = (flag >> 16) & 0777u;
+        if (g_zone[i].modo == 0) g_zone[i].modo = 0600u;
 
         idx    = (int32_t)i;
         creata = 1;

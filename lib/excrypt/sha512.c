@@ -161,3 +161,59 @@ static void sha512_con(const u64 iniziale[8], const unsigned char *m,
         }
     }
 }
+
+/* =============================================================================
+ * IN PIECES (25/11/2026): sha512_inizia, sha512_aggiungi, sha512_finisci
+ *
+ * ! ED25519 HASHED R || A || MESSAGE FROM ONE 512-BYTE BUFFER ON THE STACK:
+ * past 448 bytes of message the check said "bad" and the signature signed
+ * a TRUNCATED message, silently. Fine for key exchanges, wrong for
+ * netupdate's versione.txt (debug/bug_NETUPD001), 517 bytes. Pieces, so the
+ * message is hashed where it lies, at any length.
+ * ========================================================================== */
+void sha512_inizia(Sha512 *c)
+{
+    static const u64 H0[8] = {
+        0x6a09e667f3bcc908ULL, 0xbb67ae8584caa73bULL,
+        0x3c6ef372fe94f82bULL, 0xa54ff53a5f1d36f1ULL,
+        0x510e527fade682d1ULL, 0x9b05688c2b3e6c1fULL,
+        0x1f83d9abfb41bd6bULL, 0x5be0cd19137e2179ULL
+    };
+    unsigned int i;
+
+    for (i = 0; i < 8; i++) c->h[i] = H0[i];
+    c->n = 0;
+    c->tot = 0;
+}
+
+void sha512_aggiungi(Sha512 *c, const unsigned char *m, unsigned int n)
+{
+    c->tot += n;
+    while (n > 0) {
+        if (c->n == 0 && n >= 128) {
+            blocco(c->h, m);
+            m += 128; n -= 128;
+            continue;
+        }
+        c->buf[c->n++] = *m++;
+        n--;
+        if (c->n == 128) { blocco(c->h, c->buf); c->n = 0; }
+    }
+}
+
+void sha512_finisci(Sha512 *c, unsigned char out[64])
+{
+    u64 bit = c->tot * 8;
+    unsigned int i;
+
+    c->buf[c->n++] = 0x80;
+    if (c->n > 112) {
+        while (c->n < 128) c->buf[c->n++] = 0;
+        blocco(c->h, c->buf);
+        c->n = 0;
+    }
+    while (c->n < 120) c->buf[c->n++] = 0;     /* the high 64 bits of the length */
+    for (i = 0; i < 8; i++) c->buf[c->n++] = (unsigned char)(bit >> (56 - 8 * i));
+    blocco(c->h, c->buf);
+    for (i = 0; i < 64; i++) out[i] = (unsigned char)(c->h[i / 8] >> (56 - 8 * (i % 8)));
+}

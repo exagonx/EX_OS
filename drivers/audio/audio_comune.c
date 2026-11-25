@@ -200,7 +200,10 @@ static int zona_apri(void)
     memset(&z, 0, sizeof(z));
     strcpy(z.nome, AUDIO_ZONA);
     z.byte = AUDIO_ZONA_BYTE;
-    z.flag = SHM_CREA;
+    /* ! 0666 (kernel 0.367): the driver is root's and the programs that play
+     * are the users'; who may play is decided by the IPC (voce 111, the
+     * console). A zone per client is debug/bug_SHM001 4.2, still to decide. */
+    z.flag = SHM_CREA | SHM_MODO(0666);
 
     if (shm_apri(&z) < 0) return -1;
 

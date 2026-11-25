@@ -22,9 +22,9 @@ cd "$(dirname "$0")/.." || exit 1
 rm -f /tmp/exos/serialpr.txt /tmp/exos/pr.pcap
 
 EXOS_ISTANZA=pr EXOS_NO_FLOPPY=1 EXOS_CDROM="${EXOS_CDROM:-dist/exos.iso}" \
-EXOS_ATTESA_FINALE=160 \
+EXOS_ATTESA_FINALE=360 \
 EXOS_QEMU_EXTRA="-netdev user,id=n1,hostfwd=tcp::2225-:22 -device ne2k_pci,netdev=n1 -object filter-dump,id=f1,netdev=n1,file=/tmp/exos/pr.pcap" \
-timeout 200 python3 tools/qemu_drive.py "netdetect -c@12" "dhcp@8" "sshd -s -v@15" \
+timeout 400 python3 tools/qemu_drive.py "netdetect -c@12" "dhcp@8" "sshd -s -v@15" \
     > /tmp/exos/pr.log 2>&1 &
 QPID=$!
 
@@ -34,6 +34,11 @@ for i in $(seq 1 40); do
 done
 
 cd "$(dirname "$0")"
+
+# sshd 0.004 (debug/bug_SSH001): lying lengths first; sshd must survive
+# them all and then let the real client in
+echo "=== PACCHETTI MALFORMATI ==="
+timeout 240 python3 ssh_malformati.py 2225
 
 timeout 55 python3 ssh_client_prova.py > /tmp/exos/client.log 2>&1
 

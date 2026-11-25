@@ -1,0 +1,604 @@
+IMPLEMENTAZIONE EXIDE002 - exide come Visual Basic: disegnatore vivo,
+                            selezione multipla, griglia delle proprieta' dal
+                            vivo, allineamenti, guide ed effetti, Esegui (F5)
+===============================================================================
+Priorita':  ALTA per l'utente ("exide dovrebbe operare come il vecchio Visual
+            Basic a livello di interfaccia ma usando C come e' attualmente";
+            problemi segnalati: "non e' attiva, la dinamicita' e' ridotta,
+            ... la possibilita' di intervenire su piu' parti, qualche effetto
+            estetico durante la composizione").
+Programma:  exwin/bin/exide (0.027), con due piccole aggiunte a lib/exwin
+Sorgenti:   exwin/bin/exide/exide.c  Ctrl, g_sel, g_strum_sel, g_ridim,
+                     disegna_tela, disegna_controllo_nudo, disegna_maniglie,
+                     tela_clic, proc (EXM_MOUSE_*, EXM_KEY), prop_mostra,
+                     prop_applica_k, istante_*, ctrl_copia/incolla,
+                     compila, finestra_disponi
+Dipende da: bug_EXIDE001 (prima la correzione del refresh);
+            implementazione_TEMA001/COLORI001 per il disegno WYSIWYG
+            (passo 1). I passi 2-6 non dipendono dai temi.
+Rilevato su: albero del 25/11/2026.
+
+-------------------------------------------------------------------------------
+1. COM'E' OGGI, E COSA MANCA RISPETTO A VB
+-------------------------------------------------------------------------------
+  oggi (exide 0.027)                    VB6 / quello che si chiede
+  ------------------------------------  -----------------------------------
+  controlli DISEGNATI a mano dentro     la maschera mostra i controlli come
+  exide (disegna_controllo_nudo):       saranno: stesso aspetto, stesso tema
+  "somigliano, non sono identici"
+  un controllo scelto per volta (g_sel) selezione multipla: Ctrl+clic,
+                                        Maiusc+clic, rettangolo elastico,
+                                        Ctrl+A; muovere, ridimensionare,
+                                        copiare, cancellare il gruppo
+  proprieta': lista + casella +         griglia a due colonne, modifica
+  Applica (o "Autoaggiorna" uscendo     sul posto, effetto a ogni tasto,
+  dalla casella)                        elenchi per i valori chiusi
+  posizioni solo col mouse e con la     frecce (1 px), Maiusc+frecce
+  griglia di 4                          (griglia), Ctrl+frecce misura
+  niente allineamenti                   Formato > Allinea a sinistra/destra/
+                                        sopra/sotto/centri, stessa
+                                        larghezza/altezza, distribuisci,
+                                        centra nella maschera, porta in
+                                        primo piano/in fondo
+  niente ordine di tabulazione          Vista > Ordine di tabulazione
+  si compila, non si esegue             Esegui (F5): compila e lancia;
+                                        Prova maschera (Ctrl+F5) senza
+                                        compilare
+  ridisegno completo a ogni movimento   ridisegno del solo rettangolo, guide,
+  del mouse, nessun aiuto visivo        fantasma, misura sotto il puntatore,
+                                        controllo che "cade" al suo posto
+
+-------------------------------------------------------------------------------
+2. PASSO 1 - LA MASCHERA VIVA (WYSIWYG): i controlli disegnati dal tema
+-------------------------------------------------------------------------------
+Con TEMA001 il toolkit disegna ogni controllo con ext_* e il tema vivo:
+exide usa LE STESSE funzioni sulla tela, e la maschera e' identica al
+programma che uscira'. disegna_controllo_nudo diventa:
+
+    #include "extema.h"     /* esportato da exwin.so (TEMA001 passo 1) */
+
+    static void disegna_controllo_nudo(const Ctrl *c, int ox, int oy)
+    {
+        const ExTema *m = ex_tema();
+        const char   *cl = g_strum[c->tipo].classe;
+        int           x = ox + c->x, y = oy + c->y;
+        unsigned int  st = c->spento ? EXT_SPENTO : 0;
+        ExTela        t;
+
+        if (!ex_tela_di(g_f, &t)) return;
+        ext_ritaglio(&t, TELA_X + 2, TELA_Y + 2, TELA_W - 4, TELA_H - 4);
+        if (c == g_sopra_ctrl) st |= EXT_SOPRA;        /* vedi passo 5 */
+
+        if      (!strcmp(cl, "button"))   ext_pulsante(&t, m, x, y, c->w, c->h, c->testo, st);
+        else if (!strcmp(cl, "textbox"))  ext_casella(&t, m, x, y, c->w, c->h, c->testo, -1, st);
+        else if (!strcmp(cl, "checkbox")) ext_spunta(&t, m, x, y + (c->h - 15) / 2, c->testo, st);
+        else if (!strcmp(cl, "radio"))    ext_radio(&t, m, x, y + (c->h - 14) / 2, c->testo, st);
+        else if (!strcmp(cl, "combo"))    ext_combo(&t, m, x, y, c->w, c->h, c->testo, st);
+        else if (!strcmp(cl, "frame"))    ext_riquadro(&t, m, x, y, c->w, c->h, c->testo);
+        else if (!strcmp(cl, "separator"))ext_separatore(&t, m, x, y, c->w);
+        else if (!strcmp(cl, "header"))   ext_intestazione(&t, m, x, y, c->w, c->h, c->testo);
+        else if (!strcmp(cl, "scrollbar"))ext_scorri(&t, m, x, y, c->w, c->h, c->h > c->w,
+                                                     0, 10, 40, st);
+        else if (!strcmp(cl, "tab")) {
+            const char *voci[1]; voci[0] = c->testo;
+            ext_linguette(&t, m, x, y, c->w, c->h, voci, 1, 0, -1);
+        } else if (!strcmp(cl, "list")) {
+            const char *righe[3] = { c->testo, "...", "" };
+            ext_lista(&t, m, x, y, c->w, c->h, righe, 2, -1, -1, 0, st);
+        } else if (!strcmp(cl, "label")) {
+            ext_testo(&t, x, y + (c->h - 16) / 2, c->testo,
+                      c->spento ? m->c.testo_spento : m->c.testo);
+        } else {                                     /* textarea, codearea, image */
+            ext_casella(&t, m, x, y, c->w, c->h, "", -1, st);
+            ext_testo(&t, x + 6, y + 4, c->testo, m->c.campo_testo);
+        }
+        /* le icone (pulsante, etichetta, immagine): come oggi, dopo,
+           con ex_icon_draw */
+    }
+
+  E la maschera stessa: ext_finestra(&t, m, TELA_X + 6, TELA_Y + 6, w + 2*sp,
+  h + 2*sp + barra, forma()->titolo, EXT_ATTIVA) invece del telaio finto
+  fatto di ex_fill_rect. Quando l'utente cambia schema di colori (COLORI001),
+  exide riceve EXM_PAINT e la maschera cambia colore come il resto.
+
+  ! Si toglie il commento "i controlli si disegnano, non si creano vivi ...
+  somigliano, non sono identici": restano disegnati (non vivi: devono
+  obbedire al disegnatore), ma ora SONO identici, perche' il codice di
+  disegno e' uno solo.
+
+  PROVA MASCHERA (Ctrl+F5, menu Esegui): una finestra vera, creata con
+  ex_create dal modello (stesse classi, stesse misure, stesso testo), con
+  una proc che per ogni EXM_COMMAND scrive nella riga di stato di exide
+  "Click su Button1 (ID_BUTTON1)" - senza compilare niente. Si prova
+  l'interfaccia (tasti, fuoco, tabulazione, ridimensionamento) in mezzo
+  secondo. La funzione esiste gia' a meta': e' cio' che gen_c() scrive in
+  finestra_gen.c, fatto qui a runtime invece che come testo.
+
+    static long prova_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
+    {
+        if (msg == EXM_COMMAND) {
+            int k = ctrl_per_id(wp);
+            char s[96];
+            if (k >= 0) {
+                snprintf(s, sizeof s, "%s su %s (%u)", g_strum[g_ctrl[k].tipo].evento[0]
+                         ? g_strum[g_ctrl[k].tipo].evento[0] : "Evento",
+                         g_ctrl[k].nome, wp);
+                dico(s);
+            }
+            return 0;
+        }
+        if (msg == EXM_CLOSE) { ex_destroy(f); g_prova = 0; return 0; }
+        return ex_default_proc(f, msg, wp, lp);
+    }
+
+    static void prova_maschera(void)
+    {
+        int i;
+        if (g_prova) ex_destroy(g_prova);
+        g_prova = ex_create("window", forma()->titolo,
+                            EX_CAPTION | EX_BORDER | EX_CLOSEBOX,
+                            EX_AUTO, EX_AUTO, forma()->w, forma()->h, 0, 0, prova_proc);
+        for (i = 0; i < CTRL_MAX; i++) {
+            const Ctrl *c = &g_ctrl[i];
+            ExWindow h;
+            if (!c->usato || c->form != g_form_sel) continue;
+            h = ex_create(g_strum[c->tipo].classe, c->testo, EX_CHILD,
+                          c->x, c->y, c->w, c->h, g_prova, c->id, 0);
+            if (c->nascosto) ex_set_visible(h, 0);
+            if (c->spento)   ex_set_enabled(h, 0);
+            if (c->icona[0] && c->ic) ex_set_icon(h, c->ic, 0);
+        }
+        ex_show(g_prova, 1);
+    }
+
+  ESEGUI (F5): compila() e, se il binario e' nuovo e il log non ha errori,
+  spawn del binario con la directory del progetto come cwd (compila() sa
+  gia' dove lo mette: binario()). Durante l'esecuzione la voce diventa
+  "Ferma" (SYS_INTERROMPI sul pid; waitpid con WNOHANG nel timer della
+  finestra principale per sapere quando e' finito). Errori di compilazione:
+  si apre il compilatore con il log, come oggi.
+
+-------------------------------------------------------------------------------
+3. PASSO 2 - SELEZIONE MULTIPLA ("intervenire su piu' parti")
+-------------------------------------------------------------------------------
+3.1 Lo stato
+
+    /* al posto di int g_sel: l'insieme, e il "primo" (quello di
+       riferimento per allineare, VB lo mostra con maniglie piene) */
+    typedef unsigned long long Insieme;            /* CTRL_MAX == 64 */
+    static Insieme g_scelti = 0;
+    static int     g_primo  = -1;
+
+    #define SCELTO(k)   ((g_scelti >> (k)) & 1ull)
+    static void scegli_solo(int k) { g_scelti = k >= 0 ? 1ull << k : 0; g_primo = k; }
+    static void scegli_anche(int k) { g_scelti |= 1ull << k; if (g_primo < 0) g_primo = k; }
+    static void scegli_inverti(int k)
+    {
+        g_scelti ^= 1ull << k;
+        if (!SCELTO(k) && g_primo == k) {           /* il primo e' uscito */
+            int i; g_primo = -1;
+            for (i = 0; i < CTRL_MAX; i++) if (SCELTO(i)) { g_primo = i; break; }
+        } else if (SCELTO(k) && g_primo < 0) g_primo = k;
+    }
+    static int quanti_scelti(void)
+    {
+        int n = 0; Insieme s = g_scelti;
+        while (s) { s &= s - 1; n++; }
+        return n;
+    }
+
+  ! CTRL_MAX passa da costante a limite del tipo: se un giorno i controlli
+  diventano piu' di 64 (consigliato: 256, una maschera di VB arriva a 254),
+  Insieme diventa unsigned int[8] con tre macro. Il resto non cambia.
+
+  g_sel resta come alias di g_primo per non toccare 40 punti in un colpo
+  (#define g_sel g_primo), poi si sostituisce dove serve.
+
+  Istante (Annulla/Rifai) prende anche g_scelti e g_primo.
+
+3.2 Il mouse (tela_clic e proc)
+
+    Clic su un controllo:
+        Ctrl            -> scegli_inverti(k)            (niente trascinamento)
+        Maiusc          -> scegli_anche(k)
+        senza tasti:
+            se k e' gia' nell'insieme -> si trascina TUTTO l'insieme
+            altrimenti                -> scegli_solo(k), si trascina lui
+    Clic sul vuoto della maschera (nessuno strumento armato):
+        comincia il RETTANGOLO ELASTICO (g_elastico = 1, origine = punto)
+    Trascinamento con l'elastico: si disegna il rettangolo (passo 5);
+        al rilascio sono scelti i controlli che il rettangolo TOCCA
+        (come VB; con Alt: solo quelli tutti dentro), aggiunti
+        all'insieme se si tiene Maiusc, al posto suo altrimenti.
+    Doppio clic: come oggi, sul controllo sotto il puntatore.
+
+  I modificatori: EXM_MOUSE_DOWN porta oggi solo x, y in lp. Il server li
+  manda gia' nel campo `tasto` degli eventi di pressione (@LISTA-MULTI,
+  wserver.c: "I modificatori della tastiera all'ultimo stato del mouse");
+  serve una funzione del toolkit che li dica all'applicazione:
+
+        unsigned int ex_mouse_mods(void);   /* KBD_MOD_CTRL|SHIFT|ALT
+                                               dell'ultimo evento del mouse */
+
+3.3 Muovere il gruppo
+
+    static int g_tras_x0[CTRL_MAX], g_tras_y0[CTRL_MAX];   /* posizioni all'inizio */
+    static int g_tras_mx, g_tras_my;                       /* il mouse all'inizio */
+
+    inizio:  per ogni scelto: g_tras_x0[k] = x, g_tras_y0[k] = y;
+             g_tras_mx = mouse x, g_tras_my = mouse y
+    movimento:
+        dx = mx - g_tras_mx; dy = my - g_tras_my;
+        /* l'aggancio (guide, passo 5) si calcola sul rettangolo che
+           racchiude il gruppo, e lo spostamento corretto vale per tutti */
+        aggancia_gruppo(&dx, &dy);
+        /* il gruppo non esce dalla maschera: si stringe dx, dy sul
+           rettangolo che racchiude */
+        per ogni scelto: x = g_tras_x0[k] + dx, y = g_tras_y0[k] + dy
+
+3.4 Ridimensionare il gruppo
+
+  Con piu' scelti le maniglie piene stanno sul PRIMO; tirarne una cambia la
+  misura di tutti dello stesso delta (VB fa cosi'). Con Alt premuto, le
+  maniglie stanno sul rettangolo che racchiude il gruppo e la misura e la
+  posizione di ognuno si scalano in proporzione (in millesimi, interi):
+
+        nx = R.x + (x0 - R0.x) * R.w / R0.w   (e lo stesso per y, w, h)
+
+3.5 Tastiera
+
+    Frecce             sposta i scelti di 1 px
+    Maiusc+frecce      sposta di GRIGLIA (4)
+    Ctrl+frecce        cambia la misura di 1 px (Maiusc: GRIGLIA)
+    Canc               elimina tutti i scelti (un solo istante_segna)
+    Ctrl+A             sceglie tutti i controlli della maschera
+    Ctrl+C/X/V         copia/taglia/incolla l'insieme: g_appunti diventa un
+                       vettore di Ctrl con le posizioni relative al primo;
+                       Incolla li rimette spostati di +8,+8 (o nel punto
+                       dell'ultimo clic sulla maschera) e li sceglie
+    Tab / Maiusc+Tab   scorre la scelta fra i controlli nell'ordine di
+                       tabulazione
+    Esc                toglie la scelta (si torna alle proprieta' della maschera)
+
+  ! Un movimento con le frecce tenute premute non deve fare 30 fotografie
+  di Annulla: la prima freccia fa istante_segna(), le successive entro 600
+  ms dalla precedente no (g_ultima_freccia_ms).
+
+-------------------------------------------------------------------------------
+4. PASSO 3 - FORMATO: ALLINEA, MISURA, DISTRIBUISCI, ORDINE
+-------------------------------------------------------------------------------
+Menu nuovo "Formato" (fra Modifica e Strumenti) e barra di pulsanti con
+icone (passo 6). Tutte le funzioni lavorano sull'insieme, con il PRIMO come
+riferimento (VB: "l'ultimo scelto"; qui il primo, scritto nella riga di
+stato: "riferimento: Button1").
+
+    enum { AL_SX, AL_DX, AL_SU, AL_GIU, AL_CENTRO_O, AL_CENTRO_V };
+
+    static void allinea(int come)
+    {
+        const Ctrl *r = &g_ctrl[g_primo];
+        int k;
+        if (quanti_scelti() < 2) { dico("scegli almeno due controlli"); return; }
+        istante_segna();
+        for (k = 0; k < CTRL_MAX; k++) {
+            Ctrl *c = &g_ctrl[k];
+            if (!SCELTO(k) || k == g_primo) continue;
+            switch (come) {
+            case AL_SX:       c->x = r->x; break;
+            case AL_DX:       c->x = r->x + r->w - c->w; break;
+            case AL_SU:       c->y = r->y; break;
+            case AL_GIU:      c->y = r->y + r->h - c->h; break;
+            case AL_CENTRO_O: c->x = r->x + (r->w - c->w) / 2; break;
+            case AL_CENTRO_V: c->y = r->y + (r->h - c->h) / 2; break;
+            }
+            dentro_maschera(c);
+        }
+        g_sporco = 1;
+        animazione_assesta();              /* passo 5: i controlli scivolano */
+    }
+
+    static void stessa_misura(int larg, int alt)      /* uno dei due o tutti e due */
+    { ... c->w = r->w se larg; c->h = r->h se alt ... }
+
+    /* Distribuisci: ordina i scelti per x (o y), lascia fermi il primo e
+       l'ultimo, e mette gli altri con lo stesso spazio fra un bordo e
+       l'altro */
+    static void distribuisci(int orizz)
+    {
+        int idx[CTRL_MAX], n = 0, i, j, tot = 0, spazio, pos;
+        for (i = 0; i < CTRL_MAX; i++) if (SCELTO(i)) idx[n++] = i;
+        if (n < 3) { dico("servono almeno tre controlli"); return; }
+        for (i = 1; i < n; i++)                         /* inserzione */
+            for (j = i; j > 0 && (orizz ? g_ctrl[idx[j-1]].x > g_ctrl[idx[j]].x
+                                        : g_ctrl[idx[j-1]].y > g_ctrl[idx[j]].y); j--) {
+                int t = idx[j]; idx[j] = idx[j-1]; idx[j-1] = t;
+            }
+        for (i = 0; i < n; i++) tot += orizz ? g_ctrl[idx[i]].w : g_ctrl[idx[i]].h;
+        {
+            const Ctrl *a = &g_ctrl[idx[0]], *z = &g_ctrl[idx[n-1]];
+            int estensione = orizz ? (z->x + z->w - a->x) : (z->y + z->h - a->y);
+            spazio = (estensione - tot) / (n - 1);
+            pos = orizz ? a->x + a->w + spazio : a->y + a->h + spazio;
+        }
+        istante_segna();
+        for (i = 1; i < n - 1; i++) {
+            Ctrl *c = &g_ctrl[idx[i]];
+            if (orizz) { c->x = pos; pos += c->w + spazio; }
+            else       { c->y = pos; pos += c->h + spazio; }
+        }
+        g_sporco = 1;
+        animazione_assesta();
+    }
+
+    Centra nella maschera (orizzontale/verticale): sposta il rettangolo che
+    racchiude il gruppo al centro, tutti dello stesso delta.
+
+    Ordine (porta in primo piano / in fondo): l'ordine di disegno e di
+    creazione e' l'indice in g_ctrl. "In primo piano" sposta il controllo
+    in fondo all'elenco (memmove dei Ctrl, gli id NON cambiano, g_scelti si
+    ricalcola); il codice generato crea i controlli in quell'ordine, quindi
+    anche nel programma il controllo sta sopra.
+
+    Ordine di tabulazione: campo nuovo Ctrl.tab (0 = nessuno). Vista >
+    Ordine di tabulazione mette sulla tela un numero tondo su ogni
+    controllo che prende il fuoco; i clic in fila danno 1, 2, 3...; Esc
+    esce. gen_c() crea i controlli nell'ordine di tab (il toolkit segue
+    l'ordine di creazione per il Tab: verificarlo in exwin.c) oppure chiama
+    una ex_set_tab_order() se la si aggiunge.
+
+-------------------------------------------------------------------------------
+5. PASSO 4 - LE PROPRIETA' DAL VIVO (griglia)
+-------------------------------------------------------------------------------
+Oggi: lista "nome" + casella + Applica, con "Autoaggiorna" che applica
+uscendo dalla casella. Si sostituisce con una GRIGLIA a due colonne
+disegnata da exide (come la tela: un'area propria, non un controllo del
+toolkit - il commento di oggi dice giusto che il toolkit una griglia non
+ce l'ha; costruirla dentro exide costa meno che dentro il toolkit, e se un
+giorno serve altrove la si sposta).
+
+    +----------------+------------------+
+    | nome           | Button1          |
+    | testo          | OK               |   <- riga scelta: la casella vera
+    | x              | 120              |      (un controllo textbox) e'
+    | y              | 48               |      spostata QUI, sopra la cella
+    | larghezza      | 90               |      dei valori, con ex_move
+    | altezza        | 26               |
+    | evento         | Click        [v] |   <- valori chiusi: combo
+    | visibile       | si           [v] |
+    ...
+
+  - Un solo controllo di modifica che si sposta: una textbox (g_val di
+    oggi) e una combo (nuova) per i valori a scelta (evento, visibile,
+    attivo, sulmouse). Clic su una riga -> ex_move della casella sulla cella
+    e ex_set_focus. Frecce su/giu' nella casella: riga precedente/
+    successiva (EXM_KEY nella proc della finestra principale quando il
+    fuoco e' sulla casella).
+  - EFFETTO A OGNI TASTO: la casella ha ex_notify_changes(g_val, 1) (esiste:
+    exwin.so 0.015) -> EXM_COMMAND a ogni carattere -> prop_applica_k(riga)
+    con il testo attuale, e la tela si ridisegna. I valori non validi
+    (larghezza "1a") non si applicano e la cella si colora di rosso chiaro
+    finche' non tornano validi; nessun messaggio a finestra.
+  - Annulla: una fotografia per riga modificata (istante_segna al primo
+    tasto su quella riga, non a ogni tasto).
+  - Con piu' controlli scelti: si mostrano le proprieta' COMUNI (x, y,
+    larghezza, altezza, visibile, attivo, testo se sono della stessa
+    classe); una cella i cui valori differiscono e' vuota e scrivendoci si
+    cambia per tutti. "nome" e "id" non si mostrano (sono per forza
+    diversi).
+  - Durante il trascinamento la griglia aggiorna SOLO le celle x, y (o
+    larghezza, altezza) ridisegnando due righe, invece di rifare la lista
+    intera a ogni movimento (prop_mostra oggi rifa' tutto: e' uno dei
+    motivi della lentezza).
+
+  Accanto alla griglia, in alto, l'elenco a discesa dei controlli della
+  maschera ("Button1  (button)"), come in VB: scegliere da li' seleziona
+  sulla tela (utile per i controlli nascosti o coperti).
+
+-------------------------------------------------------------------------------
+6. PASSO 5 - GLI EFFETTI DURANTE LA COMPOSIZIONE
+-------------------------------------------------------------------------------
+Tutti con le primitive di extema (ext_linea_alfa, ext_tondo_alfa, ext_ombra)
+e le curve di extanim (exa_esce...), sulla tela soltanto. Si spengono con
+"animazioni = spente" (ANIM001).
+
+6.1 Guide intelligenti (aggancio)
+  Mentre si trascina o si ridimensiona, si confrontano i bordi e i centri
+  del rettangolo in movimento (gruppo: quello che racchiude) con quelli
+  degli altri controlli della maschera e con i margini della maschera
+  (8 px dal bordo). Se una distanza e' <= 4 px si aggancia e si disegna la
+  guida: una linea magenta sottile che va dal controllo di riferimento a
+  quello in movimento.
+
+    typedef struct { int verticale, pos, da, a; } Guida;
+    static Guida g_guide[8];
+    static int   g_n_guide;
+
+    /* corregge *dx (e *dy) perche' un bordo o il centro combaci; riempie
+       g_guide */
+    static void aggancia(int *dx, int *dy, int rx, int ry, int rw, int rh)
+    {
+        int i, migl_x = 5, migl_y = 5, cx = 0, cy = 0;
+        int mx[3], my[3];                    /* sinistra, centro, destra del mobile */
+        g_n_guide = 0;
+        mx[0] = rx + *dx; mx[1] = mx[0] + rw / 2; mx[2] = mx[0] + rw;
+        my[0] = ry + *dy; my[1] = my[0] + rh / 2; my[2] = my[0] + rh;
+        for (i = 0; i < CTRL_MAX; i++) {
+            const Ctrl *c = &g_ctrl[i];
+            int ox[3], oy[3], a, b;
+            if (!c->usato || c->form != g_form_sel || SCELTO(i)) continue;
+            ox[0] = c->x; ox[1] = c->x + c->w / 2; ox[2] = c->x + c->w;
+            oy[0] = c->y; oy[1] = c->y + c->h / 2; oy[2] = c->y + c->h;
+            for (a = 0; a < 3; a++) for (b = 0; b < 3; b++) {
+                int d = ox[b] - mx[a];
+                if (d < 0 ? -d < migl_x : d < migl_x) { migl_x = d < 0 ? -d : d; cx = d; }
+                d = oy[b] - my[a];
+                if (d < 0 ? -d < migl_y : d < migl_y) { migl_y = d < 0 ? -d : d; cy = d; }
+            }
+        }
+        if (migl_x <= 4) *dx += cx;
+        if (migl_y <= 4) *dy += cy;
+        /* dopo la correzione, le guide si ricalcolano esatte (d == 0) e si
+           salvano in g_guide con l'estensione da min a max delle due y
+           (guide verticali) o x (orizzontali) */
+    }
+
+  Disegno: ext_linea_alfa(t, ..., 1, 0x00FF2D95, 220) piu' due puntini alle
+  estremita'. Comparsa con alfa che sale in 80 ms (exa_esce), sparizione
+  in 120 ms dopo che l'aggancio si perde (le guide vecchie restano in un
+  secondo vettore con il loro tempo).
+  Alt durante il trascinamento: niente aggancio (posizionamento libero al
+  pixel, come in VB).
+
+6.2 Il fantasma e l'ombra
+  Il controllo (o il gruppo) mentre si trascina si disegna nella posizione
+  nuova con un'ombra morbida sotto (ext_ombra 6 px, alfa 70, spostata di
+  3 px in basso) e, nella posizione di partenza, un fantasma: lo stesso
+  disegno a alfa 70 (disegnato in un buffer fuori schermo una volta
+  all'inizio del trascinamento e posato con exa_posa a ogni movimento).
+  Al rilascio l'ombra sparisce in 120 ms.
+
+6.3 La misura sotto il puntatore
+  Durante trascinamento e ridimensionamento, un'etichetta piccola vicino
+  al puntatore: "x 120  y 48" o "90 x 26" (ext_suggerimento con il tema).
+
+6.4 Il rettangolo elastico
+  Riempimento dell'accento a alfa 40, bordo tratteggiato che scorre
+  ("formiche in marcia": la fase del tratteggio avanza di 1 px ogni 60 ms,
+  timer della finestra attivo solo mentre l'elastico c'e'). I controlli che
+  il rettangolo toccherebbe si illuminano gia' (contorno dell'accento) prima
+  del rilascio.
+
+6.5 Il controllo che cade
+  Posato uno strumento, il controllo nuovo compare scalando dal 70% al
+  100% centrato sul punto del clic con la curva "rimbalzo" in 160 ms
+  (exa_rimbalzo); le maniglie compaiono dopo, in dissolvenza.
+
+6.6 Assestamento
+  Allinea / distribuisci / stessa misura / Annulla / Rifai non saltano: ogni
+  controllo che cambia posizione o misura scivola dal vecchio al nuovo in
+  140 ms (exa_esce). Serve tenere, per l'animazione, i rettangoli di
+  partenza:
+
+    static struct { int x, y, w, h; } g_ass_da[CTRL_MAX];
+    static unsigned int g_ass_inizio;           /* uptime_ms, 0 = nessuna */
+
+    static void animazione_assesta(void)        /* chiamata DOPO la modifica,
+                                                   con i vecchi valori presi
+                                                   da istante_segna */
+    {
+        const Istante *prima = &g_indietro[g_indietro_n - 1];
+        int k;
+        for (k = 0; k < CTRL_MAX; k++) {
+            g_ass_da[k].x = prima->ctrl[k].x; g_ass_da[k].y = prima->ctrl[k].y;
+            g_ass_da[k].w = prima->ctrl[k].w; g_ass_da[k].h = prima->ctrl[k].h;
+        }
+        g_ass_inizio = uptime_ms();
+        ex_set_timer(g_f, 16);
+    }
+    /* nel disegno della tela, se g_ass_inizio: per ogni controllo
+       r = exa_lerp(da, a, exa_esce(t)) e lo si disegna in r; a t >= 1000
+       g_ass_inizio = 0 e ex_set_timer(g_f, 0) */
+
+6.7 Sopra il puntatore
+  Il controllo sotto il puntatore (senza pulsanti premuti) ha un contorno
+  sottile dell'accento a alfa 120 (g_sopra_ctrl): si vede cosa prende un
+  clic prima di cliccare. Le maniglie sotto il puntatore si ingrandiscono
+  da 5 a 7 px: compensano la mancanza di forme del puntatore nel toolkit
+  (non c'e' un'API per cambiarlo; se arriva, ex_set_pointer(EX_PTR_RIDIM_*)
+  sulle maniglie).
+
+6.8 La griglia dei punti
+  Punti ogni 8 px (due passi di GRIGLIA) sulla maschera, del colore
+  ext_mescola(fondo, testo, 40): si vede dove si aggancia. Si spengono da
+  Vista > Griglia.
+
+-------------------------------------------------------------------------------
+7. PASSO 6 - L'INTERFACCIA DI exide
+-------------------------------------------------------------------------------
+  - Barra dei pulsanti sotto il menu (24 px, icone 16 px da
+    /exwin/icon/exide/: nuovo, apri, salva | taglia, copia, incolla |
+    annulla, rifai | allinea a sinistra, al centro, a destra, sopra, in
+    mezzo, sotto | stessa larghezza, altezza | distribuisci o/v | esegui,
+    prova maschera, ferma). Disegnata con ext_pulsante (piatti finche' il
+    mouse non e' sopra: stato EXT_SOPRA), suggerimento col nome.
+  - Pannello strumenti a griglia di icone 2 colonne (come la casella degli
+    strumenti di VB) invece dell'elenco con miniatura: piu' strumenti in
+    meno spazio; il nome nel suggerimento. L'elenco resta come opzione
+    (Vista > Strumenti con nome).
+  - Finestre ancorabili: rimandato (il toolkit non ha l'aggancio delle
+    finestre). Oggi le tre aree restano nella finestra principale, che si
+    ridimensiona (finestra_disponi).
+  - Menu Vista: Griglia, Guide, Ordine di tabulazione, Strumenti con nome.
+  - Menu Esegui: Esegui (F5), Prova maschera (Ctrl+F5), Ferma, Compila
+    soltanto (Ctrl+B).
+  - Riga di stato su tre zone: messaggio | "Button1 (x 120 y 48 90x26)" |
+    "3 scelti".
+
+-------------------------------------------------------------------------------
+8. ORDINE DI LAVORO CONSIGLIATO
+-------------------------------------------------------------------------------
+   1. bug_EXIDE001 (refresh)                        mezza giornata
+   2. Passo 2 (selezione multipla, tastiera)        il cuore di "piu' parti"
+   3. Passo 3 (Formato)                             dipende dal 2
+   4. Passo 4 (griglia delle proprieta')            "dinamicita'"
+   5. Passo 1 (WYSIWYG) e Prova maschera / Esegui   dopo TEMA001
+   6. Passo 5 (effetti) e passo 6 (barra, icone)
+  Versione exide: +0.001 a ogni passo, come d'uso (VERSIONE_APP).
+  Formato del .dis: i campi nuovi (tab, ordine) si scrivono in coda alla
+  riga di ogni controllo; un .dis vecchio senza quei campi si legge con
+  tab = 0 (dis_carica usa parola(): aggiungere i campi in fondo).
+
+-------------------------------------------------------------------------------
+9. PROVA
+-------------------------------------------------------------------------------
+  - Rettangolo elastico su 6 controlli, Formato > Allinea a sinistra,
+    Distribuisci in verticale: posizioni attese (calcolate a mano),
+    Annulla rimette tutto in un passo.
+  - Ctrl+clic su 3 controlli di classi diverse: la griglia mostra solo
+    x/y/larghezza/altezza/visibile/attivo; scrivere 100 in larghezza: tutti
+    a 100.
+  - Trascinare un pulsante vicino al bordo sinistro di un altro: si
+    aggancia a 4 px, la guida si vede; con Alt no.
+  - Prova maschera su ogni progetto di tools/prove (se ci sono progetti
+    exide di prova; altrimenti crearne uno con un controllo per classe):
+    la finestra e' quella del programma compilato, pixel per pixel
+    (confronto di foto in QEMU).
+  - F5: compila, esegue, Ferma lo chiude; con un errore di compilazione si
+    apre il log.
+  - Pentium 166: trascinamento con 30 controlli sulla maschera senza
+    scatti visibili (ridisegno del solo rettangolo, bug_EXIDE001 2.2).
+
+-------------------------------------------------------------------------------
+10. STATO (25/11/2026, notte)
+-------------------------------------------------------------------------------
+FATTO, PASSO 2 (exide 0.029):
+  - g_scelti, un bit per controllo (CTRL_MAX e' 64: un typedef fa fallire
+    la compilazione se cresce). g_sel resta il primo; scelti_norm()
+    ricostruisce l'insieme da g_sel, quindi i 42 punti vecchi che
+    scrivono g_sel valgono come "solo lui" senza toccarli. L'istante di
+    Annulla tiene anche l'insieme.
+  - Mouse: Ctrl+clic aggiunge/toglie (senza trascinare); Maiusc+clic
+    aggiunge e trascina; clic su uno gia' scelto trascina tutto il gruppo
+    (quello cliccato si aggancia alla griglia, gli altri lo seguono; il
+    gruppo resta dentro la maschera come un rettangolo solo); clic sul
+    vuoto: rettangolo elastico, sceglie quelli che TOCCA, con Alt quelli
+    tutti dentro, con Maiusc aggiunge. I modificatori arrivano gia' in wp
+    di EXM_MOUSE_DOWN (wserver 0.006): ex_mouse_mods non serve.
+  - Tastiera sulla tela: frecce 1 px, Maiusc+frecce la griglia,
+    Ctrl+frecce la misura; tenute premute fanno UN passo di Annulla
+    (600 ms); Ctrl+A tutti; Esc nessuno; Canc tutto l'insieme in un passo.
+  - Copia/Taglia/Incolla dell'insieme (g_app e' un vettore; si incolla
+    scostato di 8 nella stessa maschera, al suo posto in un'altra).
+  - Maniglie piene sul primo, vuote sugli altri; si ridimensiona solo il
+    primo con le maniglie (con le frecce tutti).
+  - Prova nuova: tools/prova_exide_scelta.sh (Ctrl+A, 5 frecce, Canc,
+    Ctrl+Z, Ctrl+S: in finestra.dis tutti spostati dello stesso passo,
+    nessuno perso). Da far girare con la ISO rifatta.
+NON FATTO: Tab fra i controlli (vuole l'ordine di tabulazione nel .dis),
+  ridimensionare il gruppo dalle maniglie (3.4), passi 3-6. Il passo 1
+  (WYSIWYG) aspetta TEMA001.
+
+ESITO passo 2 (25/11, 06:36): tools/prova_exide_scelta.sh riuscita: Ctrl+A,
+5 frecce, Canc, Ctrl+Z, Ctrl+S, i 15 controlli della maschera aperta
+spostati di 5, l altra maschera ferma. (La prova la prima volta mescolava
+le maschere: corretta.)

@@ -84,30 +84,30 @@ int main(void)
 
     printf("\n=== mettere e rimandare ===\n");
     bis_azzera(&d);
-    bis_arrivato(&d, "ex.os", "/", "a=1", ORA);
+    bis_arrivato(&d, "ex.os", "/", "a=1", ORA, 1);
     uguale("il piu' semplice torna indietro", manda(&d, "ex.os", "/", 0, 0), "a=1");
-    bis_arrivato(&d, "ex.os", "/", "b=2", ORA);
+    bis_arrivato(&d, "ex.os", "/", "b=2", ORA, 1);
     uguale("due si separano con punto e virgola",
            manda(&d, "ex.os", "/", 0, 0), "a=1; b=2");
     /* ! LO STESSO NOME SOSTITUISCE, non si affianca: due biscotti con lo
      * stesso nome sullo stesso dominio non esistono. */
-    bis_arrivato(&d, "ex.os", "/", "a=3", ORA);
+    bis_arrivato(&d, "ex.os", "/", "a=3", ORA, 1);
     uguale("lo stesso nome sostituisce", manda(&d, "ex.os", "/", 0, 0), "a=3; b=2");
     ok("un valore vuoto e' legale",
-       bis_arrivato(&d, "ex.os", "/", "c=", ORA) == 1, "");
+       bis_arrivato(&d, "ex.os", "/", "c=", ORA, 1) == 1, "");
     ok("una riga senza uguale non e' un biscotto",
-       bis_arrivato(&d, "ex.os", "/", "spazzatura", ORA) == 0, "");
+       bis_arrivato(&d, "ex.os", "/", "spazzatura", ORA, 1) == 0, "");
 
     printf("\n=== i domini ===\n");
     bis_azzera(&d);
-    bis_arrivato(&d, "www.ex.os", "/", "solo=host", ORA);
+    bis_arrivato(&d, "www.ex.os", "/", "solo=host", ORA, 1);
     uguale("senza Domain vale solo per quell'host",
            manda(&d, "www.ex.os", "/", 0, 0), "solo=host");
     uguale("e non per il dominio sopra", manda(&d, "ex.os", "/", 0, 0), "");
     uguale("ne' per un fratello", manda(&d, "img.ex.os", "/", 0, 0), "");
 
     bis_azzera(&d);
-    bis_arrivato(&d, "www.ex.os", "/", "largo=si; Domain=.ex.os", ORA);
+    bis_arrivato(&d, "www.ex.os", "/", "largo=si; Domain=.ex.os", ORA, 1);
     uguale("con Domain vale per i sottodomini",
            manda(&d, "img.ex.os", "/", 0, 0), "largo=si");
     uguale("e per il dominio stesso", manda(&d, "ex.os", "/", 0, 0), "largo=si");
@@ -122,13 +122,13 @@ int main(void)
      * mandare la volta dopo. */
     bis_azzera(&d);
     ok("un dominio che non e' il proprio si rifiuta",
-       bis_arrivato(&d, "cattivo.os", "/", "x=1; Domain=ex.os", ORA) == 0, "");
+       bis_arrivato(&d, "cattivo.os", "/", "x=1; Domain=ex.os", ORA, 1) == 0, "");
     uguale("e infatti non arriva a nessuno", manda(&d, "ex.os", "/", 0, 0), "");
 
     printf("\n=== i percorsi ===\n");
     bis_azzera(&d);
-    bis_arrivato(&d, "ex.os", "/", "r=radice; Path=/", ORA);
-    bis_arrivato(&d, "ex.os", "/", "c=conto; Path=/conto", ORA);
+    bis_arrivato(&d, "ex.os", "/", "r=radice; Path=/", ORA, 1);
+    bis_arrivato(&d, "ex.os", "/", "c=conto; Path=/conto", ORA, 1);
     uguale("nella radice c'e' solo quello della radice",
            manda(&d, "ex.os", "/", 0, 0), "r=radice");
     uguale("dentro il percorso ci sono tutt'e due",
@@ -141,7 +141,7 @@ int main(void)
            manda(&d, "ex.os", "/contoltre", 0, 0), "r=radice");
     /* ! SENZA Path IL PREDEFINITO E' LA DIRECTORY, non la radice. */
     bis_azzera(&d);
-    bis_arrivato(&d, "ex.os", "/conto/entra.html", "s=1", ORA);
+    bis_arrivato(&d, "ex.os", "/conto/entra.html", "s=1", ORA, 1);
     uguale("senza Path vale per la directory",
            manda(&d, "ex.os", "/conto/esci.html", 0, 0), "s=1");
     uguale("e non per tutto il sito", manda(&d, "ex.os", "/", 0, 0), "");
@@ -150,28 +150,28 @@ int main(void)
      * di un file che sta nella radice E' la radice. Chi lo legge di fretta
      * scrive una prova sbagliata — e' successo scrivendo queste. */
     bis_azzera(&d);
-    bis_arrivato(&d, "ex.os", "/conto", "p=1", ORA);
+    bis_arrivato(&d, "ex.os", "/conto", "p=1", ORA, 1);
     uguale("la directory di /conto e' la radice",
            manda(&d, "ex.os", "/altro", 0, 0), "p=1");
 
     /* La query non fa parte del percorso. */
     bis_azzera(&d);
-    bis_arrivato(&d, "ex.os", "/", "q=1; Path=/cerca", ORA);
+    bis_arrivato(&d, "ex.os", "/", "q=1; Path=/cerca", ORA, 1);
     uguale("la query non conta nel confronto",
            manda(&d, "ex.os", "/cerca?testo=ciao", 0, 0), "q=1");
 
     printf("\n=== Secure e HttpOnly ===\n");
     bis_azzera(&d);
-    bis_arrivato(&d, "ex.os", "/", "aperto=1", ORA);
-    bis_arrivato(&d, "ex.os", "/", "chiuso=2; Secure", ORA);
+    bis_arrivato(&d, "ex.os", "/", "aperto=1", ORA, 1);
+    bis_arrivato(&d, "ex.os", "/", "chiuso=2; Secure", ORA, 1);
     uguale("in chiaro il Secure non parte",
            manda(&d, "ex.os", "/", 0, 0), "aperto=1");
     uguale("su https partono tutt'e due",
            manda(&d, "ex.os", "/", 1, 0), "aperto=1; chiuso=2");
 
     bis_azzera(&d);
-    bis_arrivato(&d, "ex.os", "/", "visibile=1", ORA);
-    bis_arrivato(&d, "ex.os", "/", "nascosto=2; HttpOnly", ORA);
+    bis_arrivato(&d, "ex.os", "/", "visibile=1", ORA, 1);
+    bis_arrivato(&d, "ex.os", "/", "nascosto=2; HttpOnly", ORA, 1);
     uguale("al server vanno tutt'e due",
            manda(&d, "ex.os", "/", 0, 0), "visibile=1; nascosto=2");
     /* ! E' TUTTO IL SENSO DI HttpOnly: un biscotto di sessione che uno script
@@ -180,13 +180,13 @@ int main(void)
            manda(&d, "ex.os", "/", 0, 1), "visibile=1");
     /* ! E UNO SCRIPT NON PUO' FABBRICARNE UNO INVISIBILE AGLI SCRIPT, o
      * `HttpOnly` sarebbe una parola che chiunque puo' scrivere. */
-    bis_da_script(&d, "ex.os", "/", "furbo=3; HttpOnly", ORA);
+    bis_da_script(&d, "ex.os", "/", "furbo=3; HttpOnly", ORA, 1);
     uguale("e non puo' fabbricarne uno HttpOnly",
            manda(&d, "ex.os", "/", 0, 1), "visibile=1; furbo=3");
 
     printf("\n=== le scadenze ===\n");
     bis_azzera(&d);
-    bis_arrivato(&d, "ex.os", "/", "vivo=1; Max-Age=3600", ORA);
+    bis_arrivato(&d, "ex.os", "/", "vivo=1; Max-Age=3600", ORA, 1);
     uguale("Max-Age nel futuro vive", manda(&d, "ex.os", "/", 0, 0), "vivo=1");
     {
         char b[64];
@@ -197,19 +197,19 @@ int main(void)
     /* ! Max-Age=0 E' COME UN SITO CANCELLA UN BISCOTTO, ed e' il caso che si
      * incontra facendo «esci» da qualunque servizio. */
     bis_azzera(&d);
-    bis_arrivato(&d, "ex.os", "/", "s=1", ORA);
-    bis_arrivato(&d, "ex.os", "/", "s=1; Max-Age=0", ORA);
+    bis_arrivato(&d, "ex.os", "/", "s=1", ORA, 1);
+    bis_arrivato(&d, "ex.os", "/", "s=1; Max-Age=0", ORA, 1);
     uguale("Max-Age=0 lo toglie", manda(&d, "ex.os", "/", 0, 0), "");
     bis_azzera(&d);
-    bis_arrivato(&d, "ex.os", "/", "s=1", ORA);
+    bis_arrivato(&d, "ex.os", "/", "s=1", ORA, 1);
     bis_arrivato(&d, "ex.os", "/",
-                 "s=1; Expires=Thu, 01 Jan 1970 00:00:01 GMT", ORA);
+                 "s=1; Expires=Thu, 01 Jan 1970 00:00:01 GMT", ORA, 1);
     uguale("una scadenza nel passato pure", manda(&d, "ex.os", "/", 0, 0), "");
     /* ! Max-Age VINCE SU Expires, e i server mandano tutt'e due proprio
      * contando su quella regola. */
     bis_azzera(&d);
     bis_arrivato(&d, "ex.os", "/",
-                 "s=1; Expires=Thu, 01 Jan 1970 00:00:01 GMT; Max-Age=3600", ORA);
+                 "s=1; Expires=Thu, 01 Jan 1970 00:00:01 GMT; Max-Age=3600", ORA, 1);
     uguale("Max-Age vince su Expires", manda(&d, "ex.os", "/", 0, 0), "s=1");
 
     printf("\n=== il file ===\n");
@@ -218,9 +218,9 @@ int main(void)
         Dispensa e;
 
         bis_azzera(&d);
-        bis_arrivato(&d, "ex.os", "/", "sessione=1", ORA);
+        bis_arrivato(&d, "ex.os", "/", "sessione=1", ORA, 1);
         bis_arrivato(&d, "ex.os", "/conto",
-                     "duraturo=2; Path=/conto; Max-Age=86400; Secure", ORA);
+                     "duraturo=2; Path=/conto; Max-Age=86400; Secure", ORA, 1);
         bis_salva(&d, testo, sizeof(testo), ORA);
 
         /* ! I BISCOTTI DI SESSIONE NON VANNO SU DISCO: scriverli vorrebbe dire
@@ -254,7 +254,7 @@ int main(void)
 
     printf("\n=== il valore puo' contenere di tutto ===\n");
     bis_azzera(&d);
-    bis_arrivato(&d, "ex.os", "/", "t=abc def=ghi; Path=/", ORA);
+    bis_arrivato(&d, "ex.os", "/", "t=abc def=ghi; Path=/", ORA, 1);
     uguale("spazi e uguali dentro il valore",
            manda(&d, "ex.os", "/", 0, 0), "t=abc def=ghi");
     {
@@ -262,7 +262,7 @@ int main(void)
         Dispensa e;
 
         bis_azzera(&d);
-        bis_arrivato(&d, "ex.os", "/", "t=abc def=ghi; Max-Age=99999", ORA);
+        bis_arrivato(&d, "ex.os", "/", "t=abc def=ghi; Max-Age=99999", ORA, 1);
         bis_salva(&d, testo, sizeof(testo), ORA);
         bis_azzera(&e);
         bis_carica(&e, testo, ORA);
@@ -278,7 +278,7 @@ int main(void)
         bis_azzera(&d);
         for (i = 0; i < BIS_MAX + 8; i++) {
             sprintf(nome, "n%d=v; Max-Age=%d", i, 100 + i);
-            bis_arrivato(&d, "ex.os", "/", nome, ORA);
+            bis_arrivato(&d, "ex.os", "/", nome, ORA, 1);
         }
         ok("quando e' piena si dice", d.persi == 1, "");
         /* ! SI BUTTA IL PIU' VICINO A SCADERE, non il primo che capita: quello
@@ -298,13 +298,69 @@ int main(void)
         char b[12];
 
         bis_azzera(&d);
-        bis_arrivato(&d, "ex.os", "/", "unnomelungo=unvalorelungo", ORA);
+        bis_arrivato(&d, "ex.os", "/", "unnomelungo=unvalorelungo", ORA, 1);
         bis_da_mandare(&d, "ex.os", "/", 0, 0, ORA, b, sizeof(b));
         /* ! MEGLIO NIENTE CHE UN «Cookie:» TAGLIATO IN MEZZO A UN VALORE: il
          * server lo legge, non lo riconosce, e risponde una cosa che non si
          * spiega. */
         uguale("meglio vuoto che tagliato", b, "");
     }
+
+    printf("\n=== suffissi pubblici, IP, HttpOnly, Secure (debug/bug_BROWSER001) ===\n");
+    bis_azzera(&d);
+    ok("Domain=com da www.a.com: rifiutato",
+       bis_arrivato(&d, "www.a.com", "/", "x=1; Domain=com", ORA, 1) == 0, "");
+    uguale("  e banca.com non lo riceve", manda(&d, "banca.com", "/", 1, 0), "");
+    ok("Domain=co.uk da www.a.co.uk: rifiutato",
+       bis_arrivato(&d, "www.a.co.uk", "/", "x=1; Domain=co.uk", ORA, 1) == 0, "");
+    ok("Domain=github.io da tizio.github.io: rifiutato",
+       bis_arrivato(&d, "tizio.github.io", "/", "x=1; Domain=github.io", ORA, 1) == 0, "");
+    bis_azzera(&d);
+    bis_arrivato(&d, "a.com", "/", "x=1; Domain=a.com", ORA, 1);
+    uguale("Domain=a.com da a.com: anche ai sottodomini", manda(&d, "www.a.com", "/", 1, 0), "x=1");
+    bis_azzera(&d);
+    bis_arrivato(&d, "co.uk", "/", "x=1; Domain=co.uk", ORA, 1);
+    uguale("il sito e' il suffisso: solo lui", manda(&d, "co.uk", "/", 1, 0), "x=1");
+    uguale("  e non a.co.uk", manda(&d, "a.co.uk", "/", 1, 0), "");
+    bis_azzera(&d);
+    ok("Domain=0.0.1 da 10.0.0.1: rifiutato",
+       bis_arrivato(&d, "10.0.0.1", "/", "x=1; Domain=0.0.1", ORA, 1) == 0, "");
+    uguale("  e 192.0.0.1 non lo riceve", manda(&d, "192.0.0.1", "/", 1, 0), "");
+    bis_arrivato(&d, "10.0.0.1", "/", "y=1; Domain=10.0.0.1", ORA, 1);
+    uguale("Domain=10.0.0.1 da 10.0.0.1: solo lui", manda(&d, "10.0.0.1", "/", 1, 0), "y=1");
+    uguale("  e non 1.10.0.0.1", manda(&d, "1.10.0.0.1", "/", 1, 0), "");
+
+    bis_azzera(&d);
+    bis_arrivato(&d, "ex.os", "/", "s=1; HttpOnly", ORA, 1);
+    bis_da_script(&d, "ex.os", "/", "s=2", ORA, 1);
+    uguale("uno script non cambia un HttpOnly", manda(&d, "ex.os", "/", 1, 0), "s=1");
+    uguale("  che resta nascosto agli script", manda(&d, "ex.os", "/", 1, 1), "");
+    bis_da_script(&d, "ex.os", "/", "s=; expires=Thu, 01 Jan 1970 00:00:01 GMT", ORA, 1);
+    uguale("ne' lo toglie", manda(&d, "ex.os", "/", 1, 0), "s=1");
+
+    bis_azzera(&d);
+    ok("Secure da http: rifiutato",
+       bis_arrivato(&d, "a.com", "/", "t=1; Secure", ORA, 0) == 0, "");
+    bis_arrivato(&d, "a.com", "/", "t=1; Secure", ORA, 1);
+    ok("da http non si sovrascrive un Secure",
+       bis_arrivato(&d, "a.com", "/", "t=2", ORA, 0) == 0, "");
+    ok("  ne' da un sottodominio in chiaro",
+       bis_arrivato(&d, "www.a.com", "/", "t=3; Domain=a.com", ORA, 0) == 0, "");
+    uguale("  resta t=1", manda(&d, "a.com", "/", 1, 0), "t=1");
+    bis_arrivato(&d, "a.com", "/", "t=4; Max-Age=0", ORA, 0);
+    uguale("  e da http non si toglie", manda(&d, "a.com", "/", 1, 0), "t=1");
+
+    bis_azzera(&d);
+    ok("__Host- con Secure, https, Path=/: ok",
+       bis_arrivato(&d, "a.com", "/", "__Host-x=1; Secure; Path=/", ORA, 1) == 1, "");
+    ok("__Host- con Domain: rifiutato",
+       bis_arrivato(&d, "a.com", "/", "__Host-y=1; Secure; Path=/; Domain=a.com", ORA, 1) == 0, "");
+    ok("__Host- senza Path=/: rifiutato",
+       bis_arrivato(&d, "a.com", "/x/", "__Host-z=1; Secure; Path=/x", ORA, 1) == 0, "");
+    ok("__Secure- senza Secure: rifiutato",
+       bis_arrivato(&d, "a.com", "/", "__Secure-w=1", ORA, 1) == 0, "");
+    ok("__Secure- da http: rifiutato",
+       bis_arrivato(&d, "a.com", "/", "__Secure-w=1; Secure", ORA, 0) == 0, "");
 
     printf("\n%d prove, %d sbagliate\n\n", fatte, sbagliate);
     return sbagliate ? 1 : 0;

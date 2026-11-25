@@ -1,0 +1,299 @@
+IMPLEMENTAZIONE COLORI001 - Tema 01 "Classico rifinito" con i colori
+                            personalizzabili da Impostazioni > Colori (pm)
+===============================================================================
+Priorita':  ALTA per l'utente (scelta del 25/11/2026: "mi piace il tema 01,
+            ma vorrei poter cambiare i colori ... nell'area impostazioni
+            desktop"). Gli altri nove temi restano per dopo (TEMA001 passo 6).
+Dipende da: implementazione_TEMA001, passi 1-4, limitati al SOLO tema
+            classico (extema.c + tema_01_classico.c): e' il primo lavoro da
+            fare, e da solo gia' cambia l'aspetto di tutto il sistema.
+Programma:  lib/exwin (exwin.so), drivers/wserver, exwin/bin/pm, lib/libc
+Codice pronto (compilato e provato sull'host, gcc -Wall -Wextra pulito):
+    debug/grafica/extema.h, extema.c, tema_01_classico.c   (il tema)
+    debug/grafica/colori/excolori.h, excolori.c            -> lib/exwin/
+    debug/grafica/colori/schemi/NN_*.colori (10)           -> /exwin/lib/colori/
+    debug/grafica/colori/colori_anteprima.h, .c            -> exwin/bin/pm/
+    debug/grafica/colori/pm_colori.h, pm_colori.c          -> exwin/bin/pm/
+Immagini (uscite da quel codice: sh debug/grafica/fa_anteprime.sh):
+    debug/grafica/tema_01_classico.png                     il tema
+    debug/grafica/colori/schema_NN_*.png (10)              ogni schema sul tema
+    debug/grafica/colori/pm_pannello_colori.png            il pannello in pm
+    debug/grafica/colori/pm_pannello_colori_oceano.png     lo stesso con "Oceano"
+Rilevato su: albero del 25/11/2026.
+
+-------------------------------------------------------------------------------
+1. COSA SI OTTIENE
+-------------------------------------------------------------------------------
+  - Il tema 01 al posto del disegno di oggi in tutto ExWin (toolkit e
+    telai del server).
+  - In Impostazioni una scheda "Colori":
+      * elenco a discesa degli schemi: 10 di sistema (Classico, Notte,
+        Oceano, Deserto, Foresta, Ardesia, Vinaccia, Cristallo [i colori del
+        logo], Alto contrasto, Pesca) piu' quelli salvati dall'utente;
+      * anteprima VIVA (scrivania, finestra inattiva e attiva, casella,
+        pulsante, lista con selezione, suggerimento) che si ridisegna a ogni
+        modifica, senza Applica; un clic su una parte dell'anteprima sceglie
+        quell'elemento (clic sulla barra = "Barra attiva");
+      * 19 elementi modificabili, per ognuno: campione, casella #RRGGBB,
+        tre barre R G B, Chiaro / Scuro, 16 tinte rapide;
+      * avviso di contrasto WCAG quando un testo si legge male sul suo fondo
+        (sotto 4.5:1);
+      * rifiniture: barra sfumata, titolo in grassetto, ombra sotto le
+        finestre, angoli arrotondati;
+      * Salva come... (schema dell'utente), Elimina (solo i suoi), Predefinito,
+        Annulla modifiche, Applica (a caldo, su tutte le applicazioni aperte).
+  - Gli schemi sono file di testo leggibili e scrivibili a mano
+    (excolori.h spiega il formato), e si scambiano copiandoli.
+
+-------------------------------------------------------------------------------
+2. IL MODELLO
+-------------------------------------------------------------------------------
+  colori.cfg / *.colori  --excol_leggi-->  ExColori (19 colori base +
+                                           rifiniture + ritocchi)
+                                              |
+                                        excol_applica(schema, tema_base)
+                                              v
+                                           ExTema vivo (tavolozza intera
+                                           di ~50 colori + forma)
+                                              |
+                       exwin.c (g_tema) <-----+-----> wserver.c (g_tema)
+
+  - I 19 colori base (EXC_*): scrivania sopra/sotto, finestre, testo,
+    caselle, testo nelle caselle, selezione, testo selezionato, barra
+    attiva sinistra/destra, titolo attivo, barra inattiva sinistra/destra,
+    titolo inattivo, luce e ombra del rilievo, suggerimenti e loro testo,
+    pulsante di chiusura.
+  - excol_applica ricava gli altri ~30 con regole fisse (excolori.c: per
+    esempio puls_a = finestra schiarita di 28/255, luce2 = luce mescolata
+    alla finestra al 59%, accento_chiaro = campo mescolato alla selezione
+    al 27%). Le regole riconoscono le finestre scure (luminanza < 0.18) e
+    scuriscono/schiariscono nel verso giusto (vedi schema_02_notte.png).
+  - Lo schema "Classico" ridà la tavolozza di tema_01 con scarto massimo 12
+    su un canale (verificato con un programma di prova sull'host; quattro
+    valori di tema_01 sono stati portati a quelli ricavati).
+  - I ritocchi ("!campo = #RRGGBB", fino a 16) forzano un campo qualunque
+    della tavolozza per chi vuole controllare tutto: non hanno interfaccia
+    nel pannello (resta semplice), si scrivono a mano nel file.
+
+-------------------------------------------------------------------------------
+3. PASSI
+-------------------------------------------------------------------------------
+PASSO 1 - Il tema 01 nel toolkit e nel server (TEMA001 passi 1-4, ridotti)
+
+  Copiare extema.h, extema.c in lib/exwin/; tema_01_classico.c in
+  lib/exwin/temi/. In extema.c l'elenco g_temi[] va ridotto a
+  { &extema_classico } finche' gli altri temi non entrano (o si copiano
+  tutti e dieci: costano ~2 KB di dati ciascuno e nessun codice).
+  Fare i passi 2, 3, 4 di implementazione_TEMA001 (tela_di, stato_di,
+  disegna_oggetto_nudo, cornice nel server). Da qui ExWin ha l'aspetto di
+  tema_01_classico.png.
+
+PASSO 2 - excolori nel toolkit
+
+  lib/exwin/excolori.h, excolori.c (da debug/grafica/colori). Nel Makefile
+  accanto a extema.o, in exwin.so e in wserver.drv.
+
+  In exwin.c il tema non e' piu' un puntatore a una costante ma una copia
+  viva:
+
+    #include "excolori.h"
+
+    static ExTema        g_tema_vivo;
+    static const ExTema *g_tema = &extema_classico;
+    static ExColori      g_schema;
+
+    /* $HOME/.exwin/config/colori.cfg sopra lo schema del tema */
+    static void tema_carica(void)
+    {
+        char p[200], buf[2048];
+        const char *h = getenv("HOME");
+        const ExTema *base = &extema_classico;   /* dopo: tema.cfg (TEMA001) */
+        int fd, n;
+
+        excol_da_tema(&g_schema, base);
+        if (!h || !h[0] || !strcmp(h, "/")) h = getuid() == 0 ? "/root" : "";
+        snprintf(p, sizeof(p), "%s/.exwin/config/colori.cfg", h);
+        fd = open(p, O_RDONLY, 0);
+        if (fd >= 0) {
+            n = (int)read(fd, buf, sizeof(buf) - 1);
+            close(fd);
+            if (n > 0) {
+                int ignote;
+                buf[n] = 0;
+                ignote = excol_leggi(&g_schema, buf, n);
+                if (ignote) log_exwin("colori.cfg: %d righe non capite", ignote);
+            }
+        }
+        if (g_schema.tema[0] && extema_per_nome(g_schema.tema))
+            base = extema_per_nome(g_schema.tema);
+        excol_applica(&g_schema, base, &g_tema_vivo);
+        g_tema = &g_tema_vivo;
+    }
+
+  tema_carica() si chiama in ex_init(), prima della prima finestra, e
+  quando arriva WIN_EV_TEMA (passo 3).
+
+  wserver: la stessa funzione, con la HOME dell'utente a cui il server
+  appartiene (voce 111: il server e' "<uid>:wserver"; la casa si ricava
+  dall'uid con nome_utente() + /home/<nome>, o /root per 0). Il server
+  disegna telai, barre e scrivania con g_tema.
+
+PASSO 3 - Le tre funzioni nuove del toolkit e il cambio a caldo
+
+    /* exwin.h */
+    #include "extema.h"     /* gli header pubblici: va installato anche lui */
+    int  ex_tela_di(ExWindow f, ExTela *t);       /* tela_di di TEMA001 */
+    const ExTema *ex_tema_forma(const char *nome);/* extema_per_nome, o il
+                                                     classico se non c'e' */
+    void ex_tema_ricarica(void);                  /* chiede al server di far
+                                                     rileggere i colori a tutti */
+    const ExTema *ex_tema(void);                  /* il tema vivo (per chi
+                                                     disegna da se': exide) */
+
+    /* exwin.c */
+    int ex_tela_di(ExWindow f, ExTela *t) { return tela_di(f, t); }
+    const ExTema *ex_tema_forma(const char *n)
+    {
+        const ExTema *m = n && n[0] ? extema_per_nome(n) : 0;
+        return m ? m : &extema_classico;
+    }
+    const ExTema *ex_tema(void) { return g_tema; }
+    void ex_tema_ricarica(void)
+    {
+        if (g_pid_server) ipc_send(g_pid_server, WIN_MSG_TEMA, 0, 0);
+    }
+
+    /* win_proto.h */
+    #define WIN_MSG_TEMA  0x5741    /* client -> server, senza dati */
+    #define WIN_EV_TEMA   0x0041    /* server -> ogni client (evento) */
+
+  Server, su WIN_MSG_TEMA: SOLO se il mittente (timbrato dal kernel,
+  SYS_IPC_RECV_CHI, kernel 0.356) ha l'uid del server o e' root - un altro
+  utente non deve poter far ridisegnare la sessione altrui. Poi:
+  tema_carica(), ridisegna la scrivania (cache dello sfondo, TEMA001 4.4),
+  sporca tutto lo schermo, e manda WIN_EV_TEMA a ogni client con almeno una
+  finestra.
+
+  Client, su WIN_EV_TEMA (nel giro dei messaggi del toolkit, non passato
+  all'applicazione come evento suo): tema_carica(), poi per ogni finestra
+  di primo livello disegna tutto e ex_update. Un'applicazione che disegna
+  da se' (pm, exide, filemgr) riceve dopo un EXM_PAINT normale e rilegge i
+  colori con ex_tema(): non serve altro.
+
+  libc: aggiungere a lib/include/libc.h il prototipo
+        int fsync(int fd);
+  (la funzione c'e' in lib/libc.c, il prototipo manca; pm_colori.c lo
+  dichiara da se' finche' non c'e').
+
+PASSO 4 - La scheda Colori in pm (exwin/bin/pm/pm.c)
+
+  File nuovi in exwin/bin/pm/: pm_colori.c, pm_colori.h,
+  colori_anteprima.c, colori_anteprima.h. pm si collega anche con
+  excolori.o ed extema.o (o li prende da exwin.so se esportati: TEMA001
+  passo 1, raccomandato - un'applicazione sola che si porta dentro una
+  seconda copia del motore puo' disegnare diverso dal toolkit dopo un
+  aggiornamento di uno dei due).
+
+  4.1 Misura della finestra: oggi IMP_W 470, IMP_H 420. Il pannello Colori
+      vuole 640 x 500 (anteprima 300 x 210 + elenco + editor). Portare
+
+        #define IMP_W 640
+        #define IMP_H 500
+
+      e verificare le altre schede: usano quasi tutte IMP_W - 24 e
+      IMP_W - 162 (si allargano da sole); la lista dei modi video
+      (IMP_W - 24) diventa piu' larga, va bene. Sotto 640x480 di schermo
+      la finestra non sta: in quel caso (ex_screen_size) IMP_H 460 e
+      l'anteprima scende a 160 di altezza (AN_H in pm_colori.c diventa una
+      variabile; i controlli sotto si spostano di 50).
+
+  4.2 SCHEDE: una in piu'
+
+        #define SCHEDE 5        /* era 4 */
+        ...
+        ex_item_add(c, "Colori");                    /* dopo "Applicazioni" */
+        ...
+        colori_crea(g_impost, 4, metti, IMP_W, IMP_H);   /* in fondo a
+                                                        impostazioni_apri */
+
+      ! SCH_MAX (pm.c) oggi vale 16 controlli per scheda: la scheda Colori
+      ne registra 33, e metti() scarterebbe in silenzio quelli oltre il
+      sedicesimo (resterebbero visibili su tutte le schede). Portarlo a 40:
+
+        #define SCH_MAX 40
+
+  4.3 scheda_mostra
+
+        static void scheda_mostra(int n)
+        {
+            ...come oggi...
+            colori_visibile(n == 4);      /* ridisegna l'anteprima se tocca */
+        }
+
+  4.4 impost_proc: tre aggiunte in testa, e la chiusura
+
+        if (msg == EXM_COMMAND && colori_comando(wp, lp)) return 0;
+        if (msg == EXM_MOUSE_DOWN && colori_mouse(EX_X(lp), EX_Y(lp))) return 0;
+        if (msg == EXM_PAINT) {
+            ex_default_proc(f, EXM_PAINT, 0, 0);
+            colori_disegna();
+            return 0;
+        }
+        ...
+        if (msg == EXM_CLOSE) { colori_chiudi(); ...come oggi... }
+
+      ! EXM_PAINT oggi non e' gestito da impost_proc (va a
+      ex_default_proc): con questa aggiunta pm ridisegna l'anteprima SOPRA
+      il disegno dei controlli, dopo di esso, come fa exide con la sua tela.
+
+  4.5 Gli schemi di sistema: Makefile, nella regola che copia /exwin/lib
+      sul disco e sul CD:
+
+        install -d $(DEST)/exwin/lib/colori
+        install -m 0644 debug/grafica/colori/schemi/*.colori $(DEST)/exwin/lib/colori/
+
+      (nel repository vanno spostati in exwin/lib/colori/, non lasciati
+      in debug/). netinst: aggiungerli all'elenco [sistema].
+
+PASSO 5 - Accessibilita' e robustezza
+
+  - Lo schema "Alto contrasto" (09) e' la base per chi vede poco: in
+    Impostazioni mettere anche una scorciatoia, Alt+Maiusc+Stamp come su
+    altri sistemi, che lo applica e lo toglie (gestita da pm, che e' sempre
+    in esecuzione). Facoltativo.
+  - Un colori.cfg rovinato non puo' fare danni: excol_leggi ignora le righe
+    sbagliate e i colori malformati, il resto resta quello del tema.
+    Scrivendo, pm passa da <file>.nuovo + rename (scrivi_file): un
+    salvataggio interrotto non lascia un file a meta'.
+  - Il server ignora WIN_MSG_TEMA da altri utenti (passo 3).
+
+-------------------------------------------------------------------------------
+4. PROVA
+-------------------------------------------------------------------------------
+  1. Host: sh debug/grafica/fa_anteprime.sh -> i PNG si rifanno identici
+     (sono nel repository: git diff dice se una modifica li cambia).
+  2. QEMU 1024x768x32, tema 01 senza colori.cfg: fotografia confrontata con
+     tema_01_classico.png (stesse forme e colori; il testo puo' differire
+     se l'applicazione usa un TrueType).
+  3. Impostazioni > Colori: scegliere ogni schema dall'elenco, l'anteprima
+     cambia subito; Applica: pm, filemgr, exide, gfedit, il telaio di ogni
+     finestra e la scrivania cambiano entro un secondo, nessun resto del
+     colore precedente; confrontare con schema_NN_*.png.
+  4. Elemento "Barra attiva (sinistra)", barra R a 200: l'anteprima si
+     aggiorna durante il trascinamento (EXM_COMMAND arriva anche mentre si
+     tira); casella #RRGGBB: "12,34,56" e "#123456" accettati, "#12" no.
+  5. Testo #808080 su finestre #808080: compare l'avviso di contrasto.
+  6. Salva come "Prova": file $HOME/.exwin/colori/prova.colori, "Prova
+     (tuo)" nell'elenco, Elimina attivo solo su di lui; uid 1000 e root
+     hanno schemi e colori.cfg separati (case diverse).
+  7. Uscire e rientrare (login): i colori restano; telnet da un altro
+     utente con un programma che manda WIN_MSG_TEMA al wserver della
+     console: ignorato (log del server).
+  8. A 16 bit (TEMA001 4.3): stessi colori, quantizzati.
+
+-------------------------------------------------------------------------------
+STATO (25/11/2026, notte)
+-------------------------------------------------------------------------------
+LETTO, NON COMINCIATO: dipende da TEMA001 passi 1-4 (vedi lo STATO di
+TEMA001: dopo la 0.367, come lavoro a se'). Il codice pronto in
+debug/grafica/colori resta dov'e'.

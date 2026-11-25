@@ -1,0 +1,293 @@
+BUG SSH001 - sshd: lunghezze del client non controllate (letture fuori dai
+              buffer prima dell'autenticazione, fuga di memoria della pila
+              nel terminale), servizio a una connessione per volta
+===============================================================================
+Gravita':   ALTA (da remoto, senza credenziali: caduta del servizio e fuga
+            di memoria del processo, compresi resti delle sessioni prima)
+Programma:  bin/sshd (sshd 0.003)
+Sorgenti:   bin/sshd/sshd.c   autentica, canale_apri, canale_pronto,
+                              sessione_dati (CHANNEL_DATA, window-change),
+                              pacchetto_ricevi, connessione, main
+Rilevato su: albero del 24/11/2026. Cercare le funzioni per nome.
+
+-------------------------------------------------------------------------------
+1. IL DIFETTO
+-------------------------------------------------------------------------------
+pacchetto_ricevi() garantisce solo che il carico sia lungo `len` <= 4095
+byte dentro buf[PKT_MAX]. Chi analizza il carico legge poi i campi
+`string` di SSH (uint32 lunghezza + byte) senza confrontare la lunghezza
+dichiarata con `len`, e somma lunghezze a 32 bit senza controllare il giro.
+Tutto questo accade dopo lo scambio di chiavi, che non richiede nessuna
+credenziale: e' superficie pre-autenticazione.
+
+a) autentica(), SSH_USERAUTH_REQUEST:
+
+        ln = prendi32(buf + p); p += 4;
+        if (ln >= max) ln = max - 1;       /* taglia solo la copia */
+        memcpy(utente, buf + p, ln);
+        p += prendi32(buf + 1);             /* lunghezza del client, intera */
+        p += 4 + prendi32(buf + p);         /* buf + p fuori dal buffer */
+        ln = prendi32(buf + p); p += 4;     /* lettura fuori */
+        memcmp(buf + p, "none", 4) ...      /* lettura fuori */
+
+   Con user = 0x7FFFFFF0 byte dichiarati, p diventa ~2 GB: SIGSEGV.
+
+b) canale_pronto(), "pty-req":
+
+        q += 4 + prendi32(buf + q);         /* nome del terminale */
+        *colonne = prendi32(buf + q);       /* fuori */
+
+   e il controllo comune `if (p + tn >= len)` gira a 32 bit: tn =
+   0xFFFFFFF8 da' p + tn = 1 < len, quindi passa (stesso schema in
+   sessione_dati per "window-change").
+
+c) sessione_dati(), SSH_CHANNEL_DATA:
+
+        unsigned int n = prendi32(buf + 5);
+        if (n > 0 && 9 + n <= (unsigned int)len) al_pty(fd[0], buf + 9, n);
+
+   n = 0xFFFFFFF8 -> 9 + n = 1 <= len: il controllo passa. al_pty():
+   write(pty, d, n) fallisce (EFAULT: l'intervallo esce dallo spazio
+   utente), quindi n viene stretto a ATTESA_MAX - g_att_n e
+        memcpy(g_attesa + g_att_n, d, n);   /* fino a 64 KB da buf+9 */
+   copia fino a 64 KB della PILA (buf e' 4 KB sulla pila di sessione_dati)
+   dentro la coda verso il pty. Quei byte arrivano a login/shell come
+   input, e con ECHO acceso tornano al client cifrati nel canale: fuga di
+   memoria della pila del processo verso chi e' collegato. Se la copia
+   esce dalla pila mappata: SIGSEGV.
+
+   Cosa c'e' sulla pila: le strutture Sess e i buffer delle connessioni
+   PRECEDENTI (lo stesso processo serve una connessione dopo l'altra, vedi
+   d), cioe' in chiaro i CHANNEL_DATA di altri utenti, password digitate
+   a login comprese, finche' non vengono sovrascritti.
+
+d) UNA CONNESSIONE PER VOLTA. main() chiama connessione(id) nel ciclo di
+   accept: finche' una sessione e' viva nessun altro entra. Un client che
+   si collega e non manda niente tiene il servizio fino a 15 s x 8 (riga
+   di versione), poi 20 s (KEXINIT), 20 s (ECDH), 20 s, 60 s x 8
+   (autenticazione), 30 s x 16 (canale): oltre 15 minuti per connessione,
+   ripetibile all'infinito. E ogni SIGSEGV di (a)-(c) porta via il demone
+   per tutti fino al riavvio manuale.
+
+e) MINORI, stessa area:
+   - USERAUTH_SUCCESS a qualunque password (la verifica la fa login sul
+     pty). Il client vede "autenticato" prima che lo sia; la password SSH
+     e' chiesta due volte; la chiave pubblica (publickey) non e' possibile.
+     Non e' una falla in se' (login la richiede), ma espone tutto il
+     codice di canale e pty (b, c) a chiunque.
+   - Nessun "kex-strict-s-v00@openssh.com" (Terrapin, CVE-2023-48795): la
+     direzione client->server e' gia' rigida (kex() vuole ECDH_INIT e
+     NEWKEYS senza IGNORE in mezzo), ma il server non lo annuncia ne'
+     azzera i numeri di sequenza a NEWKEYS come chiede la modalita' rigida.
+   - Nessun rinnovo delle chiavi: seq_in/seq_out a 32 bit fanno da nonce
+     di ChaCha20; al giro (2^32 pacchetti) il nonce si ripete con la
+     stessa chiave. Teorico per una shell, ma va chiuso con un tetto
+     (disconnessione a 2^31 pacchetti).
+   - Il riempimento non viene controllato: RFC 4253 6 vuole padding >= 4 e
+     (packet_length + 4) multiplo di 8 per chacha20-poly1305.
+
+-------------------------------------------------------------------------------
+2. COSA COMPORTA
+-------------------------------------------------------------------------------
+  - Chiunque raggiunga la porta (2222 o 22) fa cadere sshd con un solo
+    pacchetto dopo lo scambio di chiavi (a, b, c).
+  - Con (c) legge fino a 64 KB della pila di sshd riecheggiati dal pty:
+    resti di sessioni precedenti di altri utenti (righe digitate, password
+    date a login, dati dei comandi).
+  - Con (d) un solo client tiene il servizio occupato per sempre.
+
+-------------------------------------------------------------------------------
+3. RIPRODUZIONE
+-------------------------------------------------------------------------------
+Con paramiko dall'host (QEMU con hostfwd tcp::2222-:2222):
+
+    import paramiko, struct
+    t = paramiko.Transport(("127.0.0.1", 2222))
+    t.start_client()
+    # (a): USERAUTH_REQUEST con lunghezza del nome falsa
+    m = paramiko.Message()
+    m.add_byte(bytes([50]))                       # SSH_MSG_USERAUTH_REQUEST
+    m.add_int(0x7FFFFFF0); m.add_bytes(b"root")   # string mentita
+    t._send_message(m)
+    # sshd: SIGSEGV; la porta non risponde piu'
+
+    # (c): autenticarsi normalmente, aprire il canale e la shell, poi
+    m = paramiko.Message()
+    m.add_byte(bytes([94])); m.add_int(chan.remote_chanid)
+    m.add_int(0xFFFFFFF8); m.add_bytes(b"A" * 8)
+    t._send_message(m)
+    print(chan.recv(70000))       # eco del pty: memoria della pila
+
+-------------------------------------------------------------------------------
+4. CORREZIONE
+-------------------------------------------------------------------------------
+4.1 Un lettore di campi con i limiti, usato ovunque
+
+    typedef struct { const unsigned char *b; unsigned int n, p; int rotto; } Lett;
+
+    static void lett_init(Lett *l, const unsigned char *b, unsigned int n)
+    { l->b = b; l->n = n; l->p = 0; l->rotto = 0; }
+
+    static int lett_byte(Lett *l, unsigned char *v)
+    {
+        if (l->rotto || l->n - l->p < 1) { l->rotto = 1; return -1; }
+        *v = l->b[l->p++]; return 0;
+    }
+    static int lett_u32(Lett *l, unsigned int *v)
+    {
+        if (l->rotto || l->n - l->p < 4) { l->rotto = 1; return -1; }
+        *v = prendi32(l->b + l->p); l->p += 4; return 0;
+    }
+    /* string: puntatore dentro il buffer e lunghezza, mai copiati */
+    static int lett_str(Lett *l, const unsigned char **s, unsigned int *sn)
+    {
+        unsigned int k;
+        if (lett_u32(l, &k) != 0) return -1;
+        if (k > l->n - l->p) { l->rotto = 1; return -1; }   /* niente somme */
+        *s = l->b + l->p; *sn = k; l->p += k; return 0;
+    }
+
+   Il confronto e' sempre `k > n - p` (sottrazione di valori gia'
+   validati, p <= n per costruzione), mai `p + k <= n`.
+
+4.2 autentica() riscritta sui campi
+
+    Lett l; unsigned char t;
+    const unsigned char *u, *svc, *met; unsigned int un, sn, mn;
+
+    lett_init(&l, buf, (unsigned int)len);
+    if (lett_byte(&l, &t) || t != SSH_USERAUTH_REQUEST) continue;
+    if (lett_str(&l, &u, &un) || lett_str(&l, &svc, &sn) ||
+        lett_str(&l, &met, &mn)) return -1;          /* malformato: chiude */
+    if (un == 0 || un >= max) return -1;
+    if (memchr(u, '\0', un)) return -1;              /* niente NUL nel nome */
+    memcpy(utente, u, un); utente[un] = '\0';
+    if (sn != 14 || memcmp(svc, "ssh-connection", 14)) return -1;
+    if (mn == 4 && !memcmp(met, "none", 4)) { ... FAILURE "password" ... }
+    if (mn == 8 && !memcmp(met, "password", 8)) {
+        unsigned char cambio; const unsigned char *pw; unsigned int pn;
+        if (lett_byte(&l, &cambio) || lett_str(&l, &pw, &pn)) return -1;
+        ... (vedi 4.5) ...
+    }
+
+4.3 Canale e dati
+
+    /* CHANNEL_DATA */
+    Lett l; unsigned char t; unsigned int ch; const unsigned char *d; unsigned int dn;
+    lett_init(&l, buf, (unsigned int)len);
+    if (lett_byte(&l, &t) || lett_u32(&l, &ch) || lett_str(&l, &d, &dn)) break;
+    if (ch != NOSTRO_CANALE) break;
+    if (dn > s->finestra_in) break;             /* il client ha superato la
+                                                    finestra che gli abbiamo dato */
+    s->finestra_in -= dn;
+    if (dn) al_pty(fd[0], d, dn);
+    /* WINDOW_ADJUST solo quando la finestra scende sotto meta', e per la
+       quantita' consumata: oggi si aggiunge n + 4096 a ogni pacchetto e
+       la finestra del client cresce senza limite */
+
+    /* CHANNEL_REQUEST (pty-req, window-change, shell) */
+    if (lett_byte(&l,&t) || lett_u32(&l,&ch) || lett_str(&l,&rt,&rn) ||
+        lett_byte(&l,&vuole)) continue;
+    if (rn == 7 && !memcmp(rt, "pty-req", 7)) {
+        const unsigned char *term, *modi; unsigned int tn, mn, c, r, pw, ph;
+        if (lett_str(&l,&term,&tn) || lett_u32(&l,&c) || lett_u32(&l,&r) ||
+            lett_u32(&l,&pw) || lett_u32(&l,&ph) || lett_str(&l,&modi,&mn))
+            { rispondi FAILURE; continue; }
+        if (c == 0 || r == 0 || c > 1000 || r > 1000) { c = 80; r = 24; }
+        ...
+    }
+
+   E in al_pty: un'asserzione di difesa, la copia non deve mai superare
+   cio' che e' stato ricevuto:
+        if (n > PKT_MAX) n = PKT_MAX;   /* nessun chiamante ne ha di piu' */
+
+4.4 Pacchetti malformati
+
+   In pacchetto_ricevi, dopo aver letto tot:
+        if (riempi_n < 4 || ((tot + 4) & 7) != 0) return -1;   /* non cifrato */
+        if (riempi_n < 4 || (tot & 7) != 0)       return -1;   /* chacha20:
+                                                    la lunghezza non conta */
+   (RFC 4253 6; per chacha20-poly1305@openssh.com e' tot multiplo di 8.)
+   E un tetto ai numeri di sequenza:
+        if (s->seq_in == 0x80000000u || s->seq_out == 0x80000000u) return -1;
+
+4.5 Piu' connessioni e meno superficie prima del login
+
+   - Un figlio per connessione: dopo l'accept, fork() (o spawn di
+     "sshd -c <id>", se fork non e' adatto al modello IPC di ip.drv: la
+     connessione TCP e' un id di ip.drv, va passato al figlio e il figlio
+     deve poter parlare con ip.drv; verificare che la tabella del servente
+     di rete permetta a un altro pid di usare lo stesso id, altrimenti
+     serve un messaggio IP_MSG_TCP_CEDI(id, pid)). Il padre torna subito
+     all'accept; tetto di figli (es. 16) e di connessioni non autenticate
+     per indirizzo (es. 4), come MaxStartups di OpenSSH.
+   - LoginGraceTime: un solo orologio di 120 s dall'accept al successo,
+     invece della somma dei tempi di ogni passo.
+   - La password del pacchetto SSH va verificata e non buttata: SYS_SU non
+     serve (fa root). Serve una verifica senza effetti (una funzione di
+     libexuser che legge /boot/ombra: sshd gira come root) e poi login con
+     un'opzione "-f utente" accettata SOLO se il padre e' uid 0. Cosi' la
+     password non si chiede due volte e USERAUTH_SUCCESS dice il vero. Il
+     freno ai tentativi (vedi bug_SU001) si applica anche qui.
+   - Annunciare "kex-strict-s-v00@openssh.com" nella lista KEX di
+     kexinit_componi e, se il client annuncia "kex-strict-c-v00@openssh.com",
+     azzerare seq_in e seq_out subito dopo ogni NEWKEYS:
+        k += metti_str(p + k, "curve25519-sha256,kex-strict-s-v00@openssh.com", 46);
+        ...
+        if (client_strict) { s->seq_in = 0; s->seq_out = 0; }   /* dopo NEWKEYS */
+     (il server sceglie comunque curve25519-sha256: la pseudo-voce non e'
+     un algoritmo).
+
+4.6 Pulizia fra connessioni
+
+   Finche' le connessioni restano nello stesso processo: azzerare buf,
+   out e Sess alla fine di connessione() e di sessione_dati() (memset
+   volatile o explicit_bzero se la libc l'ha), e g_attesa/g_att_n.
+
+-------------------------------------------------------------------------------
+5. PROVA
+-------------------------------------------------------------------------------
+  - Gli script paramiko del punto 3: sshd non cade, chiude la sola
+    connessione malformata e risponde alla successiva.
+  - Fuzz: ogni campo string di USERAUTH_REQUEST, CHANNEL_OPEN,
+    CHANNEL_REQUEST, CHANNEL_DATA con lunghezze 0, len-p, len-p+1,
+    0x7FFFFFFF, 0xFFFFFFFF, 0xFFFFFFF8: zero cadute (contare con ps che il
+    pid di sshd resta lo stesso).
+  - OpenSSH vero (ssh -vvv -p 2222): entrata, nano a schermo pieno,
+    ridimensionamento, uscita; con ssh 9.6+ "kex_strict" nel log.
+  - Due ssh insieme: entrambi ottengono il prompt.
+  - Un nc che si collega e tace: dopo 120 s la connessione cade, gli
+    altri entrano subito.
+-------------------------------------------------------------------------------
+6. STATO (25/11/2026, notte)
+-------------------------------------------------------------------------------
+FATTO (sshd 0.004):
+  - lettore di campi coi limiti (Lett: k > n - p, mai somme) in
+    autentica, canale_apri, canale_pronto, CHANNEL_DATA, window-change;
+    al_pty non copia mai piu' di un pacchetto; colonne e righe oltre
+    1000 = "non lo so".
+  - riempimento controllato (RFC 4253 6), tetto ai numeri di sequenza
+    (2^31), kex-strict-s-v00@openssh.com (Terrapin) con l'azzeramento a
+    NEWKEYS se il client lo chiede.
+  - buffer, coda verso il pty e Sess azzerati a fine sessione.
+  - TROVATO STRADA FACENDO: un client che cadeva senza CHANNEL_CLOSE
+    lasciava la sessione appesa finche' la shell non scriveva, e con una
+    connessione per volta nessun altro entrava: ora la caduta del TCP
+    chiude la sessione.
+  - Prova: tools/ssh_malformati.py (un piccolo client SSH su
+    python3-cryptography) dentro tools/prova_ssh.sh, prima di OpenSSH vero.
+DA DECIDERE (4.5): un figlio per connessione (serve sapere se ip.drv
+  lascia usare una connessione a un altro pid, o un IP_MSG_TCP_CEDI);
+  LoginGraceTime unico; verifica della password in sshd e login -f
+  (oggi USERAUTH_SUCCESS a qualunque password e la chiede login).
+
+STATO (aggiunta 25/11 notte)
+- La prova della seconda tornata e' caduta: dopo la prima sessione il
+  client python chiudeva e sshd non se ne accorgeva, quindi la connessione
+  dopo non riceveva nemmeno il banner. Causa: ip.drv dice "l'altro ha
+  chiuso" rispondendo subito con 0 byte, e riempi() li prendeva per "per
+  ora niente" (400 giri a vuoto, poi di nuovo). Ora 0 byte = chiusa.
+  Da riprovare nella terza tornata (prova_ssh 32 e 64).
+
+ESITO (25/11, 06:36, terza tornata): prova_ssh a 32 e 64 bit, tutti OK
+(malformati e client OpenSSH). Resta qui per le decisioni sopra.

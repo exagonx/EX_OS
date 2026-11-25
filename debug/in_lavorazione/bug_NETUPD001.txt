@@ -1,0 +1,232 @@
+BUG NETUPD001 - netupdate si fida di cio' che arriva in HTTP in chiaro:
+                 chi sta sul percorso (o avvelena il DNS) installa un
+                 kernel suo ed esegue script come root
+===============================================================================
+Gravita':   CRITICA (esecuzione di codice da remoto come root, senza
+            interazione: -check -yes gira anche di notte da telnet/cron)
+Programma:  bin/netupdate (0.05x), lato server tools/mknetinst.sh,
+            tools/netinst/*, exagonx/pubblica.sh
+Sorgenti:   bin/netupdate/netupdate.c  url_componi (schema "http://"),
+                                       prendi, prendi_verifica_scrivi,
+                                       il passo che scarica versione.txt
+                                       (prendi_verifica_scrivi(c,
+                                       "versione.txt", NULL, ...)),
+                                       verifiche_esegui (spawn di /bin/sh),
+                                       elenchi_aggiungi, il passo 5
+                                       "si scarica ogni file accanto al
+                                       suo posto"
+            lib/dns.c                  (vedi bug_DNS001)
+Rilevato su: albero del 24/11/2026.
+
+-------------------------------------------------------------------------------
+1. IL DIFETTO
+-------------------------------------------------------------------------------
+La catena di fiducia di netupdate e':
+
+    versione.txt  --sha256-->  catalogo.txt, elenco.txt, app.txt,
+                               verifiche.txt
+    elenco/app    --sha256-->  ogni file (kernel, driver, librerie, bin)
+    verifiche.txt --sha256-->  ogni script, eseguito con /bin/sh come root
+
+Le impronte proteggono dagli errori di trasporto e da un server "che si
+contraddice", ma la RADICE, versione.txt, si scarica con
+
+    prendi_verifica_scrivi(c, "versione.txt", NULL, ver);   /* attesa NULL */
+
+da un URL costruito sempre come "http://" + c->url (url_componi), cioe' in
+chiaro, senza TLS, senza firma, senza chiave pubblica fissata nel client.
+Chi controlla la risposta HTTP di versione.txt controlla tutte le impronte
+sotto, quindi tutto cio' che viene installato ed eseguito.
+
+Non serve controllare il server: basta
+  - essere sulla stessa rete (ARP spoofing, Wi-Fi aperta, il router),
+  - oppure avvelenare il DNS del client (lib/dns.c: identificativo e porta
+    prevedibili, nessun controllo del mittente: bug_DNS001),
+  - oppure dirottare il TCP (ip.drv: bug_IP001),
+  - oppure un proxy trasparente dell'ISP.
+
+-------------------------------------------------------------------------------
+2. COSA COMPORTA
+-------------------------------------------------------------------------------
+  - Installazione di un kernel, di un driver o di /bin/login arbitrari:
+    persistenza totale, sopravvive al riavvio, settore di avvio compreso
+    ("il settore di avvio si tocca per ultimo").
+  - Esecuzione immediata: verifiche_esegui lancia /bin/sh <script> come
+    root dopo ogni -check "anche quando niente e' cambiato". Uno script
+    "sistema" falso gira su ogni macchina che controlla gli
+    aggiornamenti.
+  - Il ritiro: anche "-check" senza installare e' sufficiente (le
+    verifiche girano comunque, salvo -noverifica).
+  - Downgrade: anche con una firma futura, senza un numero di versione
+    monotono firmato un attaccante puo' riproporre un versione.txt vecchio
+    e legittimo con difetti noti (attacco di rollback/freeze, TUF).
+
+-------------------------------------------------------------------------------
+3. RIPRODUZIONE
+-------------------------------------------------------------------------------
+  1. Sull'host: python3 -m http.server 8080 in una copia di dist/netinst
+     dove tools/netinst/verifiche/<sistema>.sh contiene
+        echo pwned > /root/pwned; id >> /root/pwned
+     e si rigenerano verifiche.txt e versione.txt con le loro sha256
+     (come fa tools/mknetinst.sh).
+  2. In QEMU (netdev user con guestfwd, o una rete TAP con dnsmasq che
+     risponde l'indirizzo dell'host per il nome del server ufficiale):
+        netupdate -check -yes
+  3. /root/pwned contiene "uid=0". Nessun avviso mostrato.
+
+-------------------------------------------------------------------------------
+4. CORREZIONE
+-------------------------------------------------------------------------------
+Firma della radice con una chiave fuori linea + numero di versione
+monotono. ed25519 c'e' gia' ed e' provato contro gli RFC
+(lib/excrypt/ed25519.c, ed25519_verifica): niente codice crittografico
+nuovo da scrivere. TLS (lib/extls) e' utile in piu' ma NON sostituisce la
+firma: protegge il trasporto, non da un server o un mirror compromesso.
+
+4.1 Formato
+
+   Sul server, accanto a versione.txt:
+
+     versione.txt.sig   64 byte: firma ed25519 di versione.txt intero
+
+   Dentro versione.txt, due righe nuove (prima delle impronte):
+
+     serie   = 1732406400      (intero monotono: secondi, o contatore)
+     scade   = 1735084800      (dopo questa data il client rifiuta:
+                                contro il "freeze", che tiene un client
+                                fermo su una versione vecchia)
+
+4.2 Client (bin/netupdate/netupdate.c)
+
+   Chiave pubblica compilata nel binario (32 byte) e, facoltativa, in
+   /boot/netupdate.pub (0644 root) per chi pubblica un repository suo
+   (manuali/installazione/06-pubblicare-il-repo.md): se il file c'e',
+   vince su quella compilata, ma solo se e' di root e non scrivibile da
+   altri (statperm: uid 0, modo & 022 == 0).
+
+    static const unsigned char CHIAVE_UFFICIALE[32] = { /* da exagonx/ */ };
+
+    static int radice_verifica(const unsigned char *v, long vn,
+                               const unsigned char *sig, long sn,
+                               const unsigned char pub[32])
+    {
+        if (sn != 64) return -1;
+        return ed25519_verifica(sig, v, (unsigned long)vn, pub);
+    }
+
+   Nel passo che scarica versione.txt:
+
+        if (prendi_verifica_scrivi(c, "versione.txt", NULL, ver) != 0) ...
+        /* NUOVO */
+        n_sig = prendi_in(c, "versione.txt.sig", sig, sizeof sig);
+        if (radice_verifica(buf_ver, n_ver, sig, n_sig, chiave()) != 0) {
+            printf("  ! versione.txt non e' firmato dalla chiave di questo\n"
+                   "    sistema: non tocco niente.\n");
+            return 1;
+        }
+        serie = chiave_numero(ver, "serie");
+        if (serie < serie_vista()) {             /* /boot/netupdate.serie */
+            printf("  ! il server propone una serie piu' vecchia di quella\n"
+                   "    gia' installata (%ld < %ld): rifiuto.\n", ...);
+            return 1;
+        }
+        if (time(NULL) > chiave_numero(ver, "scade")) { ...rifiuto... }
+        ... dopo un aggiornamento riuscito: scrivere serie in
+            /boot/netupdate.serie (0644 root), con fsync ...
+
+   Il controllo va fatto PRIMA di usare qualunque impronta contenuta in
+   versione.txt e prima di scaricare qualunque altro file. Anche il ramo
+   dei sorgenti (src-versione.txt) va firmato allo stesso modo.
+
+   Transizione: per una release, accettare versione.txt senza firma SOLO
+   se /boot/netupdate.pub non esiste e l'utente passa -insicuro
+   esplicitamente; poi togliere il ramo. Le macchine gia' installate
+   ricevono il netupdate nuovo con l'ultimo aggiornamento non firmato:
+   e' l'unico passo che resta esposto, va detto nel manuale.
+
+4.3 Server (tools/mknetinst.sh, exagonx/pubblica.sh)
+
+   La chiave privata NON sta in exagonx/ accanto alla password FTP, ne'
+   nell'albero del progetto: su un supporto separato, o almeno cifrata
+   con passphrase e letta solo al momento della firma.
+
+     # firma.py (host), con PyNaCl o cryptography:
+     from nacl.signing import SigningKey
+     sk = SigningKey(open(os.environ["EXOS_CHIAVE"], "rb").read())
+     sig = sk.sign(open("dist/netinst/versione.txt","rb").read()).signature
+     open("dist/netinst/versione.txt.sig","wb").write(sig)
+
+   mknetinst.sh scrive "serie = $(date +%s)" e "scade = <+30 giorni>"
+   prima di firmare. Il formato della firma e' quello di ed25519_verifica
+   (RFC 8032, messaggio intero, niente prehash).
+
+4.4 Esecuzione delle verifiche
+
+   Anche con la firma, gli script di verifiche/ girano come root: e' una
+   scelta di progetto ("l'utente: ogni novita' arriva con netupdate"),
+   ma va limitata:
+   - mai prima che la firma della radice sia verificata (4.2);
+   - con PATH fisso (/bin) e ambiente ripulito, non quello del chiamante
+     (oggi "with the console of netupdate, and in the environment ..."):
+     spawn_ex con un envp costruito da zero;
+   - -noverifica come predefinito per "-check" senza "-yes"? Da decidere
+     con l'utente.
+
+4.5 Trasporto
+
+   Quando lib/extls e' adatto (EXBrowser lo usa gia'): "https://" in
+   url_componi se la configurazione lo dice, con verifica del certificato.
+   Difesa in piu', non al posto della firma.
+
+-------------------------------------------------------------------------------
+5. PROVA
+-------------------------------------------------------------------------------
+  - Lo scenario del punto 3: netupdate rifiuta (firma assente), nessuno
+    script eseguito, /root/pwned non esiste.
+  - versione.txt firmato ma con un byte cambiato: rifiuto.
+  - versione.txt firmato e vecchio (serie minore): rifiuto con il
+    messaggio di rollback.
+  - versione.txt firmato e scaduto: rifiuto.
+  - Il repository ufficiale ripubblicato con la firma: -check -yes sul
+    .253 e in QEMU a 32 e 64 bit, come d'uso; /boot/netupdate.serie
+    scritto.
+  - Repository di terzi con /boot/netupdate.pub: accettato con la sua
+    chiave, rifiutato con quella ufficiale.
+-------------------------------------------------------------------------------
+6. STATO (25/11/2026, notte)
+-------------------------------------------------------------------------------
+FATTO (netupdate 0.053):
+  - versione.txt firmato ed25519 (riga "firma"), con "serie" e "scade"
+    (+30 giorni); tools/netinst/firma.py crea/pubblica/firma, e
+    mknetinst.sh / mknetinstsrc.sh firmano da soli.
+  - netupdate verifica prima di toccare qualunque cosa; chiave compilata
+    (bin/netupdate/chiave_netupdate.h) o /boot/netupdate.pub (di root, non
+    scrivibile da altri); /boot/netupdate.serie contro il ritorno a un
+    albero vecchio (-indietro per volerlo davvero); -insicuro accetta un
+    albero senza firma solo se non c'e' netupdate.pub.
+  - Gli script di verifica partono con un ambiente pulito (PATH=/bin,
+    HOME=/root, NETUPDATE_*, TERM, LANG).
+  - TROVATO STRADA FACENDO: ed25519 di lib/excrypt verificava solo
+    messaggi fino a 448 byte (e firmava troncando): SHA-512 incrementale,
+    provato contro python per lunghezze 1..599, 1000, 4095, 4096, 65000.
+  - Prove: tools/prova_verifiche.sh scenario F (non firmato, -insicuro,
+    un byte cambiato, scaduto, serie vecchia, -indietro, chiave sbagliata
+    e giusta in netupdate.pub).
+DA DECIDERE (utente):
+  - la scadenza di 30 giorni (un repository non ripubblicato per un mese
+    smette di aggiornare);
+  - dove sta la chiave privata: oggi ~/ex_os/chiavi/netupdate-ed25519.key
+    (0600). SENZA COPIA DI SICUREZZA, una chiave persa vuol dire una
+    chiave nuova compilata in un netupdate nuovo da far arrivare a mano;
+  - il passaggio: il .253 ha netupdate 0.052, che non guarda la firma. Il
+    primo aggiornamento a 0.053 avviene ancora senza verifica.
+NON PUBBLICATO: ~/ftp/www ha ancora la 0.366 senza firma.
+
+STATO (aggiunta 25/11 notte)
+- prova_verifiche a 32 bit: una serie installata 99999999999 non fermava un
+  albero piu' vecchio. serie e scadenza erano long, a 32 bit si fermano a
+  2^31 (atol andava fuori). Ora long long: anche la scadenza, che come
+  orario Unix supera 2^31 nel 2038. A 64 bit passava gia'.
+
+ESITO (25/11, 06:36): prova_verifiche 28 su 28 a 32 e a 64 bit.
+Resta qui per le decisioni sopra.

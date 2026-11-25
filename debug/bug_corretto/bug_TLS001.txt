@@ -1,0 +1,243 @@
+BUG TLS001 - excert: estensioni critiche sconosciute ignorate, keyUsage,
+              extendedKeyUsage, pathLenConstraint e nameConstraints mai
+              controllati
+===============================================================================
+Gravita':   MEDIA (una CA intermedia vincolata, o un certificato foglia con
+            usi limitati, vale come una CA piena per qualunque nome)
+Programma:  lib/excert, lib/exasn1 (catena X.509), usati da lib/extls e
+            quindi da lib/exhttp (EXBrowser, scarica, i client HTTPS)
+Sorgenti:   lib/exasn1/exasn1.c   il giro sulle estensioni (OID_SAN,
+                                  basicConstraints: e_basic / e_san,
+                                  "if (!e_basic && !e_san) continue;",
+                                  il booleano "critica" saltato)
+            lib/exasn1/exasn1.h   ExCert (e_ca, ha_basic, san)
+            lib/excert/excert.c   excert_catena_valida, radice_di,
+                                  date_a_posto, excert_nome_combacia
+            lib/extls/extls_client.c  chiamate a excert_catena_valida e
+                                  excert_nome_combacia (TLS 1.2 e 1.3)
+Rilevato su: albero del 24/11/2026.
+
+-------------------------------------------------------------------------------
+1. IL DIFETTO
+-------------------------------------------------------------------------------
+L'analisi delle estensioni tiene solo subjectAltName e basicConstraints:
+
+        if (!e_basic && !e_san) continue;      /* tutto il resto: saltato */
+        ...
+        if (dopo.tag == TAG_BOOLEANO) {        /* "critica": letta e buttata */
+            interno += dopo.intestazione + dopo.valore.n;
+            ...
+
+a) ESTENSIONI CRITICHE SCONOSCIUTE ACCETTATE. RFC 5280 4.2: "A
+   certificate-using system MUST reject the certificate if it encounters a
+   critical extension it does not recognize". Il caso che conta:
+   nameConstraints (2.5.29.30), che le CA mettono CRITICA proprio sugli
+   intermedi dati a terzi (CA aziendali, governative) per limitarli a
+   "*.esempio.it". Ignorandola, quella CA emette validi per
+   www.banca.com.
+
+b) pathLenConstraint di basicConstraints non letto: un intermedio con
+   pathLen 0 (non puo' avere CA sotto) che emette un'altra CA viene
+   accettato.
+
+c) keyUsage (2.5.29.15) non letto: un certificato con cA=TRUE ma senza
+   keyCertSign (o una foglia con digitalSignature soltanto) firma altri
+   certificati e viene creduto; RFC 5280 4.2.1.3 e 6.1.4 (n).
+
+d) extendedKeyUsage (2.5.29.37) non letto: un certificato di firma del
+   codice o di posta (id-kp-codeSigning, id-kp-emailProtection), emesso da
+   una CA pubblica a chiunque lo chieda, vale come certificato di server
+   TLS se il SAN combacia. I browser vogliono id-kp-serverAuth (o
+   anyExtendedKeyUsage, o l'estensione assente) sulla foglia, e i
+   Baseline Requirements lo esigono anche sugli intermedi.
+
+e) Minori:
+   - date_a_posto: con `adesso` vuoto le date non si controllano
+     (exhttp passa sempre una data: verificare gli altri chiamanti);
+   - il jolly accetta un'etichetta sola a sinistra (bene) ma anche su
+     suffissi pubblici a due livelli ("*.co.uk"): rischio basso, le CA
+     non li emettono;
+   - nessun limite su SAN di tipo iPAddress (0x87): un host numerico non
+     combacia mai (falso negativo, non falla).
+
+-------------------------------------------------------------------------------
+2. COSA COMPORTA
+-------------------------------------------------------------------------------
+Chi possiede un certificato vincolato (intermedio con nameConstraints o
+pathLen, oppure un certificato non-TLS di una CA fidata) fa da uomo in
+mezzo a ogni connessione HTTPS di EXBrowser e di lib/exhttp verso
+qualunque sito. Il resto della stretta di mano (firma del server,
+downgrade, EMS) e' corretto: il punto debole e' solo la catena.
+
+-------------------------------------------------------------------------------
+3. RIPRODUZIONE
+-------------------------------------------------------------------------------
+Con openssl sull'host, una piccola PKI di prova e la radice messa nel
+magazzino di EX-OS (lo stesso file che magazzino_carica legge):
+
+  # intermedio con nameConstraints critico permitted;DNS:.prova.lan
+  openssl req -new -key i.key -subj /CN=Inter -out i.csr
+  openssl x509 -req -in i.csr -CA root.crt -CAkey root.key -out i.crt \
+      -extfile <(printf "basicConstraints=critical,CA:TRUE,pathlen:0\n\
+keyUsage=critical,keyCertSign\nnameConstraints=critical,permitted;DNS:.prova.lan")
+  # foglia fuori dai vincoli
+  ... -subj /CN=www.altro.com ... subjectAltName=DNS:www.altro.com,
+      extendedKeyUsage=codeSigning
+  # servire con openssl s_server -cert leaf.crt -cert_chain i.crt
+  # in EX-OS: EXBrowser su https://www.altro.com (host -> IP del server)
+  # atteso: errore; oggi: pagina aperta
+
+-------------------------------------------------------------------------------
+4. CORREZIONE
+-------------------------------------------------------------------------------
+4.1 ExCert: i campi che mancano (lib/exasn1/exasn1.h)
+
+    typedef struct {
+        ...
+        int           e_ca;
+        int           ha_basic;
+        int           path_len;      /* -1 = senza limite */
+        unsigned int  ku;            /* bit di keyUsage, 0xFFFF se assente */
+        int           ha_ku;
+        unsigned int  eku;           /* EKU_SERVER | EKU_ANY | ... */
+        int           ha_eku;
+        ExDer         nc_permessi;   /* subtrees di nameConstraints */
+        ExDer         nc_esclusi;
+        int           critica_ignota;/* 1 = c'era un'estensione critica
+                                        non riconosciuta */
+        ExDer         san;
+        ...
+    } ExCert;
+
+   OID (DER, senza tag/lunghezza):
+     keyUsage            55 1D 0F
+     basicConstraints    55 1D 13   (c'e' gia')
+     subjectAltName      55 1D 11   (c'e' gia')
+     nameConstraints     55 1D 1E
+     extKeyUsage         55 1D 25
+     id-kp-serverAuth    2B 06 01 05 05 07 03 01
+     anyExtendedKeyUsage 55 1D 25 00
+   Riconosciute ma non usate (critiche ammesse): certificatePolicies
+   55 1D 20, policyConstraints 55 1D 24, inhibitAnyPolicy 55 1D 36:
+   meglio dichiararle "conosciute" che rifiutare intermedi veri (le CA le
+   segnano critiche di rado; verificare sul magazzino reale).
+
+4.2 Il giro sulle estensioni (lib/exasn1/exasn1.c)
+
+        int critica = 0;
+        ...
+        if (dopo.tag == TAG_BOOLEANO) {
+            critica = (dopo.valore.n >= 1 && dopo.valore.p[0] != 0);
+            interno += dopo.intestazione + dopo.valore.n;
+            if (exder_leggi(&e.valore, interno, &dopo) != 0) { c->critica_ignota = 1; continue; }
+        }
+        if (dopo.tag != TAG_OCTETSTRING) { if (critica) c->critica_ignota = 1; continue; }
+
+        if      (e_san)    { ...come oggi... }
+        else if (e_basic)  { ...cA come oggi, poi:
+                             if (segue INTEGER) c->path_len = valore; }
+        else if (e_ku)     { BIT STRING: c->ha_ku = 1; c->ku = primi 9 bit
+                             (bit 0 = digitalSignature, 5 = keyCertSign) }
+        else if (e_eku)    { SEQUENCE OF OID: c->ha_eku = 1;
+                             serverAuth -> EKU_SERVER, any -> EKU_ANY }
+        else if (e_nc)     { SEQUENCE { [0] permittedSubtrees, [1]
+                             excludedSubtrees }: tenere i due ExDer }
+        else if (e_noto)   { /* policy: niente */ }
+        else if (critica)  c->critica_ignota = 1;
+
+   Ogni errore di analisi DENTRO un'estensione critica -> critica_ignota
+   = 1 (rifiutare, non indovinare).
+
+4.3 La catena (lib/excert/excert.c, excert_catena_valida)
+
+    for (i = 0; i < quanti; i++) {
+        const ExCert *figlio = &catena[i];
+
+        if (figlio->critica_ignota) return EXCERT_CRITICA_IGNOTA;  /* nuovo */
+        r = date_a_posto(figlio, adesso); ...
+
+        if (i == 0) {
+            /* la foglia: se ha EKU deve dire serverAuth o any */
+            if (figlio->ha_eku && !(figlio->eku & (EKU_SERVER | EKU_ANY)))
+                return EXCERT_USO_SBAGLIATO;
+            /* se ha KU deve permettere la firma (TLS 1.3, ECDHE) */
+            if (figlio->ha_ku && !(figlio->ku & KU_DIGITAL_SIGNATURE))
+                return EXCERT_USO_SBAGLIATO;
+        }
+        ...
+        padre = radice trovata o catena[i + 1];
+        if (!padre->e_ca) return EXCERT_NON_E_CA;
+        if (padre->ha_ku && !(padre->ku & KU_KEY_CERT_SIGN))
+            return EXCERT_USO_SBAGLIATO;
+        if (padre->ha_eku && !(padre->eku & (EKU_SERVER | EKU_ANY)))
+            return EXCERT_USO_SBAGLIATO;        /* BR: anche sugli intermedi */
+        /* pathLen: quante CA NON auto-emesse stanno fra padre e foglia */
+        if (padre->path_len >= 0 && (int)ca_sotto(catena, i) > padre->path_len)
+            return EXCERT_TROPPO_LUNGA;
+        /* nameConstraints del padre su TUTTI i nomi della foglia */
+        if (padre->nc_permessi.n || padre->nc_esclusi.n) {
+            if (!nomi_nei_vincoli(&catena[0], &padre->nc_permessi,
+                                  &padre->nc_esclusi))
+                return EXCERT_NOME_VINCOLATO;
+        }
+        ...
+    }
+
+   ca_sotto(catena, i) = numero di certificati CA in catena[1..i]
+   (esclusa la foglia), cioe' i - 0 se i >= 1, meno gli auto-emessi.
+
+   nomi_nei_vincoli: per ogni dNSName del SAN della foglia
+     - se c'e' almeno un permittedSubtree di tipo dNSName, il nome deve
+       finire con uno di essi (confronto per etichette: "prova.lan"
+       combacia "prova.lan" e "x.prova.lan", non "xprova.lan"; un vincolo
+       che comincia per "." vuole almeno un'etichetta in piu');
+     - nessun excludedSubtree dNSName deve combaciare;
+     - vincoli di tipi che non sappiamo valutare (iPAddress, directoryName,
+       URI) su un certificato che ha nomi di quel tipo: rifiutare.
+   Il confronto del jolly: "*.prova.lan" va valutato come "x.prova.lan".
+
+   Le radici del magazzino: i vincoli si applicano anche se stanno sulla
+   radice (alcune radici nazionali li portano).
+
+4.4 Messaggi (excert_perche)
+
+    case EXCERT_CRITICA_IGNOTA:  "un'estensione critica che non conosco"
+    case EXCERT_USO_SBAGLIATO:   "il certificato non e' per server TLS"
+    case EXCERT_NOME_VINCOLATO:  "la CA non puo' emettere per questo nome"
+
+-------------------------------------------------------------------------------
+5. PROVA
+-------------------------------------------------------------------------------
+  - make prova-tls (suite sull'host): aggiungere i casi della PKI del
+    punto 3 come vettori DER in tools/prove (radice, intermedio con
+    nameConstraints critico, pathlen 0 con sotto-CA, foglia codeSigning,
+    foglia con estensione critica inventata 1.2.3.4): tutti rifiutati con
+    il codice giusto; una catena vera di Let's Encrypt e una di DigiCert
+    (salvate oggi in tools/prove) accettate.
+  - EXBrowser su wikipedia.org, github.com, un sito con certificato
+    ECDSA e uno RSA: si aprono come prima.
+-------------------------------------------------------------------------------
+6. STATO (25/11/2026, notte)
+-------------------------------------------------------------------------------
+FATTO: exasn1 legge il booleano "critica", keyUsage, extendedKeyUsage,
+  pathLen e nameConstraints; estensioni critiche sconosciute o
+  illeggibili rifiutano (le note: policy, mappings, key identifier).
+  excert: foglia con EKU serverAuth/any e keyUsage con digitalSignature
+  (salvo che sia proprio un certificato del magazzino); ogni CA, radice
+  compresa, con keyCertSign, EKU compatibile, pathLen (senza contare le
+  auto-emesse) e nameConstraints dNSName su tutti i nomi della foglia
+  (il jolly come un'etichetta sotto, e un escluso sotto il jolly
+  rifiuta). Codici -12, -13, -14 con le loro frasi.
+  Gli altri tipi di vincolo (directoryName, email, URI, IP) non si
+  valutano: nessuno di quei nomi decide se un sito e' il sito.
+  Prova: make prova-excert 31 su 31 (14 casi nuovi); certprova.c non
+  compilava piu' (sha256 con size_t), sistemato. Le 148 radici di
+  certi.pem passano tutte; 14 catene vere (wikipedia, github,
+  letsencrypt, amazon.it, google, repubblica, agenziaentrate,
+  unicredit, cloudflare, mozilla, microsoft, apple, poste, debian):
+  tutte a posto.
+DA FARE: provarlo dentro EX-OS (exhttp/scarica su un https vero).
+
+ESITO (25/11, 06:36): make prova-excert 31 su 31, 148 radici e 14 catene
+vere passano; prova_verifiche 28 su 28 a 32 e 64 bit (netupdate via https).
+Spostato in bug_corretto.

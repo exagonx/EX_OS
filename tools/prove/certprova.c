@@ -33,7 +33,7 @@
 #include <openssl/sha.h>
 #include "excert.h"
 
-void sha256(const void *dati, unsigned int len, unsigned char out[32])
+void sha256(const void *dati, __SIZE_TYPE__ len, unsigned char out[32])   /* as excert.h */
 {
     SHA256((const unsigned char *)dati, len, out);
 }

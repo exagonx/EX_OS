@@ -1,0 +1,268 @@
+BUG PTY001 - /dev/pts/N si apre da qualunque utente: lettura dei tasti e
+              scrittura nella sessione di un altro utente (anche root)
+===============================================================================
+Gravita':   ALTA (sicurezza: confidenzialita' e integrita' fra utenti)
+Programma:  kernel EX-OS (32 e 64 bit), riflesso su telnetd e sshd
+Sorgenti:   kernel/ipc/pty.c            pty_apri, pty_apri_ptmx, pty_apri_slave,
+                                        struct Pty
+            kernel/syscall/syscall_impl.c  sys_open (ramo dev_pty_nome),
+                                        dev_pty_nome, sys_stat (ramo
+                                        /dev/pts/N), stat_dispositivo
+            bin/telnetd/telnetd.c       sessione -> pty_apri(fd)
+            bin/sshd/sshd.c             sessione -> pty_apri(fd)
+Rilevato su: albero di lavoro del 24/11/2026 (kernel 0.36x). Le righe
+            cambiano: si cercano le funzioni per nome.
+
+-------------------------------------------------------------------------------
+1. IL DIFETTO
+-------------------------------------------------------------------------------
+Dal kernel 0.318 lo slave di ogni coppia ha un nome, /dev/pts/N con N =
+indice della coppia in g_pty_dir. sys_open riconosce il nome con
+dev_pty_nome() e chiama pty_apri_slave(n), che controlla soltanto:
+
+    if (!p || p->master_aperti == 0) -> ENOENT
+    if (p->bloccato)                 -> EIO
+    p->slave_aperti++;
+
+Non c'e' NESSUN controllo d'identita': la struct Pty non ha proprietario
+(uid/gid) ne' modo. La voce 111 (utenti separati, kernel 0.355-0.359) ha
+chiuso file, cartelle, tastiera, mouse, suono e wserver, ma non i terminali.
+
+Peggio: le coppie create con SYS_PTY_APRI (pty_apri, cioe' openpty(), la
+strada usata da telnetd e sshd) nascono con bloccato = 0 (pty_azzera +
+nessun set), quindi sono raggiungibili per nome dal primo istante.
+
+sys_stat su /dev/pts/N risponde S_IFCHR|0620 con st_uid = st_gid = 0
+(stat_dispositivo): il sistema DICHIARA un permesso che sys_open non applica.
+
+-------------------------------------------------------------------------------
+2. COSA COMPORTA
+-------------------------------------------------------------------------------
+Un processo qualunque (utente uid 1000, un CGI di Apache, un processo di
+Firefox compromesso) puo':
+
+  a) open("/dev/pts/K", O_RDWR) per K = 0..N, finche' non smette di avere
+     ENOENT, e poi read(): ruba dalla coda in (p->in) le righe gia'
+     passate dalla disciplina. In modo canonico la riga va al PRIMO lettore
+     che la chiede: password digitate per su/sudo/login dentro la sessione
+     telnet/ssh di root finiscono all'attaccante, e la vittima vede la
+     richiesta ripetersi.
+  b) write(): i byte vanno verso il master (tubo out) e quindi sul client
+     telnet/ssh della vittima: falsi prompt ("Password: "), sequenze ANSI
+     che riscrivono lo schermo, titoli di finestra del terminale remoto.
+  c) ioctl/pty_ctl sullo slave aperto (TCSETS, TIOCSWINSZ, PTY_CTL_FG se
+     raggiungibile dallo slave): spegnere ECHO della vittima, cambiare
+     ISIG/VINTR, cambiare misure.
+  d) Tenere slave_aperti > 0: alla fine della sessione la shell della
+     vittima non vede l'hangup che si aspetta (lo slave resta "aperto da
+     qualcuno"), il master non legge la fine dei dati.
+
+E' una scalata di fatto: rubare la password di root da una sessione
+remota = root.
+
+-------------------------------------------------------------------------------
+3. RIPRODUZIONE
+-------------------------------------------------------------------------------
+  1. root entra via telnet (telnetd -> pty_apri -> /dev/pts/0).
+  2. Da un'altra sessione come utente (uid 1000):
+
+        int fd = open("/dev/pts/0", O_RDWR);   /* riesce: nessun controllo */
+        char b[256];
+        for (;;) { int n = read(fd, b, sizeof b); if (n > 0) write(1, b, n); }
+
+  3. root digita "su altroutente" + password: la riga arriva al programma
+     del punto 2.
+  Atteso (Linux): open -> EACCES (crw--w---- root:tty, il gruppo tty ha
+  solo w e solo con mesg y).
+
+-------------------------------------------------------------------------------
+4. CORREZIONE
+-------------------------------------------------------------------------------
+Modello di Linux (devpts): ogni slave ha uid, gid, modo. grantpt() lo
+mette a uid del chiamante, gid tty, 0620; login/sshd fanno fchown/fchmod
+sullo slave dopo l'autenticazione. Aprire richiede il permesso come su un
+file. Root (uid 0) passa sempre, come altrove (KERNEL: "uid 0 e' root, e
+passa dappertutto").
+
+4.1 Struttura (kernel/ipc/pty.c)
+
+    typedef struct {
+        ...
+        uint32_t bloccato, slave_atteso;
+        /* (voce 111) owner of the slave, as devpts: set at creation from
+         * the creator's identity, changed by fchown/fchmod on either end */
+        uint32_t uid, gid;
+        uint32_t modo;              /* permission bits, 0620 by default */
+        ...
+    } Pty;
+
+4.2 Creazione: chi crea e' il proprietario
+
+    int32_t pty_apri(int *master, int *slave)
+    {
+        Process *me = proc_get_current();
+        ...
+        q->master_aperti = 1;
+        q->slave_aperti  = 1;
+        q->uid  = me ? me->uid : 0;
+        q->gid  = me ? me->gid : 0;   /* senza gruppo tty: gid del creatore */
+        q->modo = 0620u;
+        ...
+    }
+
+pty_apri_ptmx chiama pty_apri: eredita lo stesso.
+
+4.3 Apertura per nome: il controllo
+
+    /* /dev/pts/N: 0, -ENOENT, -EIO (locked), -EACCES (not ours) */
+    int32_t pty_apri_slave(uint32_t n, uint32_t vuole)  /* vuole: O_ACCMODE */
+    {
+        uint32_t fl_if = read_eflags();
+        Process *me    = proc_get_current();
+        uint32_t serve = 0, ha;
+        Pty *p;
+
+        if (vuole != O_WRONLY) serve |= 4u;      /* r */
+        if (vuole != O_RDONLY) serve |= 2u;      /* w */
+        /* sys_open forza O_RDWR sul descrittore: serve ENTRAMBI se il
+         * descrittore finale sara' O_RDWR (vedi 4.4) */
+
+        interrupts_disable();
+        p = ((int)n >= 0) ? pty_da_handle((int)n) : NULL;
+        if (!p || p->master_aperti == 0) { ripristina; return ERR(ENOENT); }
+        if (p->bloccato)                 { ripristina; return ERR(EIO); }
+        if (me && me->uid != 0) {
+            if (me->uid == p->uid)                ha = (p->modo >> 6) & 7u;
+            else if (proc_nel_gruppo(me, p->gid)) ha = (p->modo >> 3) & 7u;
+            else                                  ha =  p->modo       & 7u;
+            if ((ha & serve) != serve) { ripristina; return ERR(EACCES); }
+        }
+        p->slave_aperti++;
+        p->slave_atteso = 0;
+        ripristina;
+        return 0;
+    }
+
+proc_nel_gruppo: usare la stessa funzione che vfs.c usa per i gruppi
+supplementari (cercare il controllo dei permessi della voce 111, p.es. la
+funzione che confronta gid e la lista dei gruppi del PCB) invece di
+riscriverla.
+
+4.4 sys_open (kernel/syscall/syscall_impl.c, ramo dev_pty_nome)
+
+Oggi il descrittore riceve sempre O_RDWR ("both ways, whatever was asked").
+Con il permesso va rispettata la modalita' chiesta, altrimenti chi ha solo
+w (gruppo tty, mesg y / write(1)) otterrebbe anche la lettura:
+
+        else { r = pty_apri_slave((uint32_t)n, flags & 3u); h = (int)n; }
+        ...
+        FDV(proc, free_fd).flags = (n == -1) ? ((flags & ~3u) | O_RDWR)
+                                             : flags;
+        /* sys_read/sys_write su FD_PTY_S devono controllare
+         * (flags & 3) come per FD_FILE: O_WRONLY -> read = EBADF */
+
+Verificare che sys_read e sys_write sui tipi FD_PTY_S guardino la modalita'
+d'accesso; oggi probabilmente non lo fanno (il descrittore era sempre RDWR).
+
+/dev/ptmx resta apribile da tutti (crea una coppia nuova del chiamante).
+
+4.5 fchown / fchmod su un'estremita' (per login e sshd)
+
+login, dopo setuid, deve poter fare fchown(0, uid, gid) / fchmod(0, 0620)
+sul terminale. In sys_fchown/sys_fchmod (o dove FD_PTY_* oggi da' errore)
+aggiungere:
+
+    case FD_PTY_M: case FD_PTY_S: {
+        int32_t r = pty_proprietario((int)d->inode, uid, gid, modo, me);
+        return r;
+    }
+
+    int32_t pty_proprietario(int h, int32_t uid, int32_t gid,
+                             int32_t modo, const Process *me)
+    {
+        Pty *p = pty_da_handle(h);
+        if (!p) return ERR(EBADF);
+        /* chown: solo root (POSIX con _POSIX_CHOWN_RESTRICTED);
+         * chmod: root o il proprietario */
+        if (uid >= 0 || gid >= 0) {
+            if (me->uid != 0) return ERR(EPERM);
+            if (uid >= 0) p->uid = (uint32_t)uid;
+            if (gid >= 0) p->gid = (uint32_t)gid;
+        }
+        if (modo >= 0) {
+            if (me->uid != 0 && me->uid != p->uid) return ERR(EPERM);
+            p->modo = (uint32_t)modo & 0777u;
+        }
+        return 0;
+    }
+
+E in bin/login (o in telnetd/sshd subito prima di spawn_ex del login, che
+gira come root): dopo l'autenticazione, prima del setuid,
+
+    fchown(0, pw->uid, gid_tty_o_pw_gid);
+    fchmod(0, 0620);
+
+4.6 stat che dice il vero (sys_stat, sys_fstat)
+
+    if (n >= 0) {
+        uint32_t u, g, m;
+        if (!pty_stato((uint32_t)n, &u, &g, &m)) return ERR(ENOENT);
+        stat_dispositivo(st, 0x100u + ((uint32_t)n << 1));
+        st->st_uid  = u;
+        st->st_gid  = g;
+        st->st_mode = STAT_S_IFCHR | m;
+        return 0;
+    }
+
+(ttyname, ls -l /dev/pts, write/wall, mesg leggono questi campi.)
+
+4.7 Rifinitura: TIOCSTI
+
+Se esiste (o verra' aggiunto) un ioctl che inietta byte nella coda in,
+deve richiedere che lo slave sia il terminale di controllo del chiamante o
+uid 0, come Linux >= 6.2 (dev.tty.legacy_tiocsti = 0).
+
+-------------------------------------------------------------------------------
+5. PROVA
+-------------------------------------------------------------------------------
+tools/prove/ptyperm.c (nuovo), da eseguire come uid 1000 in QEMU mentre
+root ha una sessione telnet aperta (tools/qemu_drive.py con hostfwd):
+
+    #include <fcntl.h>
+    #include <stdio.h>
+    #include <errno.h>
+    #include <sys/stat.h>
+    int main(void) {
+        int k, falle = 0;
+        for (k = 0; k < 64; k++) {
+            char n[32]; struct stat st; int fd;
+            snprintf(n, sizeof n, "/dev/pts/%d", k);
+            if (stat(n, &st) != 0) continue;
+            fd = open(n, O_RDWR);
+            if (fd >= 0 && st.st_uid != getuid()) {
+                printf("FALLA %s uid=%u modo=%o\n", n, st.st_uid, st.st_mode & 0777);
+                falle++;
+            }
+            if (fd >= 0) close(fd);
+        }
+        printf("ptyperm: %d falle\n", falle);
+        return falle != 0;
+    }
+
+Atteso dopo la correzione: 0 falle; telnet e ssh di root e di un utente
+funzionano (shell, Ctrl+C, nano, misure della finestra), python3
+os.openpty() e script(1) funzionano come uid 1000 (creatore = proprietario).
+Aggiungere il caso a permprova (voce 111) per tenere il conto delle falle.
+-------------------------------------------------------------------------------
+6. STATO (25/11/2026, notte)
+-------------------------------------------------------------------------------
+FATTO (kernel 0.367, login 0.008): ogni pty ha uid, gid e modo (0620 del
+  creatore); il lato slave controlla i permessi e tiene il modo
+  d'accesso (read su O_WRONLY e write su O_RDONLY: EBADF); stat/fstat
+  dicono il vero; SYS_FCHOWN 282 e SYS_FCHMOD 283 sui pty, fchown/fchmod
+  della libc li usano; login da' il pty all'utente.
+  Prova: tools/prove/ptyperm.c in prova_permessi (passo 12): 10 prove,
+  OK a 32 bit.
+
+ESITO (25/11, 06:36, terza tornata): prova_permessi 17 su 17 a 32 e a 64 bit
+(consoleprova, ptyperm, suprova dentro). Spostato in bug_corretto.

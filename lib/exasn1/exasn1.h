@@ -121,6 +121,20 @@ typedef struct {
     int e_ca;                  /* basicConstraints: CA vero */
     int ha_basic;              /* l'estensione c'era */
 
+    /* (debug/bug_TLS001, November 2026) what a certificate may be used for.
+     * Until then only the two fields above were read, and a CA limited to
+     * "*.esempio.it", one that may have no CA under it, or a code-signing
+     * certificate passed for a full CA or a TLS server. */
+    int          path_len;     /* basicConstraints pathLen; -1 = no limit */
+    int          ha_ku;        /* keyUsage was there */
+    unsigned int ku;           /* its first 16 bits, bit 0 of RFC 5280 = 0x8000 */
+    int          ha_eku;       /* extendedKeyUsage was there */
+    unsigned int eku;          /* EXASN1_EKU_* */
+    ExDer        nc_permessi;  /* nameConstraints: the [0] subtrees, p nullo = none */
+    ExDer        nc_esclusi;   /* the [1] subtrees */
+    int          critica_ignota;   /* a critical extension not understood:
+                                    * RFC 5280 4.2 wants it refused */
+
     /* subjectAltName, il contenuto della SEQUENCE: una fila di nomi con il
      * loro tag. Serve a rispondere alla sola domanda che conta per un
      * browser — questo certificato e' di QUESTO sito?
@@ -132,6 +146,12 @@ typedef struct {
      * legge affatto — un certificato pubblico senza SAN non esiste piu'. */
     ExDer san;                 /* p nullo = l'estensione non c'era */
 } ExCert;
+
+#define EXASN1_KU_FIRMA        0x8000u    /* digitalSignature */
+#define EXASN1_KU_FIRMA_CERT   0x0400u    /* keyCertSign */
+#define EXASN1_EKU_SERVER      0x0001u    /* id-kp-serverAuth */
+#define EXASN1_EKU_QUALUNQUE   0x0002u    /* anyExtendedKeyUsage */
+#define EXASN1_EKU_ALTRO       0x0004u    /* anything else */
 
 /* Analizza un certificato X.509 in DER. Rende 0, oppure -1: e -1 vuol dire
  * «non lo capisco», che per un certificato e' la stessa cosa di «non mi

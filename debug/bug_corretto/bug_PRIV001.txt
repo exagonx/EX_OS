@@ -1,0 +1,173 @@
+BUG PRIV001 - Chiamate senza controllo d'identita' rimaste dopo la voce
+               111: SYS_MODO_TESTO, SYS_KLOG, e il "sei alla console?" di
+               reboot basato sul tipo del descrittore 0
+===============================================================================
+Gravita':   MEDIA (DoS dello schermo da remoto; fuga di informazioni fra
+            utenti; spegnimento da processi che alla console non siedono)
+Programma:  kernel EX-OS
+Sorgenti:   kernel/syscall/syscall_impl.c  sys_modo_testo, sys_klog,
+                                           puo_spegnere, sys_reboot,
+                                           console_ammette, sys_fb_map
+            kernel/arch/x86/kprintf.c      klog, klog_copia
+            kernel/syscall/syscall_impl.c  fd_riferimento (FD_STDIN puo'
+                                           viaggiare con SCM_RIGHTS)
+Rilevato su: albero del 24/11/2026.
+
+-------------------------------------------------------------------------------
+1. IL DIFETTO
+-------------------------------------------------------------------------------
+a) sys_modo_testo non guarda chi chiama:
+
+        int32_t sys_modo_testo(InterruptFrame *frame)
+        {
+            ...
+            klog(LOG_WARN, "SYSCALL modo_testo: PID %u rimette lo schermo", ...);
+            vga_ripristina_testo();
+            return 0;
+        }
+
+   La voce 111 passo 4b (kernel 0.359) ha deciso che "lo schermo e' di chi
+   siede alla macchina": sys_fb_map chiede console_ammette(uid). Ma la
+   chiamata che riprogramma i registri VGA (modo 3, carattere e tavolozza
+   ricaricati nel piano 2) e' aperta a tutti, compresi un utente da
+   telnet/ssh e un CGI di Apache. vga_ripristina_testo scrive anche nella
+   memoria video (piano 2) mentre wserver la sta usando come framebuffer.
+
+b) sys_klog consegna il registro a chiunque. Dentro ci sono, ai livelli
+   che il registro conserva (INFO/WARN/ERROR sempre, DEBUG col livello
+   alzato): nomi degli utenti e tentativi falliti di su ("ha sbagliato la
+   password di '%s'"), chi e' diventato root, i nomi delle zone condivise
+   aperte (SHM: "apre 'win12.0'", utile a bug_SHM001), indirizzi fisici
+   e virtuali (dma_alloc, mmio_map, fb_map), con DEBUG i percorsi di ogni
+   open() di ogni utente. Linux chiude lo stesso con dmesg_restrict = 1
+   (CAP_SYSLOG).
+
+c) puo_spegnere():
+
+        if (self == NULL || self->uid == 0) return 1;
+        if (FDV(self, 0).type == FD_STDIN) return 1;   /* "una console vera" */
+
+   Il tipo del descrittore 0 e' un fatto ereditato, non un fatto su chi
+   sta davanti: ogni processo lanciato a catena da un servizio partito
+   dalla console (autoexec, init, un demone avviato a mano dalla shell di
+   root senza ridirigere 0) ha FD_STDIN come 0, e cosi' i suoi figli di
+   qualunque uid. In piu' FD_STDIN puo' viaggiare con SCM_RIGHTS
+   (fd_riferimento: "case FD_STDIN: ... return 0"), quindi un processo
+   alla console puo' "prestare" la facolta' di spegnere a un processo
+   remoto. E' anche incoerente con console_ammette, che per lo stesso
+   concetto ("chi siede alla console") usa g_console_utente[].
+
+-------------------------------------------------------------------------------
+2. COSA COMPORTA
+-------------------------------------------------------------------------------
+  a) Un utente qualunque, da remoto, spegne la grafica di chi lavora alla
+     macchina: lo schermo torna a 80x25 sopra un wserver ancora vivo, che
+     continua a scrivere pixel in una memoria che ora e' testo (schermo
+     rovinato finche' qualcuno non cambia modo). Ripetibile in ciclo:
+     scrivania inutilizzabile.
+  b) Spionaggio dell'attivita' degli altri utenti; nomi utente per gli
+     attacchi a SYS_SU (bug_SU001); nomi delle zone delle finestre.
+  c) Riavvio/spegnimento da processi senza console e senza root.
+
+-------------------------------------------------------------------------------
+3. RIPRODUZIONE
+-------------------------------------------------------------------------------
+  a) Con ExWin acceso alla console, da telnet come uid 1000:
+        /bin/testo            (o _syscall0(SYS_MODO_TESTO) in un ciclo)
+     lo schermo della console passa al testo.
+  b) Da telnet come uid 1000: dmesg | grep -e "su:" -e SHM -e fisico
+  c) Un demone di prova lanciato dalla console di root che fa setuid(1000)
+     e poi chiama reboot(EXOS_RB_RESTART): riesce.
+
+-------------------------------------------------------------------------------
+4. CORREZIONE
+-------------------------------------------------------------------------------
+4.1 SYS_MODO_TESTO: lo stesso varco di fb_map
+
+    int32_t sys_modo_testo(InterruptFrame *frame)
+    {
+        Process *self = proc_get_current();
+        (void)frame;
+        if (self != NULL && !console_ammette(self->uid)) {
+            klog(LOG_WARN, "SYSCALL modo_testo: PID %u (uid %u) non siede "
+                 "alla console - rifiutato", self->pid, self->uid);
+            return ERR(EPERM);
+        }
+        ...
+    }
+
+   ! Non va resa "solo root": e' la rete di sicurezza digitata alla cieca
+   da chi siede alla console quando il server grafico e' morto
+   (DIREZIONE.md, direttiva 2), e quella persona e' l'utente della
+   console, che console_ammette ammette. Verificare che
+   g_console_utente[] resti valorizzato anche dopo la morte di wserver
+   (e' l'uid di chi ha fatto login sulla console, non di wserver): se si
+   azzera con la morte del server, la rete di sicurezza smette di
+   funzionare proprio quando serve.
+
+4.2 SYS_KLOG: root o gruppo dedicato
+
+    int32_t sys_klog(InterruptFrame *frame)
+    {
+        Process *self = proc_get_current();
+        if (self != NULL && self->uid != 0 && !klog_aperto()) return ERR(EPERM);
+        ...
+    }
+
+   klog_aperto(): un'opzione di kernel.cfg (klog_pubblico = si/no,
+   predefinito no) per chi vuole il comportamento di oggi su una macchina
+   personale. In alternativa, mantenere aperto il registro ma filtrare:
+   klog_copia con un parametro "per non root" che salta le righe marcate
+   come riservate (aggiungere un bit al livello: LOG_RISERVATO) e usarlo
+   nei klog di su, shm, dma_alloc, mmio_map, fb_map, open.
+
+   Comandi da adattare: bin/dmesg (messaggio chiaro su EPERM: "serve
+   root, o sudo dmesg"), ExWin "registro di sistema" (@EXWIN-LOG) se
+   legge con SYS_KLOG come utente.
+
+4.3 puo_spegnere: chi siede alla console, non il tipo di fd 0
+
+    static int puo_spegnere(void)
+    {
+        Process *self = proc_get_current();
+        if (self == NULL || self->uid == 0) return 1;
+        if (self->console < VGA_N_CONSOLE &&
+            g_console_utente[self->console] == self->uid &&
+            FDV(self, 0).type == FD_STDIN)          /* e ci e' attaccato */
+            return 1;
+        ...EPERM...
+    }
+
+   E in fd_riferimento, FD_STDIN/FD_STDOUT/FD_STDERR non devono viaggiare
+   (EOPNOTSUPP come FD_SERVIZIO): un descrittore che significa "la
+   tastiera della console N" non ha senso in un altro processo, e oggi e'
+   l'unico modo per un processo remoto di ottenerne uno. Se un caso d'uso
+   reale c'e' (non risulta: Gecko passa memorie e socket), va discusso.
+
+-------------------------------------------------------------------------------
+5. PROVA
+-------------------------------------------------------------------------------
+  - Da telnet uid 1000: /bin/testo -> EPERM, schermo intatto; alla
+    console con wserver ucciso (kill dal telnet di root): /bin/testo
+    digitato alla cieca funziona ancora (rete di sicurezza viva).
+  - Da telnet uid 1000: dmesg -> EPERM (o righe riservate assenti);
+    sudo dmesg -> tutto.
+  - Il demone del punto 3c: reboot -> EPERM; shutdown dalla console
+    dell'utente: funziona come prima.
+  - permprova (voce 111): aggiungere i tre casi al conto delle falle.
+-------------------------------------------------------------------------------
+6. STATO (25/11/2026, notte)
+-------------------------------------------------------------------------------
+FATTO (kernel 0.367, dmesg 0.003):
+  - SYS_MODO_TESTO: console_ammette, come fb_map.
+  - SYS_KLOG: root e chi siede alla console (NON solo root come proposto
+    in 4.2: l'utente della macchina vedeva dmesg e il registro di ExWin
+    e non glieli tolgo); da telnet/ssh EPERM, dmesg dice "sudo dmesg".
+  - puo_spegnere: fd 0 della console E l'uid seduto a quella console.
+  - FD_STDIN con SCM_RIGHTS NON vietato: con la regola nuova non presta
+    piu' niente (l'uid deve combaciare) e cosi' non rischio Firefox.
+  - Prova: consoleprova, 5 casi nuovi (il riavvio si prova con un
+    comando inesistente: EINVAL se ammesso, EPERM se no).
+
+ESITO (25/11, 06:36, terza tornata): prova_permessi 17 su 17 a 32 e a 64 bit
+(consoleprova, ptyperm, suprova dentro). Spostato in bug_corretto.

@@ -6,6 +6,10 @@
 
 **Indice**
 
+- [Kernel 0.367 e la rete: su, terminali, memoria condivisa e registro del kernel hanno un proprietario; aggiornamenti firmati; sshd, TCP e DNS contro gli attacchi alla cieca — testato in QEMU](#kernel-0367-e-la-rete-su-terminali-memoria-condivisa-e-registro-del-kernel-hanno-un-proprietario-aggiornamenti-firmati-sshd-tcp-e-dns-contro-gli-attacchi-alla-cieca--testato-in-qemu)
+- [exeditor salva senza distruggere il file, exide sceglie più controlli insieme, i biscotti di EXBrowser come i navigatori di oggi, le chiavette USB rifiutano i trasferimenti corti — testato in QEMU](#exeditor-salva-senza-distruggere-il-file-exide-sceglie-più-controlli-insieme-i-biscotti-di-exbrowser-come-i-navigatori-di-oggi-le-chiavette-usb-rifiutano-i-trasferimenti-corti--testato-in-qemu)
+- [La memoria condivisa congelata di Firefox è davvero in sola lettura (kernel 0.366, voce 115) — testato in QEMU](#la-memoria-condivisa-congelata-di-firefox-è-davvero-in-sola-lettura-kernel-0366-voce-115--testato-in-qemu)
+- [Quanto il lucchetto dei file aspetta il disco (kernel 0.364-0.365, voce 117) — testato in QEMU e sul PC di prova](#quanto-il-lucchetto-dei-file-aspetta-il-disco-kernel-0364-0365-voce-117--testato-in-qemu-e-sul-pc-di-prova)
 - [Montare sopra una cartella vuota (kernel 0.363) — testato in QEMU e sul PC di prova](#montare-sopra-una-cartella-vuota-kernel-0363--testato-in-qemu-e-sul-pc-di-prova)
 - [I dischi in PIO non fermano più il sistema; i lettori ottici sull'AHCI (kernel 0.362, voce 117) — testato in QEMU e sul PC di prova](#i-dischi-in-pio-non-fermano-più-il-sistema-i-lettori-ottici-sullahci-kernel-0362-voce-117--testato-in-qemu-e-sul-pc-di-prova)
 - [Firefox usa i programmi del sistema: Mostra nella cartella, il programma di ogni tipo di file, il dialogo dei file di ExWin (exwin 0.024, pm 0.030, kernel 0.361, voce 118) — testato in QEMU](#firefox-usa-i-programmi-del-sistema-mostra-nella-cartella-il-programma-di-ogni-tipo-di-file-il-dialogo-dei-file-di-exwin-exwin-0024-pm-0030-kernel-0361-voce-118--testato-in-qemu)
@@ -252,6 +256,85 @@
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### Kernel 0.367 e la rete: su, terminali, memoria condivisa e registro del kernel hanno un proprietario; aggiornamenti firmati; sshd, TCP e DNS contro gli attacchi alla cieca — testato in QEMU
+
+- **Perché**: le schede in `debug/` (24-25 novembre) elencavano falle che un utente, una pagina
+  web o una macchina in rete potevano usare. Ognuna ora sta in `debug/in_lavorazione` con una
+  sezione STATO: cosa è fatto, cosa resta, cosa va deciso.
+- **su e sudo**: ogni password sbagliata costa un secondo, e dalla terza di fila il kernel non la
+  guarda nemmeno per un po' (1, 2, 4... fino a 300 secondi); la giusta o 15 minuti di calma lo
+  azzerano. sudo dice "troppi tentativi sbagliati".
+- **Terminali**: ogni `/dev/pts/N` ha un proprietario e il modo 0620, come su Linux; login lo dà a
+  chi entra. `fchown` e `fchmod` funzionano sui terminali.
+- **Memoria condivisa per nome** (`shm_apri`, `shm_open`): un proprietario e un modo, 0600 se chi
+  la crea non dice altro; fino alla 0.367 chiunque si attaccava alle finestre e agli appunti
+  degli altri.
+- **I descrittori mandati sui socket unix** hanno un tetto per utente (RLIMIT_NOFILE, al più uno
+  ogni 128 KB di RAM): ETOOMANYREFS invece di mangiare la memoria del kernel.
+- **dmesg e il modo testo**: root e chi siede alla console; da telnet o ssh, `sudo dmesg`.
+- **netupdate 0.053**: `versione.txt` è firmato (ed25519), con una serie e una scadenza di 30
+  giorni; non si tocca niente se la firma manca o non torna. L'ed25519 del sistema verificava
+  solo messaggi fino a 448 byte: corretto.
+- **sshd 0.004**: ogni campo letto dentro il pacchetto, Terrapin chiuso (scambio di chiavi
+  rigido), un client che cade non blocca più l'accesso dopo.
+- **ip.drv 0.029**: numeri di sequenza iniziali e porte casuali, RST, SYN e ACK alla cieca
+  rifiutati (RFC 5961, challenge ACK), tre contatori nuovi in `ipcfg`; `ipcfg -d` mette il DNS a
+  mano. Il risolutore DNS crede solo al server che ha interrogato, dalla porta 53, sulla domanda
+  che ha fatto.
+- **TLS**: keyUsage, extendedKeyUsage, pathLen e nameConstraints nella catena dei certificati.
+- Provato in QEMU a 32 e 64 bit: prova_permessi, prova_ssh con pacchetti malformati,
+  prova_tcp_cieca (un falso host che manda trame grezze), prova_verifiche, make prova-excert 31
+  su 31.
+
+### exeditor salva senza distruggere il file, exide sceglie più controlli insieme, i biscotti di EXBrowser come i navigatori di oggi, le chiavette USB rifiutano i trasferimenti corti — testato in QEMU
+
+- **exeditor 0.010**: salvare scrive `nome.exed~` accanto al file, aspetta il disco, e solo dopo
+  lo mette al posto: un disco pieno o una chiavetta tolta a metà lasciano il file di prima. Righe
+  di qualunque lunghezza (si fermavano a 255), fine riga DOS e ultimo a capo tenuti com'erano, un
+  file con byte 0 si apre solo da guardare, Annulla non taglia più le righe a 511.
+- **exide 0.028-0.029**: chiudere il sorgente, il compilatore, le librerie o la scheda del
+  progetto non lascia più grigio il disegnatore; trascinare ridisegna solo la tela. Più controlli
+  insieme, come in Visual Basic: Ctrl+clic, Maiusc+clic, il rettangolo elastico sulla maschera
+  vuota, Ctrl+A, Esc, frecce (Maiusc: la griglia), Ctrl+frecce per la misura, Canc, copia e
+  incolla del gruppo.
+- **EXBrowser 0.034**: niente biscotti per un suffisso pubblico ("com", "co.uk", "github.io") o
+  per un indirizzo IP, uno script non tocca un biscotto HttpOnly, una pagina http non ne mette né
+  ne sovrascrive uno Secure, i nomi `__Secure-` e `__Host-` devono essere veri (make
+  prova-biscotti 75 su 75).
+- **Chiavette USB** (uhci 0.008, ehci 0.005, ohci 0.012, xhci 0.007): una lettura o una
+  scrittura che il dispositivo fa solo in parte è un errore, riprovato una volta; prima il
+  filesystem riceveva i byte della lettura precedente. I dischi oltre 2 TB si usano fino a 2 TB
+  invece di vederli vuoti; i descrittori di configurazione si leggono entro la loro lunghezza.
+- **exwin.so 0.025**: `ex_update_rect`, per dare al server un rettangolo solo.
+
+### La memoria condivisa congelata di Firefox è davvero in sola lettura (kernel 0.366, voce 115) — testato in QEMU
+
+- **Perché**: Firefox passa ai processi dei contenuti della memoria "congelata", in sola
+  lettura. Su EX-OS quella maniglia era una semplice copia del descrittore: un processo dei
+  contenuti poteva mapparla in scrittura e cambiare memoria di cui il processo principale si fida.
+- **`open("/proc/self/fd/N", O_RDONLY)`** di un descrittore di memoria ora è la stessa memoria
+  in sola lettura, come su Linux, e mai con più accesso dell'originale.
+- **Le pagine mappate da un descrittore in sola lettura restano tali**: `mmap` e `mprotect` in
+  scrittura rispondono EACCES (prima `mprotect` rendeva scrivibile qualunque pagina condivisa),
+  la misura non cambia, e un programma che ci scrive muore di page fault.
+- **Exilla** fa così la sua maniglia congelata (patch di `ipc/glue/SharedMemoryPlatform_posix.cpp`).
+- Provato in QEMU a 32 e 64 bit: unixprova 82 su 82 (prova_permessi 14 su 14), Firefox a
+  più processi carica la pagina.
+
+### Quanto il lucchetto dei file aspetta il disco (kernel 0.364-0.365, voce 117) — testato in QEMU e sul PC di prova
+
+- **Perché**: sul PC di prova uno `stat("/")` aspettava fino a 1,8 s mentre si leggeva il CD,
+  e 345 ms dietro al disco. Prima di scegliere la cura: è il dispositivo o il lavoro del kernel?
+- **Il livello dei dischi conta il tempo al dispositivo**, i comandi e i settori (ogni comando
+  al disco, il FLUSH CACHE e ogni pacchetto a un lettore ottico), e il lucchetto dei file dice,
+  per le prese lunghe, quanto è stato del dispositivo. La riga `VFS 1s: ...` è a livello debug:
+  `loglevel = 4` in `/boot/kernel.cfg` la mostra.
+- **All'avvio il log dice il livello APM del disco** (`ATA: ... APM acceso, livello N`).
+- **Misurato sul PC di prova**: le prese lunghe sono per il 98-100% attesa del dispositivo.
+  Leggere 64 KB dal CD costa 1,4-1,9 s (il lettore che riprende velocità), 4 KB dal disco 355 ms
+  dopo una pausa (APM 128: le testine si scaricano), sync e il giornale di ext4 600-750 ms di
+  FLUSH CACHE. La cura è in coda (voce 117).
 
 ### Montare sopra una cartella vuota (kernel 0.363) — testato in QEMU e sul PC di prova
 

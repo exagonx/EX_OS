@@ -35,6 +35,16 @@
 #      for the console is closed to who does not sit there, open once root
 #      (login) says so; one for the owner is closed to others; kbd and fb_map
 #      refused to a user nobody logged in; ports below 1024 root's (ip.drv)
+#  11  kernel 0.367, debug/bug_SU001 (tools/prove/suprova.c): SYS_SU brakes
+#      per uid (1 s per failure, EAGAIN after three, a fork does not escape
+#      it, another uid is not touched), four at once with the right password
+#      all become root
+#  12  kernel 0.367, debug/bug_PTY001 (tools/prove/ptyperm.c): /dev/pts/N
+#      has an owner, 0620 as devpts; another user cannot open it, fchown and
+#      fchmod give it away, an O_WRONLY slave does not read
+#  13  kernel 0.367, debug/bug_SHM001 (tools/prove/shmperm.c): named shared
+#      zones have an owner and a mode (0600 unless said), SHM_ESCL creates
+#      or fails, root attaches to all
 # =============================================================================
 cd "$(dirname "$0")/.." || exit 1
 ARCH="${EXOS_ARCH:-i386}"
@@ -64,6 +74,9 @@ no() { echo "  [NO] $1"; no=$((no+1)); }
 "$GCC" -O2 -Wall -o "$D/pilaprova" tools/prove/pilaprova.c || { echo "pilaprova non compila" >&2; exit 1; }
 "$GCC" -O2 -Wall -o "$D/unixprova" tools/prove/unixprova.c -lpthread || { echo "unixprova non compila" >&2; exit 1; }
 "$GCC" -O2 -Wall -o "$D/consoleprova" tools/prove/consoleprova.c || { echo "consoleprova non compila" >&2; exit 1; }
+"$GCC" -O2 -Wall -o "$D/suprova" tools/prove/suprova.c || { echo "suprova non compila" >&2; exit 1; }
+"$GCC" -O2 -Wall -o "$D/ptyperm" tools/prove/ptyperm.c || { echo "ptyperm non compila" >&2; exit 1; }
+"$GCC" -O2 -Wall -o "$D/shmperm" tools/prove/shmperm.c || { echo "shmperm non compila" >&2; exit 1; }
 NIC="${EXOS_NIC:-e1000}"
 
 # a file for root to download at step 5, from a server on the host
@@ -87,14 +100,14 @@ env -u EXOS_MARCA -u EXOS_NO_FLOPPY -u EXOS_QEMU_EXTRA -u EXOS_RAM \
 si "installato"
 
 # the two files on the installed partition (it starts at sector 2048)
-for f in "$D/permprova" "$D/reteprova" "$D/codaprova" "$D/shmfili" "$D/pilaprova" "$D/unixprova" "$D/consoleprova" tools/netinst/verifiche/sistema.sh; do
+for f in "$D/permprova" "$D/reteprova" "$D/codaprova" "$D/shmfili" "$D/pilaprova" "$D/unixprova" "$D/consoleprova" "$D/suprova" "$D/ptyperm" "$D/shmperm" tools/netinst/verifiche/sistema.sh; do
     "$DEBUGFS" -w -R "write $f $(basename "$f")" "$IMG?offset=1048576" > /dev/null 2>&1
 done
 
 echo "=== 2-4. dal disco ==="
 A=("root@2" "root@6" "keymap us@3"
    "echo MODI; ls -l /; ls -l /home; echo FINE-MODI@4"
-   "chmod 755 /permprova /reteprova /codaprova /shmfili /pilaprova /unixprova /consoleprova@2"
+   "chmod 755 /permprova /reteprova /codaprova /shmfili /pilaprova /unixprova /consoleprova /suprova /ptyperm /shmperm@2"
    "echo PROVA; /permprova; echo FINE-PROVA \$?@10"
    "rm -r /root/privata /permprova.p /tmp/permprova.d@3"
    "chmod 755 /root@2" "chmod 777 /tmp@2"
@@ -106,6 +119,9 @@ A=("root@2" "root@6" "keymap us@3"
    "echo PILA; /pilaprova; dmesg | grep -a 'sulla pila'; echo FINE-PILA@10"
    "echo UNIX; /unixprova; echo FINE-UNIX \$?@20"
    "echo CONSOLE; /consoleprova; echo FINE-CONSOLE \$?@25"
+   "echo SU; /suprova; echo FINE-SU \$?@25"
+   "echo PTY; /ptyperm; echo FINE-PTY \$?@10"
+   "echo SHMP; /shmperm; echo FINE-SHMP \$?@10"
    "echo SCARICA; scarica http://10.0.2.2:$PORTA/ok.txt /tmp/ok.txt; cat /tmp/ok.txt; echo FINE-SCARICA@20"
    "sync@5")
 EXOS_QEMU=$Q EXOS_ISTANZA=pm$ARCH EXOS_NO_FLOPPY=1 EXOS_RAM=512M EXOS_MARCA="utente:" \
@@ -166,6 +182,21 @@ C=$(echo "$L" | sed -n '/^CONSOLE/,/^FINE-CONSOLE/p')
 echo "$C" | grep -a "\[NO\]" | sed 's/^/      /'
 echo "$C" | grep -aq "^FINE-CONSOLE 0" && si "console, wserver e porte basse: $(echo "$C" | grep -ao 'consoleprova: [0-9]* prove')" \
     || no "console e porte: $(echo "$C" | grep -ao 'consoleprova: .*' || echo 'non arrivata in fondo')"
+
+S=$(echo "$L" | sed -n '/^SU$/,/^FINE-SU/p')
+echo "$S" | grep -a "\[NO\]" | sed 's/^/      /'
+echo "$S" | grep -aq "^FINE-SU 0" && si "il freno di su: $(echo "$S" | grep -ac '\[OK\]') prove" \
+    || no "il freno di su: $(echo "$S" | grep -ao 'suprova: .*' || echo 'non arrivata in fondo')"
+
+T=$(echo "$L" | sed -n '/^PTY$/,/^FINE-PTY/p')
+echo "$T" | grep -a "\[NO\]" | sed 's/^/      /'
+echo "$T" | grep -aq "^FINE-PTY 0" && si "/dev/pts/N ha un proprietario: $(echo "$T" | grep -ac '\[OK\]') prove" \
+    || no "i terminali: $(echo "$T" | grep -ao 'ptyperm: .*' || echo 'non arrivata in fondo')"
+
+T=$(echo "$L" | sed -n '/^SHMP$/,/^FINE-SHMP/p')
+echo "$T" | grep -a "\[NO\]" | sed 's/^/      /'
+echo "$T" | grep -aq "^FINE-SHMP 0" && si "le memorie per nome hanno un proprietario: $(echo "$T" | grep -ac '\[OK\]') prove" \
+    || no "le memorie per nome: $(echo "$T" | grep -ao 'shmperm: .*' || echo 'non arrivata in fondo')"
 
 echo "=== $ok riusciti, $no no ($ARCH, $NIC) ==="
 [ $no -eq 0 ]

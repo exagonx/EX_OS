@@ -46,12 +46,13 @@
 #include "excrypt.h"
 
 /* +0.001 a ogni modifica: `sshd -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("sshd", "0.003");
+EX_VERSIONE("sshd", "0.004");
 
 /* ! WHAT THE PTY DID NOT TAKE WAITS HERE (0.002, kernel 0.331, analisi voce
  * 53): the master takes what fits in the input and says how much; the rest
  * goes again when poll() says POLLOUT. Until kernel 0.330 it was eaten. */
 #define ATTESA_MAX 65536
+#define PKT_MAX    4096         /* see below, where it is explained */
 static unsigned char g_attesa[ATTESA_MAX];
 static unsigned int  g_att_n = 0;
 
@@ -68,6 +69,9 @@ static void al_pty_svuota(int pty)
 
 static void al_pty(int pty, const unsigned char *d, unsigned int n)
 {
+    /* (0.004) no caller has more than one packet: a length that says
+     * otherwise is a lie, and copied 64 KB of the stack to the terminal */
+    if (n > PKT_MAX) n = PKT_MAX;
     al_pty_svuota(pty);
     if (g_att_n == 0) {
         int w = (int)write(pty, d, n);
@@ -108,7 +112,7 @@ static void al_pty(int pty, const unsigned char *d, unsigned int n)
 #define SSH_CHANNEL_SUCCESS    99
 #define SSH_CHANNEL_FAILURE   100
 
-#define PKT_MAX     4096        /* ! UN PACCHETTO SSH PUO' ARRIVARE A 32 KB, e
+/* PKT_MAX     4096           ! UN PACCHETTO SSH PUO' ARRIVARE A 32 KB, e
                                  * qui si tiene 4: una sessione di shell manda
                                  * righe, non file. Un pacchetto piu' grande si
                                  * rifiuta invece di troncarlo — troncare
@@ -170,6 +174,7 @@ typedef struct {
     unsigned char sid[32];              /* l'identificativo di sessione */
     int           canale;               /* il canale del client, -1 = nessuno */
     unsigned int  finestra;             /* quanto possiamo ancora mandargli */
+    int           chiusa;               /* ip.drv says the TCP is gone (0.004) */
 } Sess;
 
 /* -----------------------------------------------------------------------------
@@ -188,6 +193,57 @@ static unsigned int prendi32(const unsigned char *p)
 }
 
 /* Una stringa SSH e' lunghezza a 32 bit piu' i byte. */
+/* -----------------------------------------------------------------------------
+ * READING WHAT THE CLIENT SENT, WITHIN WHAT IT SENT (0.004, debug/bug_SSH001)
+ *
+ * ! UNTIL 0.003 EVERY string OF THE CLIENT WAS TAKEN AT ITS WORD: its length
+ * was added to the position without looking at the packet's, before any
+ * password. One USERAUTH_REQUEST with a name "0x7FFFFFF0 bytes long" sent
+ * the position 2 GB away and sshd fell, for everybody; a CHANNEL_DATA of
+ * 0xFFFFFFF8 bytes passed "9 + n <= len" by wrapping around and copied the
+ * stack - leftovers of the sessions before - into the terminal, and back.
+ * The check is always "k > n - p", never a sum.
+ * --------------------------------------------------------------------------- */
+typedef struct { const unsigned char *b; unsigned int n, p; int rotto; } Lett;
+
+static void lett_init(Lett *l, const unsigned char *b, int n)
+{
+    l->b = b; l->n = n > 0 ? (unsigned int)n : 0u; l->p = 0; l->rotto = 0;
+}
+
+static int lett_byte(Lett *l, unsigned char *v)
+{
+    if (l->rotto || l->n - l->p < 1) { l->rotto = 1; return -1; }
+    *v = l->b[l->p++];
+    return 0;
+}
+
+static int lett_u32(Lett *l, unsigned int *v)
+{
+    if (l->rotto || l->n - l->p < 4) { l->rotto = 1; return -1; }
+    *v = prendi32(l->b + l->p);
+    l->p += 4;
+    return 0;
+}
+
+/* a string: where it is inside the packet and how long, never copied */
+static int lett_str(Lett *l, const unsigned char **v, unsigned int *vn)
+{
+    unsigned int k;
+
+    if (lett_u32(l, &k) != 0) return -1;
+    if (k > l->n - l->p) { l->rotto = 1; return -1; }
+    *v = l->b + l->p; *vn = k;
+    l->p += k;
+    return 0;
+}
+
+/* Bytes that held passwords and sessions do not stay for the next one. */
+static void azzera(volatile unsigned char *b, unsigned int n)
+{
+    while (n--) *b++ = 0;
+}
+
 static unsigned int metti_str(unsigned char *p, const void *d, unsigned int n)
 {
     metti32(p, n);
@@ -291,13 +347,17 @@ static int riempi(Sess *s, unsigned int quanti, unsigned int ms)
             if (ipc_send(pid_ip, IP_MSG_TCP_STATO, &r, sizeof(r)) < 0) return -1;
             if (attendi_ipc(IP_MSG_TCP_INFO, buf, &len, 2000) != 0) return -1;
             memcpy(&info, buf, sizeof(info));
-            if (info.stato != IP_TCP_APERTA) return -1;
+            if (info.stato != IP_TCP_APERTA) { s->chiusa = 1; return -1; }
             continue;
         }
 
         if (len < sizeof(d)) return -1;
         memcpy(&d, buf, sizeof(d));
-        if (d.len == 0) continue;
+        /* (0.004) zero bytes is how ip.drv says "the other side closed"
+         * (tcp_consegna answers at once when the data are over): until today
+         * this looped 400 times for nothing and the session never noticed
+         * the client had gone - the next connection waited forever */
+        if (d.len == 0) { s->chiusa = 1; return -1; }
         if (s->coda_n + d.len > sizeof(s->coda)) return -1;
 
         memcpy(s->coda + s->coda_n, buf + sizeof(d), d.len);
@@ -411,6 +471,9 @@ static int pacchetto_ricevi(Sess *s, unsigned char *carico, unsigned int ms)
 
         riempi_n = s->coda[4];
         if (riempi_n + 1u > tot) return -1;
+        /* (0.004) RFC 4253 6: at least 4 bytes of padding, the whole a
+         * multiple of 8 */
+        if (riempi_n < 4 || ((tot + 4) & 7u) != 0) return -1;
 
         len = tot - riempi_n - 1;
         memcpy(carico, s->coda + 5, len);
@@ -447,6 +510,12 @@ static int pacchetto_ricevi(Sess *s, unsigned char *carico, unsigned int ms)
 
         riempi_n = s->coda[4];
         if (riempi_n + 1u > tot) return -1;
+        /* (0.004) chacha20-poly1305: the length does not count, the rest is
+         * a multiple of 8, padding at least 4 */
+        if (riempi_n < 4 || (tot & 7u) != 0) return -1;
+        /* the sequence number is ChaCha20's nonce: it must never come round
+         * with the same key, and there is no rekeying here */
+        if (s->seq_in >= 0x80000000u || s->seq_out >= 0x80000000u) return -1;
 
         len = tot - riempi_n - 1;
         memcpy(carico, s->coda + 5, len);
@@ -515,7 +584,11 @@ static unsigned int host_blob(unsigned char *p)
 /* -----------------------------------------------------------------------------
  * KEXINIT — si dichiara quello che si sa fare
  * --------------------------------------------------------------------------- */
-static const char *ALG_KEX   = "curve25519-sha256";
+/* (0.004, debug/bug_SSH001) kex-strict-s: Terrapin (CVE-2023-48795). Not an
+ * algorithm: a client that says kex-strict-c too gets its sequence numbers
+ * reset at NEWKEYS, and nothing may slip in before (kex() already wants
+ * exactly ECDH_INIT and NEWKEYS). */
+static const char *ALG_KEX   = "curve25519-sha256,kex-strict-s-v00@openssh.com";
 static const char *ALG_HOST  = "ssh-ed25519";
 static const char *ALG_CIF   = "chacha20-poly1305@openssh.com";
 static const char *ALG_MAC   = "";      /* il cifrario autentica da se' */
@@ -561,11 +634,27 @@ static int kex(Sess *s, const unsigned char *vc, unsigned int vc_n,
     unsigned char h[32], firma[64];
     unsigned char *hbuf;
     unsigned int  k = 0, n;
-    int           len;
+    int           len, rigido = 0;
+
+    /* does the client want the strict mode? its kex list, first field */
+    {
+        Lett l;
+        const unsigned char *lista;
+        unsigned int ln, j;
+
+        lett_init(&l, ic, (int)ic_n);
+        l.p = 17;                               /* type and cookie */
+        if (ic_n < 17 || lett_str(&l, &lista, &ln) != 0) return -1;
+        for (j = 0; j + 28 <= ln; j++)
+            if (memcmp(lista + j, "kex-strict-c-v00@openssh.com", 28) == 0 &&
+                (j == 0 || lista[j - 1] == ',') && (j + 28 == ln || lista[j + 28] == ','))
+                rigido = 1;
+        if (g_verboso && rigido) printf("sshd: kex rigido (kex-strict)\n");
+    }
 
     len = pacchetto_ricevi(s, buf, 20000);
     if (len < 1 || buf[0] != SSH_KEX_ECDH_INIT) return -1;
-    if (len < 5 || prendi32(buf + 1) != 32) return -1;
+    if (len < 1 + 4 + 32 || prendi32(buf + 1) != 32) return -1;   /* 0.004 */
     memcpy(qc, buf + 5, 32);
 
     if (casuale(priv, 32) != 0) return -1;
@@ -628,10 +717,12 @@ static int kex(Sess *s, const unsigned char *vc, unsigned int vc_n,
     n = 0;
     out[n++] = SSH_NEWKEYS;
     if (pacchetto_manda(s, out, n) != 0) return -1;
+    if (rigido) s->seq_out = 0;
 
     /* Il client manda il suo NEWKEYS: da li' in poi si cifra. */
     len = pacchetto_ricevi(s, buf, 10000);
     if (len < 1 || buf[0] != SSH_NEWKEYS) return -1;
+    if (rigido) s->seq_in = 0;
 
     /* -------------------------------------------------------------------------
      * Le chiavi vere: HASH(K || H || lettera || session_id), e poi si allunga
@@ -701,7 +792,10 @@ static int autentica(Sess *s, char *utente, unsigned int max)
     }
 
     for (tentativi = 0; tentativi < 8; tentativi++) {
-        unsigned int p, ln;
+        Lett l;
+        unsigned char t;
+        const unsigned char *u, *svc, *met;
+        unsigned int un, sn, ln;
 
         len = pacchetto_ricevi(s, buf, 60000);
         if (len < 1) return -1;
@@ -710,18 +804,17 @@ static int autentica(Sess *s, char *utente, unsigned int max)
         if (buf[0] == SSH_DISCONNECT) return -1;
         if (buf[0] != SSH_USERAUTH_REQUEST) continue;
 
-        p = 1;
-        ln = prendi32(buf + p); p += 4;
-        if (ln >= max) ln = max - 1;
-        memcpy(utente, buf + p, ln);
-        utente[ln] = '\0';
-        p += prendi32(buf + 1);
+        /* (0.004) the three strings, within the packet; a malformed one
+         * closes this connection, and only this one */
+        lett_init(&l, buf, len);
+        if (lett_byte(&l, &t) || lett_str(&l, &u, &un) || lett_str(&l, &svc, &sn) ||
+            lett_str(&l, &met, &ln)) return -1;
+        if (un == 0 || un >= max || memchr(u, '\0', un) != NULL) return -1;
+        memcpy(utente, u, un);
+        utente[un] = '\0';
+        (void)svc; (void)sn;
 
-        /* Si salta il servizio e si guarda il metodo. */
-        p += 4 + prendi32(buf + p);
-        ln = prendi32(buf + p); p += 4;
-
-        if (ln == 4 && memcmp(buf + p, "none", 4) == 0) {
+        if (ln == 4 && memcmp(met, "none", 4) == 0) {
             /* ! AL PRIMO GIRO IL CLIENT CHIEDE «none» PER SAPERE COSA SI
              * ACCETTA, e non e' un tentativo di entrare: si risponde con
              * l'elenco dei metodi, che qui e' uno solo. */
@@ -734,7 +827,7 @@ static int autentica(Sess *s, char *utente, unsigned int max)
             continue;
         }
 
-        if (ln == 8 && memcmp(buf + p, "password", 8) == 0) {
+        if (ln == 8 && memcmp(met, "password", 8) == 0) {
             unsigned int n = 0;
 
             /* ! LA PASSWORD ARRIVA QUI E NON SI GUARDA. La chiedera' login sul
@@ -744,6 +837,7 @@ static int autentica(Sess *s, char *utente, unsigned int max)
             if (pacchetto_manda(s, out, n) != 0) return -1;
 
             if (g_verboso) printf("sshd: utente '%s' ammesso al terminale\n", utente);
+            azzera(buf, sizeof(buf));        /* the password was in there */
             return 0;
         }
 
@@ -780,23 +874,27 @@ static int canale_apri(Sess *s)
         }
 
         if (buf[0] == SSH_CHANNEL_OPEN) {
-            unsigned int p = 1, tn, n;
+            Lett l;
+            unsigned char t;
+            const unsigned char *tipo;
+            unsigned int tn, n, mittente, finestra;
 
-            tn = prendi32(buf + p); p += 4;
-            if (tn != 7 || memcmp(buf + p, "session", 7) != 0) {
+            /* (0.004) type, sender's channel, window: within the packet */
+            lett_init(&l, buf, len);
+            if (lett_byte(&l, &t) || lett_str(&l, &tipo, &tn) ||
+                lett_u32(&l, &mittente) || lett_u32(&l, &finestra)) return -1;
+            if (tn != 7 || memcmp(tipo, "session", 7) != 0) {
                 n = 0;
                 out[n++] = SSH_CHANNEL_OPEN_FAIL;
-                metti32(out + n, prendi32(buf + p + tn)); n += 4;
+                metti32(out + n, mittente); n += 4;
                 metti32(out + n, 3); n += 4;    /* unknown channel type */
                 n += metti_str(out + n, "solo session", 12);
                 n += metti_str(out + n, "", 0);
                 if (pacchetto_manda(s, out, n) != 0) return -1;
                 continue;
             }
-            p += tn;
-
-            s->canale   = (int)prendi32(buf + p); p += 4;
-            s->finestra = prendi32(buf + p);
+            s->canale   = (int)mittente;
+            s->finestra = finestra;
 
             n = 0;
             out[n++] = SSH_CHANNEL_OPEN_CONF;
@@ -821,36 +919,41 @@ static int canale_pronto(Sess *s, unsigned int *righe, unsigned int *colonne)
     *righe = 24; *colonne = 80;
 
     for (giri = 0; giri < 16; giri++) {
-        unsigned int p, tn, n;
+        Lett l;
+        unsigned char t, vr;
+        const unsigned char *rich;
+        unsigned int ch, tn, n;
         int          vuole_risposta;
 
         len = pacchetto_ricevi(s, buf, 30000);
         if (len < 1) return -1;
         if (buf[0] != SSH_CHANNEL_REQUEST) continue;
 
-        p = 1 + 4;                       /* il numero del canale, che e' il nostro */
-        tn = prendi32(buf + p); p += 4;
-
-        if (p + tn >= (unsigned int)len) continue;   /* richiesta monca */
-        vuole_risposta = buf[p + tn];
+        /* (0.004) channel, request, want_reply: within the packet */
+        lett_init(&l, buf, len);
+        if (lett_byte(&l, &t) || lett_u32(&l, &ch) || lett_str(&l, &rich, &tn) ||
+            lett_byte(&l, &vr)) continue;            /* richiesta monca */
+        vuole_risposta = vr;
 
         if (g_verboso) {
             char nome[32];
             unsigned int q = tn < sizeof(nome) - 1 ? tn : sizeof(nome) - 1;
 
-            memcpy(nome, buf + p, q); nome[q] = '\0';
+            memcpy(nome, rich, q); nome[q] = '\0';
             printf("sshd: il canale chiede '%s' (%u byte di richiesta)\n", nome, (unsigned int)len);
         }
 
-        if (tn == 7 && memcmp(buf + p, "pty-req", 7) == 0) {
-            unsigned int q = p + tn + 1;
+        if (tn == 7 && memcmp(rich, "pty-req", 7) == 0) {
+            const unsigned char *term;
+            unsigned int termn, c = 0, r = 0;
 
             /* ! LA MISURA ARRIVA QUI, E VA MESSA NEL pty PRIMA DELLA SHELL:
              * chi disegna a schermo pieno la chiede all'avvio, e una misura
              * sbagliata la scopre solo ridisegnando storto. */
-            q += 4 + prendi32(buf + q);         /* il nome del terminale */
-            *colonne = prendi32(buf + q); q += 4;
-            *righe   = prendi32(buf + q); q += 4;
+            if (lett_str(&l, &term, &termn) || lett_u32(&l, &c) || lett_u32(&l, &r)) c = r = 0;
+            *colonne = c;
+            *righe   = r;
+            if (*colonne > 1000 || *righe > 1000) *colonne = *righe = 0;   /* 0.004 */
 
             /* ! UN TERMINALE DI MISURA ZERO NON ESISTE, e un client che la
              * manda cosi' non sta mentendo: sta dicendo «non lo so». Succede
@@ -869,7 +972,7 @@ static int canale_pronto(Sess *s, unsigned int *righe, unsigned int *colonne)
             continue;
         }
 
-        if (tn == 5 && memcmp(buf + p, "shell", 5) == 0) {
+        if (tn == 5 && memcmp(rich, "shell", 5) == 0) {
             if (vuole_risposta) {
                 n = 0;
                 out[n++] = SSH_CHANNEL_SUCCESS;
@@ -990,13 +1093,23 @@ static void sessione_dati(Sess *s, const char *shell, unsigned int righe,
         /* Dal client al programma. */
         {
             len = pacchetto_ricevi(s, buf, 60);
-            if (len < 0) continue;      /* per ora niente: si rigira */
+            /* (0.004) a client gone without CHANNEL_CLOSE ends the session:
+             * until 0.003 it waited for the shell to write, and with one
+             * connection at a time nobody else got in */
+            if (len < 0) { if (s->chiusa) break; continue; }   /* per ora niente */
             if (len < 1) continue;
 
             if (buf[0] == SSH_CHANNEL_DATA) {
-                unsigned int n = prendi32(buf + 5);
+                Lett l;
+                unsigned char t;
+                const unsigned char *d;
+                unsigned int ch, n = 0;
 
-                if (n > 0 && 9 + n <= (unsigned int)len) al_pty(fd[0], (const unsigned char *)buf + 9, n);
+                /* (0.004) within the packet: 0xFFFFFFF8 bytes no longer pass
+                 * a check that wrapped around */
+                lett_init(&l, buf, len);
+                if (lett_byte(&l, &t) || lett_u32(&l, &ch) || lett_str(&l, &d, &n)) n = 0;
+                if (n > 0) al_pty(fd[0], d, n);
 
                 /* ! LA FINESTRA SI RIAPRE, o dopo un po' il client smette di
                  * mandare: e' il controllo di flusso di SSH, e chi non lo fa
@@ -1032,19 +1145,22 @@ static void sessione_dati(Sess *s, const char *shell, unsigned int righe,
              * non arriva si ferma, e discutere di chi ha ragione con un
              * programma che sta aspettando non serve a nessuno.
              * ============================================================= */
-            if (buf[0] == SSH_CHANNEL_REQUEST && len > 1 + 4 + 4) {
-                unsigned int p = 1 + 4;
-                unsigned int tn = prendi32(buf + p);
+            if (buf[0] == SSH_CHANNEL_REQUEST) {
+                Lett l;
+                unsigned char t, vr;
+                const unsigned char *rich;
+                unsigned int ch, tn;
 
-                p += 4;
-                if (p + tn >= (unsigned int)len) continue;   /* monca */
+                /* (0.004) within the packet, as everywhere */
+                lett_init(&l, buf, len);
+                if (lett_byte(&l, &t) || lett_u32(&l, &ch) || lett_str(&l, &rich, &tn) ||
+                    lett_byte(&l, &vr)) continue;            /* monca */
 
-                if (tn == 13 && memcmp(buf + p, "window-change", 13) == 0) {
-                    unsigned int q = p + tn + 1;    /* saltato want_reply */
+                if (tn == 13 && memcmp(rich, "window-change", 13) == 0) {
+                    unsigned int colonne = 0, righe = 0;
 
-                    if (q + 8 <= (unsigned int)len) {
-                        unsigned int colonne = prendi32(buf + q);
-                        unsigned int righe   = prendi32(buf + q + 4);
+                    if (lett_u32(&l, &colonne) == 0 && lett_u32(&l, &righe) == 0 &&
+                        colonne <= 1000 && righe <= 1000) {
 
                         /* Zero vuol dire «non lo so», come in pty-req: si
                          * lascia stare invece di dare a un programma una
@@ -1059,7 +1175,7 @@ static void sessione_dati(Sess *s, const char *shell, unsigned int righe,
                     }
                 }
 
-                if (buf[p + tn]) {              /* want_reply */
+                if (vr) {                       /* want_reply */
                     unsigned int k = 0;
 
                     out[k++] = SSH_CHANNEL_SUCCESS;
@@ -1076,6 +1192,10 @@ static void sessione_dati(Sess *s, const char *shell, unsigned int righe,
 
     interrompi(figlio);
     close(fd[0]);
+    /* (0.004) what the user typed and read does not wait for the next one */
+    azzera(buf, sizeof(buf));
+    azzera(g_attesa, ATTESA_MAX);
+    g_att_n = 0;
 
     {
         unsigned int k = 0;
@@ -1170,6 +1290,7 @@ static void connessione(int id, const char *shell)
 
     (void)buf;
     printf("sshd: sessione chiusa\n");
+    azzera((unsigned char *)&s, sizeof(s));        /* keys, queue (0.004) */
 }
 
 int main(int argc, char **argv)

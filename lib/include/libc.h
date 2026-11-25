@@ -2111,9 +2111,13 @@ int     diventa_root(const char *nome, const char *password);
  * descrittore, e rende 0 per il codice di terzi che la chiama. Chi deve
  * rendere eseguibile un file che ha scritto chiami chmod(percorso, 0755).
  * (Corretto il 30 settembre 2026: qui era scritto che EX-OS non ha permessi,
- * cosa vera prima di agosto e non piu' dopo.) */
+ * cosa vera prima di agosto e non piu' dopo.)
+ * (kernel 0.367) fchmod e fchown su un TERMINALE (/dev/pts/N) cambiano
+ * davvero (SYS_FCHMOD, SYS_FCHOWN): login lo da' all'utente. Sui file resta
+ * quanto detto sopra. */
 int     chmod(const char *path, mode_t modo);
 int     fchmod(int fd, mode_t modo);
+int     fchown(int fd, unsigned int uid, unsigned int gid);
 mode_t  umask(mode_t maschera);
 
 int     stat(const char *path, struct stat *st) EXOS_STAT2(stat);
@@ -3854,6 +3858,10 @@ int     reboot(int cosa);
  * lib/libc.c, che non include questo file: TRE copie, tutte identiche.
  * ============================================================================= */
 #define SHM_CREA    0x0001      /* creala se non c'e' (senza: solo attacco) */
+/* (kernel 0.367) with SHM_CREA: -EEXIST if it is there already; and the mode
+ * of a new zone (0 = 0600). Opening needs read and write; root passes. */
+#define SHM_ESCL    0x0002
+#define SHM_MODO(m) (((unsigned int)(m) & 0777u) << 16)
 
 typedef struct {
     char         nome[16];  /* in:  come si chiama la zona */

@@ -1,0 +1,186 @@
+IMPLEMENTAZIONE GRP001 - Gruppi supplementari (setgroups, getgroups,
+                          initgroups) e il loro controllo nel VFS
+===============================================================================
+Priorita':  MEDIA (manca un pezzo del modello Unix che la voce 111 ha
+            introdotto; serve a bug_PTY001 e bug_SHM001 per il "gruppo"
+            e ai servizi portati: Apache, MariaDB, Firefox, i gruppi
+            audio/video/tty)
+Programma:  kernel EX-OS, libc, libexuser, login, install
+Sorgenti:   kernel/include/sched.h   Process.uid / Process.gid (nessun
+                                     elenco di gruppi)
+            kernel/fs/vfs.c          vfs_permesso (confronta solo
+                                     st->gid == vfs_gid_corrente()),
+                                     appiccicoso_vieta, vfs_chown
+            kernel/syscall/syscall_impl.c  sys_setuid (cambia uid e gid
+                                     insieme, ciclo su tgid)
+            lib/libc.c               setgroups (no-op, EPERM se non root),
+                                     getgroups (rende 0), initgroups
+                                     (setgroups(0,0)), setgid (via
+                                     SYS_SETUID), setregid
+            lib/exuser/exuser.c      /boot/utenti, /boot/ombra,
+                                     /boot/amministratori (nessun file dei
+                                     gruppi)
+Rilevato su: albero del 24/11/2026.
+
+-------------------------------------------------------------------------------
+1. COSA MANCA
+-------------------------------------------------------------------------------
+Un processo ha UN gid. Non c'e' modo di appartenere a piu' gruppi:
+  - una directory condivisa fra due utenti (0770, gruppo "progetto") si
+    puo' dare solo a chi ha quel gid come primario;
+  - i dispositivi e le risorse per gruppo (audio, video, tty, dialout) non
+    si possono esprimere: la voce 111 ha dovuto usare "root o chi siede
+    alla console" per tastiera, mouse, suono e schermo;
+  - getgroups() rende 0 gruppi: programmi come id, ls -l, sudo-like, i
+    controlli di Apache (Require group), PostgreSQL/MariaDB plugin di
+    autenticazione e la libc di glibc-compat mostrano o decidono sul
+    falso;
+  - initgroups() e setgroups() "riescono" senza fare niente: un servizio
+    che fa initgroups(utente, gid) crede di avere i gruppi dell'utente.
+
+-------------------------------------------------------------------------------
+2. PROGETTO
+-------------------------------------------------------------------------------
+2.1 PCB
+
+    #define GRUPPI_MAX  32            /* NGROUPS_MAX di POSIX >= 8 */
+    /* in Process, accanto a uid/gid */
+    uint16_t  n_gruppi;
+    uint32_t  gruppi[GRUPPI_MAX];
+
+   Si ereditano a fork/spawn/clone come uid e gid (stesso punto in
+   proc_create dove si copiano), si conservano a exec. 128 byte per PCB:
+   il PCB e' gia' ~12,7 KB, accettabile; se no, puntatore a un blocco
+   condiviso a conteggio (come Linux struct group_info), ma per 32 gruppi
+   non serve.
+
+2.2 Syscall
+
+    SYS_SETGROUPS (numero nuovo):  ebx = n, ecx = const uint32_t *
+        - solo uid 0, EPERM altrimenti
+        - n > GRUPPI_MAX -> EINVAL
+        - copia nel kernel PRIMA di toccare il PCB (doppia lettura)
+        - per TUTTI i fili del tgid, come sys_setuid (voce 0.279: i fili
+          gia' avviati devono scendere anche loro)
+
+    int32_t sys_setgroups(InterruptFrame *f)
+    {
+        Process *self = proc_get_current();
+        uint32_t n = FR_A1(f), k[GRUPPI_MAX], i, j;
+        const uint32_t *u = (const uint32_t *)FR_A2(f);
+
+        if (self->uid != 0)                     return ERR(EPERM);
+        if (n > GRUPPI_MAX)                     return ERR(EINVAL);
+        if (n && !syscall_verify_ptr(u, n * 4u)) return ERR(EFAULT);
+        for (i = 0; i < n; i++) k[i] = u[i];
+        interrupts_disable();                   /* stato IF salvato: voce 54 */
+        for (i = 0; i < g_proc_posti; i++) {
+            Process *q = PROC_POSTO(i);
+            if (q->state == PROC_UNUSED || q->tgid != self->tgid) continue;
+            q->n_gruppi = (uint16_t)n;
+            for (j = 0; j < n; j++) q->gruppi[j] = k[j];
+        }
+        ripristina IF;
+        return 0;
+    }
+
+    SYS_GETGROUPS: ebx = dim, ecx = uint32_t * ; dim == 0 -> rende n;
+        dim < n -> EINVAL; altrimenti copia e rende n.
+
+2.3 VFS
+
+    int proc_nel_gruppo(const Process *p, uint32_t gid)
+    {
+        uint32_t i;
+        if (p->gid == gid) return 1;
+        for (i = 0; i < p->n_gruppi; i++) if (p->gruppi[i] == gid) return 1;
+        return 0;
+    }
+
+    static int vfs_permesso(const VfsStat *st, uint32_t voluto)
+    {
+        ...
+        if (st->uid == uid)                          bit = (st->modo >> 6) & 7u;
+        else if (proc_nel_gruppo(proc_get_current(), st->gid))
+                                                     bit = (st->modo >> 3) & 7u;
+        else                                         bit =  st->modo       & 7u;
+        ...
+    }
+
+   (vfs_gid_corrente() resta per chi crea file: il gid del file nuovo e'
+   il primario, o quello della directory se ha setgid 02000 - da
+   aggiungere nello stesso giro se ext2 lo tiene gia' nel modo.)
+
+   vfs_chown: un utente non root puo' cambiare il gruppo di un SUO file
+   verso un gruppo di cui fa parte (POSIX); oggi chown e' solo root.
+
+   Usare proc_nel_gruppo anche in: pty (bug_PTY001), zone shm
+   (bug_SHM001), e dovunque oggi si confronta gid.
+
+2.4 I dati: /boot/gruppi
+
+   Formato come /etc/group, coerente con /boot/utenti:
+
+        nome:gid:membro1,membro2
+
+   0644 root. libexuser: exuser_gruppi_di(nome, out[], max) che legge il
+   file (stessa cerca_riga a campi), e l'aggiunta/rimozione di membri
+   per `login -a` e l'installatore. install crea i gruppi base:
+
+        root:0:
+        utenti:100:
+        audio:63:
+        video:44:
+        tty:5:
+
+2.5 libc
+
+    int setgroups(size_t n, const gid_t *g)
+    { int r = _syscall2(SYS_SETGROUPS, n, (uintptr_t)g);
+      if (r < 0) { errno = -r; return -1; } return 0; }
+
+    int getgroups(int dim, gid_t *g)
+    { int r = _syscall2(SYS_GETGROUPS, dim, (uintptr_t)g);
+      if (r < 0) { errno = -r; return -1; } return r; }
+
+    int initgroups(const char *utente, gid_t base)
+    {
+        gid_t v[GRUPPI_MAX]; int n = 0;
+        v[n++] = base;
+        n += exuser_gruppi_di_gid(utente, v + n, GRUPPI_MAX - n);  /* da
+                                                       /boot/gruppi */
+        return setgroups((size_t)n, v);
+    }
+
+   getgrnam/getgrgid/getgrent leggono /boot/gruppi (oggi verificare se
+   esistono e cosa rendono).
+
+2.6 login, sudo, sshd, telnetd
+
+   login, dopo l'autenticazione e PRIMA di setuid: initgroups(nome, gid).
+   sudo (diventa root): setgroups(0) o i gruppi di root.
+   Il kernel con sys_su (bug_SU001): mette uid 0, gid 0 e svuota i
+   gruppi supplementari, per non portarsi dietro quelli dell'utente.
+
+-------------------------------------------------------------------------------
+3. PROVA
+-------------------------------------------------------------------------------
+  - /home/progetto 2770 root:progetto, utenti a e b membri: entrambi
+    leggono e scrivono, c no (EACCES).
+  - id mostra "groups=..." corretti; getgroups(0, NULL) = numero giusto.
+  - setgroups da uid 1000: EPERM.
+  - Un programma a 8 fili che fa initgroups+setgid+setuid: tutti i fili
+    hanno i gruppi nuovi (leggerli da /proc/<pid>/task/*/status, riga
+    Groups:, da aggiungere a f_p_status).
+  - permprova (voce 111): 0 falle, 0 piu' stretti di Linux, con i casi
+    dei gruppi aggiunti.
+-------------------------------------------------------------------------------
+4. STATO (25/11/2026, notte)
+-------------------------------------------------------------------------------
+NON FATTO, DA DECIDERE: il progetto mette GRUPPI_MAX 32 come #define,
+  contro la regola "nessun tetto fisso". Senza tetto vuol dire un elenco
+  allocato (kmalloc, a conteggio come group_info di Linux) da copiare o
+  condividere a fork/clone e liberare all'uscita: tocca il ciclo di vita
+  del PCB. Proposta: elenco dinamico condiviso a conteggio, tetto solo di
+  protocollo 65536 come NGROUPS_MAX di Linux, /boot/gruppi come
+  /etc/group. Prima di cominciare: va bene cosi'?

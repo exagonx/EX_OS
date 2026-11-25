@@ -45,7 +45,7 @@
 #include "exuser.h"
 
 /* +0.001 a ogni modifica: `sudo -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-EX_VERSIONE("sudo", "0.001");
+EX_VERSIONE("sudo", "0.002");
 
 /* =============================================================================
  * ambiente_di_root — l'ambiente che vede il figlio
@@ -153,6 +153,12 @@ int main(int argc, char **argv)
      * una copia in giro. */
     for (i = 0; i < (int)sizeof(pass); i++) pass[i] = '\0';
 
+    if (rc == -EAGAIN) {
+        /* (0.002) kernel 0.367: after 3 failures in a row the kernel holds
+         * this uid off for a while, without looking at the password */
+        printf("sudo: troppi tentativi sbagliati: riprova fra qualche minuto.\n");
+        return 1;
+    }
     if (rc != 0) {
         /* ! NON SI DICE QUALE DELLE DUE COSE E' ANDATA STORTA — password
          * sbagliata, oppure «non sei fra gli amministratori» — perche' la

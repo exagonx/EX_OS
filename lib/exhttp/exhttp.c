@@ -1461,6 +1461,7 @@ static int leggi_a_pezzi(ExHttpTrasporto *t, unsigned char *dst,
 
 static ExHttpBiscottiChiedi   g_bis_chiedi   = 0;
 static ExHttpBiscottoArrivato g_bis_arrivato = 0;
+static ExHttpBiscottoArrivatoS g_bis_arrivato_s = 0;
 static void                  *g_bis_dato     = 0;
 
 void exhttp_biscotti(ExHttpBiscottiChiedi chiedi,
@@ -1468,6 +1469,16 @@ void exhttp_biscotti(ExHttpBiscottiChiedi chiedi,
 {
     g_bis_chiedi   = chiedi;
     g_bis_arrivato = arrivato;
+    g_bis_arrivato_s = 0;
+    g_bis_dato     = dato;
+}
+
+void exhttp_biscotti_schema(ExHttpBiscottiChiedi chiedi,
+                            ExHttpBiscottoArrivatoS arrivato, void *dato)
+{
+    g_bis_chiedi   = chiedi;
+    g_bis_arrivato = 0;
+    g_bis_arrivato_s = arrivato;
     g_bis_dato     = dato;
 }
 
@@ -1616,11 +1627,15 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
              * SEGUIRE UNA REDIREZIONE: e' l'unico momento in cui il salto dopo
              * puo' ancora portarseli. Consegnarli alla fine dello scambio
              * vorrebbe dire darli a chi non ne ha piu' bisogno. */
-            if (g_bis_arrivato) {
+            if (g_bis_arrivato || g_bis_arrivato_s) {
                 int b;
 
-                for (b = 0; b < r->n_biscotti; b++)
-                    g_bis_arrivato(g_bis_dato, u->host, r->biscotti[b]);
+                for (b = 0; b < r->n_biscotti; b++) {
+                    if (g_bis_arrivato_s)
+                        g_bis_arrivato_s(g_bis_dato, u->host, r->biscotti[b], u->cifrato);
+                    else
+                        g_bis_arrivato(g_bis_dato, u->host, r->biscotti[b]);
+                }
             }
             break;
         }

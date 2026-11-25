@@ -1,0 +1,220 @@
+BUG USB001 - Memorie USB: letture e scritture corte prese per riuscite
+              (settori di un'altra lettura consegnati al filesystem), residuo
+              del CSW ignorato; descrittori HID letti un byte oltre; dischi
+              oltre 2 TB
+===============================================================================
+Gravita':   ALTA (corruzione silenziosa dei dati su chiavette e dischi USB;
+            con un dispositivo ostile, lettura fuori dal buffer)
+Programma:  drivers/usb (usb_massa.c, usb_comune.c), usato dai driver dei
+            controller ehci, uhci, ohci, xhci (ognuno da' la sua bulk())
+Sorgenti:   drivers/usb/usb_massa.c   comando, leggi_scrivi, usb_massa_capacita
+            drivers/usb/usb_comune.c  usb_configura_hid,
+                                      usb_configura_hid_tutte,
+                                      usb_configura_massa
+            drivers/ehci/ehci.c       bulk_ehci (rende i byte trasferiti:
+                                      "avuti"); idem negli altri controller
+Rilevato su: albero del 25/11/2026.
+
+-------------------------------------------------------------------------------
+1. I DIFETTI
+-------------------------------------------------------------------------------
+a) TRASFERIMENTO CORTO = SUCCESSO. In comando():
+
+        r = m->bulk(m->dev, in ? m->ep_in : m->ep_out, dati, len, in);
+        if (r == USB_MASSA_STALLO) sblocca(...);
+        else if (r < 0) { reset_bot(m); return -1; }
+
+   bulk rende quanti byte sono passati davvero (bulk_ehci: "avuti = len -
+   resto_qtd(0)"); un valore fra 0 e len-1 non e' controllato. Poi il CSW:
+   firma e tag sono controllati, lo stato anche, ma il RESIDUO
+   (dCSWDataResidue, csw[8..11]: quanti byte il dispositivo non ha
+   trasferito) no. Con stato OK e residuo > 0 il comando "riesce".
+
+   leggi_scrivi() poi fa memcpy(buf, g_buf, byte) con byte = n * 512: la
+   parte non trasferita di g_buf contiene cio' che c'era dalla lettura
+   PRECEDENTE (g_buf e' unico). Il filesystem riceve come contenuto di un
+   settore i byte di un altro settore. Nessun errore, nessun avviso.
+
+   In scrittura: un trasferimento corto accettato vuol dire settori non
+   scritti dati per scritti.
+
+   Quando succede: chiavette economiche che rispondono corto sotto carico
+   o vicino alla fine; cavi e hub che perdono pacchetti (il controller da'
+   un trasferimento corto senza errore); dispositivi difettosi; un
+   dispositivo ostile (una "chiavetta" programmata) lo fa apposta. La
+   specifica BOT (USB MSC Bulk-Only 1.0, 6.7) vuole che l'host guardi il
+   residuo e i byte realmente trasferiti (i "13 casi").
+
+b) LA FINE DEL DISCO. leggi_scrivi controlla
+        if (lba + n > m->settori) return -1;
+   in 32 bit: lba vicino a 0xFFFFFFFF fa girare la somma e il controllo
+   passa. Il chiamante oggi (blkr3) da' LBA giusti, ma il controllo che
+   c'e' deve tenere: n > settori - lba.
+
+c) 2 TB E OLTRE. READ CAPACITY(10) rende 0xFFFFFFFF come "ultimo blocco"
+   quando il disco ha 2^32 blocchi o piu': ultimo + 1 = 0 -> m->blocchi = 0
+   (un disco da 4 TB diventa un disco vuoto, o peggio una misura sbagliata
+   se il calcolo dei settori ne deriva qualcosa). Serve READ CAPACITY(16)
+   e READ/WRITE(16) per LBA a 64 bit (con il kernel che pero' oggi tiene
+   gli LBA a 32 bit: allora almeno rifiutare il disco dicendolo).
+
+d) DESCRITTORI HID: UN BYTE OLTRE. In usb_configura_hid (e
+   usb_configura_hid_tutte, stesso schema):
+
+        } else if (tipo == 5 && trovato && i + 6 <= tot) {   /* ENDPOINT */
+            ... d->ep_intervallo = b[i + 6];
+
+   i + 6 <= tot garantisce b[i..i+5]; b[i+6] e' fuori quando i + 6 == tot.
+   Con tot = 64 (il massimo: il buffer b[64]) e un descrittore costruito
+   per finire li', si legge b[64], fuori dal buffer sulla pila. Il
+   descrittore ENDPOINT e' lungo 7: il controllo giusto e' i + 7 <= tot (e
+   len >= 7).
+
+e) DESCRITTORI DI CONFIGURAZIONE OLTRE 64 BYTE. tot si stringe a
+   sizeof(b) = 64: un dispositivo composito (tastiera con tasti multimediali
+   + touchpad, cuffie con HID) ha descrittori da 100-300 byte e
+   l'interfaccia HID puo' stare oltre il 64esimo: il dispositivo "non e' un
+   HID boot". Inoltre non si controlla che il dispositivo abbia mandato
+   davvero tot byte (la seconda GET_DESCRIPTOR puo' rendere meno: il resto
+   di b e' quello della prima).
+
+-------------------------------------------------------------------------------
+2. CORREZIONE
+-------------------------------------------------------------------------------
+2.1 comando(): byte trasferiti e residuo
+
+    /* rende 0 se il comando e' andato e i dati sono TUTTI passati;
+       -1 errore; con *passati (se non NULL) quanti byte sono passati */
+    static int comando(UsbMassa *m, const unsigned char *cmd, unsigned int cmd_len,
+                       void *dati, unsigned int len, int in, unsigned int *passati)
+    {
+        unsigned int fatti = 0, residuo;
+        ...
+        if (len > 0 && dati != NULL) {
+            r = m->bulk(m->dev, in ? m->ep_in : m->ep_out, dati, len, in);
+            if (r == USB_MASSA_STALLO) {
+                sblocca(m, in ? m->ep_in : m->ep_out, in);   /* fatti resta 0 */
+            } else if (r < 0) {
+                reset_bot(m);
+                return -1;
+            } else {
+                fatti = (unsigned int)r;
+            }
+        }
+        ... CSW come oggi (firma, tag) ...
+        residuo = leggi_le32(csw + 8);
+        if (residuo > len) { reset_bot(m); return -1; }        /* caso 2/3 BOT:
+                                                                 incoerente */
+        if (csw[12] == CSW_FASE) { reset_bot(m); return -1; }
+        if (csw[12] != CSW_OK)   return -1;
+        if (passati) *passati = fatti;
+        /* il dispositivo dice di aver passato len - residuo, il controller
+           dice fatti: devono essere d'accordo e uguali a len */
+        if (len && (fatti != len || residuo != 0)) {
+            if (m->verboso)
+                printf("massa: trasferimento corto (%u di %u, residuo %u)\n",
+                       fatti, len, residuo);
+            return -1;
+        }
+        return 0;
+    }
+
+  I comandi che possono legittimamente rendere meno (INQUIRY, REQUEST SENSE,
+  MODE SENSE: lunghezze variabili) passano `passati` e accettano il corto;
+  READ/WRITE(10) e READ CAPACITY no (passati = NULL: corto = errore).
+
+2.2 leggi_scrivi(): niente dati vecchi
+
+    if (n == 0 || n > MASSA_SETT_MAX)          return -1;
+    if (lba >= m->settori || n > m->settori - lba) return -1;
+    ...
+    if (comando(m, cmd, 10, g_buf, byte, scrittura ? 0 : 1, NULL) != 0) {
+        chiedi_motivo(m);
+        /* un tentativo in piu' dopo il reset: le chiavette che rispondono
+           corto una volta di solito rispondono giusto alla seconda */
+        if (comando(m, cmd, 10, g_buf, byte, scrittura ? 0 : 1, NULL) != 0)
+            return -1;
+    }
+
+  E per difesa: prima di una lettura, memset(g_buf, 0, byte) costa poco
+  (64 KB al massimo) e trasforma un difetto futuro dello stesso genere da
+  "dati di un altro file" in "zeri".
+
+2.3 Capacita' oltre 2 TB
+
+    if (ultimo == 0xFFFFFFFFu) {
+        /* READ CAPACITY(16): SERVICE ACTION IN(16) 0x9E, azione 0x10 */
+        unsigned char c16[16] = { 0x9E, 0x10 }, d16[32];
+        c16[13] = sizeof(d16);
+        if (comando(m, c16, 16, d16, sizeof(d16), 1, NULL) != 0) return 0;
+        ultimo64 = be64(d16);
+        m->byte_blocco = leggi_be32(d16 + 8);
+        if (ultimo64 >= 0xFFFFFFFFull) {
+            printf("massa: disco oltre 2 TB: il kernel indirizza 32 bit di LBA, "
+                   "lo uso fino a 2 TB\n");
+            m->blocchi = 0xFFFFFFFFu;     /* fino al limite, mai oltre */
+        } else m->blocchi = (unsigned int)ultimo64 + 1;
+    }
+
+2.4 Descrittori
+
+    /* usb_comune.c: leggere tutto il descrittore, anche > 64 byte */
+    unsigned char *b = malloc(tot > 9 ? tot : 9);  /* tot fino a 65535 */
+    ...
+    r = ctl(dev, 0x80, USB_REQ_GET_DESC, (USB_DESC_CONFIG << 8), 0, b, tot, 1);
+    /* ctl deve dire quanti byte ha avuto (oggi rende 0/errore): se ne ha
+       avuti meno, tot = quelli */
+    i = 9;
+    while (i + 2 <= tot) {
+        unsigned int len = b[i], tipo = b[i + 1];
+        if (len < 2 || len > tot - i) break;            /* descrittore rotto */
+        if (tipo == 4 && len >= 9) { ... b[i + 2 .. i + 8] ... }
+        else if (tipo == 5 && trovato && len >= 7) { ... b[i + 2 .. i + 6] ... }
+        i += len;
+    }
+    free(b);
+
+  Regola per tutti i parser di descrittori del progetto: si legge un campo
+  solo se `len` del descrittore lo contiene E `i + len <= tot`.
+
+-------------------------------------------------------------------------------
+3. PROVA
+-------------------------------------------------------------------------------
+  - QEMU con usb-storage su un'immagine e il guasto simulato: QEMU non
+    accorcia i trasferimenti da solo; un driver di prova (o una modifica
+    temporanea di bulk_ehci che rende len - 512 una volta ogni 50) deve far
+    fallire la lettura (errore al filesystem, ripetuta e riuscita), mai
+    consegnare dati sbagliati: sha256sum di un file da 50 MB letto dalla
+    chiavetta, 20 volte, sempre uguale.
+  - Tastiera USB composita (QEMU usb-kbd + usb-tablet su un hub, o un
+    dispositivo vero con descrittore > 64 byte): riconosciuta.
+  - Immagine da 3 TB (file sparso sull'host, -drive if=none ... usb-storage):
+    il driver la vede limitata a 2 TB e lo dice, invece di vederla da 0.
+
+-------------------------------------------------------------------------------
+4. STATO (25/11/2026, notte)
+-------------------------------------------------------------------------------
+FATTO (uhci.drv 0.008, ehci.drv 0.005, ohci.drv 0.012, xhci.drv 0.007:
+  usb_massa.c e usb_comune.c sono dentro tutti e quattro):
+  - (a) comando() guarda i byte passati (le quattro bulk() li rendono
+    davvero, controllato) e il residuo del CSW: READ/WRITE(10) e READ
+    CAPACITY vogliono tutto, INQUIRY e REQUEST SENSE accettano il corto
+    (parametro passati); residuo > richiesto = fuori fase, reset.
+    leggi_scrivi azzera g_buf prima di leggere e riprova una volta dopo
+    REQUEST SENSE.
+  - (b) lba >= settori || n > settori - lba.
+  - (c) READ CAPACITY(10) = 0xFFFFFFFF -> READ CAPACITY(16); oltre 2 TB
+    (o 2^29 blocchi da 4096) il disco si usa fino a 2 TB e lo dice.
+    READ/WRITE(16) no: il kernel indirizza 32 bit di settori.
+  - (d)(e) descrittori: un campo solo se la lunghezza del descrittore lo
+    contiene e il descrittore sta in tot (len < 2 o oltre: stop);
+    tampone 256 per hid e massa (era 64 e 128) e azzerato prima della
+    seconda lettura (una risposta corta lascia zeri, non la prima).
+  - Compilati a 32 bit.
+DA FARE: tools/prova_usb.sh a 32 e 64 bit con le ISO rifatte (in coda
+  dopo la tornata di prove di stanotte); la prova col guasto simulato
+  (bulk che rende corto una volta ogni 50) non c'e' ancora.
+
+ESITO (25/11, 06:36, terza tornata): tools/prova_usb.sh a 32 e a 64 bit,
+10 su 10 ciascuna. Manca solo la prova col guasto simulato (un bulk corto
+ogni 50): la si scrive quando serve. Spostato in bug_corretto.

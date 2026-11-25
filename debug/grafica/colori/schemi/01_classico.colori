@@ -1,0 +1,27 @@
+# Classico - Il tema 01 com'e': grigio caldo, barra blu sfumata.
+# Schema di colori per il tema classico (ExWin). Vedi excolori.h.
+schema = Classico
+tema = classico
+scrivania = #3A6EA5
+scrivania2 = #152F55
+finestra = #D4D0C8
+testo = #000000
+campo = #FFFFFF
+campo_testo = #000000
+selezione = #0A246A
+selezione_testo = #FFFFFF
+barra = #0A246A
+barra2 = #A6CAF0
+titolo = #FFFFFF
+barra_inattiva = #808080
+barra_inattiva2 = #C0C0C0
+titolo_inattivo = #D4D0C8
+luce = #FFFFFF
+ombra = #404040
+suggerimento = #FFFFE1
+suggerimento_testo = #000000
+chiudi = #C04040
+sfumata = si
+grassetto = si
+ombra = 0
+raggio = 0

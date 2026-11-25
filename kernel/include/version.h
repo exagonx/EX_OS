@@ -1108,8 +1108,21 @@
 /* 0.365 -> 0.366: Gecko's frozen shared memory is read-only for real (voce
  * 115 step 4): open("/proc/self/fd/N") of an FD_SHM is that memory again,
  * never with more access; its pages map PG_CONDIVISA_RO and mprotect never
- * makes them writable (EACCES). PTE_E_COW leaves shared pages out. */
-#define EXOS_VERSION    "0.366"
+ * makes them writable (EACCES). PTE_E_COW leaves shared pages out. The
+ * "VFS 1s" measure goes to LOG_DEBUG: it filled the console (loglevel = 4
+ * in /boot/kernel.cfg shows it again). */
+/* 0.366 -> 0.367: SYS_SU has a brake per calling uid (1 s per failure,
+ * from the 3rd in a row EAGAIN for 2^(n-3) s up to 5 minutes), reads its
+ * files into buffers of their own size instead of a static one shared by
+ * every call, compares in constant time and reads the administrators every
+ * time: no more oracle on non-administrators' passwords (debug/bug_SU001).
+ * /dev/pts/N has an owner, group and mode (the creator, 0620), checked at
+ * open as for a file; stat says them; SYS_FCHOWN/SYS_FCHMOD (282, 283) on a
+ * pty, so login gives the terminal to the user (debug/bug_PTY001).
+ * Named shared zones have an owner, group and mode (SHM_MODO, default
+ * 0600) and SHM_ESCL creates or fails: wserver's windows and the clipboard
+ * are no longer anyone's (debug/bug_SHM001). */
+#define EXOS_VERSION    "0.367"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

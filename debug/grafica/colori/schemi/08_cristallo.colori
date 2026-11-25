@@ -1,0 +1,27 @@
+# Cristallo - I colori del logo di EX-OS sulla forma classica.
+# Schema di colori per il tema classico (ExWin). Vedi excolori.h.
+schema = Cristallo
+tema = classico
+scrivania = #13244F
+scrivania2 = #040A19
+finestra = #D7DDF0
+testo = #0B1737
+campo = #FFFFFF
+campo_testo = #0B1737
+selezione = #4063D0
+selezione_testo = #FFFFFF
+barra = #3D3F9B
+barra2 = #3FD8FF
+titolo = #FFFFFF
+barra_inattiva = #8A93B5
+barra_inattiva2 = #C3CAE0
+titolo_inattivo = #F0F3FA
+luce = #FFFFFF
+ombra = #1A2F7A
+suggerimento = #0B1737
+suggerimento_testo = #DFFCFF
+chiudi = #5B5CFF
+sfumata = si
+grassetto = si
+ombra = 6
+raggio = 0

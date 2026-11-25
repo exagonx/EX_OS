@@ -535,8 +535,10 @@ int32_t sys_read(InterruptFrame *frame)
      * flag: vedi FD_PTY_M in sched.h. */
     if (FDV(proc, fd).type == FD_PTY_M)
         return pty_leggi_master((int)FDV(proc, fd).inode, buf, count);
-    if (FDV(proc, fd).type == FD_PTY_S)
+    if (FDV(proc, fd).type == FD_PTY_S) {
+        if ((FDV(proc, fd).flags & 3u) == O_WRONLY) return ERR(EBADF);
         return pty_leggi_slave((int)FDV(proc, fd).inode, buf, count);
+    }
 
     /* file FAT12 */
     if (FDV(proc, fd).type == FD_FILE) {
@@ -780,6 +782,7 @@ int32_t sys_write(InterruptFrame *frame)
     if (FDV(proc, fd).type == FD_PTY_M)
         return pty_scrivi_master((int)FDV(proc, fd).inode, buf, count);
     if (FDV(proc, fd).type == FD_PTY_S) {
+        if ((FDV(proc, fd).flags & 3u) == O_RDONLY) return ERR(EBADF);
         if (extb_cattura(proc, buf, count)) return (int32_t)count;
         return pty_scrivi_slave((int)FDV(proc, fd).inode, buf, count);
     }
@@ -922,14 +925,16 @@ int32_t sys_open(InterruptFrame *frame)
 
             if (n != -2) {
                 if (n == -1) r = pty_apri_ptmx(&h);
-                else { r = pty_apri_slave((uint32_t)n); h = (int)n; }
+                else { r = pty_apri_slave((uint32_t)n, (uint32_t)flags & 3u); h = (int)n; }
                 if (r < 0) {
                     FDV(proc, free_fd).type = FD_UNUSED;
                     fd_rilasciato(proc, free_fd);
                     return r;
                 }
                 FDV(proc, free_fd).type        = (n == -1) ? FD_PTY_M : FD_PTY_S;
-                FDV(proc, free_fd).flags       = (flags & ~(uint32_t)0x3u) | O_RDWR;  /* both ways, whatever was asked */
+                /* the master both ways; the slave as asked (0.367): the
+                 * permission was checked for that, no more */
+                FDV(proc, free_fd).flags       = (n == -1) ? ((flags & ~(uint32_t)0x3u) | O_RDWR) : (uint32_t)flags;
                 FDV(proc, free_fd).offset      = 0;
                 FDV(proc, free_fd).inode       = (uint32_t)h;
                 FDV(proc, free_fd).driver_data = NULL;
@@ -988,11 +993,54 @@ static void unix_conta(const FileDescriptor *d)
  *
  * ! A cycle (an end sent over itself and never received) is not collected,
  * as Linux does with its garbage collector: those pipes stay until reboot.
+ * ! SO THERE IS A CEILING (0.367, debug/bug_UNIX001): the descriptors on the
+ * way, per uid, no more than its RLIMIT_NOFILE, as Linux's
+ * too_many_unix_fds, and no more than one per 128 KB of RAM: here
+ * RLIMIT_NOFILE is one per 2 KB, and a cycle keeps two pipes of 4 KB in
+ * the kernel, so that alone would let a user pin four times the RAM. With
+ * this, at most ~1/16 of it; Firefox has a few dozen on the way. Until 0.367 four calls in a loop filled the kernel's
+ * memory, pages that never go to swap, and nothing could start any more.
+ * Counted from the kmalloc of an attachment to its kfree, the two places
+ * below; root is not counted. The collection is 4.2 of that file.
  * ============================================================================= */
 typedef struct {
     PipeAllegato   t;               /* t.n descriptors follow */
+    uint32_t       uid, contati;    /* whose, and how many it counts (0.367) */
     FileDescriptor d[];
 } UnixAllegato;
+
+typedef struct UnixVolo {
+    struct UnixVolo *dopo;
+    uint32_t         uid, n;
+} UnixVolo;
+static UnixVolo *g_unix_volo;       /* one per uid that ever sent; never freed */
+
+static UnixVolo *unix_volo(uint32_t uid, int crea)
+{
+    UnixVolo *v;
+
+    for (v = g_unix_volo; v != NULL; v = v->dopo)
+        if (v->uid == uid) return v;
+    if (!crea) return NULL;
+    v = (UnixVolo *)kmalloc(sizeof(*v));
+    if (v == NULL) return NULL;
+    v->uid = uid;
+    v->n = 0;
+    v->dopo = g_unix_volo;
+    g_unix_volo = v;
+    return v;
+}
+
+/* the attachment goes: its descriptors no longer count for its sender */
+static void unix_volo_rendi(UnixAllegato *a)
+{
+    UnixVolo *v;
+
+    if (a->contati == 0) return;
+    v = unix_volo(a->uid, 0);
+    if (v) v->n = v->n > a->contati ? v->n - a->contati : 0;
+    a->contati = 0;
+}
 
 /* one more reference to what d points to; 0 or -errno */
 static int32_t fd_riferimento(const FileDescriptor *d)
@@ -1031,6 +1079,7 @@ static void unix_allegato_via(UnixAllegato *a)
     uint32_t i;
 
     for (i = 0; i < a->t.n; i++) fd_riferimento_via(&a->d[i]);
+    unix_volo_rendi(a);
     kfree(a);
 }
 
@@ -1356,10 +1405,34 @@ int32_t sys_unix_manda(InterruptFrame *frame)
         if (!syscall_verify_ptr((void *)(uintptr_t)m.fds, m.nfds * sizeof(int32_t)))
             return ERR(EFAULT);
         for (i = 0; i < m.nfds; i++) k[i] = ((const int32_t *)(uintptr_t)m.fds)[i];
+        /* (0.367) the ceiling: see UnixAllegato */
+        if (proc->uid != 0) {
+            UnixVolo *v = unix_volo(proc->uid, 1);
+
+            if (v == NULL) return ERR(ENOMEM);
+            uint32_t tetto = pmm_get_total_pages() / 32u;
+
+            if (tetto < 64u) tetto = 64u;
+            if (tetto > proc->fdt->limite) tetto = proc->fdt->limite;
+            if (v->n + m.nfds > tetto) {
+                static uint32_t detto_uid = 0xFFFFFFFFu;
+
+                if (detto_uid != proc->uid) {
+                    klog(LOG_WARN, "SYSCALL sendmsg: uid %u ha %u descrittori in viaggio, "
+                         "il limite e' %u: ETOOMANYREFS",
+                         proc->uid, v->n, tetto);
+                    detto_uid = proc->uid;
+                }
+                return ERR(ETOOMANYREFS);
+            }
+        }
         a = (UnixAllegato *)kmalloc(sizeof(UnixAllegato) +
                                     m.nfds * sizeof(FileDescriptor));
         if (a == NULL) return ERR(ENOMEM);
         a->t.n = 0;
+        a->uid = proc->uid;
+        a->contati = proc->uid != 0 ? m.nfds : 0;
+        if (a->contati) unix_volo(proc->uid, 0)->n += a->contati;
         for (i = 0; i < m.nfds; i++) {
             if (k[i] < 0 || k[i] >= FD_N(proc) || FDV(proc, k[i]).type == FD_UNUSED) {
                 r = ERR(EBADF);
@@ -1420,6 +1493,7 @@ int32_t sys_unix_ricevi(InterruptFrame *frame)
             if (m.flags & UNIX_CLOEXEC) FDV(proc, nfd).flags |= O_CLOEXEC;
             ((int32_t *)(uintptr_t)m.fds)[presi++] = nfd;
         }
+        unix_volo_rendi(a);
         kfree(a);
         um->presi = presi;
         if (troncati) um->flags |= UNIX_TRONCATI;
@@ -4378,8 +4452,13 @@ int32_t sys_stat(InterruptFrame *frame)
         if (e_dev_null(abs)) { stat_dispositivo(st, 0); return 0; }
         if (n == -1) { stat_dispositivo(st, 1); return 0; }
         if (n >= 0) {
-            if (!pty_esiste((uint32_t)n)) return ERR(ENOENT);
+            uint32_t u, g, m;
+
+            if (pty_stato((uint32_t)n, &u, &g, &m) != 0) return ERR(ENOENT);
             stat_dispositivo(st, 0x100u + ((uint32_t)n << 1));
+            st->st_uid  = u;               /* (0.367) the truth, not 0:0 */
+            st->st_gid  = g;
+            st->st_mode = STAT_S_IFCHR | m;
             return 0;
         }
     }
@@ -4467,8 +4546,16 @@ int32_t sys_fstat(InterruptFrame *frame)
     if (FDV(proc, fd).type == FD_UNUSED)        return ERR(EBADF);
     /* (0.318) a pty and /dev/null are character devices, as for stat */
     if (FDV(proc, fd).type == FD_PTY_S || FDV(proc, fd).type == FD_PTY_M) {
+        uint32_t u, g, m;
+
         stat_dispositivo(st, 0x100u + (FDV(proc, fd).inode << 1) +
                              (FDV(proc, fd).type == FD_PTY_M ? 1u : 0u));
+        if (FDV(proc, fd).type == FD_PTY_S &&
+            pty_stato(FDV(proc, fd).inode, &u, &g, &m) == 0) {
+            st->st_uid  = u;
+            st->st_gid  = g;
+            st->st_mode = STAT_S_IFCHR | m;
+        }
         return 0;
     }
     if (FDV(proc, fd).type == FD_NULL) { stat_dispositivo(st, 0); return 0; }
@@ -5128,12 +5215,20 @@ int32_t sys_ahci_passa(InterruptFrame *frame)
     return (int32_t)ata_passa_ad_ahci();
 }
 
-/* Il registro dei messaggi del kernel, per `dmesg`. Vedi kprintf.c. */
+static int console_ammette(uint32_t uid);     /* see WHO SITS AT THE CONSOLES */
+
+/* Il registro dei messaggi del kernel, per `dmesg`. Vedi kprintf.c.
+ * ! (0.367, debug/bug_PRIV001) ROOT AND WHO SITS AT THE CONSOLE: in it are
+ * the names that got su wrong, the zones of other users' windows, physical
+ * addresses. A user from telnet or ssh, or a CGI, read it all until 0.367.
+ * The owner of the machine keeps dmesg and ExWin's log, as before. */
 int32_t sys_klog(InterruptFrame *frame)
 {
     char    *dst  = (char *)FR_A1(frame);
     uint32_t size = FR_A2(frame);
+    Process *self = proc_get_current();
 
+    if (self != NULL && !console_ammette(self->uid)) return ERR(EPERM);
     if (size == 0 || size > 65536u)     return ERR(EINVAL);
     if (FR_A3(frame) > 1u)                return ERR(EINVAL);
     if (!syscall_verify_ptr(dst, size)) return ERR(EFAULT);
@@ -5407,18 +5502,42 @@ static uint32_t su_numero(const char *s)
     return v;
 }
 
-/* Legge un file intero in `buf`. Rende i byte letti, <0 se non si apre. */
-static int32_t su_leggi(const char *percorso, char *buf, uint32_t max)
+/* The whole file in a buffer of its own size (kfree, after su_azzera): NULL
+ * if it does not open.
+ * ! UNTIL 0.367 A STATIC 8 KB BUFFER SHARED BY EVERY CALL (debug/bug_SU001):
+ * vfs_read can sleep, two sys_su overwrote each other's text and the right
+ * password was refused; past ~90 users the last ones were cut off, silently. */
+#define SU_FILE_TETTO (1024u * 1024u)
+static char *su_leggi(const char *percorso, int32_t *n_out)
 {
-    int h = vfs_open_autorita(percorso, 0);
-    int n;
+    int      h = vfs_open_autorita(percorso, 0);
+    VfsStat  st;
+    uint32_t max;
+    char    *buf;
+    int      n;
 
-    if (h < 0) return -1;
+    *n_out = 0;
+    if (h < 0) return NULL;
+    max = (vfs_fstat(h, &st) == 0 && st.dimensione > 0) ? st.dimensione + 1u : SU_FILE_MAX;
+    if (max > SU_FILE_TETTO) {
+        klog(LOG_WARN, "SYSCALL su: %s e' piu' grande di %u KB: letto solo l'inizio",
+             percorso, SU_FILE_TETTO / 1024u);
+        max = SU_FILE_TETTO;
+    }
+    buf = (char *)kmalloc(max);
+    if (buf == NULL) { vfs_close(h); return NULL; }
     n = vfs_read(h, buf, max - 1, 0);
     vfs_close(h);
     if (n < 0) n = 0;
     buf[n] = '\0';
-    return n;
+    *n_out = n;
+    return buf;
+}
+
+/* Hashes and passwords do not stay in the kernel heap or stack. */
+static void su_azzera(volatile char *b, uint32_t n)
+{
+    while (n--) *b++ = 0;
 }
 
 /* Il campo `quale` (0,1,2) della riga che comincia col nome dato. Rende 1 se
@@ -5462,11 +5581,11 @@ static int su_campo(const char *testo, int n, const char *nome, int quale,
 /* 1 se il nome sta in /boot/amministratori, una riga per nome. */
 static int su_amministratore(const char *nome)
 {
-    static char testo[1024];
-    int n = su_leggi("/boot/amministratori", testo, sizeof(testo));
-    int i = 0;
+    int32_t n;
+    char   *testo = su_leggi("/boot/amministratori", &n);
+    int     i = 0, si = 0;
 
-    if (n <= 0) return 0;
+    if (testo == NULL) return 0;
 
     while (i < n) {
         int p = i, l, k;
@@ -5479,9 +5598,78 @@ static int su_amministratore(const char *nome)
 
         for (k = 0; k < l && nome[k]; k++)
             if (testo[p + k] != nome[k]) break;
-        if (k == l && nome[k] == '\0') return 1;
+        if (k == l && nome[k] == '\0') { si = 1; break; }
     }
-    return 0;
+    kfree(testo);
+    return si;
+}
+
+/* =============================================================================
+ * THE BRAKE (0.367, debug/bug_SU001)
+ *
+ * SYS_SU answers any process, and until 0.367 it answered as fast as the
+ * kernel could hash: a dictionary on root's password at thousands of tries a
+ * second, with only a WARN in the log. Now, per CALLING uid (fork does not
+ * multiply it):
+ *   - every failure costs 1 s, slept after the check, holding nothing;
+ *   - from the 3rd failure in a row the uid is held off for 2^(n-3) s, at
+ *     most 5 minutes: EAGAIN, without even looking at the password;
+ *   - a success clears it, and so do 15 minutes without failures.
+ * A typo in sudo costs a second; a dictionary gets ~300 tries a day.
+ * ! THE SAME uid SHARES THE BRAKE: whoever runs as you can hold off your own
+ * sudo for a few minutes. That is the price of not being fooled by fork.
+ * ============================================================================= */
+#define SU_FRENO_MAX_S   300u
+#define SU_FRENO_OBLIO   (15u * 60u * 100u)  /* ticks: 15 minutes */
+
+typedef struct SuFreno {
+    struct SuFreno *dopo;
+    uint32_t        uid, falliti, fino_a, ultimo;
+} SuFreno;
+static SuFreno *g_su_freni;    /* one per uid that ever failed; never freed */
+
+static SuFreno *su_freno(uint32_t uid)
+{
+    SuFreno *f;
+
+    for (f = g_su_freni; f != NULL; f = f->dopo)
+        if (f->uid == uid) break;
+    if (f == NULL) {
+        f = (SuFreno *)kmalloc(sizeof(*f));
+        if (f == NULL) return NULL;
+        f->uid = uid; f->falliti = 0; f->fino_a = f->ultimo = g_ticks;
+        f->dopo = g_su_freni;
+        g_su_freni = f;
+    }
+    if (f->falliti && (uint32_t)(g_ticks - f->ultimo) > SU_FRENO_OBLIO) f->falliti = 0;
+    return f;
+}
+
+/* A failure: the hold-off grows, then the fixed second. Always EPERM. */
+static int32_t su_fallito(SuFreno *f)
+{
+    if (f != NULL) {
+        f->falliti++;
+        f->ultimo = g_ticks;
+        if (f->falliti >= 3) {
+            uint32_t sec = f->falliti - 3 >= 9 ? SU_FRENO_MAX_S : (1u << (f->falliti - 3));
+
+            if (sec > SU_FRENO_MAX_S) sec = SU_FRENO_MAX_S;
+            /* + the fixed second below: the hold-off starts when we return */
+            f->fino_a = g_ticks + 100u + sec * 100u;
+        }
+    }
+    {
+        uint32_t fino = g_ticks + 100u;   /* 1 s, in slices like sys_sleep */
+
+        while ((int32_t)(fino - g_ticks) > 0) {
+            uint32_t ora = g_ticks, resto = fino - ora;
+
+            sched_dormi_fino(ora + (resto < 10u ? resto : 10u));
+            if (proc_da_interrompere()) break;
+        }
+    }
+    return ERR(EPERM);
 }
 
 int32_t sys_su(InterruptFrame *frame)
@@ -5490,55 +5678,72 @@ int32_t sys_su(InterruptFrame *frame)
     const char *pass = (const char *)FR_A2(frame);
     Process    *self = proc_get_current();
 
-    static char testo[SU_FILE_MAX];
-    char  sale[32], imp[80], misto[160], prova[65], su_[16], sg_[16];
-    int   n;
+    char    *testo;
+    SuFreno *freno = NULL;
+    char  sale[72], imp[80], misto[200], prova[65], su_[16], sg_[16];
+    int32_t n;
     uint32_t i = 0, j;
+    int   trovato, amm;
+    uint8_t diff;
 
     if (self == NULL) return ERR(ESRCH);
     if (!syscall_verify_str(nome, 64) || !syscall_verify_str(pass, 128))
         return ERR(EFAULT);
 
+    /* --- the brake: root is already root, everyone else waits its turn  */
+    if (self->uid != 0) {
+        freno = su_freno(self->uid);
+        if (freno != NULL && freno->falliti >= 3 && (int32_t)(freno->fino_a - g_ticks) > 0)
+            return ERR(EAGAIN);
+    }
+
     /* --- chi e' costui: uid e gid dal file pubblico --------------------- */
-    n = su_leggi("/boot/utenti", testo, sizeof(testo));
-    if (n <= 0) return ERR(EPERM);
-    if (!su_campo(testo, n, nome, 1, su_, sizeof(su_)) ||
-        !su_campo(testo, n, nome, 2, sg_, sizeof(sg_))) return ERR(EPERM);
+    su_[0] = sg_[0] = sale[0] = imp[0] = '\0';
+    testo = su_leggi("/boot/utenti", &n);
+    trovato = testo != NULL &&
+              su_campo(testo, n, nome, 1, su_, sizeof(su_)) &&
+              su_campo(testo, n, nome, 2, sg_, sizeof(sg_));
+    if (testo) kfree(testo);
 
     /* --- l'impronta, dal file che solo il kernel e root leggono --------- */
-    n = su_leggi("/boot/ombra", testo, sizeof(testo));
-    if (n <= 0) return ERR(EPERM);
-    if (!su_campo(testo, n, nome, 1, sale, sizeof(sale)) ||
-        !su_campo(testo, n, nome, 2, imp,  sizeof(imp))) return ERR(EPERM);
+    testo = su_leggi("/boot/ombra", &n);
+    if (testo != NULL) {
+        trovato = trovato &&
+                  su_campo(testo, n, nome, 1, sale, sizeof(sale)) &&
+                  su_campo(testo, n, nome, 2, imp,  sizeof(imp));
+        su_azzera(testo, (uint32_t)n);
+        kfree(testo);
+    } else trovato = 0;
 
-    /* L'impronta e' SHA-256 di "sale:password", come la scrive lib/exuser. */
+    /* L'impronta e' SHA-256 di "sale:password", come la scrive lib/exuser.
+     * Computed even for a name that is not there: same cost, same answer. */
     for (j = 0; sale[j] && i < sizeof(misto) - 2; j++) misto[i++] = sale[j];
     misto[i++] = ':';
     for (j = 0; pass[j] && i < sizeof(misto) - 1; j++) misto[i++] = pass[j];
     misto[i] = '\0';
     sha256_esa(misto, i, prova);
+    su_azzera(misto, sizeof(misto));
 
-    for (j = 0; j < 64; j++)
-        if (prova[j] != imp[j]) {
-            klog(LOG_WARN, "SYSCALL su: PID %u (uid %u) ha sbagliato la "
-                 "password di '%s'", self->pid, self->uid, nome);
-            return ERR(EPERM);
-        }
+    /* ! CONSTANT TIME, AND THE ADMINISTRATORS' FILE READ EVERY TIME: until
+     * 0.367 the loop left at the first different digit, and only a right
+     * password went on to read /boot/amministratori and log "password giusta
+     * ma non e' amministratore" - an oracle on the password of every user. */
+    for (diff = 0, j = 0; j < 64; j++) diff |= (uint8_t)(prova[j] ^ imp[j]);
+    amm = su_amministratore(nome);
+    if (!trovato || diff != 0 || imp[64] != '\0' ||
+        (su_numero(su_) != 0 && !amm)) {
+        klog(LOG_WARN, "SYSCALL su: rifiutato per '%s' (PID %u, uid %u)",
+             nome, self->pid, self->uid);
+        su_azzera(prova, sizeof(prova));
+        return su_fallito(freno);
+    }
+    su_azzera(prova, sizeof(prova));
+    if (freno != NULL) freno->falliti = 0;
 
-    /* --- puo' fare root? ------------------------------------------------ */
+    /* --- puo' fare root: si' -------------------------------------------- */
     {
-        uint32_t uid = su_numero(su_);
-        uint32_t gid = su_numero(sg_);
-
-        if (uid != 0 && !su_amministratore(nome)) {
-            klog(LOG_WARN, "SYSCALL su: '%s' ha dato la password giusta ma non "
-                 "e' amministratore (PID %u)", nome, self->pid);
-            return ERR(EPERM);
-        }
-
         self->uid = 0;
         self->gid = 0;
-        (void)uid; (void)gid;
 
         klog(LOG_INFO, "SYSCALL su: PID %u e' diventato root provando di essere "
              "'%s'", self->pid, nome);
@@ -6218,14 +6423,21 @@ int32_t sys_truncate(InterruptFrame *frame)
  * ! E root RESTA ROOT: da remoto un amministratore spegne, perche' quello si'
  * che e' amministrazione.
  * ============================================================================= */
+static uint32_t g_console_utente[VGA_N_CONSOLE];   /* see WHO SITS AT THE CONSOLES */
+
 static int puo_spegnere(void)
 {
     Process *self = proc_get_current();
 
     if (self == NULL || self->uid == 0) return 1;      /* root, o il kernel */
 
-    /* Una console vera: chi ha la macchina davanti. */
-    if (FDV(self, 0).type == FD_STDIN) return 1;
+    /* Una console vera: chi ha la macchina davanti.
+     * ! (0.367, debug/bug_PRIV001) AND IT IS HIM: fd 0 is inherited, and
+     * every process started down a chain from the console had it - a daemon
+     * that did setuid(1000), its children. Now the uid logged in at the
+     * console this process belongs to, as console_ammette asks. */
+    if (FDV(self, 0).type == FD_STDIN && self->console < VGA_N_CONSOLE &&
+        g_console_utente[self->console] == self->uid) return 1;
 
     klog(LOG_WARN, "SYSCALL reboot: rifiutata al PID %u (uid %u): "
          "non e' root e non e' su una console di questa macchina",
@@ -7187,6 +7399,17 @@ int32_t sys_modo_testo(InterruptFrame *frame)
 
     (void)frame;
 
+    /* ! (0.367, debug/bug_PRIV001) THE SAME DOOR AS fb_map: the screen is
+     * whoever sits at the machine's. Until 0.367 a user from telnet put the
+     * console back to text under a living wserver, in a loop if he liked.
+     * Not root only: it is the net typed blind at the console when the
+     * graphics died, and that person is the console's user. */
+    if (self != NULL && !console_ammette(self->uid)) {
+        klog(LOG_WARN, "SYSCALL modo_testo: PID %u (uid %u) non siede alla console: rifiutato",
+             self->pid, self->uid);
+        return ERR(EPERM);
+    }
+
     klog(LOG_WARN, "SYSCALL modo_testo: PID %u rimette lo schermo",
          self ? self->pid : 0);
 
@@ -7695,6 +7918,39 @@ int32_t sys_chown(InterruptFrame *frame)
     if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
 
     return (int32_t)vfs_chown(abs, FR_A2(frame), FR_A3(frame));
+}
+
+/* =============================================================================
+ * SYS_FCHOWN (282), SYS_FCHMOD (283) -- by descriptor (0.367)
+ *
+ * For now the ends of a pty, which login hands to the user after the
+ * password (debug/bug_PTY001): -EOPNOTSUPP for anything else, and the libc
+ * goes on doing for files what it did before.
+ * ========================================================================== */
+int32_t sys_fchown(InterruptFrame *frame)
+{
+    Process *proc = proc_get_current();
+    int      fd   = (int)FR_A1(frame);
+
+    if (proc == NULL || fd < 0 || fd >= FD_N(proc) || FDV(proc, fd).type == FD_UNUSED)
+        return ERR(EBADF);
+    if (FDV(proc, fd).type != FD_PTY_S && FDV(proc, fd).type != FD_PTY_M)
+        return ERR(EOPNOTSUPP);
+    return pty_proprietario((int)FDV(proc, fd).inode, (int32_t)FR_A2(frame),
+                            (int32_t)FR_A3(frame), -1);
+}
+
+int32_t sys_fchmod(InterruptFrame *frame)
+{
+    Process *proc = proc_get_current();
+    int      fd   = (int)FR_A1(frame);
+
+    if (proc == NULL || fd < 0 || fd >= FD_N(proc) || FDV(proc, fd).type == FD_UNUSED)
+        return ERR(EBADF);
+    if (FDV(proc, fd).type != FD_PTY_S && FDV(proc, fd).type != FD_PTY_M)
+        return ERR(EOPNOTSUPP);
+    return pty_proprietario((int)FDV(proc, fd).inode, -1, -1,
+                            (int32_t)(FR_A2(frame) & 0777u));
 }
 
 int32_t sys_chmod(InterruptFrame *frame)

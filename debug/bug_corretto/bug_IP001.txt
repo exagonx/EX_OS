@@ -1,0 +1,254 @@
+BUG IP001 - TCP di ip.drv: ISN prevedibile, RST accettato con qualunque
+             numero di sequenza, ACK accettato fuori finestra: chiusura,
+             desincronizzazione e falsificazione di connessioni alla cieca
+===============================================================================
+Gravita':   ALTA (da remoto, anche fuori percorso: basta conoscere o
+            indovinare la quaterna indirizzo/porta)
+Programma:  drivers/ip (ip.drv, il servente TCP/IP in ring 3)
+Sorgenti:   drivers/ip/ip.c   tratta_tcp (apertura passiva, ramo TCP_RST,
+                              stato S_SYN_RICEV, dati), tcp_apri (apertura
+                              attiva), tcp_conferma, tcp_rst_ignoto
+Rilevato su: albero del 24/11/2026. Le righe si cercano per funzione.
+
+-------------------------------------------------------------------------------
+1. IL DIFETTO
+-------------------------------------------------------------------------------
+a) ISN DEL SERVER = 1000 + (uptime_ms() & 0xFFFF)  (tratta_tcp, nuova
+   connessione dal SYN). Sono 65536 valori, e chi ha fatto UNA
+   connessione qualunque alla macchina conosce la fase di uptime_ms: il
+   SYN+ACK successivo e' prevedibile a pochi ms. Nessun segreto, nessuna
+   dipendenza dalla quaterna.
+
+   ISN DEL CLIENT = (uptime_ms() << 8) ^ (porta_loc << 16) ^ 0x45584F53
+   (tcp_apri). Il commento dice gia' che "non e' sicurezza". La porta
+   effimera (g_tcp_porta, da 49152 in avanti, in ordine) e' anch'essa
+   prevedibile.
+
+b) RST SENZA CONTROLLO. In tratta_tcp, trovata la connessione:
+
+        if (flag & TCP_RST) {
+            tcp_chiudi_dura(c, c->stato == S_SYN_INVIA ? -ECONNREFUSED
+                                                      : -ECONNRESET);
+            return;
+        }
+
+   Nessun confronto fra seq e rcv_nxt/finestra. RFC 793 vuole il seq
+   nella finestra di ricezione; RFC 5961 3.2 lo vuole ESATTAMENTE uguale a
+   rcv_nxt (altrimenti challenge ACK). Qui basta la quaterna.
+   In S_SYN_INVIA RFC 793 vuole anche che l'ACK del RST riconosca il
+   nostro SYN (ack == snd_nxt): qui no.
+
+c) ACK FUORI FINESTRA. tcp_conferma accetta qualunque ack "dopo"
+   snd_una (seq_prima(snd_una, ack): meta' dello spazio a 32 bit) e, se
+   supera snd_nxt, fa avanzare snd_nxt:
+
+        quanti = ack - c->snd_una;  if (quanti > c->tx_len) quanti = c->tx_len;
+        c->tx_off += quanti; c->tx_len -= quanti;      /* dati MAI MANDATI
+                                                           dati per ricevuti */
+        c->snd_una = ack;
+        if (seq_prima(c->snd_nxt, c->snd_una)) c->snd_nxt = c->snd_una;
+
+   RFC 793 3.9: "If the ACK acks something not yet sent (SEG.ACK >
+   SND.NXT) then send an ACK, drop the segment". RFC 5961 5.2 restringe
+   anche sotto: SND.UNA - MAX.SND.WND <= SEG.ACK <= SND.NXT.
+   (Verificare anche il ramo S_SYN_RICEV: li' ack == snd_nxt e' gia'
+   richiesto, bene.)
+
+d) Il controllo del seq per i segmenti con solo ACK: va verificato che
+   tcp_conferma sia chiamata solo con seq accettabile. Se e' chiamata
+   comunque (come appare), un segmento con seq qualunque e ack casuale ha
+   il 50% di probabilita' di essere preso per buono.
+
+-------------------------------------------------------------------------------
+2. COSA COMPORTA
+-------------------------------------------------------------------------------
+  - CHIUSURA ALLA CIECA (b): un attaccante fuori percorso che sa
+    indirizzo e porta del client (porta server nota: 22/23/80/3306/2222)
+    prova le 16384 porte effimere tipiche di Linux o le poche di EX-OS
+    (sequenziali) con un RST ciascuna: ogni sessione telnet/ssh/MariaDB/
+    HTTP cade. Un RST per porta, nessun numero da indovinare.
+  - FALSIFICAZIONE DI CONNESSIONI (a): con ISN prevedibile si apre una
+    connessione TCP fingendo un altro indirizzo IP (attacco di Mitnick):
+    tutto cio' che si fida dell'indirizzo sorgente e' aggirato. Esempi su
+    EX-OS: le concessioni di MariaDB per host ('utente'@'10.0.2.%'), le
+    regole Allow/Deny di Apache, ogni servizio interno che filtra per IP.
+    La risposta va all'IP falsificato, ma i comandi arrivano.
+  - DESINCRONIZZAZIONE (c, d): un ACK falso con ack "avanti" scarta dati
+    in coda di invio mai trasmessi (perdita silenziosa: il programma crede
+    di averli mandati) e sposta snd_nxt: la connessione si blocca o manda
+    byte con numeri di sequenza che il peer rifiuta.
+  - INIEZIONE DI DATI: il controllo seq == rcv_nxt e' esatto, quindi
+    serve il numero giusto; con (a) l'ISN del peer remoto non e' nostro,
+    ma per le connessioni in USCITA da EX-OS verso server che usano ISN
+    buoni resta difficile; il punto debole sono le connessioni IN
+    ENTRATA, dove l'ISN e' nostro e prevedibile e il rcv_nxt e' quello del
+    client (non nostro). Fattibile soprattutto sul lato ack (c).
+
+-------------------------------------------------------------------------------
+3. RIPRODUZIONE
+-------------------------------------------------------------------------------
+Dall'host, con QEMU in rete TAP (o -netdev socket) e scapy:
+
+    # ISN prevedibile: tre SYN a 1 s di distanza
+    from scapy.all import *
+    for i in range(3):
+        r = sr1(IP(dst="10.0.2.15")/TCP(sport=40000+i, dport=23, flags="S"))
+        print(r[TCP].seq - 1000)        # = uptime_ms & 0xFFFF, cresce di ~1000
+        time.sleep(1)
+
+    # RST alla cieca: un telnet aperto da 10.0.2.2:XXXXX
+    for p in range(32768, 61000):
+        send(IP(src="10.0.2.2", dst="10.0.2.15")/
+             TCP(sport=p, dport=23, flags="R", seq=12345), verbose=0)
+    # la sessione telnet cade ("connection reset")
+
+-------------------------------------------------------------------------------
+4. CORREZIONE
+-------------------------------------------------------------------------------
+4.1 ISN secondo RFC 6528
+
+   ISN = M + F(localip, localport, remoteip, remoteport, segreto)
+   M = orologio a 4 microsecondi (qui: uptime_ms() * 250, basta che sia
+   monotono e giri lentamente); F = un hash con chiave segreta. ip.drv ha
+   gia' getentropy nella libc (lo usa sshd) e SHA-256 o SipHash si
+   trovano in lib/excrypt.
+
+    static unsigned char g_isn_segreto[16];        /* main(): getentropy */
+
+    static unsigned int isn_nuovo(const unsigned char ip_loc[4], unsigned int pl,
+                                  const unsigned char ip_rem[4], unsigned int pr)
+    {
+        unsigned char m[16 + 4 + 2 + 4 + 2], h[32];
+        unsigned int k = 0;
+        memcpy(m + k, g_isn_segreto, 16); k += 16;
+        memcpy(m + k, ip_loc, 4); k += 4; m[k++] = pl >> 8; m[k++] = pl;
+        memcpy(m + k, ip_rem, 4); k += 4; m[k++] = pr >> 8; m[k++] = pr;
+        sha256(m, k, h);                 /* o siphash24(g_isn_segreto, ...) */
+        return (uptime_ms() * 250u) + prendi32(h);
+    }
+
+   In tratta_tcp (SYN in arrivo):
+        nuova->snd_una = isn_nuovo(g_cfg.ip, porta_loc, ip + 12, porta_rem);
+   In tcp_apri:
+        c->snd_una = isn_nuovo(sorgente_per(c->ip), c->porta_loc, c->ip, c->porta_rem);
+
+   Se getentropy fallisce all'avvio: riprovare come fa sshd (casuale()),
+   e se proprio non c'e' entropia dirlo nel log e usare l'hash del MAC +
+   orologio, mai la costante.
+
+   Porta effimera: casuale nella fascia invece che sequenziale
+   (RFC 6056, algoritmo 3 o 4: offset = F(quaterna, segreto)).
+
+4.2 RST (RFC 5961 3.2)
+
+    if (flag & TCP_RST) {
+        if (c->stato == S_SYN_INVIA) {
+            /* accettabile solo se riconosce il nostro SYN */
+            if ((flag & TCP_ACK) && ack == c->snd_nxt)
+                tcp_chiudi_dura(c, -ECONNREFUSED);
+            return;
+        }
+        if (seq == c->rcv_nxt) {
+            tcp_chiudi_dura(c, -ECONNRESET);
+        } else if (seq_nella_finestra(c, seq)) {
+            tcp_challenge_ack(c);       /* ACK con rcv_nxt e snd_nxt veri:
+                                           un peer legittimo rimanda il RST
+                                           col seq giusto */
+        }
+        return;                          /* fuori finestra: si ignora */
+    }
+
+    static int seq_nella_finestra(const Conn *c, unsigned int s)
+    {
+        unsigned int fin = rx_cap(c) - c->rx_len;    /* finestra annunciata */
+        return (unsigned int)(s - c->rcv_nxt) < (fin ? fin : 1u);
+    }
+
+    static void tcp_challenge_ack(Conn *c)
+    {
+        /* tetto: al piu' 10 al secondo per tutto il servente (RFC 5961 7) */
+        static unsigned int finestra_ms, quanti;
+        unsigned int ora = uptime_ms();
+        if (ora - finestra_ms >= 1000u) { finestra_ms = ora; quanti = 0; }
+        if (++quanti > 10u) return;
+        tcp_manda(c, TCP_ACK, NULL, 0);
+    }
+
+   In S_SYN_RICEV: un RST con seq == rcv_nxt libera lo slot (torna in
+   ascolto), altrimenti si ignora.
+
+4.3 ACK (RFC 793 3.9 + RFC 5961 5.2)
+
+   All'inizio di tcp_conferma, o meglio in tratta_tcp prima di chiamarla:
+
+    /* il segmento deve stare nella finestra di ricezione (RFC 793 3.9,
+       "first check sequence number"): altrimenti ACK e scarto */
+    if (!(n == 0 ? (seq == c->rcv_nxt || seq_nella_finestra(c, seq))
+                 : seq_nella_finestra(c, seq) ||
+                   seq_nella_finestra(c, seq + n - 1u))) {
+        if (!(flag & TCP_RST)) tcp_challenge_ack(c);
+        return;
+    }
+    /* ack accettabile: SND.UNA - MAX.SND.WND <= ack <= SND.NXT */
+    if (seq_prima(c->snd_max, ack)) {          /* riconosce byte mai mandati */
+        tcp_challenge_ack(c);
+        return;
+    }
+    if (seq_prima(ack, c->snd_una - c->fin_max_vista)) {  /* troppo vecchio */
+        tcp_challenge_ack(c);
+        return;
+    }
+
+   (snd_max esiste gia' nella Conn; fin_max_vista = la finestra piu'
+   grande annunciata dal peer, da tenere quando si aggiorna c->finestra.)
+
+   E in tcp_conferma la riga
+        if (seq_prima(c->snd_nxt, c->snd_una)) c->snd_nxt = c->snd_una;
+   diventa un'asserzione impossibile (ack <= snd_max e' gia' garantito).
+
+4.4 SYN in una connessione aperta (RFC 5961 4)
+
+   Un SYN con quaterna di una connessione S_APERTA non deve aprire ne'
+   chiudere niente: challenge ACK. Verificare il ramo attuale (oggi il
+   SYN senza connessione e' trattato, quello con connessione esistente
+   non e' visibile nel codice letto: rileggere tratta_tcp prima di
+   cambiarlo).
+
+-------------------------------------------------------------------------------
+5. PROVA
+-------------------------------------------------------------------------------
+  - scapy, ISN: 1000 SYN, gli ISN non devono avere correlazione con
+    l'uptime (scarto fra consecutivi distribuito su 32 bit, non ~1000).
+  - scapy, RST: il ciclo del punto 3 non chiude la sessione; un RST col
+    seq esatto (letto con tcpdump) la chiude; un RST in finestra ma non
+    esatto produce un ACK (challenge) e la sessione resta.
+  - scapy, ACK falso con ack = snd_nxt + 100000: nessun dato perso
+    (telnet: la riga successiva arriva intera), challenge ACK visibile.
+  - Le prove di carico esistenti (Apache con molte connessioni, MariaDB,
+    Firefox, netupdate, tools/stress) senza regressioni; nel contatore
+    g_st aggiungere challenge_ack e rst_ignorati e guardarli a fine prova:
+    devono restare a zero con traffico legittimo.
+-------------------------------------------------------------------------------
+6. STATO (25/11/2026, notte)
+-------------------------------------------------------------------------------
+FATTO (ip.drv 0.029, ipcfg 0.007):
+  - ISN RFC 6528: orologio a 4 us + SipHash-2-4 della quaterna con un
+    segreto da getentropy (se all'avvio manca, lo richiede a ogni
+    connessione e lo dice una volta nel log); porte effimere TCP e UDP
+    RFC 6056 alg. 3.
+  - RST: in SYN_INVIA solo con ack == snd_nxt; poi solo seq == rcv_nxt;
+    in finestra ma non esatto: challenge ACK (al piu' 10/s); fuori: niente.
+  - SYN su una connessione aperta: challenge ACK.
+  - Segmenti fuori dalla finestra di ricezione: un ACK e basta (la
+    finestra che portano non conta); ack oltre il byte piu' alto mai
+    mandato o piu' vecchio di 64 KB: challenge ACK e scarto.
+  - Contatori nuovi in ipcfg: TCP fuori finestra, RST ignorati,
+    challenge ACK (a zero col traffico onesto).
+  - Prova: tools/prova_tcp_cieca.sh (QEMU con -netdev socket e un falso
+    host in python che manda trame grezze).
+DA FARE: le prove di carico (tools/stress, prova-invio) con la 0.029
+  per vedere che i contatori restano a zero e niente rallenta.
+
+ESITO (25/11, 06:36, terza tornata): prova_tcp_cieca 0 no a 32 e a 64 bit
+(ISN, RST fuori finestra e non esatto, ACK falso, SYN ripetuto, dati fuori
+finestra, RST esatto). Spostato in bug_corretto.

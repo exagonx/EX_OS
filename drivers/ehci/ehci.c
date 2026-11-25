@@ -79,7 +79,7 @@
 
 /* +0.001 a ogni modifica: `ehci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ehci.drv", "0.004");
+EX_VERSIONE("ehci.drv", "0.005");
 
 /* --- Registri di capacita' (all'inizio della finestra) --------------------- */
 #define C_CAPLENGTH   0x00      /* byte 0 = lunghezza, byte 2-3 = versione */

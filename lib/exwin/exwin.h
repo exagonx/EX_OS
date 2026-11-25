@@ -865,6 +865,12 @@ int    ex_watch_fd(int fd, ExWatchProc fn, void *dato);
  * affected. See exwin.c. */
 void   ex_tab_content(ExWindow finestra, int si);
 void ex_update(ExWindow f);     /* «ho finito»: lo dice al server */
+/* The same for one rectangle of the window (exwin 0.025): only it reaches the
+ * screen. For a part drawn many times a second. */
+void ex_update_rect(ExWindow f, int x, int y, int w, int h);
+/* ! ex_default_proc(f, EXM_PAINT...) DRAWS ONLY THE BACKGROUND AND THE
+ * CONTROLS: on a window whose proc draws something by itself, call the proc
+ * (debug/bug_EXIDE001). */
 
 /* -----------------------------------------------------------------------------
  * Posare un rettangolo di pixel gia' pronti, in ARGB a 32 bit.

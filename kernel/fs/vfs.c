@@ -479,8 +479,10 @@ static void fs_misura(uint32_t chi_era, const char *cosa)
         }
     }
     if (g_ticks - g_fss_tick < 100u || proc_get_current() == NULL) return;
+    /* LOG_DEBUG (0.366): a measure, not a fault - it filled the console of
+     * the .253 with lines. loglevel = 4 in /boot/kernel.cfg brings it back. */
     if (g_fss_tot >= FS_SEC_DIRE_MS)
-        klog(LOG_WARN, "VFS 1s: %u >%ums, %u ms; max %u PID %u (%s): disco %u ms, %u cmd, %u KB",
+        klog(LOG_DEBUG, "VFS 1s: %u >%ums, %u ms; max %u PID %u (%s): disco %u ms, %u cmd, %u KB",
              g_fss_n, FS_SEC_MS, g_fss_tot, g_fss_max, g_fss_pid, g_fss_chi,
              g_fss_dev, g_fss_cmd, g_fss_kb);
     g_fss_n = g_fss_tot = g_fss_max = 0;

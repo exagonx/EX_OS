@@ -112,6 +112,12 @@
 
 /* Flag di shm_apri */
 #define SHM_CREA     0x0001     /* creala se non c'e' (senza: solo attacco) */
+/* (0.367, debug/bug_SHM001) with SHM_CREA: -EEXIST if it is there already, so
+ * the creator knows it did not attach to somebody else's zone */
+#define SHM_ESCL     0x0002
+/* (0.367) the permissions of a new zone, bits 16-24 of the flag; 0 = 0600.
+ * Opening needs read AND write (a mapping is always both); root passes. */
+#define SHM_MODO(m)  (((uint32_t)(m) & 0777u) << 16)
 
 /* Zona vista dal kernel. Quella vista dai processi sta in libc.h. */
 typedef struct {
@@ -122,6 +128,10 @@ typedef struct {
                              * quindi pretendere contiguita' costerebbe
                              * frammentazione in cambio di niente */
     uint32_t  proc;         /* quanti processi la tengono aperta. 0 = slot libero */
+    /* (0.367, debug/bug_SHM001) who made it and who may open it. Until 0.367
+     * anyone attached to any name: the pixels of other users' windows, their
+     * clipboard, a squatted "win<id>.0" that crashed wserver. */
+    uint32_t  uid, gid, modo;
 } ShmZonaK;
 
 /* Apre o crea. Rende 0 e riempie *out_virt / *out_byte, oppure un -errno.

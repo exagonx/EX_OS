@@ -228,26 +228,43 @@ static void impronta_di(const char *sale, const char *pass, char out[65])
     sha256_esa(misto, (size_t)i, out);
 }
 
-/* Un sale nuovo.
+/* Un sale nuovo: 32 esadecimali, 16 byte del kernel (getrandom).
  *
- * ! NON E' CASUALE PER DAVVERO, e va detto. EX-OS non espone ancora una
- * sorgente di entropia allo spazio utente (il kernel ne ha una, vedi
- * arch/x86/entropia.c). Qui si mescolano l'orologio, i millisecondi
- * dall'avvio e il PID: basta a rendere diversi due sali generati sulla
- * stessa macchina, che e' cio' che serve contro le tabelle precalcolate,
- * ma un sale prevedibile non e' un sale forte. Il giorno che una syscall
- * di entropia ci sara', questa funzione e' l'unico posto da cambiare. */
-static void sale_nuovo(char out[17])
+ * ! FINO AL 25/11/2026 ERA SHA-256 DI ORA, MILLISECONDI E PID (debug/bug_SU001):
+ * poche decine di bit veri, abbastanza per tabelle precalcolate sulle
+ * installazioni fatte con lo stesso supporto.
+ * ! SE IL KERNEL NON HA ANCORA ENTROPIA (una CPU senza RDRAND appena accesa)
+ * si aspetta qualche secondo, poi si torna al sale di prima e lo si dice: un
+ * sale non e' una chiave, deve solo essere diverso, e rifiutare vorrebbe dire
+ * un'installazione che non crea l'utente. */
+static void sale_nuovo(char out[33])
 {
-    char semi[64];
-    char imp[65];
-    int  i;
+    static const char esa[] = "0123456789abcdef";
+    unsigned char b[16];
+    int i, giri;
 
-    snprintf(semi, sizeof(semi), "%ld:%u:%u",
-             (long)time(NULL), (unsigned)uptime_ms(), (unsigned)getpid());
-    sha256_esa(semi, strlen(semi), imp);
-    for (i = 0; i < 16; i++) out[i] = imp[i];
-    out[16] = '\0';
+    for (giri = 0; giri < 20; giri++) {
+        if (getrandom(b, sizeof(b), 0) == (ssize_t)sizeof(b)) {
+            for (i = 0; i < 16; i++) {
+                out[2 * i]     = esa[b[i] >> 4];
+                out[2 * i + 1] = esa[b[i] & 15];
+            }
+            out[32] = '\0';
+            return;
+        }
+        usleep(250000);
+    }
+    {
+        char semi[64], imp[65];
+
+        fprintf(stderr, "exuser: il kernel non ha ancora entropia: sale debole "
+                        "(premi qualche tasto e rifai la password)\n");
+        snprintf(semi, sizeof(semi), "%ld:%u:%u",
+                 (long)time(NULL), (unsigned)uptime_ms(), (unsigned)getpid());
+        sha256_esa(semi, strlen(semi), imp);
+        for (i = 0; i < 32; i++) out[i] = imp[i];
+        out[32] = '\0';
+    }
 }
 
 /* Cerca `nome` e ne rende sale e impronta. 0 se trovato. */
@@ -311,7 +328,7 @@ static int trova_utente(const char *radice, const char *nome, char *sale,
      * cerca_riga rende -1, e chi ha chiamato non riesce ad autenticare. E'
      * giusto — solo login, che gira da root, deve poterlo fare. */
     if (sale && imp)
-        return cerca_riga(perc(radice, "ombra",  pb, sizeof(pb)), nome, 2, sale, 17, imp, 65);
+        return cerca_riga(perc(radice, "ombra",  pb, sizeof(pb)), nome, 2, sale, 33, imp, 65);
 
     return 0;
 }
@@ -386,7 +403,7 @@ static int aggiungi_utente(const char *radice, const char *nome,
                            const char *pass, unsigned int uid,
                            unsigned int gid)
 {
-    char sale[17], imp[65], riga[RIGA_MAX], pa[96], pb[96];
+    char sale[33], imp[65], riga[RIGA_MAX], pa[96], pb[96];
 
     /* =========================================================================
      * ! UN NOME GIA' PRESO SI RIFIUTA, E IL CONTROLLO STA QUI DENTRO
@@ -525,11 +542,18 @@ int exuser_amministratore_aggiungi(const char *radice, const char *nome)
 int exuser_verifica(const char *radice, const char *nome, const char *pass,
                     unsigned int *uid, unsigned int *gid)
 {
-    char sale[17], imp[65], prova[65];
+    char sale[33], imp[65], prova[65];
 
     if (!exuser_nome_valido(nome)) return 0;
     if (trova_utente(radice, nome, sale, imp, uid, gid) != 0) return 0;
 
     impronta_di(sale, pass, prova);
-    return strcmp(prova, imp) == 0;
+    {
+        /* constant time (debug/bug_SU001): no leaving at the first digit */
+        unsigned char d = 0;
+        int i;
+
+        for (i = 0; i < 64; i++) d |= (unsigned char)(prova[i] ^ imp[i]);
+        return d == 0 && imp[64] == '\0' && prova[64] == '\0';
+    }
 }

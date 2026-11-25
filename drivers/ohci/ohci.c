@@ -57,7 +57,7 @@
 
 /* +0.001 a ogni modifica: `ohci.drv -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("ohci.drv", "0.011");
+EX_VERSIONE("ohci.drv", "0.012");
 
 /* --- I registri, a spiazzamenti fissi (qui non si legge nessun CAPLENGTH) -- */
 #define R_REVISION      0x00

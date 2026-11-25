@@ -83,14 +83,17 @@ void bis_azzera(Dispensa *d);
  * della richiesta, non «/». Metterci «/» sarebbe stato piu' semplice e piu'
  * permissivo: manderebbe a tutto il sito un biscotto che vale per una parte. */
 int bis_arrivato(Dispensa *d, const char *host, const char *percorso,
-                 const char *riga, unsigned int ora_s);
+                 const char *riga, unsigned int ora_s, int cifrata);
 
 /* Quel che uno script ha scritto in `document.cookie`. E' la stessa
  * grammatica, meno due cose: `HttpOnly` si ignora — un biscotto non visibile
  * agli script non puo' nascere da uno script — e il dominio non puo' allargarsi
  * oltre l'host della pagina. */
 int bis_da_script(Dispensa *d, const char *host, const char *percorso,
-                  const char *riga, unsigned int ora_s);
+                  const char *riga, unsigned int ora_s, int cifrata);
+/* `cifrata`: the answer (for a script, its page) came over https. From it
+ * (debug/bug_BROWSER001) a page in clear does not make or overwrite Secure
+ * cookies, and __Secure- / __Host- names need it. */
 
 /* Riempie `fuori` con «n=v; n2=v2», scegliendo quelli che riguardano
  * host + percorso. `per_script` a 1 salta gli `HttpOnly`. */

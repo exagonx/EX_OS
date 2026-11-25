@@ -1,0 +1,160 @@
+BUG DNS001 - Il risolutore della libc accetta risposte falsificate:
+              identificativo prevedibile, porta sorgente in sequenza,
+              mittente e domanda non controllati
+===============================================================================
+Gravita':   ALTA (dirottamento di ogni nome risolto: netupdate, EXBrowser,
+            ftp, scarica, Firefox se passa dalla libc)
+Programma:  lib/dns.c (libc), servente drivers/ip (porte UDP effimere)
+Sorgenti:   lib/dns.c          la funzione di risoluzione (quella con
+                               "Un identificativo che cambi fra una
+                               richiesta e l'altra"), salta_nome
+            drivers/ip/ip.c    IP_MSG_UDP_APRI con porta 0
+                               (g_porta_effimera++)
+Rilevato su: albero del 24/11/2026.
+
+-------------------------------------------------------------------------------
+1. IL DIFETTO
+-------------------------------------------------------------------------------
+a) id = (uptime_ms() ^ (getpid() << 7)) & 0xFFFF
+   uptime_ms e' noto a meno di qualche secondo (vedi l'ISN di bug_IP001,
+   che lo espone direttamente), il pid e' piccolo e quasi sempre noto
+   (netupdate lanciato al boot o da telnet): poche centinaia di valori.
+
+b) La porta sorgente: ip.drv assegna g_porta_effimera++ da 49152, in
+   sequenza. Chi vede una richiesta (o ne provoca una, p.es. un link in una
+   pagina) conosce la prossima.
+
+c) Nessun controllo del mittente: il datagramma IP_MSG_UDP_DATI porta
+   d.ip e d.porta, ma il codice confronta solo l'identificativo e il bit
+   QR. Qualunque host che spedisce alla porta giusta con l'id giusto viene
+   creduto, anche se non e' st.cfg.dns e non parla dalla porta 53.
+
+d) La sezione domanda della risposta viene saltata (salta_nome) senza
+   confrontarla con il nome chiesto, e il primo record A/IN di classe IN
+   viene preso senza guardare il nome del proprietario del record: una
+   risposta per "altro.nome" con un A dentro vale per il nome chiesto.
+
+e) Un solo datagramma valido chiude la partita: nessuna difesa tipo
+   "0x20 bit" ne' ripetizione della domanda.
+
+Con (a)+(b) lo spazio da indovinare e' di ~10-16 bit invece dei ~32 bit
+(16 di id x 16 di porta) che si chiedono a un risolutore dopo Kaminsky
+(RFC 5452). (c) e (d) permettono anche l'attacco piu' semplice: rispondere
+prima del server vero dalla stessa rete locale.
+
+-------------------------------------------------------------------------------
+2. COSA COMPORTA
+-------------------------------------------------------------------------------
+Il nome del server di netupdate viene risolto con questa funzione: un
+attaccante sulla rete o fuori percorso con un po' di traffico manda la
+macchina al suo server di aggiornamento, e con bug_NETUPD001 esegue codice
+come root. Lo stesso per ogni connessione per nome in chiaro (ftp,
+scarica, EXBrowser in http).
+
+-------------------------------------------------------------------------------
+3. RIPRODUZIONE
+-------------------------------------------------------------------------------
+    # host, scapy: inondare la porta prevista con tutti gli id 0..65535
+    for i in range(65536):
+        send(IP(src="1.2.3.4", dst="10.0.2.15")/UDP(sport=9999, dport=P)/
+             DNS(id=i, qr=1, qd=DNSQR(qname="x."),
+                 an=DNSRR(rrname="x.", type="A", rdata="6.6.6.6")),
+             verbose=0)
+    # in EX-OS, nello stesso momento: host esempio.org
+    # -> 6.6.6.6 (sorgente, porta e nome sbagliati, eppure accettata)
+
+-------------------------------------------------------------------------------
+4. CORREZIONE
+-------------------------------------------------------------------------------
+4.1 Identificativo casuale
+
+        unsigned char rnd[2];
+        if (getentropy(rnd, 2) != 0) return -EIO;     /* niente ripiego */
+        id = (unsigned int)rnd[0] << 8 | rnd[1];
+
+4.2 Porta sorgente casuale (ip.drv, IP_MSG_UDP_APRI con porta 0)
+
+        unsigned int tentativi, porta;
+        for (tentativi = 0; tentativi < 64; tentativi++) {
+            unsigned char r[2];
+            arc_o_getentropy(r, 2);
+            porta = 49152u + (((unsigned int)r[0] << 8 | r[1]) % 16384u);
+            if (udp_cerca(porta) < 0) break;          /* libera */
+        }
+        /* fallback: scorrimento lineare dalla posizione casuale */
+
+   (Stesso generatore per le porte TCP effimere, bug_IP001 4.1.)
+
+4.3 Mittente
+
+        if (memcmp(d.ip, server_interrogato, 4) != 0 || d.porta != PORTA_DNS)
+            goto riprenota;
+
+   server_interrogato = l'indirizzo a cui e' stata mandata QUESTA
+   richiesta (inv.ip), non "uno dei server configurati".
+
+4.4 Domanda e risposta
+
+        /* la sezione domanda deve essere una sola e uguale alla nostra */
+        if (((unsigned)r[4] << 8 | r[5]) != 1) goto riprenota;
+        if (!nome_uguale_dns(r, d.len, 12, nome_chiesto)) goto riprenota;
+        p = salta_nome(r, d.len, 12);
+        if (p == 0 || p + 4 > d.len) goto riprenota;
+        if (prendi16(r + p) != TIPO_A || prendi16(r + p + 2) != CLASSE_IN)
+            goto riprenota;
+        p += 4;
+        ...
+        /* nelle risposte: accettare un A solo se il proprietario e' il nome
+           chiesto o l'ultimo CNAME seguito a partire da lui */
+        corrente = nome_chiesto;
+        for (k = 0; k < ancount; k++) {
+            q = p; p = salta_nome(r, d.len, p); ...
+            if (tipo == TIPO_CNAME && nome_uguale_dns(r, d.len, q, corrente))
+                corrente = <decomprimi il nome in rdata>;
+            else if (tipo == TIPO_A && rdlen == 4 &&
+                     nome_uguale_dns(r, d.len, q, corrente)) { ...preso... }
+        }
+
+   nome_uguale_dns: confronto senza distinzione di maiuscole, etichetta
+   per etichetta, seguendo i puntatori di compressione con un limite di
+   salti (gia' in salta_nome: riusarne la logica).
+
+4.5 Facoltativo: 0x20 (maiuscole casuali nella domanda, controllate
+   identiche nella risposta) aggiunge fino a un bit per lettera.
+
+-------------------------------------------------------------------------------
+5. PROVA
+-------------------------------------------------------------------------------
+  - Lo script del punto 3: nessuna risposta accettata (mittente, nome).
+  - 1000 risoluzioni di fila: id e porte senza correlazione visibile
+    (istogramma piatto; nessuna porta consecutiva).
+  - Risoluzioni vere con CNAME (www.wikipedia.org), con server che
+    comprimono i nomi, e con il DNS di QEMU (10.0.2.3): invariate.
+-------------------------------------------------------------------------------
+6. STATO (25/11/2026, notte)
+-------------------------------------------------------------------------------
+FATTO: identificativo da getentropy (ripiego al vecchio con avviso se
+  l'entropia non arriva in 100 ms), porta UDP casuale (ip.drv 0.029),
+  risposta accettata solo dal server interrogato e dalla porta 53, con
+  una sola domanda uguale alla nostra (maiuscole a parte) di tipo A/IN;
+  un A conta solo se e' del nome chiesto o del CNAME che ne parte
+  (nomi espansi coi puntatori, al piu' 8 salti e solo all'indietro).
+  ipcfg -d per il DNS a mano. Prova nella fase DNS di
+  tools/prova_tcp_cieca.py (risposte false da un altro indirizzo, per
+  un'altra domanda, A di un altro nome prima di quello giusto, CNAME).
+NON FATTO: 4.5 (0x20), facoltativo.
+
+STATO (aggiunta 25/11 notte, prova_tcp_cieca)
+- Da decidere: ip.drv non tiene una coda per una porta UDP che nessuno sta
+  leggendo (scelta voluta, "Nessuno sta aspettando" in ip.c). Il risolutore
+  riprenota solo dopo aver guardato il datagramma arrivato: se un falso
+  arriva un attimo prima di quello vero, il vero si perde e la domanda
+  scade (ritenta 3 volte, poi ETIMEDOUT). Nessun indirizzo falso viene
+  creduto, ma chi manda falsi a raffica puo' impedire di risolvere.
+  Proposta: coda piccola per porta (es. 4 datagrammi, cresce con la RAM),
+  solo quando c'e' un lettore registrato da poco. Pro: niente perdite.
+  Contro: tocca ip.drv in un punto delicato, memoria in piu' per porta.
+  La prova ora manda le tre risposte a 0,3 s l'una dall'altra.
+
+ESITO (25/11, 06:36): prova_tcp_cieca 0 no a 32 e 64 bit (nessun
+indirizzo falso creduto). Resta qui per la coda UDP da decidere.

@@ -27,7 +27,8 @@ BANCO  = "/tmp/certprova"
 MOTIVO = {0: "OK", -1: "MALFORMATO", -2: "FIRMA SBAGLIATA", -3: "NOME DIVERSO",
           -4: "NON E' UNA CA", -5: "SCADUTO", -6: "NON ANCORA VALIDO",
           -7: "SENZA RADICE", -8: "ALGORITMO RIFIUTATO", -9: "TROPPO LUNGA",
-          -10: "CHIAVE RIFIUTATA", -11: "ANNULLATA DA CHI CHIAMA"}
+          -10: "CHIAVE RIFIUTATA", -11: "ANNULLATA DA CHI CHIAMA",
+          -12: "CRITICA IGNOTA", -13: "USO SBAGLIATO", -14: "NOME VINCOLATO"}
 
 def compila():
     # ! excurva STA QUI DENTRO DA QUANDO excert SA VERIFICARE ECDSA, e per
@@ -112,6 +113,50 @@ def pki(d):
         "-sha256", "-extfile", conf("radice", True), "-extensions", "v3",
         "-out", "%s/incrociata.pem" % d)
 
+    # =========================================================================
+    # ! WHAT A CA MAY DO (debug/bug_TLS001): until November 2026 a CA was
+    # cA=TRUE and nothing else. Certificates with their own v3 section:
+    # limits by name and by depth, uses that are not a TLS server's.
+    # =========================================================================
+    def su_misura(nome, chi, v3):
+        chiave(nome)
+        c = "%s/%s-v3.cnf" % (d, nome)
+        open(c, "w").write("[req]\ndistinguished_name=dn\nprompt=no\n"
+                           "[dn]\nCN=EX-OS prova %s\nO=EX-OS\n[v3]\n%s" % (nome, v3))
+        oss("req", "-new", "-key", "%s/%s.key" % (d, nome), "-config", c,
+            "-out", "%s/%s.csr" % (d, nome))
+        oss("x509", "-req", "-in", "%s/%s.csr" % (d, nome),
+            "-CA", "%s/%s.pem" % (d, chi), "-CAkey", "%s/%s.key" % (d, chi),
+            "-CAcreateserial", "-days", "365", "-sha256",
+            "-extfile", c, "-extensions", "v3", "-out", "%s/%s.pem" % (d, nome))
+        oss("x509", "-in", "%s/%s.pem" % (d, nome), "-outform", "DER",
+            "-out", "%s/%s.der" % (d, nome))
+
+    CA = "basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n"
+    FOGLIA = "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\n"
+    su_misura("vinc", "radice", CA.replace("CA:TRUE", "CA:TRUE,pathlen:0") +
+              "nameConstraints=critical,permitted;DNS:prova.lan\n")
+    su_misura("dentro", "vinc", FOGLIA + "subjectAltName=DNS:www.prova.lan,DNS:*.prova.lan\n")
+    su_misura("fuori", "vinc", FOGLIA + "subjectAltName=DNS:www.prova.lan,DNS:www.banca.com\n")
+    su_misura("simile", "vinc", FOGLIA + "subjectAltName=DNS:xprova.lan\n")
+    su_misura("sottoca", "vinc", CA)
+    su_misura("nipote", "sottoca", FOGLIA + "subjectAltName=DNS:www.prova.lan\n")
+    su_misura("escl", "radice", CA + "nameConstraints=critical,excluded;DNS:banca.com\n")
+    su_misura("banca", "escl", FOGLIA + "subjectAltName=DNS:www.banca.com\n")
+    su_misura("jolly", "escl", FOGLIA + "subjectAltName=DNS:*.com\n")
+    su_misura("libera", "escl", FOGLIA + "subjectAltName=DNS:www.posta.it\n")
+    su_misura("codice", "media", FOGLIA + "extendedKeyUsage=codeSigning\n")
+    su_misura("server", "media", FOGLIA + "extendedKeyUsage=serverAuth,clientAuth\n")
+    su_misura("inventata", "media", FOGLIA + "1.2.3.4=critical,ASN1:NULL\n")
+    su_misura("ignota", "media", FOGLIA + "1.2.3.5=ASN1:NULL\n")
+    su_misura("nokcs", "radice", "basicConstraints=critical,CA:TRUE\n"
+              "keyUsage=critical,digitalSignature\n")
+    su_misura("dinokcs", "nokcs", FOGLIA)
+    su_misura("cifra", "media", "basicConstraints=critical,CA:FALSE\n"
+              "keyUsage=critical,keyEncipherment\n")
+    su_misura("mediacod", "radice", CA + "extendedKeyUsage=codeSigning\n")
+    su_misura("dimediacod", "mediacod", FOGLIA)
+
     # scaduto: firmato ieri, valido un giorno... openssl non fa date passate,
     # quindi si guarda con una data di «adesso» spostata avanti.
     for n in ("radice", "media", "sito", "furba", "finto", "altra", "incrociata"):
@@ -173,6 +218,24 @@ def main():
               [D("altra")], [D("sito"), D("media"), D("incrociata")]),
         prova("radice incrociata, nel magazzino nessuna delle due", -7, oggi,
               [D("furba")], [D("sito"), D("media"), D("incrociata")]),
+    ]
+
+    R = [D("radice")]
+    tutte += [
+        prova("nameConstraints: dentro (anche *.prova.lan)", 0, oggi, R, [D("dentro"), D("vinc")]),
+        prova("nameConstraints: un nome fuori", -14, oggi, R, [D("fuori"), D("vinc")]),
+        prova("nameConstraints: xprova.lan non e' prova.lan", -14, oggi, R, [D("simile"), D("vinc")]),
+        prova("pathlen 0 con una CA sotto", -9, oggi, R, [D("nipote"), D("sottoca"), D("vinc")]),
+        prova("nome escluso", -14, oggi, R, [D("banca"), D("escl")]),
+        prova("jolly che copre il nome escluso", -14, oggi, R, [D("jolly"), D("escl")]),
+        prova("fuori dall'escluso: buona", 0, oggi, R, [D("libera"), D("escl")]),
+        prova("foglia per firmare il codice", -13, oggi, R, [D("codice"), D("media")]),
+        prova("foglia serverAuth: buona", 0, oggi, R, [D("server"), D("media")]),
+        prova("estensione critica inventata", -12, oggi, R, [D("inventata"), D("media")]),
+        prova("estensione inventata non critica: buona", 0, oggi, R, [D("ignota"), D("media")]),
+        prova("CA senza keyCertSign", -13, oggi, R, [D("dinokcs"), D("nokcs")]),
+        prova("foglia senza digitalSignature", -13, oggi, R, [D("cifra"), D("media")]),
+        prova("intermedia con EKU codeSigning", -13, oggi, R, [D("dimediacod"), D("mediacod")]),
     ]
 
     # ! E LA FIRMA ROVINATA: un byte del TBSCertificate cambiato. La catena e'

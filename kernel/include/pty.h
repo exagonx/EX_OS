@@ -125,8 +125,11 @@ int32_t pty_apri(int *master, int *slave);
  * /dev/pts/N: one more reference to the slave of pair N (-ENOENT, -EIO);
  * pty_esiste: pair N is there with its master. See pty.c. */
 int32_t pty_apri_ptmx(int *h);
-int32_t pty_apri_slave(uint32_t n);
+int32_t pty_apri_slave(uint32_t n, uint32_t vuole);
 int     pty_esiste(uint32_t n);
+/* (0.367, debug/bug_PTY001) the owner of a pair: stat and fchown/fchmod */
+int     pty_stato(uint32_t n, uint32_t *uid, uint32_t *gid, uint32_t *modo);
+int32_t pty_proprietario(int h, int32_t uid, int32_t gid, int32_t modo);
 
 /* Le quattro strade. `h` e' l'handle reso da pty_apri. */
 int32_t pty_leggi_master(int h, void *buf, uint32_t n);

@@ -1,0 +1,40 @@
+debug/grafica - LE GRAFICHE DI ExWin: immagini e codice abbinati
+================================================================
+Ogni PNG e' uscito dal codice C accanto, compilato sull'host con lo stesso
+motore (extema.c) che andra' nel toolkit. Per rifarli tutti:
+    sh fa_anteprime.sh          (serve gcc e python3-pil)
+
+MOTORE E INTERFACCIA
+  extema.h, extema.c        temi: primitive con antialias intero, controlli
+  extanim.h, extanim.c      animazioni: curve e copie comuni
+  Integrazione: ../implementazione_TEMA001.txt, ../implementazione_ANIM001.txt
+
+TEMI (immagine <-> codice)
+  tema_01_classico.png      tema_01_classico.c      <- SCELTO dall'utente (25/11)
+  tema_02_cristallo.png     tema_02_cristallo.c     (+ _scrivania.png: dal logo)
+  tema_03_ghiaccio.png      tema_03_ghiaccio.c      (+ _scrivania.png)
+  tema_04_circuito.png      tema_04_circuito.c      (+ _scrivania.png)
+  tema_05_chiaro.png        tema_05_chiaro.c
+  tema_06_scuro.png         tema_06_scuro.c
+  tema_07_vetro.png         tema_07_vetro.c
+  tema_08_pastello.png      tema_08_pastello.c
+  tema_09_ambra.png         tema_09_ambra.c
+  tema_10_metallo.png       tema_10_metallo.c
+
+ANIMAZIONI (PNG animato + griglia di fotogrammi <-> codice)
+  anim_01_dissolvenza  anim_02_zoom  anim_03_scivola  anim_04_genio
+  anim_05_cristallo    anim_06_onda  anim_07_respiro  anim_08_tendina
+  anim_09_selezione    anim_10_luccichio  anim_11_cambio
+  ognuna: anim_NN_nome.png, anim_NN_nome_fotogrammi.png, anim_NN_nome.c
+
+COLORI PERSONALIZZABILI DEL TEMA 01 (Impostazioni > Colori in pm)
+  colori/excolori.h, .c             schemi: colori base -> tavolozza, file
+  colori/schemi/NN_*.colori         i 10 schemi di sistema
+  colori/schema_NN_*.png            ogni schema applicato al tema 01
+  colori/colori_anteprima.h, .c     l'anteprima viva del pannello
+  colori/pm_colori.h, .c            la scheda di pm
+  colori/pm_pannello_colori.png     come appare il pannello (+ _oceano.png)
+  Integrazione: ../implementazione_COLORI001.txt
+
+PROGRAMMI DI ANTEPRIMA (solo host)
+  anteprima.c, anim_anteprima.c, anim_png.py, colori/anteprima_pannello.c

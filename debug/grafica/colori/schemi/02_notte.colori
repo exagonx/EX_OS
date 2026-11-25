@@ -1,0 +1,27 @@
+# Notte - Scuro: grafite, selezione blu; per le ore serali.
+# Schema di colori per il tema classico (ExWin). Vedi excolori.h.
+schema = Notte
+tema = classico
+scrivania = #1A2430
+scrivania2 = #0A0E14
+finestra = #2E3238
+testo = #E6E6E6
+campo = #1E2125
+campo_testo = #E6E6E6
+selezione = #3D7DD8
+selezione_testo = #FFFFFF
+barra = #1B3A66
+barra2 = #3D7DD8
+titolo = #FFFFFF
+barra_inattiva = #3A3E44
+barra_inattiva2 = #55595F
+titolo_inattivo = #A0A4AA
+luce = #5A6068
+ombra = #0E1012
+suggerimento = #3A3E44
+suggerimento_testo = #FFFFFF
+chiudi = #D9534F
+sfumata = si
+grassetto = si
+ombra = 10
+raggio = 0

@@ -141,6 +141,13 @@ fi
     echo "elenco    = $(sha256sum "$FUORI/elenco.txt" | cut -d' ' -f1)"
 } > "$FUORI/versione.txt"
 
+# ! FIRMATO (debug/bug_NETUPD001, 25/11/2026): la riga "firma" in fondo e'
+# ed25519 di tutto cio' che la precede, con la chiave in ~/ex_os/chiavi. Senza
+# firma il netupdate nuovo rifiuta il server: un versione.txt in chiaro
+# decideva cosa installare ed eseguire come root.
+python3 tools/netinst/firma.py firma "$FUORI/versione.txt" \
+    || echo "mknetinst: ! VERSIONE.TXT NON FIRMATO: netupdate rifiutera' questo albero (tools/netinst/firma.py crea)"
+
 echo ""
 grep -v '^#' "$FUORI/versione.txt" | sed 's/^/  /'
 echo ""

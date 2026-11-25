@@ -1,0 +1,27 @@
+# Alto contrasto - Per chi vede poco: nero, bianco, giallo, ciano.
+# Schema di colori per il tema classico (ExWin). Vedi excolori.h.
+schema = Alto contrasto
+tema = classico
+scrivania = #000000
+scrivania2 = #000000
+finestra = #000000
+testo = #FFFFFF
+campo = #000000
+campo_testo = #FFFF00
+selezione = #00FFFF
+selezione_testo = #000000
+barra = #800080
+barra2 = #800080
+titolo = #FFFFFF
+barra_inattiva = #008000
+barra_inattiva2 = #008000
+titolo_inattivo = #FFFFFF
+luce = #FFFFFF
+ombra = #808080
+suggerimento = #FFFF00
+suggerimento_testo = #000000
+chiudi = #FF0000
+sfumata = no
+grassetto = si
+ombra = 0
+raggio = 0

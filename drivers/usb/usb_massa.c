@@ -121,12 +121,14 @@ static void reset_bot(UsbMassa *m)
  * `cmd` e' il blocco SCSI, `cmd_len` la sua lunghezza. `dati` puo' essere
  * nullo. Rende 0 se il dispositivo ha detto che e' andata, -1 altrimenti.
  * --------------------------------------------------------------------------- */
+/* `passati`: NULL = every byte must pass (READ, WRITE, READ CAPACITY); else
+ * a short answer is fine (INQUIRY, REQUEST SENSE) and it says how much came. */
 static int comando(UsbMassa *m, const unsigned char *cmd, unsigned int cmd_len,
-                   void *dati, unsigned int len, int in)
+                   void *dati, unsigned int len, int in, unsigned int *passati)
 {
     unsigned char cbw[CBW_LEN];
     unsigned char csw[CSW_LEN];
-    unsigned int  i, tag;
+    unsigned int  i, tag, fatti = 0, residuo;
     int           r;
 
     if (cmd_len == 0 || cmd_len > 16) return -1;
@@ -162,6 +164,8 @@ static int comando(UsbMassa *m, const unsigned char *cmd, unsigned int cmd_len,
         } else if (r < 0) {
             reset_bot(m);
             return -1;
+        } else {
+            fatti = (unsigned int)r;
         }
     }
 
@@ -196,6 +200,22 @@ static int comando(UsbMassa *m, const unsigned char *cmd, unsigned int cmd_len,
     if (csw[12] == CSW_FASE) { reset_bot(m); return -1; }
     if (csw[12] != CSW_OK)   return -1;
 
+    /* ! (debug/bug_USB001) A SHORT TRANSFER IS NOT A SUCCESS. Until 25/11 the
+     * bytes that passed and the CSW residue were never looked at: a stick
+     * answering short under load (or a cable losing packets, or a "stick"
+     * built to do it) gave the filesystem the tail of the PREVIOUS read as
+     * the content of this one, g_buf being shared. Bullshit data, no error.
+     * BOT 1.0 6.7: the device says len - residue, the controller says fatti;
+     * a residue bigger than what was asked is phase nonsense. */
+    residuo = leggi_le32(csw + 8);
+    if (len > 0 && residuo > len) { reset_bot(m); return -1; }
+    if (passati) { *passati = fatti; return 0; }
+    if (len > 0 && dati != NULL && (fatti != len || residuo != 0)) {
+        if (m->verboso)
+            printf("massa: trasferimento corto (%u di %u, residuo %u)\n",
+                   fatti, len, residuo);
+        return -1;
+    }
     return 0;
 }
 
@@ -217,7 +237,8 @@ static void chiedi_motivo(UsbMassa *m)
     cmd[0] = SCSI_REQUEST_SENSE;
     cmd[4] = sizeof(sense);
 
-    if (comando(m, cmd, 6, sense, sizeof(sense), 1) == 0 && m->verboso)
+    for (i = 0; i < sizeof(sense); i++) sense[i] = 0;
+    if (comando(m, cmd, 6, sense, sizeof(sense), 1, &i) == 0 && m->verboso)
         printf("massa: sense %02x/%02x/%02x\n",
                sense[2] & 0x0F, sense[12], sense[13]);
 }
@@ -235,7 +256,7 @@ int usb_massa_pronta(UsbMassa *m)
      * esterno a piatti ci mette anche qualche secondo a girare. Rinunciare al
      * primo no vuol dire non vedere mai i dischi lenti. */
     for (giro = 0; giro < 20; giro++) {
-        if (comando(m, cmd, 6, 0, 0, 0) == 0) return 1;
+        if (comando(m, cmd, 6, 0, 0, 0, NULL) == 0) return 1;
         chiedi_motivo(m);
         usleep(200000);
     }
@@ -261,7 +282,8 @@ int usb_massa_nome(UsbMassa *m, char *nome, unsigned int max)
     cmd[4] = sizeof(d);
 
     for (i = 0; i < sizeof(d); i++) d[i] = 0;
-    if (comando(m, cmd, 6, d, sizeof(d), 1) != 0) return 0;
+    if (comando(m, cmd, 6, d, sizeof(d), 1, &j) != 0) return 0;
+    j = 0;
 
     /* Venditore (8 byte) e prodotto (16), riempiti di spazi a destra. */
     for (i = 8; i < 32 && j + 1 < max; i++) {
@@ -284,12 +306,37 @@ int usb_massa_capacita(UsbMassa *m)
     cmd[0] = SCSI_READ_CAPACITY10;
 
     for (i = 0; i < sizeof(d); i++) d[i] = 0;
-    if (comando(m, cmd, 10, d, sizeof(d), 1) != 0) return 0;
+    if (comando(m, cmd, 10, d, sizeof(d), 1, NULL) != 0) return 0;
 
     ultimo         = leggi_be32(d + 0);      /* l'ULTIMO blocco, non quanti */
     m->byte_blocco = leggi_be32(d + 4);
 
     if (m->byte_blocco == 0) return 0;
+
+    /* ! (debug/bug_USB001) 0xFFFFFFFF MEANS "ASK READ CAPACITY(16)": the disk
+     * has 2^32 blocks or more, and ultimo + 1 gave 0 - a 4 TB disk seen
+     * empty. The block layer addresses 32 bits of 512-byte sectors: it is
+     * used up to 2 TB, and said. */
+    if (ultimo == 0xFFFFFFFFu) {
+        unsigned char c16[16], d16[32];
+        unsigned int  alto;
+
+        for (i = 0; i < 16; i++) c16[i] = 0;
+        for (i = 0; i < 32; i++) d16[i] = 0;
+        c16[0]  = 0x9E;                      /* SERVICE ACTION IN(16) */
+        c16[1]  = 0x10;                      /* READ CAPACITY(16) */
+        c16[13] = sizeof(d16);
+        if (comando(m, c16, 16, d16, sizeof(d16), 1, &i) != 0 || i < 12) return 0;
+        alto           = leggi_be32(d16 + 0);
+        ultimo         = leggi_be32(d16 + 4);
+        m->byte_blocco = leggi_be32(d16 + 8);
+        if (m->byte_blocco == 0) return 0;
+        if (alto != 0 || ultimo == 0xFFFFFFFFu) {
+            printf("massa: disco oltre 2 TB: lo uso solo fino a 2 TB "
+                   "(il kernel indirizza 32 bit di settori)\n");
+            ultimo = 0xFFFFFFFEu;
+        }
+    }
 
     /* ! ULTIMO + 1, ed e' l'errore classico: READ CAPACITY rende l'indirizzo
      * dell'ultimo blocco. Prenderlo per la capacita' vuol dire un dispositivo
@@ -302,7 +349,13 @@ int usb_massa_capacita(UsbMassa *m)
         m->settori = m->blocchi;
     } else if (m->byte_blocco == 4096) {
         /* Un supporto a 4096 si presenta lo stesso in settori da 512: la
-         * traduzione sta qui, in un punto solo. Vedi usb_massa.h. */
+         * traduzione sta qui, in un punto solo. Vedi usb_massa.h.
+         * (debug/bug_USB001) in 32 bits: past 2^29 blocks of 4096 the
+         * product wraps; used up to 2 TB, as above. */
+        if (m->blocchi > 0x1FFFFFFFu) {
+            printf("massa: disco oltre 2 TB: lo uso solo fino a 2 TB\n");
+            m->blocchi = 0x1FFFFFFFu;
+        }
         m->settori = m->blocchi * 8;
     } else {
         printf("massa: blocchi da %u byte: non so tradurli in settori\n",
@@ -323,7 +376,8 @@ static int leggi_scrivi(UsbMassa *m, unsigned int lba, unsigned int n,
     unsigned int  i, blocco, quanti, byte;
 
     if (n == 0 || n > MASSA_SETT_MAX) return -1;
-    if (lba + n > m->settori)         return -1;
+    /* (debug/bug_USB001) never a sum: lba near 2^32 wrapped it */
+    if (lba >= m->settori || n > m->settori - lba) return -1;
 
     /* Da settori da 512 ai blocchi veri del supporto. */
     if (m->byte_blocco == 512) {
@@ -352,10 +406,18 @@ static int leggi_scrivi(UsbMassa *m, unsigned int lba, unsigned int n,
     cmd[8] = (unsigned char)(quanti);
 
     if (scrittura) memcpy(g_buf, buf, byte);
+    /* a future bug of the same kind gives zeros, not another file's sectors */
+    else           memset(g_buf, 0, byte);
 
-    if (comando(m, cmd, 10, g_buf, byte, scrittura ? 0 : 1) != 0) {
+    if (comando(m, cmd, 10, g_buf, byte, scrittura ? 0 : 1, NULL) != 0) {
         chiedi_motivo(m);
-        return -1;
+        /* one more try after the reset: a stick that answers short once
+         * usually answers right the second time */
+        if (!scrittura) memset(g_buf, 0, byte);
+        if (comando(m, cmd, 10, g_buf, byte, scrittura ? 0 : 1, NULL) != 0) {
+            chiedi_motivo(m);
+            return -1;
+        }
     }
 
     if (!scrittura) memcpy(buf, g_buf, byte);

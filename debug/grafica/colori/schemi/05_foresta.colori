@@ -1,0 +1,27 @@
+# Foresta - Verde salvia, barra verde bosco.
+# Schema di colori per il tema classico (ExWin). Vedi excolori.h.
+schema = Foresta
+tema = classico
+scrivania = #4C7A44
+scrivania2 = #1A3318
+finestra = #D2DCCB
+testo = #1E2A18
+campo = #FBFFF7
+campo_testo = #1E2A18
+selezione = #2E6B30
+selezione_testo = #FFFFFF
+barra = #1F4D21
+barra2 = #7DB46C
+titolo = #FFFFFF
+barra_inattiva = #8E9A88
+barra_inattiva2 = #C9D2C3
+titolo_inattivo = #F2F5EF
+luce = #FFFFFF
+ombra = #3A4A34
+suggerimento = #FFFFE6
+suggerimento_testo = #1E2A18
+chiudi = #B8442E
+sfumata = si
+grassetto = si
+ombra = 0
+raggio = 0

@@ -75,7 +75,7 @@
 
 /* +0.001 a ogni modifica: `wserver -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("wserver", "0.017");
+EX_VERSIONE("wserver", "0.018");
 
 /* ! NO FIXED NUMBER OF WINDOWS (wserver 0.013, the user's rule: only the
  * configuration and the hardware set limits). Up to 0.012 there were 16
@@ -2604,6 +2604,33 @@ static int titolo_metti(Finestra *f, const char *s, unsigned int n)
 /* A child window (WIN_MSG_CREA_FIGLIA): a zone like any window, a place in the
  * parent, nothing in g_ordine. Refused (id 0) if the parent is not there or
  * is somebody else's. */
+/* (0.018, kernel 0.367, debug/bug_SHM001) the zone of a new window: CREATED,
+ * never an attach to one already there - a name somebody made first, of one
+ * page, read past its end by the compositor and wserver fell - and as big as
+ * asked. A taken name moves to the next id. */
+static int zona_finestra(ShmZona *z, unsigned int w, unsigned int h)
+{
+    int prove, r;
+
+    for (prove = 0; prove < 64; prove++) {
+        memset(z, 0, sizeof(*z));
+        win_nome_zona(z->nome, g_prossimo_id, 0);
+        z->byte = w * h * 4;
+        z->flag = SHM_CREA | SHM_ESCL;
+        r = shm_apri(z);
+        if (r == -EEXIST) {
+            printf("wserver: la zona %s c'e' gia' (di qualcun altro): salto l'id %u\n",
+                   z->nome, g_prossimo_id);
+            g_prossimo_id++;
+            continue;
+        }
+        if (r != 0) return -1;
+        if (z->byte < w * h * 4) { shm_chiudi((void *)(uintptr_t)z->virt); return -1; }
+        return 0;
+    }
+    return -1;
+}
+
 static void crea_figlia(unsigned int pid, const WinCreaFiglia *c)
 {
     WinCreata r;
@@ -2647,11 +2674,7 @@ static void crea_figlia(unsigned int pid, const WinCreaFiglia *c)
     if (r.larghezza > g_fb_w) r.larghezza = g_fb_w;
     if (r.altezza   > g_fb_h) r.altezza   = g_fb_h;
 
-    memset(&z, 0, sizeof(z));
-    win_nome_zona(z.nome, g_prossimo_id, 0);
-    z.byte = r.larghezza * r.altezza * 4;
-    z.flag = SHM_CREA;
-    if (shm_apri(&z) != 0) {
+    if (zona_finestra(&z, r.larghezza, r.altezza) != 0) {
         (void)ipc_send(pid, WIN_MSG_CREATA, &r, sizeof(r));
         return;
     }
@@ -2727,12 +2750,7 @@ static void crea(unsigned int pid, const WinCrea *c, unsigned int len)
     if (r.larghezza > g_fb_w) r.larghezza = g_fb_w;
     if (r.altezza   > g_fb_h) r.altezza   = g_fb_h;
 
-    memset(&z, 0, sizeof(z));
-    win_nome_zona(z.nome, g_prossimo_id, 0);
-    z.byte = r.larghezza * r.altezza * 4;
-    z.flag = SHM_CREA;
-
-    if (shm_apri(&z) != 0) {
+    if (zona_finestra(&z, r.larghezza, r.altezza) != 0) {
         (void)ipc_send(pid, WIN_MSG_CREATA, &r, sizeof(r));
         return;
     }
@@ -2892,12 +2910,13 @@ static void ridimensiona(int idx, unsigned int nw, unsigned int nh)
     memset(&z, 0, sizeof(z));
     win_nome_zona(z.nome, f->id, f->giro + 1);
     z.byte = nw * nh * 4;
-    z.flag = SHM_CREA;
+    z.flag = SHM_CREA | SHM_ESCL;   /* 0.018: ours, and as big as asked */
 
     /* ! SE LA ZONA NUOVA NON SI PUO' AVERE NON SUCCEDE NIENTE: la finestra
      * resta della misura di prima, con i suoi pixel dov'erano. E' l'unico modo
      * di fallire che non lascia niente a meta'. */
-    if (shm_apri(&z) != 0) {
+    if (shm_apri(&z) != 0 || z.byte < nw * nh * 4) {
+        if (z.virt) shm_chiudi((void *)(uintptr_t)z.virt);
         if (g_verboso)
             printf("wserver: niente zona da %ux%u: la finestra %u resta com'e'\n",
                    nw, nh, f->id);

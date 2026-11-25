@@ -1,0 +1,27 @@
+# Deserto - Sabbia e terra di Siena.
+# Schema di colori per il tema classico (ExWin). Vedi excolori.h.
+schema = Deserto
+tema = classico
+scrivania = #C8A06A
+scrivania2 = #6E4A26
+finestra = #E3D5B8
+testo = #3B2A14
+campo = #FFFAF0
+campo_testo = #3B2A14
+selezione = #A0522D
+selezione_testo = #FFFFFF
+barra = #7A4A1E
+barra2 = #D9A066
+titolo = #FFFFFF
+barra_inattiva = #A89880
+barra_inattiva2 = #D8CCB4
+titolo_inattivo = #F4EEE0
+luce = #FFFFFF
+ombra = #5C4630
+suggerimento = #FFF6DC
+suggerimento_testo = #3B2A14
+chiudi = #B03A2E
+sfumata = si
+grassetto = si
+ombra = 0
+raggio = 0

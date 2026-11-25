@@ -288,6 +288,8 @@ typedef char stat_56_byte[sizeof(Stat) == 56 ? 1 : -1];
 #define SYS_IPC_RECV_CHI 275 /* ipc_recv with the sender's uid/gid (0.356) */
 #define SYS_IPC_FILTRO   280 /* who may write to my mailbox (0.359) */
 #define SYS_CONSOLE_UTENTE 281 /* who sits at a console (0.359) */
+#define SYS_FCHOWN         282 /* by descriptor, for now a pty (0.367) */
+#define SYS_FCHMOD         283
 #define SYS_SOCKETPAIR   276 /* two ends of a unix socket (0.358) */
 #define SYS_UNIX_MANDA   277 /* send on an end, with descriptors */
 #define SYS_UNIX_RICEVI  278 /* receive on an end, with descriptors */
@@ -550,6 +552,9 @@ typedef struct {
 #define ENOSPC       28
 #define EROFS        30
 #define ENOSYS       38
+#ifndef EOPNOTSUPP
+#define EOPNOTSUPP   95      /* fchown/fchmod off a terminal (kernel 0.367) */
+#endif
 #define ENOTEMPTY    39
 #define ENAMETOOLONG 36
 #define EILSEQ       84
@@ -7512,7 +7517,12 @@ int chmod(const char *path, mode_t modo)
 
 int fchmod(int fd, mode_t modo)
 {
-    (void)modo;
+    /* (kernel 0.367) a terminal for real; on anything else -EOPNOTSUPP and
+     * what was done before: nothing, see above */
+    int32_t r = _syscall2(SYS_FCHMOD, (uintptr_t)fd, (uint32_t)modo);
+
+    if (r == 0) return 0;
+    if (r != -EOPNOTSUPP && r != -ENOSYS) { errno = -r; return -1; }
     if (fsize(fd) < 0) { errno = EBADF; return -1; }
     return 0;
 }
@@ -11354,6 +11364,7 @@ typedef struct {
     unsigned int byte;          /* 0 until the zone exists */
     unsigned int virt;
     int          indice;        /* its place in g_shmzona */
+    unsigned int modo;          /* shm_open's mode, for the kernel (0.367) */
 } ShmZonaP;
 
 /* The zones this process holds (descriptors and mappings of one zone count
@@ -11499,7 +11510,6 @@ int shm_open(const char *nome, int flag, mode_t modo)
     int      i, r, fd;
     char     k[16];
 
-    (void)modo;
     if (!nome) { errno = EINVAL; return -1; }
     if (nome != SHM_ANON && !nome[0]) { errno = EINVAL; return -1; }
 
@@ -11572,6 +11582,7 @@ int shm_open(const char *nome, int flag, mode_t modo)
     memset(z, 0, sizeof(*z));
     z->indice = i;
     z->usato = 1;
+    z->modo  = (unsigned int)modo & 0777u;
     strcpy(z->nome, k);
     if (r == 0) { z->byte = q.byte; z->virt = q.virt; }
     fd = shmfd_nuovo(i);
@@ -11644,7 +11655,8 @@ static int ftruncate_zona(int fd, off_t lung)
     memset(&q, 0, sizeof(q));
     strcpy(q.nome, z->nome);
     q.byte = (unsigned int)lung;
-    q.flag = SHM_CREA;
+    /* (kernel 0.367) the mode shm_open was given: the zone has an owner now */
+    q.flag = SHM_CREA | ((z->modo & 0777u) << 16);
     r = shm_apri(&q);
     if (r < 0) { errno = -r; return -1; }
     z->byte = q.byte;
@@ -14764,7 +14776,11 @@ int lchown(const char *p, unsigned int u, unsigned int g)   { return chown(p, u,
 int fchown(int fd, unsigned int u, unsigned int g)
 {
     struct stat st;
+    int32_t r = _syscall3(SYS_FCHOWN, (uintptr_t)fd, (uintptr_t)u, (uintptr_t)g);
 
+    /* (kernel 0.367) a terminal for real; files as before */
+    if (r == 0) return 0;
+    if (r != -EOPNOTSUPP && r != -ENOSYS) { errno = -r; return -1; }
     if (fstat(fd, &st) != 0) return -1;
     if ((u == (unsigned int)-1 || u == st.st_uid) && (g == (unsigned int)-1 || g == st.st_gid))
         return 0;

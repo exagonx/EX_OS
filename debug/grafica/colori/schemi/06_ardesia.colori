@@ -1,0 +1,27 @@
+# Ardesia - Grigio azzurrato, sobrio, per lavorare a lungo.
+# Schema di colori per il tema classico (ExWin). Vedi excolori.h.
+schema = Ardesia
+tema = classico
+scrivania = #5A6B80
+scrivania2 = #252D38
+finestra = #C9CED6
+testo = #15191E
+campo = #FFFFFF
+campo_testo = #15191E
+selezione = #4A5D78
+selezione_testo = #FFFFFF
+barra = #2F3B4C
+barra2 = #7F92AD
+titolo = #FFFFFF
+barra_inattiva = #8A919B
+barra_inattiva2 = #BCC2CA
+titolo_inattivo = #EEF0F3
+luce = #FFFFFF
+ombra = #3A4048
+suggerimento = #F5F7FA
+suggerimento_testo = #15191E
+chiudi = #B5473A
+sfumata = si
+grassetto = si
+ombra = 4
+raggio = 0

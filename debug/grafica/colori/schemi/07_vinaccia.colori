@@ -1,0 +1,27 @@
+# Vinaccia - Rosa antico, barra color vino.
+# Schema di colori per il tema classico (ExWin). Vedi excolori.h.
+schema = Vinaccia
+tema = classico
+scrivania = #7A2A3E
+scrivania2 = #2E0C16
+finestra = #E2D2D2
+testo = #2A1214
+campo = #FFFFFF
+campo_testo = #2A1214
+selezione = #8C1C3C
+selezione_testo = #FFFFFF
+barra = #5E0F24
+barra2 = #C25070
+titolo = #FFFFFF
+barra_inattiva = #A08A8E
+barra_inattiva2 = #D4C4C6
+titolo_inattivo = #F6EEEF
+luce = #FFFFFF
+ombra = #4A2A30
+suggerimento = #FFF6F0
+suggerimento_testo = #2A1214
+chiudi = #A01C1C
+sfumata = si
+grassetto = si
+ombra = 0
+raggio = 0

@@ -1312,6 +1312,10 @@ toolinst: dirs $(TOOLINST_BIN)
 NETUPDATE_SRC := bin/netupdate/netupdate.c
 NETUPDATE_BIN := $(BUILD_BIN_CD)/netupdate
 NETUPDATE_LD  := bin/netupdate/netupdate.ld
+# ! ed25519.c SOLO QUI (0.053, debug/bug_NETUPD001): versione.txt e' firmato,
+# e la chiave pubblica e' chiave_netupdate.h (tools/netinst/firma.py pubblica).
+NETUPDATE_FIRMA := lib/excrypt/ed25519.c
+NETUPDATE_CHIAVE := bin/netupdate/chiave_netupdate.h
 
 # ! COLLEGA LO STUB DI exhttp, come /bin/scarica. La libreria vera e'
 # /exwin/lib/exhttp.so e si carica quando serve: `-check` parla HTTP, e non c'e'
@@ -1326,10 +1330,12 @@ NETUPDATE_LD  := bin/netupdate/netupdate.ld
 # (il salto 0.346 -> 0.351 del PC di prova). Vedi STATICI_OBBLIGATI.
 $(NETUPDATE_BIN): $(NETUPDATE_SRC) $(NETUPDATE_LD) $(EXHTTP_SRC) $(EXHTTP_HTTP) $(EXHTTP_HDR) \
                   $(DNS_SRC) $(RETE_SRC) $(IP_PROTO) $(EXTLS_CLIENT) lib/programma.ld \
-                  $(EXIMG_INFLATE) $(LIBC_HDR) $(LIBC_SRC) $(LIBC_START) $(SEGNO_FLAG)
+                  $(EXIMG_INFLATE) $(LIBC_HDR) $(LIBC_SRC) $(LIBC_START) $(SEGNO_FLAG) \
+                  $(NETUPDATE_FIRMA) $(NETUPDATE_CHIAVE)
 	@echo "=== Compilazione /bin/netupdate ==="
 	@mkdir -p $(BUILD_BIN_CD) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -I lib/eximg -c $(NETUPDATE_SRC) -o $(BUILD_OBJ)/netupdate_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp -I lib/eximg -I lib/excrypt -c $(NETUPDATE_SRC) -o $(BUILD_OBJ)/netupdate_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/excrypt -c $(NETUPDATE_FIRMA) -o $(BUILD_OBJ)/netupdate_ed25519.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_INFLATE) -o $(BUILD_OBJ)/netupdate_inflate.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exhttp $(EXTLS_INC) -I drivers/net -c $(EXHTTP_SRC) -o $(BUILD_OBJ)/netupdate_http_main.o
 	$(CC) $(CFLAGS_USER) -I lib/exhttp -c $(EXHTTP_HTTP) -o $(BUILD_OBJ)/netupdate_http_http.o
@@ -1346,6 +1352,7 @@ $(NETUPDATE_BIN): $(NETUPDATE_SRC) $(NETUPDATE_LD) $(EXHTTP_SRC) $(EXHTTP_HTTP) 
 	    $(BUILD_OBJ)/netupdate_http_main.o $(BUILD_OBJ)/netupdate_http_http.o \
 	    $(BUILD_OBJ)/netupdate_dns.o $(BUILD_OBJ)/netupdate_rete.o \
 	    $(foreach f,$(EXTLS_CLIENT),$(BUILD_OBJ)/netupdate_tls_$(basename $(notdir $(f))).o) \
+	    $(BUILD_OBJ)/netupdate_ed25519.o \
 	    $(BUILD_OBJ)/netupdate_inflate.o $(BUILD_OBJ)/netupdate_libc.o -o $@
 	@echo "[OK] netupdate compilato: $@"
 

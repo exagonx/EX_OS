@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.366
+**Versione:** 0.367
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -120,14 +120,14 @@ Dentro EX-OS gli stessi manuali sono in `/doc/manuali` (dal CD:
 
 ## Ultime novità
 
+- [Kernel 0.367: freno di su, terminali e memorie con proprietario, netupdate firmato, sshd/TCP/DNS irrobustiti](manuali/novita.it.md#kernel-0367-e-la-rete-su-terminali-memoria-condivisa-e-registro-del-kernel-hanno-un-proprietario-aggiornamenti-firmati-sshd-tcp-e-dns-contro-gli-attacchi-alla-cieca--testato-in-qemu) — *testato in QEMU*
+- [exeditor salva sicuro, exide sceglie più controlli, biscotti di EXBrowser, USB rifiuta i trasferimenti corti](manuali/novita.it.md#exeditor-salva-senza-distruggere-il-file-exide-sceglie-più-controlli-insieme-i-biscotti-di-exbrowser-come-i-navigatori-di-oggi-le-chiavette-usb-rifiutano-i-trasferimenti-corti--testato-in-qemu) — *testato in QEMU*
+- [La memoria condivisa congelata di Firefox è davvero in sola lettura (kernel 0.366, voce 115)](manuali/novita.it.md#la-memoria-condivisa-congelata-di-firefox-è-davvero-in-sola-lettura-kernel-0366-voce-115--testato-in-qemu) — *testato in QEMU*
+- [Quanto il lucchetto dei file aspetta il disco (kernel 0.364-0.365, voce 117)](manuali/novita.it.md#quanto-il-lucchetto-dei-file-aspetta-il-disco-kernel-0364-0365-voce-117--testato-in-qemu-e-sul-pc-di-prova) — *testato in QEMU e sul PC di prova*
 - [Montare sopra una cartella vuota (kernel 0.363)](manuali/novita.it.md#montare-sopra-una-cartella-vuota-kernel-0363--testato-in-qemu-e-sul-pc-di-prova) — *testato in QEMU e sul PC di prova*
 - [I dischi in PIO non fermano più il sistema; i lettori ottici sull'AHCI (kernel 0.362, voce 117)](manuali/novita.it.md#i-dischi-in-pio-non-fermano-più-il-sistema-i-lettori-ottici-sullahci-kernel-0362-voce-117--testato-in-qemu-e-sul-pc-di-prova) — *testato in QEMU e sul PC di prova*
 - [Firefox usa i programmi del sistema e il dialogo dei file di ExWin (kernel 0.361, voce 118)](manuali/novita.it.md#firefox-usa-i-programmi-del-sistema-mostra-nella-cartella-il-programma-di-ogni-tipo-di-file-il-dialogo-dei-file-di-exwin-exwin-0024-pm-0030-kernel-0361-voce-118--testato-in-qemu) — *testato in QEMU*
 - [Caricare un programma grande non blocca più il mouse e il resto (kernel 0.360, voce 117)](manuali/novita.it.md#caricare-un-programma-grande-non-blocca-più-il-mouse-e-il-resto-del-sistema-kernel-0360-voce-117--testato-in-qemu) — *testato in QEMU*
-- [Tastiera, mouse, suono e schermo a chi siede alla console; le porte sotto 1024 a root (kernel 0.359, voce 111 passo 4b)](manuali/novita.it.md#tastiera-mouse-suono-e-schermo-a-chi-siede-alla-console-le-porte-sotto-1024-a-root-kernel-0359-voce-111-passo-4b--testato-in-qemu) — *testato in QEMU*
-- [Firefox a più processi, come su Linux: socket unix a coppie, descrittori che viaggiano, memoria che è un descrittore (kernel 0.358, exilla 0.008, voce 115)](manuali/novita.it.md#firefox-a-più-processi-come-su-linux-socket-unix-a-coppie-descrittori-che-viaggiano-memoria-che-è-un-descrittore-kernel-0358-exilla-0008-voce-115--testato-in-qemu) — *testato in QEMU*
-- [Quando un programma cade il kernel scrive chi l'ha chiamato: fino a 48 chiamanti dalla pila (kernel 0.357)](manuali/novita.it.md#quando-un-programma-cade-il-kernel-scrive-chi-lha-chiamato-fino-a-48-chiamanti-dalla-pila-kernel-0357--testato-in-qemu) — *testato in QEMU*
-- [Firefox non si chiude più sulle pagine piene di immagini: fcntl F_DUPFD_CLOEXEC copia un descrittore di memoria condivisa](manuali/novita.it.md#firefox-non-si-chiude-più-sulle-pagine-piene-di-immagini-fcntl-f_dupfd_cloexec-copia-un-descrittore-di-memoria-condivisa--da-testare-sul-pc-di-prova) — *da testare sul PC di prova*
 
 Tutte le altre, dalla più recente: [Novità](manuali/novita.it.md).
 

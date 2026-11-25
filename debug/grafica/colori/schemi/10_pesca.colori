@@ -1,0 +1,27 @@
+# Pesca - Caldo e morbido, angoli appena arrotondati.
+# Schema di colori per il tema classico (ExWin). Vedi excolori.h.
+schema = Pesca
+tema = classico
+scrivania = #F4C7B0
+scrivania2 = #C58B78
+finestra = #F3E2D8
+testo = #3A2A24
+campo = #FFFCFA
+campo_testo = #3A2A24
+selezione = #E07A5F
+selezione_testo = #FFFFFF
+barra = #C8553D
+barra2 = #F2A88E
+titolo = #FFFFFF
+barra_inattiva = #B9A69C
+barra_inattiva2 = #E6D7CF
+titolo_inattivo = #FBF5F1
+luce = #FFFFFF
+ombra = #7A5E52
+suggerimento = #FFF8F0
+suggerimento_testo = #3A2A24
+chiudi = #C8453D
+sfumata = si
+grassetto = si
+ombra = 8
+raggio = 3

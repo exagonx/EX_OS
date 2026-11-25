@@ -31,7 +31,7 @@
 #include "libc.h"
 
 /* +0.001 a ogni modifica: `dmesg -version` la stampa. */
-EX_VERSIONE("dmesg", "0.002");
+EX_VERSIONE("dmesg", "0.003");
 
 #define ZONA 32768
 
@@ -114,10 +114,24 @@ int main(int argc, char **argv)
         } else parola = argv[i];
     }
 
-    if (segue) { segui(parola); return 1; }
+    if (segue) {
+        if (klog_leggi(g_buf, ZONA, 1) == -EPERM) {
+            printf("dmesg: il registro del kernel e' di root e di chi siede alla console:\n"
+                   "       da telnet o ssh, sudo dmesg.\n");
+            return 1;
+        }
+        segui(parola);
+        return 1;
+    }
 
     if (avvio) {
         n = klog_leggi(g_buf, ZONA, 0);
+        /* kernel 0.367 (debug/bug_PRIV001): root and the console's user */
+        if (n == -EPERM) {
+            printf("dmesg: il registro del kernel e' di root e di chi siede alla console:\n"
+                   "       da telnet o ssh, sudo dmesg.\n");
+            return 1;
+        }
         if (n < 0) {
             printf("dmesg: il kernel non tiene il registro dei messaggi (%d):\n"
                    "       serve il kernel 0.242 o successivo.\n", n);

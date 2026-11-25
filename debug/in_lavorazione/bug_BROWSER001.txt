@@ -1,0 +1,224 @@
+BUG BROWSER001 - EXBrowser, cookie: Domain su un suffisso pubblico
+                  ("com"), script che sovrascrivono o cancellano i cookie
+                  HttpOnly, cookie Secure scritti da pagine in chiaro, Domain
+                  su indirizzi IP
+===============================================================================
+Gravita':   ALTA (sicurezza web: fissazione e furto di sessione fra siti)
+Programma:  exwin/bin/exbrowser (EXBrowser), la "dispensa" dei cookie
+Sorgenti:   exwin/bin/exbrowser/biscotti.c  dominio_copre, leggi_riga, metti,
+                                            bis_arrivato, bis_da_script,
+                                            vale_qui
+            exwin/bin/exbrowser/biscotti.h  Dispensa, Biscotto, Letto
+            exwin/bin/exbrowser/exbrowser.c i chiamanti (risposta HTTP con
+                                            Set-Cookie; document.cookie dal
+                                            ponte JS)
+Rilevato su: albero del 25/11/2026.
+
+-------------------------------------------------------------------------------
+1. I DIFETTI
+-------------------------------------------------------------------------------
+a) NESSUN CONTROLLO DEI SUFFISSI PUBBLICI. metti() accetta l'attributo
+   Domain se dominio_copre(L->dominio, host), cioe' se e' un suffisso per
+   etichette dell'host. "Domain=com" da www.cattivo.com copre www.cattivo.com
+   -> il cookie si salva con dominio "com" e con_sottodomini = 1 ->
+   vale_qui lo manda a QUALUNQUE sito .com (banca.com, posta.com). Lo
+   stesso con "co.uk", "it" (un sito .it lo da' a tutti i .it), "github.io"
+   (siti di utenti diversi).
+   RFC 6265 5.3 passo 5: "If the user agent is configured to reject public
+   suffixes and the domain-attribute is a public suffix ... ignore the
+   cookie entirely" (o trattarlo come host-only se domain == host).
+   Conseguenze: un sito qualunque fissa la sessione di un altro
+   ("session fixation": SESSIONID=valore-scelto-dall'attaccante, con cui
+   poi entra lui), o fa sparire i cookie veri di un altro sito (stesso nome,
+   percorso piu' specifico, mandato prima), o fa riempire la dispensa.
+
+b) UNO SCRIPT SCAVALCA HttpOnly. bis_da_script() passa da metti() come la
+   risposta HTTP. metti() trova il cookie esistente con trova(dom, perc,
+   nome) e lo SOVRASCRIVE (o, con L->togli, lo CANCELLA) senza guardare
+   che sia HttpOnly; e mettendo solo_http = (!da_script && ...) = 0, il
+   cookie diventa anche leggibile dagli script da quel momento.
+   RFC 6265 5.3 passo 11: "If the cookie was received from a 'non-HTTP' API
+   and the old-cookie's http-only-flag is set, abort these steps and ignore
+   the newly created cookie entirely". Un XSS su un sito (o uno script di
+   terzi incluso nella pagina) sostituisce il cookie di sessione HttpOnly
+   con uno suo: e' proprio cio' che HttpOnly deve impedire.
+
+c) SECURE DA UNA PAGINA IN CHIARO. metti() non sa se la risposta (o la
+   pagina dello script) era HTTPS. Una risposta http://sito.it/ (anche
+   iniettata da chi sta in mezzo: bug_IP001, bug_DNS001) puo' mettere un
+   cookie Secure, o sovrascrivere quello Secure che il sito aveva messo in
+   HTTPS: alla prossima visita in HTTPS il sito riceve il valore
+   dell'attaccante. RFC 6265bis (draft, applicato da tutti i browser dal
+   2017): "Leave Secure Cookies Alone" - un'origine non sicura non crea
+   cookie Secure e non sovrascrive cookie Secure con lo stesso nome il cui
+   dominio la copre.
+
+d) DOMAIN SU UN INDIRIZZO IP. Host "10.0.0.1" e Domain=0.0.1 passa
+   dominio_copre (etichette "0","0","1"), e il cookie va a 192.0.0.1,
+   172.16.0.1... RFC 6265 5.1.3: un host IP corrisponde solo a se stesso;
+   l'attributo Domain va ignorato (o il cookie rifiutato) se l'host e' un
+   indirizzo IP.
+
+e) SameSite NON C'E' (implementazione, non difetto): i cookie partono con
+   ogni richiesta verso il loro sito, anche quelle provocate da un altro
+   sito (immagini, form POST): CSRF. I browser di oggi trattano i cookie
+   senza SameSite come "Lax".
+
+-------------------------------------------------------------------------------
+2. CORREZIONE
+-------------------------------------------------------------------------------
+2.1 I suffissi pubblici
+
+  Una tabella compilata dalla Public Suffix List (publicsuffix.org,
+  licenza MPL 2.0 - compatibile da distribuire come dato; ~9000 regole,
+  ~100 KB di testo, ~60 KB compressa a trie). Due fasi:
+
+  - Subito (copre il 95% del rischio): rifiutare Domain di UNA sola
+    etichetta ("com", "it", "localhost") e le regole a due etichette dei
+    domini nazionali piu' comuni (co.uk, com.au, co.jp, gov.it, ...): una
+    tabella di ~200 voci scritta qui.
+  - Poi: la lista intera in /exwin/lib/psl.dat, aggiornata con netupdate,
+    letta in un trie ordinato all'avvio (o cercata con bsearch per
+    etichetta finale).
+
+    /* biscotti.c */
+    static const char *const g_psl_corta[] = {
+        "com","net","org","info","biz","it","de","fr","uk","es","eu",
+        "co.uk","org.uk","ac.uk","gov.uk","com.au","net.au","co.jp","ne.jp",
+        "com.br","com.cn","co.in","co.nz","gov.it","edu.it",
+        "github.io","gitlab.io","blogspot.com","herokuapp.com","appspot.com",
+        /* ...completare con le regole a 2-3 etichette piu' frequenti... */
+        0
+    };
+
+    static int e_suffisso_pubblico(const char *dom)
+    {
+        int i;
+        if (!strchr(dom, '.')) return 1;                 /* una sola etichetta */
+        for (i = 0; g_psl_corta[i]; i++) if (ugu_min(dom, g_psl_corta[i])) return 1;
+        return psl_cerca(dom);                           /* fase 2: la lista intera */
+    }
+
+    static int e_indirizzo_ip(const char *h)
+    {
+        int punti = 0, cifre = 0;
+        if (strchr(h, ':')) return 1;                    /* IPv6 letterale */
+        for (; *h; h++) {
+            if (*h == '.') { if (!cifre) return 0; punti++; cifre = 0; }
+            else if (*h >= '0' && *h <= '9') cifre++;
+            else return 0;
+        }
+        return punti == 3 && cifre > 0;
+    }
+
+  In metti():
+
+    if (L->dominio[0]) {
+        if (e_indirizzo_ip(host)) {
+            if (!ugu_min(L->dominio, host)) return 0;    /* (d) */
+            /* uguale: host-only */
+            dom = host; con_sottodomini = 0;
+        } else if (e_suffisso_pubblico(L->dominio)) {
+            if (!ugu_min(L->dominio, host)) return 0;    /* (a) rifiutato */
+            dom = host; con_sottodomini = 0;             /* il sito E' il suffisso:
+                                                            host-only */
+        } else if (!dominio_copre(L->dominio, host)) return 0;
+    }
+
+2.2 HttpOnly e Secure
+
+  metti() riceve due informazioni in piu': da_script (c'e' gia') e
+  cifrata (la richiesta o la pagina era HTTPS):
+
+    static int metti(Dispensa *d, const char *host, const char *richiesta,
+                     const Letto *L, int da_script, int cifrata)
+    {
+        ...
+        /* (c) un'origine in chiaro non crea cookie Secure */
+        if (L->sicuro && !cifrata) return 0;
+        /* (c) ne' ne sovrascrive uno Secure con lo stesso nome che la copre */
+        if (!cifrata) {
+            int i;
+            for (i = 0; i < BIS_MAX; i++) {
+                const Biscotto *b = &d->b[i];
+                if (b->usato && b->sicuro && ugu(b->nome, L->nome) &&
+                    (dominio_copre(b->dominio, dom) || dominio_copre(dom, b->dominio)) &&
+                    percorso_copre(b->percorso, perc))
+                    return 0;
+            }
+        }
+        k = trova(d, dom, perc, L->nome);
+        /* (b) uno script non tocca un cookie HttpOnly: ne' lo cambia ne' lo toglie */
+        if (k >= 0 && da_script && d->b[k].solo_http) return 0;
+        ...
+    }
+
+  bis_arrivato(d, host, percorso, riga, ora_s, cifrata) e
+  bis_da_script(..., cifrata): i chiamanti in exbrowser.c sanno lo schema
+  dell'URL (https: -> 1). Per document.cookie: lo schema della PAGINA che
+  esegue lo script.
+
+  Prefissi (RFC 6265bis 4.1.3), facili e utili: un nome che comincia con
+  "__Secure-" si accetta solo con Secure da HTTPS; "__Host-" solo con
+  Secure, da HTTPS, senza Domain e con Path=/.
+
+2.3 SameSite (minimo: Lax predefinito)
+
+  Biscotto.stesso_sito: 0 = None (solo con Secure), 1 = Lax (predefinito),
+  2 = Strict. bis_da_mandare riceve "la richiesta e' dello stesso sito o
+  una navigazione di primo livello con metodo sicuro":
+
+    if (b->stesso_sito == 2 && !stesso_sito_richiesta) continue;
+    if (b->stesso_sito == 1 && !stesso_sito_richiesta &&
+        !(navigazione_primo_livello && metodo_sicuro)) continue;
+
+  "Stesso sito" = stesso dominio registrabile (eTLD+1: qui serve la stessa
+  tabella dei suffissi pubblici).
+
+-------------------------------------------------------------------------------
+3. PROVA
+-------------------------------------------------------------------------------
+  make prova-biscotti (la suite sull'host gia' esiste): casi nuovi
+
+    da www.a.com:  "x=1; Domain=com"            -> rifiutato
+    da a.com:      "x=1; Domain=a.com"          -> ok, con sottodomini
+    da co.uk:      "x=1; Domain=co.uk"          -> host-only (il sito e' il suffisso)
+    da 10.0.0.1:   "x=1; Domain=0.0.1"          -> rifiutato
+    da 10.0.0.1:   "x=1; Domain=10.0.0.1"       -> ok, host-only
+    HTTP:  "s=1; HttpOnly"; script: "s=2"       -> resta s=1, HttpOnly
+    script: "s=; expires=Thu, 01 Jan 1970..."   -> s=1 resta
+    da http://a.com: "t=1; Secure"              -> rifiutato
+    da https://a.com "t=1; Secure", poi da http://a.com "t=2" -> resta t=1
+    "__Host-x=1; Secure; Path=/" da https senza Domain -> ok; con Domain -> no
+
+-------------------------------------------------------------------------------
+4. STATO (25/11/2026, notte)
+-------------------------------------------------------------------------------
+FATTO (EXBrowser 0.034, exhttp.so):
+  - (a) suffissi pubblici: una sola etichetta e ~300 regole a 2-3
+    etichette della Public Suffix List (nazionali e private: co.uk,
+    com.au, gov.it, github.io, blogspot.com, herokuapp.com...) in
+    g_psl_corta; Domain su un suffisso: rifiutato, o host-only se il sito
+    E' il suffisso.
+  - (d) host IP: Domain vale solo se uguale all'host, e diventa host-only.
+  - (b) uno script non cambia ne' toglie un cookie HttpOnly.
+  - (c) da http non nasce un Secure e non si sovrascrive/toglie un
+    Secure con lo stesso nome che copre il dominio; prefissi __Secure- e
+    __Host- (RFC 6265bis 4.1.3).
+  - exhttp.so: exhttp_biscotti_schema(), come exhttp_biscotti ma il
+    gancio riceve anche "cifrata"; il vecchio resta (programmi gia'
+    costruiti). EXBrowser usa il nuovo; document.cookie usa lo schema
+    della pagina.
+  - Prova: make prova-biscotti 75 su 75 (25 nuovi, quelli della sezione
+    3 e qualcuno in piu').
+NON FATTO, DA DECIDERE:
+  - fase 2: la lista intera (psl.dat in /exwin/lib, aggiornata da
+    netupdate, ~9000 regole, regole con * e !).
+  - (e) SameSite: serve che exhttp dica a chi chiede i cookie se la
+    richiesta e' dello stesso sito e se e' una navigazione di primo
+    livello: cambia il gancio "chiedi" e i chiamanti (immagini, form,
+    script). "Lax" predefinito puo' rompere accessi che passano da un
+    altro sito con un POST (pagamenti, SSO): da provare su siti veri.
+
+ESITO (25/11, 06:36): make prova-biscotti 75 su 75. Resta qui per
+SameSite e la lista intera.

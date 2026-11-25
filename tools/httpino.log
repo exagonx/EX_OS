@@ -4994,3 +4994,1541 @@
   finito /netinst/verifiche/sistema.sh: 4984 byte
 /netinst/verifiche/valkey.sh
   finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 517 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 517 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33157 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 9038 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 659 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/altra.pub
+  finito /netinst_64/altra.pub: 32 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/giusta.pub
+  finito /netinst_64/giusta.pub: 32 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 9038 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/app/valkey.txt
+  finito /netinst_64/app/valkey.txt: 1591 byte
+/netinst_64/file/exos/src/valkey/comune.sh
+  finito /netinst_64/file/exos/src/valkey/comune.sh: 16270 byte
+/netinst_64/file/exos/src/valkey/costruisci.sh
+  finito /netinst_64/file/exos/src/valkey/costruisci.sh: 4297 byte
+/netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz
+  finito /netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz: 4440532 byte
+/netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz.sha256
+  finito /netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz.sha256: 86 byte
+/netinst_64/file/exos/valkey/COPYING
+  finito /netinst_64/file/exos/valkey/COPYING: 3091 byte
+/netinst_64/file/exos/valkey/bin/valkey-benchmark
+  finito /netinst_64/file/exos/valkey/bin/valkey-benchmark: 654160 byte
+/netinst_64/file/exos/valkey/bin/valkey-check-aof
+  finito /netinst_64/file/exos/valkey/bin/valkey-check-aof: 2993040 byte
+/netinst_64/file/exos/valkey/bin/valkey-check-rdb
+  finito /netinst_64/file/exos/valkey/bin/valkey-check-rdb: 2993040 byte
+/netinst_64/file/exos/valkey/bin/valkey-cli
+  finito /netinst_64/file/exos/valkey/bin/valkey-cli: 850920 byte
+/netinst_64/file/exos/valkey/bin/valkey-sentinel
+  finito /netinst_64/file/exos/valkey/bin/valkey-sentinel: 2993040 byte
+/netinst_64/file/exos/valkey/bin/valkey-server
+  finito /netinst_64/file/exos/valkey/bin/valkey-server: 2993040 byte
+/netinst_64/file/exos/valkey/dati/.tieni
+  finito /netinst_64/file/exos/valkey/dati/.tieni: 0 byte
+/netinst_64/file/exos/valkey/etc/sentinel.conf
+  finito /netinst_64/file/exos/valkey/etc/sentinel.conf: 14699 byte
+/netinst_64/file/exos/valkey/etc/valkey.conf
+  finito /netinst_64/file/exos/valkey/etc/valkey.conf: 129445 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 9038 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 9065 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/file/boot/kernel.bin
+  finito /netinst_64/file/boot/kernel.bin: 480497 byte
+/netinst_64/file/boot/help.txt
+  finito /netinst_64/file/boot/help.txt: 100768 byte
+/netinst_64/file/boot/kernel.txt
+  finito /netinst_64/file/boot/kernel.txt: 26742 byte
+/netinst_64/file/boot/minimale.txt
+  finito /netinst_64/file/boot/minimale.txt: 591 byte
+/netinst_64/file/boot/rdboot.lz4
+  finito /netinst_64/file/boot/rdboot.lz4: 851422 byte
+/netinst_64/file/dev/ac97.drv
+  finito /netinst_64/file/dev/ac97.drv: 66456 byte
+/netinst_64/file/dev/ar5k.drv
+  finito /netinst_64/file/dev/ar5k.drv: 203568 byte
+/netinst_64/file/dev/cardbus.drv
+  finito /netinst_64/file/dev/cardbus.drv: 56080 byte
+/netinst_64/file/dev/cpufreq.drv
+  finito /netinst_64/file/dev/cpufreq.drv: 51392 byte
+/netinst_64/file/dev/es1371.drv
+  finito /netinst_64/file/dev/es1371.drv: 66376 byte
+/netinst_64/file/dev/fetta.drv
+  finito /netinst_64/file/dev/fetta.drv: 33672 byte
+/netinst_64/file/dev/hdaudio.drv
+  finito /netinst_64/file/dev/hdaudio.drv: 75600 byte
+/netinst_64/file/dev/mappa.drv
+  finito /netinst_64/file/dev/mappa.drv: 51536 byte
+/netinst_64/file/dev/nv40.drv
+  finito /netinst_64/file/dev/nv40.drv: 87520 byte
+/netinst_64/file/dev/nv50.drv
+  finito /netinst_64/file/dev/nv50.drv: 86608 byte
+/netinst_64/file/dev/ramdisk.drv
+  finito /netinst_64/file/dev/ramdisk.drv: 33672 byte
+/netinst_64/file/dev/sb.drv
+  finito /netinst_64/file/dev/sb.drv: 67016 byte
+/netinst_64/file/dev/sis.drv
+  finito /netinst_64/file/dev/sis.drv: 103192 byte
+/netinst_64/file/dev/sonda.drv
+  finito /netinst_64/file/dev/sonda.drv: 65064 byte
+/netinst_64/file/dev/vgaprova.drv
+  finito /netinst_64/file/dev/vgaprova.drv: 29160 byte
+/netinst_64/file/dev/wifisim.drv
+  finito /netinst_64/file/dev/wifisim.drv: 38656 byte
+/netinst_64/file/dev/wserver.drv
+  finito /netinst_64/file/dev/wserver.drv: 79760 byte
+/netinst_64/file/drivers/ac97.drv
+  finito /netinst_64/file/drivers/ac97.drv: 66456 byte
+/netinst_64/file/drivers/ar5k.drv
+  finito /netinst_64/file/drivers/ar5k.drv: 203568 byte
+/netinst_64/file/drivers/cardbus.drv
+  finito /netinst_64/file/drivers/cardbus.drv: 56080 byte
+/netinst_64/file/drivers/cpufreq.drv
+  finito /netinst_64/file/drivers/cpufreq.drv: 51392 byte
+/netinst_64/file/drivers/dpms.drv
+  finito /netinst_64/file/drivers/dpms.drv: 56520 byte
+/netinst_64/file/drivers/e1000.drv
+  finito /netinst_64/file/drivers/e1000.drv: 64984 byte
+/netinst_64/file/drivers/ehci.drv
+  finito /netinst_64/file/drivers/ehci.drv: 66080 byte
+/netinst_64/file/drivers/es1371.drv
+  finito /netinst_64/file/drivers/es1371.drv: 66376 byte
+/netinst_64/file/drivers/fetta.drv
+  finito /netinst_64/file/drivers/fetta.drv: 33672 byte
+/netinst_64/file/drivers/hdaudio.drv
+  finito /netinst_64/file/drivers/hdaudio.drv: 75600 byte
+/netinst_64/file/drivers/ip.drv
+  finito /netinst_64/file/drivers/ip.drv: 70272 byte
+/netinst_64/file/drivers/kbd.drv
+  finito /netinst_64/file/drivers/kbd.drv: 61352 byte
+/netinst_64/file/drivers/lpt.drv
+  finito /netinst_64/file/drivers/lpt.drv: 78680 byte
+/netinst_64/file/drivers/mappa.drv
+  finito /netinst_64/file/drivers/mappa.drv: 51536 byte
+/netinst_64/file/drivers/mouseser.drv
+  finito /netinst_64/file/drivers/mouseser.drv: 51936 byte
+/netinst_64/file/drivers/ne2k.drv
+  finito /netinst_64/file/drivers/ne2k.drv: 64912 byte
+/netinst_64/file/drivers/nforce.drv
+  finito /netinst_64/file/drivers/nforce.drv: 78744 byte
+/netinst_64/file/drivers/nv40.drv
+  finito /netinst_64/file/drivers/nv40.drv: 87520 byte
+/netinst_64/file/drivers/nv50.drv
+  finito /netinst_64/file/drivers/nv50.drv: 86608 byte
+/netinst_64/file/drivers/ohci.drv
+  finito /netinst_64/file/drivers/ohci.drv: 70888 byte
+/netinst_64/file/drivers/pci.drv
+  finito /netinst_64/file/drivers/pci.drv: 33416 byte
+/netinst_64/file/drivers/pcnet.drv
+  finito /netinst_64/file/drivers/pcnet.drv: 65296 byte
+/netinst_64/file/drivers/ramdisk.drv
+  finito /netinst_64/file/drivers/ramdisk.drv: 33672 byte
+/netinst_64/file/drivers/rtl8169.drv
+  finito /netinst_64/file/drivers/rtl8169.drv: 65376 byte
+/netinst_64/file/drivers/sb.drv
+  finito /netinst_64/file/drivers/sb.drv: 67016 byte
+/netinst_64/file/drivers/sis.drv
+  finito /netinst_64/file/drivers/sis.drv: 103192 byte
+/netinst_64/file/drivers/sis900.drv
+  finito /netinst_64/file/drivers/sis900.drv: 98992 byte
+/netinst_64/file/drivers/sonda.drv
+  finito /netinst_64/file/drivers/sonda.drv: 65064 byte
+/netinst_64/file/drivers/svga.drv
+  finito /netinst_64/file/drivers/svga.drv: 65184 byte
+/netinst_64/file/drivers/uhci.drv
+  finito /netinst_64/file/drivers/uhci.drv: 71088 byte
+/netinst_64/file/drivers/vgaprova.drv
+  finito /netinst_64/file/drivers/vgaprova.drv: 29160 byte
+/netinst_64/file/drivers/wifisim.drv
+  finito /netinst_64/file/drivers/wifisim.drv: 38656 byte
+/netinst_64/file/drivers/wserver.drv
+  finito /netinst_64/file/drivers/wserver.drv: 79760 byte
+/netinst_64/file/drivers/xhci.drv
+  finito /netinst_64/file/drivers/xhci.drv: 75536 byte
+/netinst_64/file/exwin/font/AUTHORS
+  finito /netinst_64/file/exwin/font/AUTHORS: 379 byte
+/netinst_64/file/exwin/font/LICENSE
+  finito /netinst_64/file/exwin/font/LICENSE: 4414 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 9038 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 517 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 517 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 9038 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 659 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 9038 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/altra.pub
+  finito /netinst_64/altra.pub: 32 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/giusta.pub
+  finito /netinst_64/giusta.pub: 32 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 9038 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 718 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 9038 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/app/valkey.txt
+  finito /netinst/app/valkey.txt: 1591 byte
+/netinst/file/exos/src/valkey/comune.sh
+  finito /netinst/file/exos/src/valkey/comune.sh: 16270 byte
+/netinst/file/exos/src/valkey/costruisci.sh
+  finito /netinst/file/exos/src/valkey/costruisci.sh: 4297 byte
+/netinst/file/exos/src/valkey/valkey-9.1.3.tar_gz
+  finito /netinst/file/exos/src/valkey/valkey-9.1.3.tar_gz: 4440532 byte
+/netinst/file/exos/src/valkey/valkey-9.1.3.tar_gz.sha256
+  finito /netinst/file/exos/src/valkey/valkey-9.1.3.tar_gz.sha256: 86 byte
+/netinst/file/exos/valkey/COPYING
+  finito /netinst/file/exos/valkey/COPYING: 3091 byte
+/netinst/file/exos/valkey/bin/valkey-benchmark
+  finito /netinst/file/exos/valkey/bin/valkey-benchmark: 579608 byte
+/netinst/file/exos/valkey/bin/valkey-check-aof
+  finito /netinst/file/exos/valkey/bin/valkey-check-aof: 2646104 byte
+/netinst/file/exos/valkey/bin/valkey-check-rdb
+  finito /netinst/file/exos/valkey/bin/valkey-check-rdb: 2646104 byte
+/netinst/file/exos/valkey/bin/valkey-cli
+  finito /netinst/file/exos/valkey/bin/valkey-cli: 715884 byte
+/netinst/file/exos/valkey/bin/valkey-sentinel
+  finito /netinst/file/exos/valkey/bin/valkey-sentinel: 2646104 byte
+/netinst/file/exos/valkey/bin/valkey-server
+  finito /netinst/file/exos/valkey/bin/valkey-server: 2646104 byte
+/netinst/file/exos/valkey/dati/.tieni
+  finito /netinst/file/exos/valkey/dati/.tieni: 0 byte
+/netinst/file/exos/valkey/etc/sentinel.conf
+  finito /netinst/file/exos/valkey/etc/sentinel.conf: 14699 byte
+/netinst/file/exos/valkey/etc/valkey.conf
+  finito /netinst/file/exos/valkey/etc/valkey.conf: 129445 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 718 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 718 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 718 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 9038 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 718 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 9065 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/file/boot/kernel.bin
+  finito /netinst/file/boot/kernel.bin: 459217 byte
+/netinst/file/boot/help.txt
+  finito /netinst/file/boot/help.txt: 104484 byte
+/netinst/file/boot/kernel.txt
+  finito /netinst/file/boot/kernel.txt: 26742 byte
+/netinst/file/boot/minimale.txt
+  finito /netinst/file/boot/minimale.txt: 591 byte
+/netinst/file/boot/rdboot.lz4
+  finito /netinst/file/boot/rdboot.lz4: 773753 byte
+/netinst/file/dev/ac97.drv
+  finito /netinst/file/dev/ac97.drv: 59784 byte
+/netinst/file/dev/ar5k.drv
+  finito /netinst/file/dev/ar5k.drv: 190732 byte
+/netinst/file/dev/cardbus.drv
+  finito /netinst/file/dev/cardbus.drv: 49948 byte
+/netinst/file/dev/cpufreq.drv
+  finito /netinst/file/dev/cpufreq.drv: 45388 byte
+/netinst/file/dev/es1371.drv
+  finito /netinst/file/dev/es1371.drv: 59728 byte
+/netinst/file/dev/fetta.drv
+  finito /netinst/file/dev/fetta.drv: 36544 byte
+/netinst/file/dev/floppy.drv
+  finito /netinst/file/dev/floppy.drv: 14284 byte
+/netinst/file/dev/hdaudio.drv
+  finito /netinst/file/dev/hdaudio.drv: 68692 byte
+/netinst/file/dev/mappa.drv
+  finito /netinst/file/dev/mappa.drv: 45492 byte
+/netinst/file/dev/nv40.drv
+  finito /netinst/file/dev/nv40.drv: 84760 byte
+/netinst/file/dev/nv50.drv
+  finito /netinst/file/dev/nv50.drv: 79968 byte
+/netinst/file/dev/ramdisk.drv
+  finito /netinst/file/dev/ramdisk.drv: 27988 byte
+/netinst/file/dev/sb.drv
+  finito /netinst/file/dev/sb.drv: 60188 byte
+/netinst/file/dev/sis.drv
+  finito /netinst/file/dev/sis.drv: 96548 byte
+/netinst/file/dev/sonda.drv
+  finito /netinst/file/dev/sonda.drv: 58736 byte
+/netinst/file/dev/vgaprova.drv
+  finito /netinst/file/dev/vgaprova.drv: 23600 byte
+/netinst/file/dev/wifisim.drv
+  finito /netinst/file/dev/wifisim.drv: 32752 byte
+/netinst/file/drivers/ac97.drv
+  finito /netinst/file/drivers/ac97.drv: 59784 byte
+/netinst/file/drivers/ar5k.drv
+  finito /netinst/file/drivers/ar5k.drv: 190732 byte
+/netinst/file/drivers/cardbus.drv
+  finito /netinst/file/drivers/cardbus.drv: 49948 byte
+/netinst/file/drivers/cpufreq.drv
+  finito /netinst/file/drivers/cpufreq.drv: 45388 byte
+/netinst/file/drivers/dpms.drv
+  finito /netinst/file/drivers/dpms.drv: 50228 byte
+/netinst/file/drivers/e1000.drv
+  finito /netinst/file/drivers/e1000.drv: 54588 byte
+/netinst/file/drivers/ehci.drv
+  finito /netinst/file/drivers/ehci.drv: 59520 byte
+/netinst/file/drivers/es1371.drv
+  finito /netinst/file/drivers/es1371.drv: 59728 byte
+/netinst/file/drivers/fetta.drv
+  finito /netinst/file/drivers/fetta.drv: 36544 byte
+/netinst/file/drivers/floppy.drv
+  finito /netinst/file/drivers/floppy.drv: 14284 byte
+/netinst/file/drivers/hdaudio.drv
+  finito /netinst/file/drivers/hdaudio.drv: 68692 byte
+/netinst/file/drivers/ip.drv
+  finito /netinst/file/drivers/ip.drv: 68208 byte
+/netinst/file/drivers/kbd.drv
+  finito /netinst/file/drivers/kbd.drv: 54988 byte
+/netinst/file/drivers/lpt.drv
+  finito /netinst/file/drivers/lpt.drv: 67876 byte
+/netinst/file/drivers/mappa.drv
+  finito /netinst/file/drivers/mappa.drv: 45492 byte
+/netinst/file/drivers/mouseser.drv
+  finito /netinst/file/drivers/mouseser.drv: 45804 byte
+/netinst/file/drivers/ne2k.drv
+  finito /netinst/file/drivers/ne2k.drv: 58596 byte
+/netinst/file/drivers/nforce.drv
+  finito /netinst/file/drivers/nforce.drv: 68012 byte
+/netinst/file/drivers/nv40.drv
+  finito /netinst/file/drivers/nv40.drv: 84760 byte
+/netinst/file/drivers/nv50.drv
+  finito /netinst/file/drivers/nv50.drv: 79968 byte
+/netinst/file/drivers/ohci.drv
+  finito /netinst/file/drivers/ohci.drv: 64164 byte
+/netinst/file/drivers/pci.drv
+  finito /netinst/file/drivers/pci.drv: 27800 byte
+/netinst/file/drivers/pcnet.drv
+  finito /netinst/file/drivers/pcnet.drv: 58928 byte
+/netinst/file/drivers/ramdisk.drv
+  finito /netinst/file/drivers/ramdisk.drv: 27988 byte
+/netinst/file/drivers/rtl8169.drv
+  finito /netinst/file/drivers/rtl8169.drv: 59000 byte
+/netinst/file/drivers/sb.drv
+  finito /netinst/file/drivers/sb.drv: 60188 byte
+/netinst/file/drivers/sis.drv
+  finito /netinst/file/drivers/sis.drv: 96548 byte
+/netinst/file/drivers/sis900.drv
+  finito /netinst/file/drivers/sis900.drv: 92404 byte
+/netinst/file/drivers/sonda.drv
+  finito /netinst/file/drivers/sonda.drv: 58736 byte
+/netinst/file/drivers/svga.drv
+  finito /netinst/file/drivers/svga.drv: 58860 byte
+/netinst/file/drivers/uhci.drv
+  finito /netinst/file/drivers/uhci.drv: 64352 byte
+/netinst/file/drivers/vgaprova.drv
+  finito /netinst/file/drivers/vgaprova.drv: 23600 byte
+/netinst/file/drivers/wifisim.drv
+  finito /netinst/file/drivers/wifisim.drv: 32752 byte
+/netinst/file/drivers/xhci.drv
+  finito /netinst/file/drivers/xhci.drv: 68688 byte
+/netinst/file/exwin/font/AUTHORS
+  finito /netinst/file/exwin/font/AUTHORS: 379 byte
+/netinst/file/exwin/font/LICENSE
+  finito /netinst/file/exwin/font/LICENSE: 4414 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 718 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 9038 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 515 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 515 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 718 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 9038 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 657 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 718 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 9038 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 718 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 9038 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst/altra.pub
+  finito /netinst/altra.pub: 32 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/giusta.pub
+  finito /netinst/giusta.pub: 32 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 718 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 9038 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 9038 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/app/valkey.txt
+  finito /netinst_64/app/valkey.txt: 1591 byte
+/netinst_64/file/exos/src/valkey/comune.sh
+  finito /netinst_64/file/exos/src/valkey/comune.sh: 16270 byte
+/netinst_64/file/exos/src/valkey/costruisci.sh
+  finito /netinst_64/file/exos/src/valkey/costruisci.sh: 4297 byte
+/netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz
+  finito /netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz: 4440532 byte
+/netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz.sha256
+  finito /netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz.sha256: 86 byte
+/netinst_64/file/exos/valkey/COPYING
+  finito /netinst_64/file/exos/valkey/COPYING: 3091 byte
+/netinst_64/file/exos/valkey/bin/valkey-benchmark
+  finito /netinst_64/file/exos/valkey/bin/valkey-benchmark: 654160 byte
+/netinst_64/file/exos/valkey/bin/valkey-check-aof
+  finito /netinst_64/file/exos/valkey/bin/valkey-check-aof: 2993040 byte
+/netinst_64/file/exos/valkey/bin/valkey-check-rdb
+  finito /netinst_64/file/exos/valkey/bin/valkey-check-rdb: 2993040 byte
+/netinst_64/file/exos/valkey/bin/valkey-cli
+  finito /netinst_64/file/exos/valkey/bin/valkey-cli: 850920 byte
+/netinst_64/file/exos/valkey/bin/valkey-sentinel
+  finito /netinst_64/file/exos/valkey/bin/valkey-sentinel: 2993040 byte
+/netinst_64/file/exos/valkey/bin/valkey-server
+  finito /netinst_64/file/exos/valkey/bin/valkey-server: 2993040 byte
+/netinst_64/file/exos/valkey/dati/.tieni
+  finito /netinst_64/file/exos/valkey/dati/.tieni: 0 byte
+/netinst_64/file/exos/valkey/etc/sentinel.conf
+  finito /netinst_64/file/exos/valkey/etc/sentinel.conf: 14699 byte
+/netinst_64/file/exos/valkey/etc/valkey.conf
+  finito /netinst_64/file/exos/valkey/etc/valkey.conf: 129445 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 9038 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 9065 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/file/boot/kernel.bin
+  finito /netinst_64/file/boot/kernel.bin: 481841 byte
+/netinst_64/file/boot/help.txt
+  finito /netinst_64/file/boot/help.txt: 104484 byte
+/netinst_64/file/boot/kernel.txt
+  finito /netinst_64/file/boot/kernel.txt: 26742 byte
+/netinst_64/file/boot/minimale.txt
+  finito /netinst_64/file/boot/minimale.txt: 591 byte
+/netinst_64/file/boot/rdboot.lz4
+  finito /netinst_64/file/boot/rdboot.lz4: 852211 byte
+/netinst_64/file/dev/ac97.drv
+  finito /netinst_64/file/dev/ac97.drv: 66456 byte
+/netinst_64/file/dev/ar5k.drv
+  finito /netinst_64/file/dev/ar5k.drv: 203568 byte
+/netinst_64/file/dev/cardbus.drv
+  finito /netinst_64/file/dev/cardbus.drv: 56080 byte
+/netinst_64/file/dev/cpufreq.drv
+  finito /netinst_64/file/dev/cpufreq.drv: 51392 byte
+/netinst_64/file/dev/es1371.drv
+  finito /netinst_64/file/dev/es1371.drv: 66376 byte
+/netinst_64/file/dev/fetta.drv
+  finito /netinst_64/file/dev/fetta.drv: 33672 byte
+/netinst_64/file/dev/hdaudio.drv
+  finito /netinst_64/file/dev/hdaudio.drv: 75600 byte
+/netinst_64/file/dev/mappa.drv
+  finito /netinst_64/file/dev/mappa.drv: 51536 byte
+/netinst_64/file/dev/nv40.drv
+  finito /netinst_64/file/dev/nv40.drv: 87520 byte
+/netinst_64/file/dev/nv50.drv
+  finito /netinst_64/file/dev/nv50.drv: 86608 byte
+/netinst_64/file/dev/ramdisk.drv
+  finito /netinst_64/file/dev/ramdisk.drv: 33672 byte
+/netinst_64/file/dev/sb.drv
+  finito /netinst_64/file/dev/sb.drv: 67016 byte
+/netinst_64/file/dev/sis.drv
+  finito /netinst_64/file/dev/sis.drv: 103192 byte
+/netinst_64/file/dev/sonda.drv
+  finito /netinst_64/file/dev/sonda.drv: 65064 byte
+/netinst_64/file/dev/vgaprova.drv
+  finito /netinst_64/file/dev/vgaprova.drv: 29160 byte
+/netinst_64/file/dev/wifisim.drv
+  finito /netinst_64/file/dev/wifisim.drv: 38656 byte
+/netinst_64/file/dev/wserver.drv
+  finito /netinst_64/file/dev/wserver.drv: 79792 byte
+/netinst_64/file/drivers/ac97.drv
+  finito /netinst_64/file/drivers/ac97.drv: 66456 byte
+/netinst_64/file/drivers/ar5k.drv
+  finito /netinst_64/file/drivers/ar5k.drv: 203568 byte
+/netinst_64/file/drivers/cardbus.drv
+  finito /netinst_64/file/drivers/cardbus.drv: 56080 byte
+/netinst_64/file/drivers/cpufreq.drv
+  finito /netinst_64/file/drivers/cpufreq.drv: 51392 byte
+/netinst_64/file/drivers/dpms.drv
+  finito /netinst_64/file/drivers/dpms.drv: 56520 byte
+/netinst_64/file/drivers/e1000.drv
+  finito /netinst_64/file/drivers/e1000.drv: 64984 byte
+/netinst_64/file/drivers/ehci.drv
+  finito /netinst_64/file/drivers/ehci.drv: 66080 byte
+/netinst_64/file/drivers/es1371.drv
+  finito /netinst_64/file/drivers/es1371.drv: 66376 byte
+/netinst_64/file/drivers/fetta.drv
+  finito /netinst_64/file/drivers/fetta.drv: 33672 byte
+/netinst_64/file/drivers/hdaudio.drv
+  finito /netinst_64/file/drivers/hdaudio.drv: 75600 byte
+/netinst_64/file/drivers/ip.drv
+  finito /netinst_64/file/drivers/ip.drv: 74864 byte
+/netinst_64/file/drivers/kbd.drv
+  finito /netinst_64/file/drivers/kbd.drv: 61352 byte
+/netinst_64/file/drivers/lpt.drv
+  finito /netinst_64/file/drivers/lpt.drv: 78680 byte
+/netinst_64/file/drivers/mappa.drv
+  finito /netinst_64/file/drivers/mappa.drv: 51536 byte
+/netinst_64/file/drivers/mouseser.drv
+  finito /netinst_64/file/drivers/mouseser.drv: 51936 byte
+/netinst_64/file/drivers/ne2k.drv
+  finito /netinst_64/file/drivers/ne2k.drv: 64912 byte
+/netinst_64/file/drivers/nforce.drv
+  finito /netinst_64/file/drivers/nforce.drv: 78744 byte
+/netinst_64/file/drivers/nv40.drv
+  finito /netinst_64/file/drivers/nv40.drv: 87520 byte
+/netinst_64/file/drivers/nv50.drv
+  finito /netinst_64/file/drivers/nv50.drv: 86608 byte
+/netinst_64/file/drivers/ohci.drv
+  finito /netinst_64/file/drivers/ohci.drv: 70888 byte
+/netinst_64/file/drivers/pci.drv
+  finito /netinst_64/file/drivers/pci.drv: 33416 byte
+/netinst_64/file/drivers/pcnet.drv
+  finito /netinst_64/file/drivers/pcnet.drv: 65296 byte
+/netinst_64/file/drivers/ramdisk.drv
+  finito /netinst_64/file/drivers/ramdisk.drv: 33672 byte
+/netinst_64/file/drivers/rtl8169.drv
+  finito /netinst_64/file/drivers/rtl8169.drv: 65376 byte
+/netinst_64/file/drivers/sb.drv
+  finito /netinst_64/file/drivers/sb.drv: 67016 byte
+/netinst_64/file/drivers/sis.drv
+  finito /netinst_64/file/drivers/sis.drv: 103192 byte
+/netinst_64/file/drivers/sis900.drv
+  finito /netinst_64/file/drivers/sis900.drv: 98992 byte
+/netinst_64/file/drivers/sonda.drv
+  finito /netinst_64/file/drivers/sonda.drv: 65064 byte
+/netinst_64/file/drivers/svga.drv
+  finito /netinst_64/file/drivers/svga.drv: 65184 byte
+/netinst_64/file/drivers/uhci.drv
+  finito /netinst_64/file/drivers/uhci.drv: 71088 byte
+/netinst_64/file/drivers/vgaprova.drv
+  finito /netinst_64/file/drivers/vgaprova.drv: 29160 byte
+/netinst_64/file/drivers/wifisim.drv
+  finito /netinst_64/file/drivers/wifisim.drv: 38656 byte
+/netinst_64/file/drivers/wserver.drv
+  finito /netinst_64/file/drivers/wserver.drv: 79792 byte
+/netinst_64/file/drivers/xhci.drv
+  finito /netinst_64/file/drivers/xhci.drv: 75536 byte
+/netinst_64/file/exwin/font/AUTHORS
+  finito /netinst_64/file/exwin/font/AUTHORS: 379 byte
+/netinst_64/file/exwin/font/LICENSE
+  finito /netinst_64/file/exwin/font/LICENSE: 4414 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 9038 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 517 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 517 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 9038 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 659 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 9038 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/altra.pub
+  finito /netinst_64/altra.pub: 32 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/giusta.pub
+  finito /netinst_64/giusta.pub: 32 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 9038 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 718 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 9038 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/app/valkey.txt
+  finito /netinst/app/valkey.txt: 1591 byte
+/netinst/file/exos/src/valkey/comune.sh
+  finito /netinst/file/exos/src/valkey/comune.sh: 16270 byte
+/netinst/file/exos/src/valkey/costruisci.sh
+  finito /netinst/file/exos/src/valkey/costruisci.sh: 4297 byte
+/netinst/file/exos/src/valkey/valkey-9.1.3.tar_gz
+  finito /netinst/file/exos/src/valkey/valkey-9.1.3.tar_gz: 4440532 byte
+/netinst/file/exos/src/valkey/valkey-9.1.3.tar_gz.sha256
+  finito /netinst/file/exos/src/valkey/valkey-9.1.3.tar_gz.sha256: 86 byte
+/netinst/file/exos/valkey/COPYING
+  finito /netinst/file/exos/valkey/COPYING: 3091 byte
+/netinst/file/exos/valkey/bin/valkey-benchmark
+  finito /netinst/file/exos/valkey/bin/valkey-benchmark: 579608 byte
+/netinst/file/exos/valkey/bin/valkey-check-aof
+  finito /netinst/file/exos/valkey/bin/valkey-check-aof: 2646104 byte
+/netinst/file/exos/valkey/bin/valkey-check-rdb
+  finito /netinst/file/exos/valkey/bin/valkey-check-rdb: 2646104 byte
+/netinst/file/exos/valkey/bin/valkey-cli
+  finito /netinst/file/exos/valkey/bin/valkey-cli: 715884 byte
+/netinst/file/exos/valkey/bin/valkey-sentinel
+  finito /netinst/file/exos/valkey/bin/valkey-sentinel: 2646104 byte
+/netinst/file/exos/valkey/bin/valkey-server
+  finito /netinst/file/exos/valkey/bin/valkey-server: 2646104 byte
+/netinst/file/exos/valkey/dati/.tieni
+  finito /netinst/file/exos/valkey/dati/.tieni: 0 byte
+/netinst/file/exos/valkey/etc/sentinel.conf
+  finito /netinst/file/exos/valkey/etc/sentinel.conf: 14699 byte
+/netinst/file/exos/valkey/etc/valkey.conf
+  finito /netinst/file/exos/valkey/etc/valkey.conf: 129445 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 718 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 718 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 718 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 9038 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 718 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 9065 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/file/boot/kernel.bin
+  finito /netinst/file/boot/kernel.bin: 459217 byte
+/netinst/file/boot/help.txt
+  finito /netinst/file/boot/help.txt: 106351 byte
+/netinst/file/boot/kernel.txt
+  finito /netinst/file/boot/kernel.txt: 26742 byte
+/netinst/file/boot/minimale.txt
+  finito /netinst/file/boot/minimale.txt: 591 byte
+/netinst/file/boot/rdboot.lz4
+  finito /netinst/file/boot/rdboot.lz4: 778771 byte
+/netinst/file/dev/ac97.drv
+  finito /netinst/file/dev/ac97.drv: 59784 byte
+/netinst/file/dev/ar5k.drv
+  finito /netinst/file/dev/ar5k.drv: 190732 byte
+/netinst/file/dev/cardbus.drv
+  finito /netinst/file/dev/cardbus.drv: 49948 byte
+/netinst/file/dev/cpufreq.drv
+  finito /netinst/file/dev/cpufreq.drv: 45388 byte
+/netinst/file/dev/es1371.drv
+  finito /netinst/file/dev/es1371.drv: 59728 byte
+/netinst/file/dev/fetta.drv
+  finito /netinst/file/dev/fetta.drv: 36544 byte
+/netinst/file/dev/floppy.drv
+  finito /netinst/file/dev/floppy.drv: 14284 byte
+/netinst/file/dev/hdaudio.drv
+  finito /netinst/file/dev/hdaudio.drv: 68692 byte
+/netinst/file/dev/mappa.drv
+  finito /netinst/file/dev/mappa.drv: 45492 byte
+/netinst/file/dev/nv40.drv
+  finito /netinst/file/dev/nv40.drv: 84760 byte
+/netinst/file/dev/nv50.drv
+  finito /netinst/file/dev/nv50.drv: 79968 byte
+/netinst/file/dev/ramdisk.drv
+  finito /netinst/file/dev/ramdisk.drv: 27988 byte
+/netinst/file/dev/sb.drv
+  finito /netinst/file/dev/sb.drv: 60188 byte
+/netinst/file/dev/sis.drv
+  finito /netinst/file/dev/sis.drv: 96548 byte
+/netinst/file/dev/sonda.drv
+  finito /netinst/file/dev/sonda.drv: 58736 byte
+/netinst/file/dev/vgaprova.drv
+  finito /netinst/file/dev/vgaprova.drv: 23600 byte
+/netinst/file/dev/wifisim.drv
+  finito /netinst/file/dev/wifisim.drv: 32752 byte
+/netinst/file/drivers/ac97.drv
+  finito /netinst/file/drivers/ac97.drv: 59784 byte
+/netinst/file/drivers/ar5k.drv
+  finito /netinst/file/drivers/ar5k.drv: 190732 byte
+/netinst/file/drivers/cardbus.drv
+  finito /netinst/file/drivers/cardbus.drv: 49948 byte
+/netinst/file/drivers/cpufreq.drv
+  finito /netinst/file/drivers/cpufreq.drv: 45388 byte
+/netinst/file/drivers/dpms.drv
+  finito /netinst/file/drivers/dpms.drv: 50228 byte
+/netinst/file/drivers/e1000.drv
+  finito /netinst/file/drivers/e1000.drv: 54588 byte
+/netinst/file/drivers/ehci.drv
+  finito /netinst/file/drivers/ehci.drv: 59540 byte
+/netinst/file/drivers/es1371.drv
+  finito /netinst/file/drivers/es1371.drv: 59728 byte
+/netinst/file/drivers/fetta.drv
+  finito /netinst/file/drivers/fetta.drv: 36544 byte
+/netinst/file/drivers/floppy.drv
+  finito /netinst/file/drivers/floppy.drv: 14284 byte
+/netinst/file/drivers/hdaudio.drv
+  finito /netinst/file/drivers/hdaudio.drv: 68692 byte
+/netinst/file/drivers/ip.drv
+  finito /netinst/file/drivers/ip.drv: 68208 byte
+/netinst/file/drivers/kbd.drv
+  finito /netinst/file/drivers/kbd.drv: 54988 byte
+/netinst/file/drivers/lpt.drv
+  finito /netinst/file/drivers/lpt.drv: 67876 byte
+/netinst/file/drivers/mappa.drv
+  finito /netinst/file/drivers/mappa.drv: 45492 byte
+/netinst/file/drivers/mouseser.drv
+  finito /netinst/file/drivers/mouseser.drv: 45804 byte
+/netinst/file/drivers/ne2k.drv
+  finito /netinst/file/drivers/ne2k.drv: 58596 byte
+/netinst/file/drivers/nforce.drv
+  finito /netinst/file/drivers/nforce.drv: 68012 byte
+/netinst/file/drivers/nv40.drv
+  finito /netinst/file/drivers/nv40.drv: 84760 byte
+/netinst/file/drivers/nv50.drv
+  finito /netinst/file/drivers/nv50.drv: 79968 byte
+/netinst/file/drivers/ohci.drv
+  finito /netinst/file/drivers/ohci.drv: 64184 byte
+/netinst/file/drivers/pci.drv
+  finito /netinst/file/drivers/pci.drv: 27800 byte
+/netinst/file/drivers/pcnet.drv
+  finito /netinst/file/drivers/pcnet.drv: 58928 byte
+/netinst/file/drivers/ramdisk.drv
+  finito /netinst/file/drivers/ramdisk.drv: 27988 byte
+/netinst/file/drivers/rtl8169.drv
+  finito /netinst/file/drivers/rtl8169.drv: 59000 byte
+/netinst/file/drivers/sb.drv
+  finito /netinst/file/drivers/sb.drv: 60188 byte
+/netinst/file/drivers/sis.drv
+  finito /netinst/file/drivers/sis.drv: 96548 byte
+/netinst/file/drivers/sis900.drv
+  finito /netinst/file/drivers/sis900.drv: 92404 byte
+/netinst/file/drivers/sonda.drv
+  finito /netinst/file/drivers/sonda.drv: 58736 byte
+/netinst/file/drivers/svga.drv
+  finito /netinst/file/drivers/svga.drv: 58860 byte
+/netinst/file/drivers/uhci.drv
+  finito /netinst/file/drivers/uhci.drv: 64392 byte
+/netinst/file/drivers/vgaprova.drv
+  finito /netinst/file/drivers/vgaprova.drv: 23600 byte
+/netinst/file/drivers/wifisim.drv
+  finito /netinst/file/drivers/wifisim.drv: 32752 byte
+/netinst/file/drivers/xhci.drv
+  finito /netinst/file/drivers/xhci.drv: 68728 byte
+/netinst/file/exwin/font/AUTHORS
+  finito /netinst/file/exwin/font/AUTHORS: 379 byte
+/netinst/file/exwin/font/LICENSE
+  finito /netinst/file/exwin/font/LICENSE: 4414 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 718 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 9038 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 515 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 515 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 718 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 9038 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 657 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 718 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 9038 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst/altra.pub
+  finito /netinst/altra.pub: 32 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/giusta.pub
+  finito /netinst/giusta.pub: 32 byte
+/netinst/versione.txt
+  finito /netinst/versione.txt: 656 byte
+/netinst/app.txt
+  finito /netinst/app.txt: 33886 byte
+/netinst/app/avvio.txt
+  finito /netinst/app/avvio.txt: 278 byte
+/netinst/app/sistema.txt
+  finito /netinst/app/sistema.txt: 33693 byte
+/netinst/verifiche.txt
+  finito /netinst/verifiche.txt: 718 byte
+/netinst/verifiche/sistema.sh
+  finito /netinst/verifiche/sistema.sh: 9038 byte
+/netinst/verifiche/valkey.sh
+  finito /netinst/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 9038 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/app/valkey.txt
+  finito /netinst_64/app/valkey.txt: 1591 byte
+/netinst_64/file/exos/src/valkey/comune.sh
+  finito /netinst_64/file/exos/src/valkey/comune.sh: 16270 byte
+/netinst_64/file/exos/src/valkey/costruisci.sh
+  finito /netinst_64/file/exos/src/valkey/costruisci.sh: 4297 byte
+/netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz
+  finito /netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz: 4440532 byte
+/netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz.sha256
+  finito /netinst_64/file/exos/src/valkey/valkey-9.1.3.tar_gz.sha256: 86 byte
+/netinst_64/file/exos/valkey/COPYING
+  finito /netinst_64/file/exos/valkey/COPYING: 3091 byte
+/netinst_64/file/exos/valkey/bin/valkey-benchmark
+  finito /netinst_64/file/exos/valkey/bin/valkey-benchmark: 654160 byte
+/netinst_64/file/exos/valkey/bin/valkey-check-aof
+  finito /netinst_64/file/exos/valkey/bin/valkey-check-aof: 2993040 byte
+/netinst_64/file/exos/valkey/bin/valkey-check-rdb
+  finito /netinst_64/file/exos/valkey/bin/valkey-check-rdb: 2993040 byte
+/netinst_64/file/exos/valkey/bin/valkey-cli
+  finito /netinst_64/file/exos/valkey/bin/valkey-cli: 850920 byte
+/netinst_64/file/exos/valkey/bin/valkey-sentinel
+  finito /netinst_64/file/exos/valkey/bin/valkey-sentinel: 2993040 byte
+/netinst_64/file/exos/valkey/bin/valkey-server
+  finito /netinst_64/file/exos/valkey/bin/valkey-server: 2993040 byte
+/netinst_64/file/exos/valkey/dati/.tieni
+  finito /netinst_64/file/exos/valkey/dati/.tieni: 0 byte
+/netinst_64/file/exos/valkey/etc/sentinel.conf
+  finito /netinst_64/file/exos/valkey/etc/sentinel.conf: 14699 byte
+/netinst_64/file/exos/valkey/etc/valkey.conf
+  finito /netinst_64/file/exos/valkey/etc/valkey.conf: 129445 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 9038 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 9065 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/file/boot/kernel.bin
+  finito /netinst_64/file/boot/kernel.bin: 481841 byte
+/netinst_64/file/boot/help.txt
+  finito /netinst_64/file/boot/help.txt: 106351 byte
+/netinst_64/file/boot/kernel.txt
+  finito /netinst_64/file/boot/kernel.txt: 26742 byte
+/netinst_64/file/boot/minimale.txt
+  finito /netinst_64/file/boot/minimale.txt: 591 byte
+/netinst_64/file/boot/rdboot.lz4
+  finito /netinst_64/file/boot/rdboot.lz4: 855733 byte
+/netinst_64/file/dev/ac97.drv
+  finito /netinst_64/file/dev/ac97.drv: 66456 byte
+/netinst_64/file/dev/ar5k.drv
+  finito /netinst_64/file/dev/ar5k.drv: 203568 byte
+/netinst_64/file/dev/cardbus.drv
+  finito /netinst_64/file/dev/cardbus.drv: 56080 byte
+/netinst_64/file/dev/cpufreq.drv
+  finito /netinst_64/file/dev/cpufreq.drv: 51392 byte
+/netinst_64/file/dev/es1371.drv
+  finito /netinst_64/file/dev/es1371.drv: 66376 byte
+/netinst_64/file/dev/fetta.drv
+  finito /netinst_64/file/dev/fetta.drv: 33672 byte
+/netinst_64/file/dev/hdaudio.drv
+  finito /netinst_64/file/dev/hdaudio.drv: 75600 byte
+/netinst_64/file/dev/mappa.drv
+  finito /netinst_64/file/dev/mappa.drv: 51536 byte
+/netinst_64/file/dev/nv40.drv
+  finito /netinst_64/file/dev/nv40.drv: 87520 byte
+/netinst_64/file/dev/nv50.drv
+  finito /netinst_64/file/dev/nv50.drv: 86608 byte
+/netinst_64/file/dev/ramdisk.drv
+  finito /netinst_64/file/dev/ramdisk.drv: 33672 byte
+/netinst_64/file/dev/sb.drv
+  finito /netinst_64/file/dev/sb.drv: 67016 byte
+/netinst_64/file/dev/sis.drv
+  finito /netinst_64/file/dev/sis.drv: 103192 byte
+/netinst_64/file/dev/sonda.drv
+  finito /netinst_64/file/dev/sonda.drv: 65064 byte
+/netinst_64/file/dev/vgaprova.drv
+  finito /netinst_64/file/dev/vgaprova.drv: 29160 byte
+/netinst_64/file/dev/wifisim.drv
+  finito /netinst_64/file/dev/wifisim.drv: 38656 byte
+/netinst_64/file/dev/wserver.drv
+  finito /netinst_64/file/dev/wserver.drv: 79792 byte
+/netinst_64/file/drivers/ac97.drv
+  finito /netinst_64/file/drivers/ac97.drv: 66456 byte
+/netinst_64/file/drivers/ar5k.drv
+  finito /netinst_64/file/drivers/ar5k.drv: 203568 byte
+/netinst_64/file/drivers/cardbus.drv
+  finito /netinst_64/file/drivers/cardbus.drv: 56080 byte
+/netinst_64/file/drivers/cpufreq.drv
+  finito /netinst_64/file/drivers/cpufreq.drv: 51392 byte
+/netinst_64/file/drivers/dpms.drv
+  finito /netinst_64/file/drivers/dpms.drv: 56520 byte
+/netinst_64/file/drivers/e1000.drv
+  finito /netinst_64/file/drivers/e1000.drv: 64984 byte
+/netinst_64/file/drivers/ehci.drv
+  finito /netinst_64/file/drivers/ehci.drv: 66104 byte
+/netinst_64/file/drivers/es1371.drv
+  finito /netinst_64/file/drivers/es1371.drv: 66376 byte
+/netinst_64/file/drivers/fetta.drv
+  finito /netinst_64/file/drivers/fetta.drv: 33672 byte
+/netinst_64/file/drivers/hdaudio.drv
+  finito /netinst_64/file/drivers/hdaudio.drv: 75600 byte
+/netinst_64/file/drivers/ip.drv
+  finito /netinst_64/file/drivers/ip.drv: 74864 byte
+/netinst_64/file/drivers/kbd.drv
+  finito /netinst_64/file/drivers/kbd.drv: 61352 byte
+/netinst_64/file/drivers/lpt.drv
+  finito /netinst_64/file/drivers/lpt.drv: 78680 byte
+/netinst_64/file/drivers/mappa.drv
+  finito /netinst_64/file/drivers/mappa.drv: 51536 byte
+/netinst_64/file/drivers/mouseser.drv
+  finito /netinst_64/file/drivers/mouseser.drv: 51936 byte
+/netinst_64/file/drivers/ne2k.drv
+  finito /netinst_64/file/drivers/ne2k.drv: 64912 byte
+/netinst_64/file/drivers/nforce.drv
+  finito /netinst_64/file/drivers/nforce.drv: 78744 byte
+/netinst_64/file/drivers/nv40.drv
+  finito /netinst_64/file/drivers/nv40.drv: 87520 byte
+/netinst_64/file/drivers/nv50.drv
+  finito /netinst_64/file/drivers/nv50.drv: 86608 byte
+/netinst_64/file/drivers/ohci.drv
+  finito /netinst_64/file/drivers/ohci.drv: 75016 byte
+/netinst_64/file/drivers/pci.drv
+  finito /netinst_64/file/drivers/pci.drv: 33416 byte
+/netinst_64/file/drivers/pcnet.drv
+  finito /netinst_64/file/drivers/pcnet.drv: 65296 byte
+/netinst_64/file/drivers/ramdisk.drv
+  finito /netinst_64/file/drivers/ramdisk.drv: 33672 byte
+/netinst_64/file/drivers/rtl8169.drv
+  finito /netinst_64/file/drivers/rtl8169.drv: 65376 byte
+/netinst_64/file/drivers/sb.drv
+  finito /netinst_64/file/drivers/sb.drv: 67016 byte
+/netinst_64/file/drivers/sis.drv
+  finito /netinst_64/file/drivers/sis.drv: 103192 byte
+/netinst_64/file/drivers/sis900.drv
+  finito /netinst_64/file/drivers/sis900.drv: 98992 byte
+/netinst_64/file/drivers/sonda.drv
+  finito /netinst_64/file/drivers/sonda.drv: 65064 byte
+/netinst_64/file/drivers/svga.drv
+  finito /netinst_64/file/drivers/svga.drv: 65184 byte
+/netinst_64/file/drivers/uhci.drv
+  finito /netinst_64/file/drivers/uhci.drv: 71144 byte
+/netinst_64/file/drivers/vgaprova.drv
+  finito /netinst_64/file/drivers/vgaprova.drv: 29160 byte
+/netinst_64/file/drivers/wifisim.drv
+  finito /netinst_64/file/drivers/wifisim.drv: 38656 byte
+/netinst_64/file/drivers/wserver.drv
+  finito /netinst_64/file/drivers/wserver.drv: 79792 byte
+/netinst_64/file/drivers/xhci.drv
+  finito /netinst_64/file/drivers/xhci.drv: 75592 byte
+/netinst_64/file/exwin/font/AUTHORS
+  finito /netinst_64/file/exwin/font/AUTHORS: 379 byte
+/netinst_64/file/exwin/font/LICENSE
+  finito /netinst_64/file/exwin/font/LICENSE: 4414 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 9038 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 517 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 517 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 9038 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 659 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 9038 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
+/netinst_64/altra.pub
+  finito /netinst_64/altra.pub: 32 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/giusta.pub
+  finito /netinst_64/giusta.pub: 32 byte
+/netinst_64/versione.txt
+  finito /netinst_64/versione.txt: 658 byte
+/netinst_64/app.txt
+  finito /netinst_64/app.txt: 34199 byte
+/netinst_64/app/avvio.txt
+  finito /netinst_64/app/avvio.txt: 278 byte
+/netinst_64/app/sistema.txt
+  finito /netinst_64/app/sistema.txt: 33158 byte
+/netinst_64/verifiche.txt
+  finito /netinst_64/verifiche.txt: 718 byte
+/netinst_64/verifiche/sistema.sh
+  finito /netinst_64/verifiche/sistema.sh: 9038 byte
+/netinst_64/verifiche/valkey.sh
+  finito /netinst_64/verifiche/valkey.sh: 1532 byte
