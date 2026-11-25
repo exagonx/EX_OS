@@ -13,6 +13,8 @@
 #include "pmm.h"
 #include "kmalloc.h"  /* g_oltre: references past 256 owners */
 #include "paging.h"   /* PAGING_FINESTRA_FISICA: la pagina da non allocare mai */
+#include "cfg.h"      /* riservakernel */
+#include "sched.h"    /* g_ticks: the warnings, once a second */
 
 /* =============================================================================
  * Costanti
@@ -491,6 +493,54 @@ void pmm_init(BootInfo *info)
  * Ritorna: indirizzo fisico della pagina (allineato a 4KB)
  *          0 se non ci sono pagine libere (OUT OF MEMORY)
  * ============================================================================= */
+/* The warnings of an allocator that may be asked a thousand times a second
+ * when the RAM is gone: the first at once, then one line a second with how
+ * many there were (985 identical lines in one Firefox test, 25/11). */
+typedef struct { uint32_t tick, n, primo; } Avviso;
+static Avviso g_avv_riserva, g_avv_fascia;
+
+static void avviso_al_secondo(Avviso *a, const char *fmt, uint32_t v)
+{
+    a->n++;
+    if (a->primo && g_ticks - a->tick < 100u) return;
+    if (a->n > 1)
+        klog(LOG_ERROR, "PMM: %u volte nell'ultimo secondo:", a->n);
+    klog(LOG_ERROR, fmt, v);
+    a->primo = 1;
+    a->tick  = g_ticks;
+    a->n     = 0;
+}
+
+/* Free pages inside the kernel band. A byte at a time: 2 KB of bitmap for
+ * 64 MB, and only counted when the band is already the last resort. */
+static uint32_t fascia_libere(void)
+{
+    uint32_t lim = pmm_limite_kernel(), i, n = 0;
+
+    for (i = 0; i < lim && (i & 7u); i++) if (!BITMAP_TEST(i)) n++;
+    for (; i + 8u <= lim; i += 8u) {
+        uint8_t b = g_bitmap[i / 8u];
+        if (b == 0xFFu) continue;
+        b = (uint8_t)~b;
+        while (b) { n++; b &= (uint8_t)(b - 1u); }
+    }
+    for (; i < lim; i++) if (!BITMAP_TEST(i)) n++;
+    return n;
+}
+
+/* The band's pages programs may not take: riservakernel MB, or 1/8 of the
+ * band (8 MB of 64; 4 of a 32 MB machine, where the band is all the RAM). */
+static uint32_t fascia_riserva(uint32_t fascia)
+{
+    const char *s = cfg_get_option("riservakernel");
+    uint32_t    mb = 0;
+
+    if (s == NULL || *s < '0' || *s > '9') return fascia / 8u;
+    while (*s >= '0' && *s <= '9') mb = mb * 10u + (uint32_t)(*s++ - '0');
+    mb *= 256u;
+    return mb > fascia / 2u ? fascia / 2u : mb;   /* never half the band away */
+}
+
 static paddr_t pmm_alloc_page_dentro(void)
 {
     uint32_t i;
@@ -528,7 +578,22 @@ static paddr_t pmm_alloc_page_dentro(void)
 
     /* Ultima risorsa: la fascia kernel. Meglio consegnarla che rispondere
      * "memoria esaurita" mentre c'e' — su una macchina piccola e' l'unica
-     * memoria che esista. */
+     * memoria che esista.
+     *
+     * ! BUT NOT TO THE LAST PAGE (25 November 2026, FIREFOX001 C3). The
+     * band also feeds page tables, kernel stacks and the kernel heap, and
+     * those come from pmm_alloc_page_kernel, which has nowhere else to
+     * look. Firefox at 1536 MB took the band to the bone, map_page found
+     * no page for a table, the fault went unresolved and the PARENT died
+     * at 0x00000000 - the whole browser gone for a child that ate the RAM.
+     * Now programs stop at the reserve: the one asking gets «RAM finita»
+     * (and swap, if there is any), the kernel still has its tables. */
+    if (fascia_libere() <= fascia_riserva(fascia)) {
+        avviso_al_secondo(&g_avv_riserva, "PMM: RAM finita per i programmi, "
+                          "resta la riserva del kernel (%u pagine, riservakernel "
+                          "in kernel.cfg)", fascia_riserva(fascia));
+        return 0;
+    }
     for (i = 0; i < fascia; i++) {
         if (!BITMAP_TEST(i)) {
             BITMAP_SET(i);
@@ -603,9 +668,9 @@ static paddr_t pmm_alloc_page_kernel_dentro(void)
     /* Messaggio esplicito: "la RAM e' finita" e "la fascia kernel e'
      * finita" sono due guasti diversi, e confonderli manda a cercare
      * memoria che c'e'. */
-    klog(LOG_ERROR, "PMM: fascia kernel esaurita (0x0-0x%08x): %u pagine "
-         "libere altrove, ma il kernel non potrebbe rileggerle",
-         USER_SPACE_BASE, g_free_pages);
+    avviso_al_secondo(&g_avv_fascia, "PMM: fascia kernel esaurita: %u pagine "
+                      "libere altrove, ma il kernel non potrebbe rileggerle",
+                      g_free_pages);
     return 0;
 }
 

@@ -195,6 +195,10 @@ static void cfg_apply_key(KernelConfig *cfg, const char *section,
             cfg_strcpy(cfg->cache_disco, value, sizeof(cfg->cache_disco));
             return;
         }
+        if (cfg_strcmp(key, "riservakernel") == 0) {
+            cfg_strcpy(cfg->riserva_kernel, value, sizeof(cfg->riserva_kernel));
+            return;
+        }
         /* netrx / nettx = N: the network cards' rings (cfg.h) */
         if (cfg_strcmp(key, "netrx") == 0) {
             cfg_strcpy(cfg->net_rx, value, sizeof(cfg->net_rx));
@@ -646,6 +650,9 @@ const char *cfg_get_option(const char *key)
     }
     if (cfg_strcmp(key, "cachedisco") == 0) {
         return cfg->cache_disco[0] ? cfg->cache_disco : NULL;
+    }
+    if (cfg_strcmp(key, "riservakernel") == 0) {
+        return cfg->riserva_kernel[0] ? cfg->riserva_kernel : NULL;
     }
     if (cfg_strcmp(key, "netrx") == 0) {
         return cfg->net_rx[0] ? cfg->net_rx : NULL;

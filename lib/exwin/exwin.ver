@@ -23,6 +23,8 @@
         ex_draw_text;
         ex_update;
         ex_update_rect;
+        ex_tema_colore;
+        ex_tema_nome;
         ex_pixmap;
         ex_draw_image;
         ex_list_clear;

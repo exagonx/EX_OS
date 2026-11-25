@@ -422,7 +422,7 @@ static void tabella_disegna(void)
     char         t[48];
 
     /* The header: one raised cell per column, the sorted one with ^ or v. */
-    ex_fill_rect(g_f, x0, TAB_Y, tw, TESTA_H, EX_GRAY);
+    ex_fill_rect(g_f, x0, TAB_Y, tw, TESTA_H, ex_tema_colore(EX_TC_FONDO));
     for (c = 0, x = x0; c < COLONNE && x < x0 + tw; x += g_col_w[c], c++) {
         int w = g_col_w[c];
 

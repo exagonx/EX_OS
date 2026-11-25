@@ -22,6 +22,7 @@
 #include "exfont_ttf.h" /* il TrueType: sta in exfont.so, si apre a richiesta */
 
 extern const unsigned char font8x16[256 * 16];
+#include "extema.h"     /* the themes: debug/implementazione_TEMA001 */
 
 /* ! NO FIXED NUMBER OF OBJECTS (exwin.so 0.020, voce 42). It was 64, then 192
  * from 27 September 2026 (Calctor has 85 controls, and with 64 the last
@@ -65,6 +66,7 @@ typedef struct {
     unsigned int *zona;
     unsigned int  passo_px;     /* pixel per riga */
     unsigned int  premuto;      /* il controllo e' giu' */
+    unsigned int  sopra;        /* the pointer is over it (0.026, the theme lights it) */
     ExWindow    fuoco;        /* solo per il primo livello: chi ha i tasti */
     /* ! TAB PAST THE LAST CONTROL GOES TO THE CONTENT, for a window that asked
      * (ex_tab_content). Only the top level uses it. */
@@ -2088,6 +2090,68 @@ static int ritaglia(const Oggetto *r, int *x, int *y, int *w, int *h)
     return 1;
 }
 
+/* =============================================================================
+ * ! THE THEME (exwin.so 0.026, debug/implementazione_TEMA001). The colours
+ * and the relief of the controls come from an ExTema (extema.c): today the
+ * classic one, the one the user chose. The toolkit keeps everything that
+ * decides WHERE things are - sizes, rows, the caret, the clicks - and the
+ * text, which the engine would write with the 8x16 font only (no UTF-8, no
+ * TrueType): the engine paints the surfaces under it.
+ * ============================================================================= */
+static const ExTema *g_tema = &extema_classico;
+#define TC (g_tema->c)
+
+/* the canvas of the top-level window of f, with the current clip */
+static int tela_di(ExWindow f, ExTela *t)
+{
+    Oggetto *r = radice(f);
+
+    if (!r || !r->pix) return 0;
+    ext_tela(t, r->pix, r->w, r->h, (int)r->passo_px);
+    if (g_clip) ext_ritaglio(t, g_clip_x1, g_clip_y1,
+                             g_clip_x2 - g_clip_x1, g_clip_y2 - g_clip_y1);
+    return 1;
+}
+
+/* the theme's relief: two rings in the classic theme */
+static void rilievo_tema(ExWindow f, int x, int y, int w, int h, int incavato)
+{
+    ExTela t;
+
+    if (w < 4 || h < 4 || !tela_di(f, &t)) return;
+    ext_bordo3d(&t, g_tema, x, y, w, h, incavato);
+}
+
+/* a pressable piece (scroll arrows, the thumb, the combo button): the face of
+ * the theme's button */
+static void tasto_tema(ExWindow f, int x, int y, int w, int h, int premuto)
+{
+    ExTela t;
+
+    if (w < 4 || h < 4 || !tela_di(f, &t)) return;
+    ext_pulsante_fondo(&t, g_tema, x, y, w, h, premuto ? EXT_PREMUTO : 0);
+}
+
+unsigned int ex_tema_colore(int quale)
+{
+    switch (quale) {
+    case EX_TC_FONDO:          return TC.fondo;
+    case EX_TC_TESTO:          return TC.testo;
+    case EX_TC_TESTO_SPENTO:   return TC.testo_spento;
+    case EX_TC_CAMPO:          return TC.campo;
+    case EX_TC_CAMPO_TESTO:    return TC.campo_testo;
+    case EX_TC_ACCENTO:        return TC.accento;
+    case EX_TC_ACCENTO_TESTO:  return TC.accento_testo;
+    case EX_TC_LUCE:           return TC.luce;
+    case EX_TC_OMBRA:          return TC.ombra;
+    case EX_TC_BORDO:          return TC.bordo;
+    case EX_TC_SCRIVANIA:      return TC.desktop_a;
+    default:                   return TC.fondo;
+    }
+}
+
+const char *ex_tema_nome(void) { return g_tema->nome; }
+
 /* -----------------------------------------------------------------------------
  * Disegnare
  * --------------------------------------------------------------------------- */
@@ -2262,14 +2326,15 @@ static void bordo3d(ExWindow f, int x, int y, int w, int h,
     ex_fill_rect(f, x, y, 1, h, sopra);                    /* la sinistra*/
 }
 
+/* one ring, as always (programs draw inside it), in the theme's colours */
 void ex_draw_raised(ExWindow f, int x, int y, int w, int h)
 {
-    bordo3d(f, x, y, w, h, EX_HIGHLIGHT, EX_SHADOW);
+    bordo3d(f, x, y, w, h, TC.luce, TC.ombra);
 }
 
 void ex_draw_sunken(ExWindow f, int x, int y, int w, int h)
 {
-    bordo3d(f, x, y, w, h, EX_SHADOW, EX_HIGHLIGHT);
+    bordo3d(f, x, y, w, h, TC.ombra, TC.luce);
 }
 
 /* =============================================================================
@@ -3492,7 +3557,7 @@ static int ridisegna_controllo(Oggetto *o)
     if (y1 > r->h) y1 = r->h;
     if (x1 <= x0 || y1 <= y0) return 1;         /* nothing of it is visible */
 
-    if (o->classe == CL_ETICHETTA) ex_fill_rect(rh, o->x, o->y, o->w, o->h, EX_GRAY);
+    if (o->classe == CL_ETICHETTA) ex_fill_rect(rh, o->x, o->y, o->w, o->h, TC.fondo);
     disegna_oggetto(o);
     disegna_figli(h);
     menu_sopra(rh);
@@ -3876,18 +3941,20 @@ static void menu_voci_disegna(ExWindow f, const MenuTitolo *T, int tx, int ty,
         const char *t   = T->voce[i].testo;
         const char *tab = strchr(t, '\t');
         char sinistra[MENU_TESTO_MAX];
-        unsigned int colore = EX_BLACK;
+        unsigned int colore = TC.menu_testo;
 
         if (T->voce[i].id == 0) {
-            ex_fill_rect(f, tx + 4, ry + MENU_RIGA_H / 2 - 1, tw - 8, 1, EX_SHADOW);
-            ex_fill_rect(f, tx + 4, ry + MENU_RIGA_H / 2,     tw - 8, 1, EX_HIGHLIGHT);
+            ex_fill_rect(f, tx + 4, ry + MENU_RIGA_H / 2 - 1, tw - 8, 1, TC.ombra2);
+            ex_fill_rect(f, tx + 4, ry + MENU_RIGA_H / 2,     tw - 8, 1, TC.luce);
             continue;
         }
         if ((int)i == evidenziata) {
-            ex_fill_rect(f, tx + 2, ry - 1, tw - 4, MENU_RIGA_H, EX_BLUE);
-            colore = EX_WHITE;
+            ex_fill_rect(f, tx + 2, ry - 1, tw - 4, MENU_RIGA_H, TC.menu_sopra);
+            colore = TC.menu_sopra_testo;
         }
-        if (T->voce[i].spento) colore = (int)i == evidenziata ? EX_GRAY : EX_DARK_GRAY;
+        if (T->voce[i].spento)
+            colore = (int)i == evidenziata ? ext_mescola(TC.menu_sopra_testo, TC.menu_sopra, 110)
+                                           : TC.testo_spento;
         if (tab) {
             unsigned int l = (unsigned int)(tab - t);
 
@@ -3926,13 +3993,13 @@ static void menu_sopra(ExWindow f)
 
     /* Un separatore e' un solco, non una voce: non si sceglie e non si
      * evidenzia (menu_voci_disegna). */
-    ex_fill_rect(f, tx, ty, tw, th, EX_GRAY);
-    ex_draw_raised(f, tx, ty, tw, th);
+    ex_fill_rect(f, tx, ty, tw, th, TC.menu_fondo);
+    rilievo_tema(f, tx, ty, tw, th, 0);
     menu_voci_disegna(f, T, tx, ty, tw, M->sotto);
 
     if (menu_sub_dove(M, &tx, &ty, &tw, &th)) {
-        ex_fill_rect(f, tx, ty, tw, th, EX_GRAY);
-        ex_draw_raised(f, tx, ty, tw, th);
+        ex_fill_rect(f, tx, ty, tw, th, TC.menu_fondo);
+        rilievo_tema(f, tx, ty, tw, th, 0);
         menu_voci_disegna(f, &M->sub[M->sub_aperta], tx, ty, tw, M->sub_sotto);
     }
     (void)i;
@@ -4620,7 +4687,7 @@ static void disegna_oggetto(Oggetto *o)
 
     riga = r->pix + (unsigned int)y * r->passo_px + (unsigned int)x;
     for (j = 0; j < h; j++) {
-        for (i = (x + y + j) & 1; i < w; i += 2) riga[i] = EX_GRAY;
+        for (i = (x + y + j) & 1; i < w; i += 2) riga[i] = TC.fondo;
         riga += r->passo_px;
     }
 }
@@ -4660,12 +4727,26 @@ static void disegna_oggetto_nudo(Oggetto *o)
         int dx = o->premuto ? 1 : 0;
         int lato = (int)o->icona_lato;
         int tx;
+        unsigned int ct = EX_BLACK, sotto = TC.fondo;
 
-        ex_fill_rect(o->padre, x, y, o->w, o->h, EX_GRAY);
-        ex_draw_rect(o->padre, x, y, o->w, o->h, EX_BLACK);
+        /* (0.026) the face is the theme's: the engine swaps the relief when
+         * pressed, as the old code here did, and shows the focus (dotted, in
+         * the classic theme) where the blue frame was */
+        {
+            ExTela       t;
+            Oggetto     *rd = radice(o->padre);
+            unsigned int st = 0;
 
-        if (o->premuto) ex_draw_sunken(o->padre,  x + 1, y + 1, o->w - 2, o->h - 2);
-        else            ex_draw_raised(o->padre, x + 1, y + 1, o->w - 2, o->h - 2);
+            if (o->premuto)                                     st |= EXT_PREMUTO;
+            if (o->sopra)                                       st |= EXT_SOPRA;
+            if (o->stile & EX_DISABLED)                         st |= EXT_SPENTO;
+            if (rd && rd->fuoco == (ExWindow)(o->maniglia) && o->w > 10 && o->h > 10)
+                st |= EXT_FUOCO;
+            if (tela_di(o->padre, &t))
+                ct = ext_pulsante_fondo(&t, g_tema, x, y, o->w, o->h, st);
+            sotto = o->premuto ? ext_mescola(TC.puls_giu_a, TC.puls_giu_b, 128)
+                               : ext_mescola(TC.puls_a, TC.puls_b, 128);
+        }
 
         /* ! CON L'ICONA LA SCRITTA NON E' PIU' IN MEZZO AL PULSANTE, E' IN
          * MEZZO A QUEL CHE RESTA. Centrare il testo sul pulsante intero e
@@ -4680,25 +4761,19 @@ static void disegna_oggetto_nudo(Oggetto *o)
             if (ix < x + dx + 3) ix = x + dx + 3;
             ex_icon_draw(o->padre, (ExIcon)o->icona, ix,
                              y + dx + ((int)o->h - lato) / 2,
-                             (unsigned int)lato, EX_GRAY);
+                             (unsigned int)lato, sotto);
             tx = ix + lato + 6;
         } else {
             tx = x + dx + ((int)o->w - larg(o->titolo)) / 2;
         }
 
-        ex_draw_text(o->padre, tx, y + dx + ((int)o->h - 16) / 2, o->titolo,
-                  (o->stile & EX_DISABLED) ? EX_DARK_GRAY : EX_BLACK);
+        ex_draw_text(o->padre, tx, y + dx + ((int)o->h - 16) / 2, o->titolo, ct);
 
         /* ! THE FOCUS IS SHOWN (27 September 2026). A button with the focus
          * looked like any other, so nobody could see which one Enter would
          * press — in a dialog whose default is «Annulla» by contract, that
-         * is the one thing to see. The same blue frame the radio puts around
-         * its caption. */
-        {
-            Oggetto *rd = radice(o->padre);
-            if (rd && rd->fuoco == (ExWindow)(o->maniglia) && o->w > 10 && o->h > 10)
-                ex_draw_rect(o->padre, x + 4, y + 4, o->w - 8, o->h - 8, EX_BLUE);
-        }
+         * is the one thing to see. Since 0.026 the theme draws it (EXT_FUOCO
+         * above). */
         break;
     }
 
@@ -4724,12 +4799,12 @@ static void disegna_oggetto_nudo(Oggetto *o)
          * si risponde semplicemente col riquadro. */
         int lato = o->w < o->h ? (int)o->w : (int)o->h;
 
-        ex_fill_rect(o->padre, x, y, o->w, o->h, EX_GRAY);
+        ex_fill_rect(o->padre, x, y, o->w, o->h, TC.fondo);
         if (o->icona && lato > 0)
             ex_icon_draw(o->padre, (ExIcon)o->icona,
                              x + ((int)o->w - lato) / 2,
                              y + ((int)o->h - lato) / 2,
-                             (unsigned int)lato, EX_GRAY);
+                             (unsigned int)lato, TC.fondo);
         break;
     }
 
@@ -4741,10 +4816,10 @@ static void disegna_oggetto_nudo(Oggetto *o)
 
             ex_icon_draw(o->padre, (ExIcon)o->icona, x,
                              y + ((int)o->h - lato) / 2,
-                             (unsigned int)lato, EX_GRAY);
-            ex_draw_text(o->padre, x + lato + 6, y, o->titolo, EX_BLACK);
+                             (unsigned int)lato, TC.fondo);
+            ex_draw_text(o->padre, x + lato + 6, y, o->titolo, TC.testo);
         } else {
-            ex_draw_text(o->padre, x, y, o->titolo, EX_BLACK);
+            ex_draw_text(o->padre, x, y, o->titolo, TC.testo);
         }
         break;
 
@@ -4787,14 +4862,22 @@ static void disegna_oggetto_nudo(Oggetto *o)
             vis = dopo;
         }
 
-        ex_fill_rect(o->padre, x, y, o->w, o->h, EX_WHITE);
+        /* (0.026) the theme's field: sunken in two rings in the classic */
+        {
+            ExTela tt;
+
+            if (tela_di(o->padre, &tt))
+                ext_campo(&tt, g_tema, x, y, o->w, o->h,
+                          (o->stile & EX_DISABLED) ? EXT_SPENTO : 0);
+        }
         /* ! IL BORDO DICE CHI HA I TASTI. Senza, chi guarda non sa dove
-         * andra' a finire quello che batte — e Tab sembra non fare niente. */
-        ex_draw_rect(o->padre, x, y, o->w, o->h, fuoco ? EX_BLUE : EX_DARK_GRAY);
+         * andra' a finire quello che batte — e Tab sembra non fare niente.
+         * (0.026) inside the theme's relief, in the accent colour */
+        if (fuoco) ex_draw_rect(o->padre, x + 2, y + 2, o->w - 4, o->h - 4, TC.accento);
 
         memcpy(buf, t + o->vista, vis);
         buf[vis] = '\0';
-        ex_draw_text(o->padre, x + 3, ty, buf, EX_BLACK);
+        ex_draw_text(o->padre, x + 3, ty, buf, TC.campo_testo);
 
         sel = fuoco && casella_sel(o, &a, &b);
         if (sel) {
@@ -4805,33 +4888,33 @@ static void disegna_oggetto_nudo(Oggetto *o)
                 int sx = larg_n(t + o->vista, da - o->vista);
                 int sw = larg_n(t + da, al - da);
 
-                ex_fill_rect(o->padre, x + 3 + sx, y + 3, sw, o->h - 6, EX_BLUE);
+                ex_fill_rect(o->padre, x + 3 + sx, y + 3, sw, o->h - 6, TC.accento);
                 memcpy(buf, t + da, al - da);
                 buf[al - da] = '\0';
-                ex_draw_text(o->padre, x + 3 + sx, ty, buf, EX_WHITE);
+                ex_draw_text(o->padre, x + 3 + sx, ty, buf, TC.accento_testo);
             }
         }
         if (fuoco)
             ex_fill_rect(o->padre, x + 3 + larg_n(t + o->vista, cur - o->vista), y + 3, 1,
-                      o->h - 6, EX_BLACK);
+                      o->h - 6, TC.campo_testo);
         break;
     }
 
     /* Un riquadro e' un solco, non un rettangolo: una riga che rientra e una
      * che sporge subito dopo, come una cucitura nel pannello. */
     case CL_RIQUADRO:
-        ex_draw_sunken(o->padre, x, y + 8, o->w, o->h - 8);
-        ex_draw_raised(o->padre, x + 1, y + 9, o->w - 2, o->h - 10);
+        bordo3d(o->padre, x, y + 8, o->w, o->h - 8, TC.ombra2, TC.luce);
+        bordo3d(o->padre, x + 1, y + 9, o->w - 2, o->h - 10, TC.luce, TC.ombra2);
         if (o->titolo[0]) {
             ex_fill_rect(o->padre, x + 6, y + 8,
-                      larg(o->titolo) + 6, 2, EX_GRAY);
-            ex_draw_text(o->padre, x + 9, y, o->titolo, EX_BLACK);
+                      larg(o->titolo) + 6, 2, TC.fondo);
+            ex_draw_text(o->padre, x + 9, y, o->titolo, TC.testo);
         }
         break;
 
     case CL_SEPARATORE:
-        ex_fill_rect(o->padre, x, y, o->w, 1, EX_SHADOW);
-        ex_fill_rect(o->padre, x, y + 1, o->w, 1, EX_HIGHLIGHT);
+        ex_fill_rect(o->padre, x, y, o->w, 1, TC.ombra2);
+        ex_fill_rect(o->padre, x, y + 1, o->w, 1, TC.luce);
         break;
 
     case CL_AREA: {
@@ -5024,14 +5107,15 @@ static void disegna_oggetto_nudo(Oggetto *o)
         int col_fuoco;
         int gutter = 0;         /* lo spazio a sinistra per le icone */
 
-        ex_fill_rect(o->padre, x, y, o->w, o->h, EX_WHITE);
+        ex_fill_rect(o->padre, x, y, o->w, o->h, TC.campo);
 
         /* ! IL BORDO DICE CHI HA I TASTI, come per la casella di testo: senza,
-         * chi guarda non sa se le frecce muoveranno questa lista o un'altra. */
+         * chi guarda non sa se le frecce muoveranno questa lista o un'altra.
+         * (0.026) one ring of the theme: the rows start at x + 2 */
         col_fuoco = (r && r->fuoco == (ExWindow)(o->maniglia));
         ex_draw_sunken(o->padre, x, y, o->w, o->h);
         if (col_fuoco) ex_draw_rect(o->padre, x + 1, y + 1,
-                                           o->w - 2, o->h - 2, EX_BLUE);
+                                           o->w - 2, o->h - 2, TC.accento);
         if (!L) break;
 
         /* ! SE UNA RIGA HA UN'ICONA, LO SPAZIO LO LASCIANO TUTTE. Indentare
@@ -5055,10 +5139,10 @@ static void disegna_oggetto_nudo(Oggetto *o)
             /* ! LA SCELTA E' UN FONDO, NON UN COLORE DEL TESTO. Su voci di
              * lunghezza diversa un testo colorato non dice dove finisce la
              * riga scelta; un fondo si'. */
-            unsigned int fondo = EX_WHITE;
+            unsigned int fondo = TC.campo;
 
             if (v == L->sel || (L->multi && v < L->n && L->segni[v])) {
-                fondo = col_fuoco ? EX_BLUE : EX_DARK_GRAY;
+                fondo = col_fuoco ? TC.accento : TC.accento_chiaro;
                 ex_fill_rect(o->padre, x + 2, ry - 1,
                              o->w - 4 - (L->n > L->righe ? AREA_BARRA : 0),
                              LISTA_RIGA_H, fondo);
@@ -5091,7 +5175,8 @@ static void disegna_oggetto_nudo(Oggetto *o)
                     testo = vis;
                 }
                 ex_draw_text(o->padre, x + 4 + gutter, ry, testo,
-                          (v == L->sel || (L->multi && v < L->n && L->segni[v])) ? EX_WHITE : EX_BLACK);
+                          (v == L->sel || (L->multi && v < L->n && L->segni[v]))
+                              ? (col_fuoco ? TC.accento_testo : TC.campo_testo) : TC.campo_testo);
             }
         }
         /* Dopo le righe: un testo lungo passa sotto la barra, non sopra. */
@@ -5123,11 +5208,13 @@ static void disegna_oggetto_nudo(Oggetto *o)
         break;
     }
 
-    case CL_INTESTAZIONE:
-        ex_fill_rect(o->padre, x, y, o->w, o->h, EX_BLUE);
-        ex_draw_raised(o->padre, x, y, o->w, o->h);
-        ex_draw_text(o->padre, x + 6, y + (o->h - 16) / 2, o->titolo, EX_WHITE);
+    case CL_INTESTAZIONE: {
+        ExTela t;
+
+        if (tela_di(o->padre, &t)) ext_intestazione(&t, g_tema, x, y, o->w, o->h, "");
+        ex_draw_text(o->padre, x + 6, y + (o->h - 16) / 2, o->titolo, TC.titolo);
         break;
+    }
 
     /* =====================================================================
      * ! LA SPUNTA E IL RADIO SONO LO STESSO CONTROLLO CON DUE DISEGNI, e la
@@ -5151,22 +5238,26 @@ static void disegna_oggetto_nudo(Oggetto *o)
         /* Premuto: il riquadro si fa grigio. E' il «sta succedendo» di una
          * spunta, che non ha un rilievo da scambiare come un pulsante. */
         ex_fill_rect(o->padre, x, by, lato, lato,
-                  o->premuto ? EX_GRAY : EX_WHITE);
-        ex_draw_sunken(o->padre, x, by, lato, lato);
+                  o->premuto ? TC.fondo : (o->stile & EX_DISABLED) ? TC.campo_spento : TC.campo);
+        rilievo_tema(o->padre, x, by, lato, lato, 1);
 
         if (o->valore) {
-            /* Il segno: due tratti, come una V storta. */
-            for (i = 0; i < 3; i++)
-                ex_fill_rect(o->padre, x + 3 + i, by + 5 + i, 2, 2, EX_BLACK);
-            for (i = 0; i < 4; i++)
-                ex_fill_rect(o->padre, x + 6 + i, by + 7 - i, 2, 2, EX_BLACK);
+            /* Il segno: due tratti, come una V storta (0.026: antialiased) */
+            ExTela t;
+            unsigned int c = (o->stile & EX_DISABLED) ? TC.testo_spento : TC.campo_testo;
+
+            if (tela_di(o->padre, &t)) {
+                ext_linea(&t, x + 3, by + 6, x + 5, by + 9, 2, c);
+                ext_linea(&t, x + 5, by + 9, x + 10, by + 3, 2, c);
+            }
+            (void)i;
         }
 
         ex_draw_text(o->padre, x + lato + 5, y + (o->h - 16) / 2, o->titolo,
-                  (o->stile & EX_DISABLED) ? EX_DARK_GRAY : EX_BLACK);
+                  (o->stile & EX_DISABLED) ? TC.testo_spento : TC.testo);
         if (r && r->fuoco == (ExWindow)(o->maniglia))
             ex_draw_rect(o->padre, x + lato + 3, y + (o->h - 16) / 2 - 1,
-                                larg(o->titolo) + 4, 18, EX_BLUE);
+                                larg(o->titolo) + 4, 18, TC.accento);
         break;
     }
 
@@ -5176,16 +5267,30 @@ static void disegna_oggetto_nudo(Oggetto *o)
         int cx = x + lato / 2;
         int cy = y + o->h / 2;
 
-        disco(o->padre, cx, cy, lato / 2,     EX_DARK_GRAY);
-        disco(o->padre, cx, cy, lato / 2 - 1,
-              o->premuto ? EX_GRAY : EX_WHITE);
-        if (o->valore) disco(o->padre, cx, cy, 2, EX_BLACK);
+        /* (0.026) the classic theme's sunken disc, antialiased: dark ring,
+         * light lower-right, the field inside */
+        {
+            ExTela t;
+            int    rr = lato / 2;
+
+            if (tela_di(o->padre, &t)) {
+                ext_cerchio(&t, cx, cy, rr, TC.ombra2);
+                ext_cerchio(&t, cx, cy, rr - 1, TC.ombra);
+                ext_cerchio(&t, cx + 1, cy + 1, rr - 2, TC.luce);
+                ext_cerchio(&t, cx, cy, rr - 2,
+                            o->premuto ? TC.fondo : (o->stile & EX_DISABLED) ? TC.campo_spento : TC.campo);
+                if (o->valore) ext_cerchio(&t, cx, cy, 2,
+                                           (o->stile & EX_DISABLED) ? TC.testo_spento : TC.campo_testo);
+            } else {
+                disco(o->padre, cx, cy, rr, TC.ombra2);
+            }
+        }
 
         ex_draw_text(o->padre, x + lato + 5, y + (o->h - 16) / 2, o->titolo,
-                  (o->stile & EX_DISABLED) ? EX_DARK_GRAY : EX_BLACK);
+                  (o->stile & EX_DISABLED) ? TC.testo_spento : TC.testo);
         if (r && r->fuoco == (ExWindow)(o->maniglia))
             ex_draw_rect(o->padre, x + lato + 3, y + (o->h - 16) / 2 - 1,
-                                larg(o->titolo) + 4, 18, EX_BLUE);
+                                larg(o->titolo) + 4, 18, TC.accento);
         break;
     }
 
@@ -5195,32 +5300,24 @@ static void disegna_oggetto_nudo(Oggetto *o)
 
         /* La gola rientra, le frecce e il cursore sporgono: e' la regola di
          * sempre — sporge cio' che si preme, rientra cio' in cui sta. */
-        ex_fill_rect(o->padre, x, y, o->w, o->h, EX_DARK_GRAY);
+        ex_fill_rect(o->padre, x, y, o->w, o->h, TC.scorri_fondo);
 
         if (oriz) {
-            ex_fill_rect(o->padre, x, y, spess, spess, EX_GRAY);
-            ex_draw_raised(o->padre, x, y, spess, spess);
-            triangolino(o->padre, x + 4, y + 4, spess - 8, 2, EX_BLACK);
+            tasto_tema(o->padre, x, y, spess, spess, 0);
+            triangolino(o->padre, x + 4, y + 4, spess - 8, 2, TC.testo);
 
-            ex_fill_rect(o->padre, x + o->w - spess, y, spess, spess, EX_GRAY);
-            ex_draw_raised(o->padre, x + o->w - spess, y, spess, spess);
-            triangolino(o->padre, x + o->w - spess + 4, y + 4, spess - 8, 3,
-                        EX_BLACK);
+            tasto_tema(o->padre, x + o->w - spess, y, spess, spess, 0);
+            triangolino(o->padre, x + o->w - spess + 4, y + 4, spess - 8, 3, TC.testo);
 
-            ex_fill_rect(o->padre, x + spess + cp, y, cl, spess, EX_GRAY);
-            ex_draw_raised(o->padre, x + spess + cp, y, cl, spess);
+            tasto_tema(o->padre, x + spess + cp, y, cl, spess, 0);
         } else {
-            ex_fill_rect(o->padre, x, y, spess, spess, EX_GRAY);
-            ex_draw_raised(o->padre, x, y, spess, spess);
-            triangolino(o->padre, x + 4, y + 4, spess - 8, 0, EX_BLACK);
+            tasto_tema(o->padre, x, y, spess, spess, 0);
+            triangolino(o->padre, x + 4, y + 4, spess - 8, 0, TC.testo);
 
-            ex_fill_rect(o->padre, x, y + o->h - spess, spess, spess, EX_GRAY);
-            ex_draw_raised(o->padre, x, y + o->h - spess, spess, spess);
-            triangolino(o->padre, x + 4, y + o->h - spess + 4, spess - 8, 1,
-                        EX_BLACK);
+            tasto_tema(o->padre, x, y + o->h - spess, spess, spess, 0);
+            triangolino(o->padre, x + 4, y + o->h - spess + 4, spess - 8, 1, TC.testo);
 
-            ex_fill_rect(o->padre, x, y + spess + cp, spess, cl, EX_GRAY);
-            ex_draw_raised(o->padre, x, y + spess + cp, spess, cl);
+            tasto_tema(o->padre, x, y + spess + cp, spess, cl, 0);
         }
         break;
     }
@@ -5232,20 +5329,22 @@ static void disegna_oggetto_nudo(Oggetto *o)
         Voci    *V = voci_di(o);
         int      bw = 17;
 
-        ex_fill_rect(o->padre, x, y, o->w, o->h, EX_WHITE);
-        ex_draw_sunken(o->padre, x, y, o->w, o->h);
+        {
+            ExTela tt;
+
+            if (tela_di(o->padre, &tt))
+                ext_campo(&tt, g_tema, x, y, o->w, o->h,
+                          (o->stile & EX_DISABLED) ? EXT_SPENTO : 0);
+        }
         if (r && r->fuoco == (ExWindow)(o->maniglia))
-            ex_draw_rect(o->padre, x + 1, y + 1, o->w - 2, o->h - 2,
-                                EX_BLUE);
+            ex_draw_rect(o->padre, x + 2, y + 2, o->w - 4, o->h - 4, TC.accento);
 
         if (V && V->sel < V->n)
             ex_draw_text(o->padre, x + 4, y + (o->h - 16) / 2, V->testo[V->sel],
-                      EX_BLACK);
+                      TC.campo_testo);
 
-        ex_fill_rect(o->padre, x + o->w - bw - 2, y + 2, bw, o->h - 4, EX_GRAY);
-        ex_draw_raised(o->padre, x + o->w - bw - 2, y + 2, bw, o->h - 4);
-        triangolino(o->padre, x + o->w - bw + 2, y + (o->h - 8) / 2, 8, 1,
-                    EX_BLACK);
+        tasto_tema(o->padre, x + o->w - bw - 2, y + 2, bw, o->h - 4, 0);
+        triangolino(o->padre, x + o->w - bw + 2, y + (o->h - 8) / 2, 8, 1, TC.testo);
         break;
     }
 
@@ -5261,9 +5360,9 @@ static void disegna_oggetto_nudo(Oggetto *o)
         unsigned int i;
         int          px = x;
 
-        ex_fill_rect(o->padre, x, y, o->w, o->h, EX_GRAY);
+        ex_fill_rect(o->padre, x, y, o->w, o->h, TC.fondo);
         /* La riga di fondo, che la linguetta scelta interrompe. */
-        ex_fill_rect(o->padre, x, y + o->h - 1, o->w, 1, EX_SHADOW);
+        ex_fill_rect(o->padre, x, y + o->h - 1, o->w, 1, TC.ombra);
         if (!V) break;
 
         {
@@ -5278,12 +5377,14 @@ static void disegna_oggetto_nudo(Oggetto *o)
 
                 if (px + lw > fine) break;      /* quel che non ci sta non c'e' */
 
-                ex_fill_rect(o->padre, px, y + su, lw, o->h - su, EX_GRAY);
-                ex_fill_rect(o->padre, px, y + su, lw, 1, EX_HIGHLIGHT);
-                ex_fill_rect(o->padre, px, y + su, 1, o->h - su, EX_HIGHLIGHT);
-                ex_fill_rect(o->padre, px + lw - 1, y + su, 1, o->h - su, EX_SHADOW);
+                ex_fill_rect(o->padre, px, y + su, lw, o->h - su,
+                             i == V->sel ? TC.fondo : TC.fondo_alt);
+                ex_fill_rect(o->padre, px, y + su, lw, 1, TC.luce);
+                ex_fill_rect(o->padre, px, y + su, 1, o->h - su, TC.luce);
+                ex_fill_rect(o->padre, px + lw - 1, y + su, 1, o->h - su, TC.ombra);
+                if (lw > 3) ex_fill_rect(o->padre, px + lw - 2, y + su + 1, 1, o->h - su - 1, TC.ombra2);
                 if (i != V->sel)
-                    ex_fill_rect(o->padre, px, y + o->h - 1, lw, 1, EX_SHADOW);
+                    ex_fill_rect(o->padre, px, y + o->h - 1, lw, 1, TC.ombra);
 
                 /* un titolo troppo lungo si taglia con «~» */
                 strncpy(t, V->testo[i], sizeof(t) - 1);
@@ -5293,7 +5394,7 @@ static void disegna_oggetto_nudo(Oggetto *o)
                     size_t l = strlen(t);
                     while (l > 1 && larg(t) > spazio) { t[--l] = '\0'; t[l - 1] = '~'; }
                 }
-                ex_draw_text(o->padre, px + 8, y + su + (o->h - su - 16) / 2, t, EX_BLACK);
+                ex_draw_text(o->padre, px + 8, y + su + (o->h - su - 16) / 2, t, TC.testo);
                 if (V->schede)
                     tab_x_rossa(o->padre, px + lw - TAB_CHIUDI_W - 1,
                                 y + su + (o->h - su - TAB_X_LATO) / 2, i == V->sel);
@@ -5302,10 +5403,9 @@ static void disegna_oggetto_nudo(Oggetto *o)
             if (frecce) {
                 int fx = x + o->w - 2 * TAB_FRECCIA_W, k;
                 for (k = 0; k < 2; k++) {
-                    ex_fill_rect(o->padre, fx + k * TAB_FRECCIA_W, y, TAB_FRECCIA_W, o->h - 1, EX_GRAY);
-                    ex_draw_raised(o->padre, fx + k * TAB_FRECCIA_W, y, TAB_FRECCIA_W, o->h - 1);
+                    tasto_tema(o->padre, fx + k * TAB_FRECCIA_W, y, TAB_FRECCIA_W, o->h - 1, 0);
                     ex_draw_text(o->padre, fx + k * TAB_FRECCIA_W + 4, y + (o->h - 16) / 2,
-                              k ? ">" : "<", EX_BLACK);
+                              k ? ">" : "<", TC.testo);
                 }
             }
         }
@@ -5343,32 +5443,34 @@ static void disegna_oggetto_nudo(Oggetto *o)
 
         mdi_client(o, &cx, &cy, &cw, &ch);
 
-        ex_fill_rect(o->padre, x, y, o->w, o->h, EX_GRAY);
+        ex_fill_rect(o->padre, x, y, o->w, o->h, TC.telaio);
         ex_draw_raised(o->padre, x, y, o->w, o->h);
         ex_draw_sunken(o->padre, x + 1, y + 1, o->w - 2, o->h - 2);
 
+        /* (0.026) the bar in the colour of the server's (wserver 0.019):
+         * a quarter along the theme's shade, not barra_a, which in the
+         * classic theme is the selection colour */
         ex_fill_rect(o->padre, x + MDI_BORDO, y + MDI_BORDO,
-                  o->w - 2 * MDI_BORDO, MDI_BARRA_H,
-                  attiva ? MDI_C_ATTIVA : MDI_C_INATTIVA);
+                     o->w - 2 * MDI_BORDO, MDI_BARRA_H,
+                     attiva ? ext_mescola(TC.barra_a, TC.barra_b, 64) : TC.barra_ina_a);
         ex_draw_raised(o->padre, x + MDI_BORDO, y + MDI_BORDO,
                    o->w - 2 * MDI_BORDO, MDI_BARRA_H);
         ex_draw_text(o->padre, x + MDI_BORDO + 5,
                   y + MDI_BORDO + (MDI_BARRA_H - 16) / 2, o->titolo,
-                  attiva ? MDI_C_TITOLO : MDI_C_TIT_INA);
+                  attiva ? TC.titolo : TC.titolo_ina);
 
         if (o->stile & EX_CLOSEBOX) {
             int bl = MDI_BARRA_H - 4;
             int bx = x + o->w - MDI_BORDO - bl - 1;
             int by = y + MDI_BORDO + 2;
 
-            ex_fill_rect(o->padre, bx, by, bl, bl, EX_GRAY);
-            ex_draw_raised(o->padre, bx, by, bl, bl);
-            ex_fill_rect(o->padre, bx + 4, by + 4, bl - 8, bl - 8, MDI_C_CHIUDI);
+            tasto_tema(o->padre, bx, by, bl, bl, 0);
+            ex_fill_rect(o->padre, bx + 4, by + 4, bl - 8, bl - 8, TC.chiudi);
             ex_draw_sunken(o->padre, bx + 4, by + 4, bl - 8, bl - 8);
         }
 
         /* Il fondo del client: i controlli di dentro ci si disegnano sopra. */
-        ex_fill_rect(o->padre, cx, cy, cw, ch, EX_GRAY);
+        ex_fill_rect(o->padre, cx, cy, cw, ch, TC.fondo);
         break;
     }
 
@@ -5378,18 +5480,18 @@ static void disegna_oggetto_nudo(Oggetto *o)
         Menu *M = menu_di(o);
         unsigned int i;
 
-        ex_fill_rect(o->padre, x, y, o->w, o->h, EX_GRAY);
+        ex_fill_rect(o->padre, x, y, o->w, o->h, TC.fondo);
         ex_draw_raised(o->padre, x, y, o->w, o->h);
         if (!M) break;
 
         menu_geometria(M);
         for (i = 0; i < M->n; i++) {
             int tx = x + M->titolo[i].x;
-            unsigned int col = EX_BLACK;
+            unsigned int col = TC.testo;
 
             if (M->aperto == (int)i) {
-                ex_fill_rect(o->padre, tx, y + 2, M->titolo[i].w, o->h - 4, EX_BLUE);
-                col = EX_WHITE;
+                ex_fill_rect(o->padre, tx, y + 2, M->titolo[i].w, o->h - 4, TC.menu_sopra);
+                col = TC.menu_sopra_testo;
             }
             ex_draw_text(o->padre, tx + 8, y + (o->h - 16) / 2,
                       M->titolo[i].nome, col);
@@ -6623,19 +6725,19 @@ static void barra_disegna(ExWindow f, int x, int y, int lun, int sp, int oriz,
 
     barra_geo(lun, sp, massimo, pagina, valore, &gola, &cp, &cl);
     if (oriz) {
-        ex_fill_rect(f, x, y, lun, sp, EX_DARK_GRAY);
-        ex_fill_rect(f, x, y, sp, sp, EX_GRAY);        ex_draw_raised(f, x, y, sp, sp);
-        triangolino(f, x + 3, y + 3, sp - 6, 2, EX_BLACK);
-        ex_fill_rect(f, x + lun - sp, y, sp, sp, EX_GRAY); ex_draw_raised(f, x + lun - sp, y, sp, sp);
-        triangolino(f, x + lun - sp + 3, y + 3, sp - 6, 3, EX_BLACK);
-        ex_fill_rect(f, x + sp + cp, y, cl, sp, EX_GRAY); ex_draw_raised(f, x + sp + cp, y, cl, sp);
+        ex_fill_rect(f, x, y, lun, sp, TC.scorri_fondo);
+        tasto_tema(f, x, y, sp, sp, 0);
+        triangolino(f, x + 3, y + 3, sp - 6, 2, TC.testo);
+        tasto_tema(f, x + lun - sp, y, sp, sp, 0);
+        triangolino(f, x + lun - sp + 3, y + 3, sp - 6, 3, TC.testo);
+        tasto_tema(f, x + sp + cp, y, cl, sp, 0);
     } else {
-        ex_fill_rect(f, x, y, sp, lun, EX_DARK_GRAY);
-        ex_fill_rect(f, x, y, sp, sp, EX_GRAY);        ex_draw_raised(f, x, y, sp, sp);
-        triangolino(f, x + 3, y + 3, sp - 6, 0, EX_BLACK);
-        ex_fill_rect(f, x, y + lun - sp, sp, sp, EX_GRAY); ex_draw_raised(f, x, y + lun - sp, sp, sp);
-        triangolino(f, x + 3, y + lun - sp + 3, sp - 6, 1, EX_BLACK);
-        ex_fill_rect(f, x, y + sp + cp, sp, cl, EX_GRAY); ex_draw_raised(f, x, y + sp + cp, sp, cl);
+        ex_fill_rect(f, x, y, sp, lun, TC.scorri_fondo);
+        tasto_tema(f, x, y, sp, sp, 0);
+        triangolino(f, x + 3, y + 3, sp - 6, 0, TC.testo);
+        tasto_tema(f, x, y + lun - sp, sp, sp, 0);
+        triangolino(f, x + 3, y + lun - sp + 3, sp - 6, 1, TC.testo);
+        tasto_tema(f, x, y + sp + cp, sp, cl, 0);
     }
 }
 
@@ -6662,7 +6764,7 @@ static void area_barre_disegna(const Oggetto *o, Area *A, int x, int y)
     area_massimi(A, &mv, &mo);
     barra_disegna(o->padre, bx, y + 1, o->h - AREA_BARRA - 2, AREA_BARRA, 0, mv, A->righe, A->top);
     barra_disegna(o->padre, x + 1, hy, o->w - AREA_BARRA - 2, AREA_BARRA, 1, mo, A->cols, A->left);
-    ex_fill_rect(o->padre, bx, hy, AREA_BARRA, AREA_BARRA, EX_GRAY);
+    ex_fill_rect(o->padre, bx, hy, AREA_BARRA, AREA_BARRA, TC.fondo);
 }
 
 /* A press on a bar: 1 if it was on one (the view moved, or a drag began). */
@@ -7816,6 +7918,28 @@ static void ridisegna_finestra(ExWindow f)
 #define AVVISO_RIGHE   4
 
 static ExWindow g_sopra_f, g_sopra_c;   /* finestra e controllo sotto il puntatore */
+
+/* (0.026) the button under the pointer is lit by the theme (EXT_SOPRA): only
+ * the two buttons that change are redrawn, never the window */
+static void sopra_ridisegna(ExWindow c, unsigned int acceso)
+{
+    Oggetto *o = c ? ogg(c) : 0;
+    int ox, oy;
+
+    if (!o || !o->usato || o->classe != CL_PULSANTE || o->sopra == acceso) return;
+    o->sopra = acceso;
+    if (!o->padre || !(o->stile & EX_VISIBLE)) return;
+    disegna_oggetto(o);
+    origine(o, &ox, &oy);
+    ex_update_rect(o->padre, ox + o->x, oy + o->y, o->w, o->h);
+}
+
+static void sopra_cambia(ExWindow vecchio, ExWindow nuovo)
+{
+    if (vecchio == nuovo) return;
+    sopra_ridisegna(vecchio, 0);
+    sopra_ridisegna(nuovo, 1);
+}
 static int        g_sopra_giu;          /* un bottone e' giu': vedi WIN_EV_USCITO */
 static int        g_punta_x, g_punta_y; /* dove, nell'area della finestra */
 
@@ -8297,6 +8421,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
             g_punta_x = (int)e.x;
             g_punta_y = (int)e.y;
             if (c != g_sopra_c || f != g_sopra_f) {
+                sopra_cambia(g_sopra_c, c);
                 g_sopra_f = f;
                 g_sopra_c = c;
                 avviso_via();
@@ -8318,6 +8443,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
              * torna su — l'aiuto che ricompare sotto il dito di chi ha appena
              * cliccato. Col bottone giu' il riquadro si toglie e basta. */
             if (!g_sopra_giu) {
+                sopra_cambia(g_sopra_c, 0);
                 g_sopra_f = 0;
                 g_sopra_c = 0;
             }
@@ -8335,6 +8461,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
              * il puntatore se n'e' andato, e il prossimo arrivo conta. */
             g_sopra_giu = 0;
             if (g_sopra_f != f || controllo_in(f, (int)e.x, (int)e.y) != g_sopra_c) {
+                sopra_cambia(g_sopra_c, 0);
                 g_sopra_f = 0;
                 g_sopra_c = 0;
             }
@@ -9017,7 +9144,7 @@ long ex_default_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         }
 
         /* Lo sfondo dell'area del client, e poi i controlli sopra. */
-        ex_fill_rect(f, 0, 0, o->w, o->h, EX_GRAY);
+        ex_fill_rect(f, 0, 0, o->w, o->h, TC.fondo);
         disegna_figli(f);
         ex_update(f);
         return 0;
@@ -9451,7 +9578,7 @@ void ex_item_rename(ExWindow c, unsigned int i, const char *testo)
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
  * 0.002 = ex_enable() ed EX_DISABLED; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.025"   /* 0.025: ex_update_rect (debug/bug_EXIDE001), gli appunti di misura sbagliata rifiutati (debug/bug_SHM001); 0.024: ex_open_file apre le cartelle col programma del tipo "/" (il file manager); 0.023: i programmi per tipo scelti in Impostazioni (ex_types, ex_type_set, ex_type_program, /boot/tipi.cfg); 0.022: tabulazioni nelle aree (ex_textarea_set_tab, ex_textarea_get_column), voci di menu spente (ex_menu_enable) */
+#define EXWIN_VERSIONE "0.026"   /* 0.026: i temi (extema.c, debug/implementazione_TEMA001), il classico rifinito, ex_tema_colore e ex_tema_nome; 0.025: ex_update_rect (debug/bug_EXIDE001), gli appunti di misura sbagliata rifiutati (debug/bug_SHM001); 0.024: ex_open_file apre le cartelle col programma del tipo "/" (il file manager); 0.023: i programmi per tipo scelti in Impostazioni (ex_types, ex_type_set, ex_type_program, /boot/tipi.cfg); 0.022: tabulazioni nelle aree (ex_textarea_set_tab, ex_textarea_get_column), voci di menu spente (ex_menu_enable) */
 
 const char *ex_version(void) { return EXWIN_VERSIONE; }
 

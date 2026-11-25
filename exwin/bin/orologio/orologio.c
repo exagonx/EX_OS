@@ -130,7 +130,7 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         return EX_NO_REDRAW;
 
     case EXM_PAINT:
-        ex_fill_rect(f, 0, 0, FIN_W, FIN_H, EX_GRAY);
+        ex_fill_rect(f, 0, 0, FIN_W, FIN_H, ex_tema_colore(EX_TC_FONDO));
         ex_draw_sunken(f, 0, 0, FIN_W, FIN_H);
         ex_draw_text(f, (FIN_W - ex_text_width(EX_FONT_SYSTEM, g_testo)) / 2,
                   2, g_testo, EX_BLACK);

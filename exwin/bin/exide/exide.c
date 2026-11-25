@@ -617,7 +617,7 @@ static void miniatura(int tipo, int x, int y)
         ex_fill_rect(g_f, x + 12, y + 10, 2, 4, EX_BLACK);
         break;
     case 0:                                     /* button */
-        ex_fill_rect(g_f, x, y + 1, 28, 13, EX_GRAY);
+        ex_fill_rect(g_f, x, y + 1, 28, 13, ex_tema_colore(EX_TC_FONDO));
         ex_draw_rect(g_f, x, y + 1, 28, 13, EX_BLACK);
         ex_draw_raised(g_f, x + 1, y + 2, 26, 11);
         ex_fill_rect(g_f, x + 8, y + 7, 12, 2, EX_BLACK);
@@ -649,7 +649,7 @@ static void miniatura(int tipo, int x, int y)
         break;
     case 5:                                     /* frame */
         ex_draw_rect(g_f, x, y + 4, 28, 11, EX_DARK_GRAY);
-        ex_fill_rect(g_f, x + 4, y + 3, 10, 3, EX_GRAY);
+        ex_fill_rect(g_f, x + 4, y + 3, 10, 3, ex_tema_colore(EX_TC_FONDO));
         ex_fill_rect(g_f, x + 5, y + 4, 8, 2, EX_BLACK);
         break;
     case 6:                                     /* separator */
@@ -679,21 +679,21 @@ static void miniatura(int tipo, int x, int y)
     case 11:                                    /* combo */
         ex_fill_rect(g_f, x, y + 2, 28, 12, EX_WHITE);
         ex_draw_sunken(g_f, x, y + 2, 28, 12);
-        ex_fill_rect(g_f, x + 17, y + 3, 10, 10, EX_GRAY);
+        ex_fill_rect(g_f, x + 17, y + 3, 10, 10, ex_tema_colore(EX_TC_FONDO));
         ex_draw_raised(g_f, x + 17, y + 3, 10, 10);
         for (i = 0; i < 3; i++) ex_fill_rect(g_f, x + 20 + i, y + 7 + i, 5 - 2 * i, 1, EX_BLACK);
         break;
     case 12:                                    /* tab */
         ex_fill_rect(g_f, x, y + 12, 28, 1, EX_DARK_GRAY);
-        ex_fill_rect(g_f, x + 1, y + 3, 12, 9, EX_GRAY);
+        ex_fill_rect(g_f, x + 1, y + 3, 12, 9, ex_tema_colore(EX_TC_FONDO));
         ex_draw_raised(g_f, x + 1, y + 3, 12, 10);
         ex_draw_rect(g_f, x + 14, y + 5, 11, 8, EX_DARK_GRAY);
         break;
     case 13:                                    /* scrollbar */
         ex_fill_rect(g_f, x + 10, y, 9, 15, EX_DARK_GRAY);
-        ex_fill_rect(g_f, x + 10, y, 9, 4, EX_GRAY);
-        ex_fill_rect(g_f, x + 10, y + 11, 9, 4, EX_GRAY);
-        ex_fill_rect(g_f, x + 11, y + 6, 7, 3, EX_GRAY);
+        ex_fill_rect(g_f, x + 10, y, 9, 4, ex_tema_colore(EX_TC_FONDO));
+        ex_fill_rect(g_f, x + 10, y + 11, 9, 4, ex_tema_colore(EX_TC_FONDO));
+        ex_fill_rect(g_f, x + 11, y + 6, 7, 3, ex_tema_colore(EX_TC_FONDO));
         break;
     default:                                    /* image */
         ex_fill_rect(g_f, x + 2, y, 24, 15, 0x0090B8E0);
@@ -724,9 +724,9 @@ static void disegna_strumenti(void)
             ex_fill_rect(g_f, STR_X + 2, y, STR_W - 4, STR_RIGA, 0x00DCE6F2);
         /* La miniatura sta su un quadratino grigio, come il controllo sulla
          * maschera: su una riga blu si leggerebbe male. */
-        ex_fill_rect(g_f, STR_X + 4, y + 2, 32, STR_RIGA - 4, EX_GRAY);
+        ex_fill_rect(g_f, STR_X + 4, y + 2, 32, STR_RIGA - 4, ex_tema_colore(EX_TC_FONDO));
         if (tipo >= 0 && g_str_ic[tipo])
-            ex_icon_draw(g_f, g_str_ic[tipo], STR_X + 12, y + 2, 16, EX_GRAY);
+            ex_icon_draw(g_f, g_str_ic[tipo], STR_X + 12, y + 2, 16, ex_tema_colore(EX_TC_FONDO));
         else
             miniatura(tipo, STR_X + 6, y + 3);
         ex_draw_text(g_f, STR_X + 41, y + 2, tipo < 0 ? "Puntatore" : g_strum[tipo].etichetta,
@@ -787,10 +787,10 @@ static void disegna_controllo(const Ctrl *c, int ox, int oy)
     if (!c->nascosto && !c->spento) return;
 
     for (i = 2; i < c->w - 1; i += 4)
-        ex_fill_rect(g_f, x + i, y + 1, 1, c->h - 2, EX_GRAY);
+        ex_fill_rect(g_f, x + i, y + 1, 1, c->h - 2, ex_tema_colore(EX_TC_FONDO));
     if (c->nascosto) {
         for (i = 2; i < c->h - 1; i += 4)
-            ex_fill_rect(g_f, x + 1, y + i, c->w - 2, 1, EX_GRAY);
+            ex_fill_rect(g_f, x + 1, y + i, c->w - 2, 1, ex_tema_colore(EX_TC_FONDO));
         ex_draw_rect(g_f, x, y, c->w, c->h, EX_DARK_GRAY);
     }
 }
@@ -803,7 +803,7 @@ static void disegna_controllo_nudo(const Ctrl *c, int ox, int oy)
     if (strcmp(cl, "button") == 0) {
         int tx = x + 6;
 
-        ex_fill_rect(g_f, x, y, c->w, c->h, EX_GRAY);
+        ex_fill_rect(g_f, x, y, c->w, c->h, ex_tema_colore(EX_TC_FONDO));
         ex_draw_rect(g_f, x, y, c->w, c->h, EX_BLACK);
         ex_draw_raised(g_f, x + 1, y + 1, c->w - 2, c->h - 2);
 
@@ -815,7 +815,7 @@ static void disegna_controllo_nudo(const Ctrl *c, int ox, int oy)
             int lato = c->h - 6 < 8 ? 8 : (c->h - 6 > 32 ? 32 : c->h - 6);
 
             ex_icon_draw(g_f, c->ic, x + 4, y + (c->h - lato) / 2,
-                             (unsigned int)lato, EX_GRAY);
+                             (unsigned int)lato, ex_tema_colore(EX_TC_FONDO));
             tx = x + 4 + lato + 6;
         }
 
@@ -824,7 +824,7 @@ static void disegna_controllo_nudo(const Ctrl *c, int ox, int oy)
         if (icona_ctrl(c)) {
             int lato = c->h < 8 ? 8 : (c->h > 32 ? 32 : c->h);
 
-            ex_icon_draw(g_f, c->ic, x, y, (unsigned int)lato, EX_GRAY);
+            ex_icon_draw(g_f, c->ic, x, y, (unsigned int)lato, ex_tema_colore(EX_TC_FONDO));
             ex_draw_text(g_f, x + lato + 6, y, c->testo, EX_BLACK);
         } else {
             ex_draw_text(g_f, x, y, c->testo, EX_BLACK);
@@ -839,7 +839,7 @@ static void disegna_controllo_nudo(const Ctrl *c, int ox, int oy)
         if (icona_ctrl(c) && lato > 0)
             ex_icon_draw(g_f, c->ic, x + (c->w - lato) / 2,
                              y + (c->h - lato) / 2,
-                             (unsigned int)lato, EX_GRAY);
+                             (unsigned int)lato, ex_tema_colore(EX_TC_FONDO));
         else
             ex_draw_rect(g_f, x, y, c->w, c->h, EX_DARK_GRAY);
     } else if (strcmp(cl, "textbox") == 0 || strcmp(cl, "combo") == 0) {
@@ -847,7 +847,7 @@ static void disegna_controllo_nudo(const Ctrl *c, int ox, int oy)
         ex_draw_sunken(g_f, x, y, c->w, c->h);
         ex_draw_text(g_f, x + 3, y + (c->h - 16) / 2, c->testo, EX_BLACK);
         if (strcmp(cl, "combo") == 0) {
-            ex_fill_rect(g_f, x + c->w - 19, y + 2, 17, c->h - 4, EX_GRAY);
+            ex_fill_rect(g_f, x + c->w - 19, y + 2, 17, c->h - 4, ex_tema_colore(EX_TC_FONDO));
             ex_draw_raised(g_f, x + c->w - 19, y + 2, 17, c->h - 4);
         }
     } else if (strcmp(cl, "checkbox") == 0) {
@@ -865,7 +865,7 @@ static void disegna_controllo_nudo(const Ctrl *c, int ox, int oy)
     } else if (strcmp(cl, "frame") == 0) {
         ex_draw_sunken(g_f, x, y + 8, c->w, c->h - 8);
         ex_draw_raised(g_f, x + 1, y + 9, c->w - 2, c->h - 10);
-        ex_fill_rect(g_f, x + 6, y + 8, (int)strlen(c->testo) * 8 + 6, 2, EX_GRAY);
+        ex_fill_rect(g_f, x + 6, y + 8, (int)strlen(c->testo) * 8 + 6, 2, ex_tema_colore(EX_TC_FONDO));
         ex_draw_text(g_f, x + 9, y, c->testo, EX_BLACK);
     } else if (strcmp(cl, "separator") == 0) {
         ex_fill_rect(g_f, x, y, c->w, 1, EX_SHADOW);
@@ -876,12 +876,12 @@ static void disegna_controllo_nudo(const Ctrl *c, int ox, int oy)
         ex_draw_text(g_f, x + 6, y + (c->h - 16) / 2, c->testo, EX_WHITE);
     } else if (strcmp(cl, "scrollbar") == 0) {
         ex_fill_rect(g_f, x, y, c->w, c->h, EX_DARK_GRAY);
-        ex_fill_rect(g_f, x, y, c->w, 16, EX_GRAY);
+        ex_fill_rect(g_f, x, y, c->w, 16, ex_tema_colore(EX_TC_FONDO));
         ex_draw_raised(g_f, x, y, c->w, 16);
-        ex_fill_rect(g_f, x, y + c->h - 16, c->w, 16, EX_GRAY);
+        ex_fill_rect(g_f, x, y + c->h - 16, c->w, 16, ex_tema_colore(EX_TC_FONDO));
         ex_draw_raised(g_f, x, y + c->h - 16, c->w, 16);
     } else if (strcmp(cl, "tab") == 0) {
-        ex_fill_rect(g_f, x, y, c->w, c->h, EX_GRAY);
+        ex_fill_rect(g_f, x, y, c->w, c->h, ex_tema_colore(EX_TC_FONDO));
         ex_fill_rect(g_f, x, y + c->h - 1, c->w, 1, EX_SHADOW);
         ex_draw_raised(g_f, x, y, (int)strlen(c->testo) * 8 + 16, c->h);
         ex_draw_text(g_f, x + 8, y + 3, c->testo, EX_BLACK);
@@ -991,11 +991,11 @@ static void disegna_tela_solo(void)
 
     /* La maschera: telaio, barra del titolo, area del client. */
     ex_fill_rect(g_f, TELA_X + 6, TELA_Y + 6, forma()->w + 4, forma()->h + 24,
-              EX_GRAY);
+              ex_tema_colore(EX_TC_FONDO));
     ex_draw_raised(g_f, TELA_X + 6, TELA_Y + 6, forma()->w + 4, forma()->h + 24);
     ex_fill_rect(g_f, TELA_X + 8, TELA_Y + 8, forma()->w, 20, EX_BLUE);
     ex_draw_text(g_f, TELA_X + 13, TELA_Y + 10, forma()->titolo, EX_WHITE);
-    ex_fill_rect(g_f, ox, oy, forma()->w, forma()->h, EX_GRAY);
+    ex_fill_rect(g_f, ox, oy, forma()->w, forma()->h, ex_tema_colore(EX_TC_FONDO));
 
     /* ! SI DISEGNA UNA MASCHERA PER VOLTA, e non e' un ripiego rispetto a
      * mostrarle tutte insieme dentro un contenitore MDI. Il ripiano e' 436x396

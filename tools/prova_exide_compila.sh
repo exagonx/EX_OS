@@ -117,13 +117,13 @@ fi
 echo "=== 3. il programma compilato apre la sua finestra ==="
 if [ -f "$D/3-programma.ppm" ]; then
     # La finestra del programma: grigio dei controlli la' dove prima c'era il
-    # blu della scrivania.
+    # blu della scrivania (D4D0C8, il fondo del tema classico, exwin.so 0.026).
     n=$(python3 - "$D/3-programma.ppm" <<'FINEPY'
 import sys
 d = open(sys.argv[1], "rb").read().split(b"\n", 3)
 w = int(d[1].split()[0]); px = d[3]
 print(sum(1 for y in range(30, 230) for x in range(10, 330)
-          if px[(y * w + x) * 3:(y * w + x) * 3 + 3] == bytes((192, 192, 192))))
+          if px[(y * w + x) * 3:(y * w + x) * 3 + 3] == bytes((212, 208, 200))))
 FINEPY
 )
     [ "${n:-0}" -gt 20000 ] && ok "la finestra del programma c'e' ($n pixel grigi)" \

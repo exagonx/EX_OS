@@ -30,9 +30,9 @@ import sys
 #   (E la scrivania del program manager non e' piu' dello stesso blu della
 #   barra: fondo e barra uguali rendevano la misura ambigua, oltre che il
 #   bordo di una finestra invisibile.)
-C_BARRA    = (30, 77, 125)      # C_BARRA_ATT: la barra del titolo ATTIVA,
+C_BARRA    = (49, 77, 139)      # C_BARRA_ATT (wserver 0.019): la barra del titolo ATTIVA,
                                 # e non e' il blu del toolkit apposta
-C_PRESA    = (64, 64, 64)       # i segni in diagonale della presa d'angolo
+C_PRESA    = (72, 72, 72)       # i segni in diagonale della presa d'angolo (wserver 0.019)
 C_CONTORNO = (255, 255, 128)    # il contorno di un ridimensionamento in corso
 C_NERO     = (0, 0, 0)          # il fondo di un controllo «terminale»
 BARRA_H    = 20

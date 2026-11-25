@@ -6,6 +6,7 @@
 
 **Contents**
 
+- [ExWin wears the classic theme: warmer panels, two-ring relief, shaded buttons (exwin.so 0.026, wserver 0.019) — tested in QEMU](#exwin-wears-the-classic-theme-warmer-panels-two-ring-relief-shaded-buttons-exwinso-0026-wserver-0019--tested-in-qemu)
 - [Kernel 0.367 and the network: su, terminals, shared memory and the kernel log have an owner; signed updates; sshd, TCP and DNS against blind attacks — tested in QEMU](#kernel-0367-and-the-network-su-terminals-shared-memory-and-the-kernel-log-have-an-owner-signed-updates-sshd-tcp-and-dns-against-blind-attacks--tested-in-qemu)
 - [exeditor saves without destroying the file, exide chooses more controls at once, EXBrowser cookies as today's browsers, USB sticks refuse short transfers — tested in QEMU](#exeditor-saves-without-destroying-the-file-exide-chooses-more-controls-at-once-exbrowser-cookies-as-todays-browsers-usb-sticks-refuse-short-transfers--tested-in-qemu)
 - [Firefox's frozen shared memory is read-only for real (kernel 0.366, voce 115) — tested in QEMU](#firefoxs-frozen-shared-memory-is-read-only-for-real-kernel-0366-voce-115--tested-in-qemu)
@@ -256,6 +257,25 @@
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### ExWin wears the classic theme: warmer panels, two-ring relief, shaded buttons (exwin.so 0.026, wserver 0.019) — tested in QEMU
+
+- **What**: the first step of `debug/implementazione_TEMA001`, with the theme the user chose,
+  "classico rifinito" (`debug/grafica/tema_01_classico.png`). The theme engine (`lib/exwin/extema.c`)
+  and the ten themes are now inside exwin.so; the classic one paints the controls.
+- **How it looks**: panels of a warm grey (0xD4D0C8 instead of 0xC0C0C0), buttons with a shaded face
+  and a relief of two rings, focus shown with dots, antialiased check boxes and radio buttons,
+  scroll bars, tabs, menus and headers in the theme's colours. The window frames of the server have
+  the same grey and a bold title.
+- **What does not change**: sizes, rows, the caret, where a click lands, the fonts (TrueType and
+  UTF-8 still written by the toolkit). Programs need no change; one that paints part of its window
+  itself asks `ex_tema_colore(EX_TC_FONDO)` (exide, pm, exeditor, EXBrowser, archivi, orologio and
+  fontprova do).
+- **For the tests**: the active title bar is 0x314D8B and the grip in the corner 0x484848, colours
+  nothing else uses (`tools/misura_finestre.py` and six tests updated).
+- Not yet: the shaded title bar and the engine inside the server, choosing the theme in Settings.
+- Tested in QEMU at 32 and 64 bit: prova_finestre, prova_ridimensiona, prova_riduci,
+  prova_tasti_sistema, prova_exbrowser_misura, prova_exide_scelta.
 
 ### Kernel 0.367 and the network: su, terminals, shared memory and the kernel log have an owner; signed updates; sshd, TCP and DNS against blind attacks — tested in QEMU
 

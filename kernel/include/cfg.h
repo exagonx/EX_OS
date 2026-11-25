@@ -138,6 +138,11 @@ typedef struct {
     char        cache_disco[16];
     char        net_tx[16];
 
+    /* riservakernel = MB: the part of the 64 MB kernel band programs may
+     * never take (pmm.c, FIREFOX001). Empty = 1/8 of the band, 0 = none
+     * (programs take it to the last page, as before 0.368). */
+    char        riserva_kernel[16];
+
     /* [boot] */
     /* Disposizione della tastiera: la legge /dev/kbd.drv all'avvio con
      * SYS_GETENV. Sta in [kernel] e non in [env] perche' e' una scelta di

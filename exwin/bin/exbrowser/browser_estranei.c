@@ -782,7 +782,7 @@ static void est_disegna(int rif, int x, int y, int w, int h)
                 est_disegna(EST_IMM(c->imm), x, y, w, h);
                 break;
             }
-            ex_fill_rect(g_f, cx, y, cw, ch, EX_GRAY);
+            ex_fill_rect(g_f, cx, y, cw, ch, ex_tema_colore(EX_TC_FONDO));
             ex_draw_raised(g_f, cx, y, cw, ch);
             ex_draw_text(g_f,
                       cx + (cw - ex_text_width(EX_FONT_SYSTEM, mostra)) / 2,
@@ -806,7 +806,7 @@ static void est_disegna(int rif, int x, int y, int w, int h)
             ex_draw_text(g_f, cx + 4, y + (ch - 16) / 2, mostra, EX_BLACK);
             /* La freccia in fondo: dice che si apre, anche se non si apre
              * ancora. */
-            ex_fill_rect(g_f, cx + cw - 18, y + 2, 16, ch - 4, EX_GRAY);
+            ex_fill_rect(g_f, cx + cw - 18, y + 2, 16, ch - 4, ex_tema_colore(EX_TC_FONDO));
             ex_draw_raised(g_f, cx + cw - 18, y + 2, 16, ch - 4);
             ex_draw_text(g_f, cx + cw - 14, y + (ch - 16) / 2, "v", EX_BLACK);
             break;
@@ -962,7 +962,7 @@ static void est_disegna(int rif, int x, int y, int w, int h)
                 alta = area_y() + area_h() - cima;
 
             if (rw > 0 && alta > 0) {
-                ex_fill_rect(g_f, x, cima, rw, alta, EX_GRAY);
+                ex_fill_rect(g_f, x, cima, rw, alta, ex_tema_colore(EX_TC_FONDO));
 
                 /* Il bordo si incide solo quando il riquadro c'e' tutto:
                  * un incavo tagliato a meta' disegna una riga di luce in

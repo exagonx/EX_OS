@@ -2204,7 +2204,7 @@ static void vb_disegna(ExWindow f)
     int x1 = (int)g_sw - VB_OROLOGIO, i;
     int y = 2, h = BARRA_H - 4;
 
-    ex_fill_rect(f, VB_X0, 0, x1 - VB_X0, BARRA_H, EX_GRAY);
+    ex_fill_rect(f, VB_X0, 0, x1 - VB_X0, BARRA_H, ex_tema_colore(EX_TC_FONDO));
 
     for (i = 0; i < g_vb_n; i++) {
         VoceBarra *b = &g_vb[i];
@@ -2216,12 +2216,12 @@ static void vb_disegna(ExWindow f)
 
         /* ! THE ONE WITH THE FOCUS IS PRESSED IN, the others stick out: the
          * rule of the toolkit — what sticks out can be pressed. */
-        ex_fill_rect(f, b->x, y, b->w, h, EX_GRAY);
+        ex_fill_rect(f, b->x, y, b->w, h, ex_tema_colore(EX_TC_FONDO));
         if ((b->v.stato & EX_WE_FOCUSED) && !ridotta) ex_draw_sunken(f, b->x, y, b->w, h);
         else                                       ex_draw_raised(f, b->x, y, b->w, h);
 
         if (b->ic) {
-            ex_icon_draw(f, b->ic, tx, y + (h - VB_ICONA) / 2, VB_ICONA, EX_GRAY);
+            ex_icon_draw(f, b->ic, tx, y + (h - VB_ICONA) / 2, VB_ICONA, ex_tema_colore(EX_TC_FONDO));
             tx += VB_ICONA + 4;
         }
 
@@ -2254,7 +2254,7 @@ static void vol_disegna(ExWindow f)
 {
     int x = VB_VOL_X, y = 2, h = BARRA_H - 4, ax = x + 4, ay = y + 4, k;
 
-    ex_fill_rect(f, x, y, VB_VOL_W, h, EX_GRAY);
+    ex_fill_rect(f, x, y, VB_VOL_W, h, ex_tema_colore(EX_TC_FONDO));
     if (!g_vedi_volume) return;         /* spenta dal pannello: resta il grigio */
     ex_draw_raised(f, x, y, VB_VOL_W, h);
     ex_fill_rect(f, ax, ay + 5, 4, 6, EX_BLACK);                    /* il corpo */
@@ -2373,7 +2373,7 @@ static void wifi_disegna(ExWindow f)
 {
     int x = VB_WIFI_X, y = 2, h = BARRA_H - 4, k, livelli, colore;
 
-    ex_fill_rect(f, x, y, VB_WIFI_W, h, EX_GRAY);
+    ex_fill_rect(f, x, y, VB_WIFI_W, h, ex_tema_colore(EX_TC_FONDO));
     if (!g_wifi_c_e) return;
     ex_draw_raised(f, x, y, VB_WIFI_W, h);
     if (g_wifi_stato == WIFI_STATO_CONNESSA) {

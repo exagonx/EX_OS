@@ -84,7 +84,7 @@ xs = []
 for y in range(h):
     for x in range(w):
         i = (y * w + x) * 3
-        if px[i] == 30 and px[i + 1] == 77 and px[i + 2] == 125: xs.append(x)
+        if px[i] == 49 and px[i + 1] == 77 and px[i + 2] == 139: xs.append(x)
 print(max(xs) - min(xs) + 1 if xs else 0)
 EOF
 }

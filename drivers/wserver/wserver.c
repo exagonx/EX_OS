@@ -75,7 +75,7 @@
 
 /* +0.001 a ogni modifica: `wserver -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("wserver", "0.018");
+EX_VERSIONE("wserver", "0.019");   /* 0.019: i colori del tema classico, titolo in grassetto (debug/implementazione_TEMA001) */
 
 /* ! NO FIXED NUMBER OF WINDOWS (wserver 0.013, the user's rule: only the
  * configuration and the hardware set limits). Up to 0.012 there were 16
@@ -139,16 +139,29 @@ EX_VERSIONE("wserver", "0.018");
  * dire quale blu fosse quale. Le prove che misurano le finestre contando i
  * pixel (tools/misura_finestre.py) hanno bisogno di un colore che voglia dire
  * UNA cosa sola. */
-#define C_BARRA_ATT     0x001E4D7D
+/* (wserver 0.019) the colours of the classic theme, lib/exwin/temi/
+ * tema_classico.c, the one exwin.so 0.026 paints the panels with: a frame of
+ * the old grey around a 0xD4D0C8 panel looked like two windows. Until the
+ * engine comes in here too (debug/implementazione_TEMA001, passo 4) they are
+ * copied, and the bar stays one colour: a quarter along the theme's shade
+ * barra_a -> barra_b (ext_mescola(0x0A246A, 0xA6CAF0, 64)), because barra_a
+ * itself is the theme's selection colour - the trap described above. */
+#define C_BARRA_ATT     0x00314D8B
 #define C_BARRA_INA     0x00808080
-#define C_TELAIO        0x00C0C0C0  /* il grigio del telaio, come il pannello */
+#define C_TELAIO        0x00D4D0C8  /* il grigio del telaio, come il pannello */
 #define C_LUCE          0x00FFFFFF
-#define C_OMBRA         0x00000000
+#define C_OMBRA         0x00404040
 #define C_TITOLO        0x00FFFFFF
-#define C_TITOLO_INA    0x00E0E0E0
+#define C_TITOLO_INA    0x00D4D0C8
 #define C_CHIUDI        0x00C04040
-#define C_CLIENT        0x00C0C0C0
-#define C_PRESA         0x00404040
+#define C_CLIENT        0x00D4D0C8
+/* ! THE GRIP HAS A GREY NOBODY ELSE USES (0.019). It was 0x404040, and since
+ * exwin.so 0.026 that is the shadow of every relief in the classic theme:
+ * tools/misura_finestre.py, which finds the grip by its colour, took the
+ * taskbar's buttons for it and measured windows down to the bottom of the
+ * screen. To the eye 0x484848 is the same; to a test it is one thing only,
+ * like C_BARRA_ATT. */
+#define C_PRESA         0x00484848
 #define C_CONTORNO      0x00FFFF80
 #define C_RIDUCI        0x00000000  /* the bar inside the minimize button */
 
@@ -910,9 +923,14 @@ static void cornice(const Finestra *f, unsigned int attiva)
                                    (puo_ingrandirsi(f) ? 1u : 0u);
             unsigned int spazio = bottoni * BARRA_H + 5u;
 
-            if (f->w > spazio + 8u)
+            /* bold, as the classic theme wants it: the same text twice,
+             * one pixel apart (one column less, for that pixel) */
+            if (f->w > spazio + 9u) {
                 scrivi_n(f->x + 5, ty + (alta - 16) / 2, f->titolo,
-                         attiva ? C_TITOLO : C_TITOLO_INA, (f->w - spazio) / 8u);
+                         attiva ? C_TITOLO : C_TITOLO_INA, (f->w - spazio - 1u) / 8u);
+                scrivi_n(f->x + 6, ty + (alta - 16) / 2, f->titolo,
+                         attiva ? C_TITOLO : C_TITOLO_INA, (f->w - spazio - 1u) / 8u);
+            }
         }
 
         /* ! IL PULSANTE DI CHIUSURA E' UN OGGETTO, NON UN QUADRATO ROSSO.

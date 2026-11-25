@@ -72,6 +72,11 @@ passi_a() {
     echo "foto:$D/rid_prima.ppm@2"
 } > "$D/rid_args.txt"
 
+# ! THE PHOTOS OF THE LAST RUN GO FIRST: the wait below stops at the first
+# rid_prima.ppm that is not empty, and with the old one still there it read
+# the grip of the run before (25 November 2026: of another wserver)
+rm -f "$D/rid_prima.ppm" "$D/rid_tirando.ppm" "$D/rid_dopo.ppm"
+
 mapfile -t A < "$D/rid_args.txt"
 EXOS_ISTANZA=rid EXOS_NO_FLOPPY=1 EXOS_CDROM=dist/exos.iso EXOS_ATTESA_FINALE=120 \
     timeout 300 python3 tools/qemu_drive.py "${A[@]}" > "$D/rid.log" 2>&1 &

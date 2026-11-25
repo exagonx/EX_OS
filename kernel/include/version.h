@@ -1122,7 +1122,19 @@
  * Named shared zones have an owner, group and mode (SHM_MODO, default
  * 0600) and SHM_ESCL creates or fails: wserver's windows and the clipboard
  * are no longer anyone's (debug/bug_SHM001). */
-#define EXOS_VERSION    "0.367"
+/* 0.367 -> 0.368: programs no longer take the kernel band to the last
+ * page: riservakernel MB (kernel.cfg, 1/8 of the band if not said) stay
+ * for page tables and kernel stacks, so when the RAM runs out the program
+ * asking gets "RAM finita" and the others live (Firefox's parent died at
+ * 1536 MB for a child, debug/bug_FIREFOX001 C3). "fascia kernel esaurita"
+ * once a second with the count. */
+/* 0.368 -> 0.369: the whole read-only pages of an executable in one copy
+ * for the whole machine (kernel/mm/filecache.c): the first fault reads 64 KB
+ * at once, every later fault of any process on the same page of the same
+ * file (identity, size, mtime) gets the same frame. The frames nobody maps
+ * go back when the RAM runs out (fc_cedi). Firefox's 8-11 processes share
+ * one copy of their 277 MB executable (debug/bug_FIREFOX001 C2). */
+#define EXOS_VERSION    "0.369"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

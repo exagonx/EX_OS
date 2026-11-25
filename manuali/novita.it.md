@@ -6,6 +6,7 @@
 
 **Indice**
 
+- [ExWin veste il tema classico: pannelli più caldi, rilievo a due anelli, pulsanti sfumati (exwin.so 0.026, wserver 0.019) — testato in QEMU](#exwin-veste-il-tema-classico-pannelli-più-caldi-rilievo-a-due-anelli-pulsanti-sfumati-exwinso-0026-wserver-0019--testato-in-qemu)
 - [Kernel 0.367 e la rete: su, terminali, memoria condivisa e registro del kernel hanno un proprietario; aggiornamenti firmati; sshd, TCP e DNS contro gli attacchi alla cieca — testato in QEMU](#kernel-0367-e-la-rete-su-terminali-memoria-condivisa-e-registro-del-kernel-hanno-un-proprietario-aggiornamenti-firmati-sshd-tcp-e-dns-contro-gli-attacchi-alla-cieca--testato-in-qemu)
 - [exeditor salva senza distruggere il file, exide sceglie più controlli insieme, i biscotti di EXBrowser come i navigatori di oggi, le chiavette USB rifiutano i trasferimenti corti — testato in QEMU](#exeditor-salva-senza-distruggere-il-file-exide-sceglie-più-controlli-insieme-i-biscotti-di-exbrowser-come-i-navigatori-di-oggi-le-chiavette-usb-rifiutano-i-trasferimenti-corti--testato-in-qemu)
 - [La memoria condivisa congelata di Firefox è davvero in sola lettura (kernel 0.366, voce 115) — testato in QEMU](#la-memoria-condivisa-congelata-di-firefox-è-davvero-in-sola-lettura-kernel-0366-voce-115--testato-in-qemu)
@@ -256,6 +257,26 @@
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### ExWin veste il tema classico: pannelli più caldi, rilievo a due anelli, pulsanti sfumati (exwin.so 0.026, wserver 0.019) — testato in QEMU
+
+- **Cosa**: il primo passo di `debug/implementazione_TEMA001`, col tema scelto dall'utente,
+  il "classico rifinito" (`debug/grafica/tema_01_classico.png`). Il motore dei temi
+  (`lib/exwin/extema.c`) e i dieci temi ora stanno dentro exwin.so; il classico disegna i controlli.
+- **Come si vede**: pannelli di un grigio caldo (0xD4D0C8 invece di 0xC0C0C0), pulsanti con la
+  faccia sfumata e un rilievo a due anelli, il fuoco a puntini, spunte e radio con l'antialias,
+  barre di scorrimento, linguette, menu e intestazioni nei colori del tema. I telai del server hanno
+  lo stesso grigio e il titolo in grassetto.
+- **Cosa non cambia**: misure, righe, il cursore, dove cade un clic, i caratteri (TrueType e UTF-8
+  li scrive ancora il toolkit). I programmi non vanno toccati; chi dipinge da sé una parte della
+  finestra chiede `ex_tema_colore(EX_TC_FONDO)` (lo fanno exide, pm, exeditor, EXBrowser, archivi,
+  orologio e fontprova).
+- **Per le prove**: la barra del titolo attiva è 0x314D8B e la presa nell'angolo 0x484848, colori
+  che non usa nessun altro (`tools/misura_finestre.py` e sei prove aggiornate).
+- Non ancora: la barra del titolo sfumata e il motore dentro il server, la scelta del tema nelle
+  Impostazioni.
+- Provato in QEMU a 32 e 64 bit: prova_finestre, prova_ridimensiona, prova_riduci,
+  prova_tasti_sistema, prova_exbrowser_misura, prova_exide_scelta.
 
 ### Kernel 0.367 e la rete: su, terminali, memoria condivisa e registro del kernel hanno un proprietario; aggiornamenti firmati; sshd, TCP e DNS contro gli attacchi alla cieca — testato in QEMU
 

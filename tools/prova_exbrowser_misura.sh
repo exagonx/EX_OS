@@ -34,7 +34,7 @@ for y in range(h):
     r = y * w
     for x in range(w):
         i = (r + x) * 3
-        if px[i] == 30 and px[i + 1] == 77 and px[i + 2] == 125:
+        if px[i] == 49 and px[i + 1] == 77 and px[i + 2] == 139:   # C_BARRA_ATT, wserver 0.019
             xs.append(x); ys.append(y)
 if xs: print(min(xs), min(ys), max(xs), max(ys))
 EOF
@@ -73,7 +73,7 @@ B1=$(barra "$D/1-prima.ppm")
 [ -n "$B1" ] || { echo "NON RIUSCITO: nessuna finestra attiva sullo schermo"; exit 1; }
 read -r X0 Y0 X1 Y1 <<< "$B1"
 
-# ! LA PRESA SI CALCOLA, NON SI CERCA PER COLORE: il suo grigio (64,64,64)
+# ! LA PRESA SI CALCOLA, NON SI CERCA PER COLORE: il suo grigio (72,72,72, wserver 0.019)
 # c'e' anche dentro le pagine, e misura_finestre.py --presa trova quello. La
 # finestra nasce alta FIN_H = 540 sotto la barra del titolo; la presa e' il
 # quadrato di 14 pixel nell'angolo in basso a destra dell'area del client.
@@ -84,7 +84,7 @@ import sys
 d = open('$D/1-prima.ppm', 'rb').read().split(b'\n', 3)
 w, h = map(int, d[1].split()); px = d[3]
 print(sum(1 for y in range($PY - 7, $PY + 7) for x in range($PX - 7, $PX + 7)
-          if tuple(px[(y * w + x) * 3:(y * w + x) * 3 + 3]) == (64, 64, 64)))")
+          if tuple(px[(y * w + x) * 3:(y * w + x) * 3 + 3]) == (72, 72, 72)))")
 echo "=== 1. aperto: barra del titolo ($B1), presa in ($PRESA) ==="
 if [ "$N_PRESA" -ge 6 ]; then
     echo "  [OK]  la finestra ha la presa per ridimensionarsi"

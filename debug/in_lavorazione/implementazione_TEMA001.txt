@@ -329,3 +329,56 @@ Ordine proposto: passo 1-2-3 col solo tema classico (COLORI001 lo
 vuole), misura con misura_finestre.py (entro il 10%), poi passo 4
 (server, 32 bit prima; 16/24 con l'ombra a 32 bit), poi COLORI001.
 DA DECIDERE: va bene cominciare cosi' alla prossima sessione?
+
+STATO (25/11/2026, giorno) - PASSI 1-3 COL CLASSICO, MODO "MISTO"
+-------------------------------------------------------------------------------
+Scelto dall'utente il 25/11: tema 01 classico; integrazione "mista" (il
+motore disegna le superfici, exwin tiene misure, testo, cursore e clic).
+Perche' misto: ext_lista/ext_tendina hanno righe da 20 e 22 px (exwin 16,
+e il clic calcola le righe con 16), ext_testo scrive solo l'8x16 (exwin ha
+UTF-8, TrueType, password, icone, colonne).
+FATTO:
+  - lib/exwin/extema.[ch] e lib/exwin/temi/tema_*.c (i dieci) dentro
+    exwin.so (Makefile EXTEMA_SRC; 64 bit: tools/costruisci-utente64.sh;
+    libexos.a statico; il CD degli strumenti accanto a exwin.c).
+  - extema.c: ext_pulsante_fondo (la faccia senza scritta, rende il colore
+    del testo), ext_campo e ext_bordo3d pubblici.
+  - exwin.so 0.026: g_tema = &extema_classico; pulsanti (faccia sfumata,
+    rilievo a due anelli, fuoco a puntini), caselle/combo/liste (campo del
+    tema, fuoco col bordo accento), spunta e radio (antialias), barre di
+    scorrimento, linguette, menu e tendine, intestazione (del motore),
+    riquadro, separatore, MDI, fondo delle finestre: tutto dalla tavolozza.
+    ex_draw_raised/sunken: un anello come prima, coi colori del tema.
+    Nuove: ex_tema_colore(EX_TC_*), ex_tema_nome(). Campo Oggetto.sopra:
+    il pulsante sotto il mouse si accende (ridisegnati solo i due che
+    cambiano) - SOLO nelle finestre che chiedono il passaggio del mouse.
+  - Programmi: EX_GRAY -> ex_tema_colore(EX_TC_FONDO) in exide, pm,
+    exeditor, exbrowser (2 file), archivi, orologio, fontprova.
+  - wserver 0.019: colori del classico (telaio e pannello D4D0C8, ombra
+    404040), titolo in grassetto. Barra a TINTA UNITA 314D8B (un quarto
+    della sfumatura barra_a->barra_b): barra_a 0A246A nel classico e' anche
+    il colore della selezione, e la barra deve essere un colore solo suo
+    (tools/misura_finestre.py la cerca per colore). La presa d'angolo
+    passa a 484848: 404040 ora e' l'ombra di ogni rilievo e misura_finestre
+    misurava le finestre fino al fondo dello schermo.
+  - Prove aggiornate: misura_finestre.py (barra 49,77,139; presa 72,72,72),
+    prova_tasti_sistema.sh, prova_exide_compila.sh (grigio 212,208,200),
+    prova_exbrowser_misura.sh; prova_ridimensiona.sh cancella le sue foto
+    vecchie prima di partire (leggeva la presa del giro precedente).
+PROVE (QEMU): prova_finestre 32 e 64 a posto; prova_exide_scelta riuscita
+  (foto: pulsanti e intestazioni del tema); prova_ridimensiona giusta
+  (presa, contorno, 644x424 -> 525x337, spigolo fermo coi tasti).
+DA DECIDERE:
+  - Il passaggio del mouse per tutte le finestre (oggi solo chi lo chiede):
+    pro, ogni pulsante si accende; contro, ~100 eventi al secondo a ogni
+    programma mentre il mouse si muove. Nel classico la differenza di
+    colore e' piccola: consiglio di lasciarlo cosi' finche' non serve a un
+    tema che lo mostra di piu'.
+  - La tela di exide disegna i controlli finti per conto suo (stile
+    vecchio): farla col motore (ext_pulsante ecc.) e' il prossimo pezzo.
+NON FATTO (passi successivi): la barra sfumata e il motore dentro wserver
+  (passo 4, con misura_finestre che riconosce la sfumatura), tema.cfg e il
+  cambio a caldo (passo 6), il pannello Aspetto in pm, COLORI001.
+VISTO PER STRADA (non dal tema): prova_exide_compila fallisce col CD degli
+  strumenti del 19/11: "attempted static link of dynamic object
+  /exwin/lib/exwin.so" (il linker del CD collega exwin.so in statico).

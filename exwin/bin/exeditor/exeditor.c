@@ -866,7 +866,7 @@ static void barra_segni(void)
         int acceso = i == BT_G ? g_seg_g == 1 : i == BT_C ? g_seg_c == 1 :
                      i == BT_S ? g_seg_s == 1 : g_seg_al == i - BT_SIN;
 
-        ex_fill_rect(g_f, g_bt_x[i] + 2, y, 20, 2, acceso ? EX_BLUE : EX_GRAY);
+        ex_fill_rect(g_f, g_bt_x[i] + 2, y, 20, 2, acceso ? EX_BLUE : ex_tema_colore(EX_TC_FONDO));
     }
 }
 
@@ -1285,7 +1285,7 @@ static void righello_testo(void)
     int          x, y, w, h, x0, fine;
 
     righello_rett(&x, &y, &w, &h);
-    ex_fill_rect(g_f, x, y, w, h, EX_GRAY);
+    ex_fill_rect(g_f, x, y, w, h, ex_tema_colore(EX_TC_FONDO));
     x0 = x + 2;                                 /* the area draws its text at +2 */
     fine = x + w - 16;                          /* its scroll bar */
     ex_fill_rect(g_f, x0, y + 3, fine - x0, h - 6, EX_WHITE);
@@ -1324,7 +1324,7 @@ static void righello_disegna(void)
     P = exrtf_vista_par(&g_vista);
     fo = ex_font_find(EXRTF_SANS, 10, 0, 0);
 
-    ex_fill_rect(g_f, x, y, w, h, EX_GRAY);
+    ex_fill_rect(g_f, x, y, w, h, ex_tema_colore(EX_TC_FONDO));
     ex_fill_rect(g_f, x, y + 3, w, h - 6, 0x00A8A8A8);
     a = cx < x ? x : cx;
     b = cx + cw > x + w ? x + w : cx + cw;

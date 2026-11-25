@@ -326,4 +326,8 @@ int      paging_utente_pronta(struct Process *p, vaddr_t va, uint32_t len);
  * finita. */
 int      paging_pigra_tocca(struct Process *p, vaddr_t virt);
 
+/* A page for a program, making room if need be (disk cache, file cache,
+ * swap): the one the page fault uses. 0 = the RAM is gone. */
+paddr_t paging_pagina_utente(void);
+
 #endif /* PAGING_H */

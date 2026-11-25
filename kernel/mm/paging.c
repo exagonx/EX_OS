@@ -21,6 +21,7 @@
 #include "smp.h"        /* cpu_n: CR0.WP is per processor */
 #include "kmalloc.h"    /* g_wp_spento, one per processor (0.319) */
 #include "blk.h"        /* blk_cache_cedi */
+#include "filecache.h"  /* fc_pagina, fc_cedi: one copy of a file's pages */
 #include "vfs.h"   /* vfs_read: le pagine mancanti arrivano dall'eseguibile */
 #include "syscall.h" /* PROT_* and the errno values of paging_proteggi */
 
@@ -1400,12 +1401,20 @@ static paddr_t pagina_utente(void)
         /* what the disk can read again goes before what it would have to
          * store */
         if (blk_cache_cedi(64) != 0) { f = pmm_alloc_page_utente(); continue; }
+        /* file pages nobody maps: the file has them again (0.369) */
+        if (fc_cedi(64) != 0) { f = pmm_alloc_page_utente(); continue; }
         if (swap_sfratta()) { f = pmm_alloc_page(); continue; }
         if (!swap_attivo()) break;
         sched_sleep(10);
         f = pmm_alloc_page_utente();
     }
     return f;
+}
+
+/* The same, for filecache.c. */
+paddr_t paging_pagina_utente(void)
+{
+    return pagina_utente();
 }
 
 static int pte_riservata(vaddr_t virt);
@@ -1660,6 +1669,29 @@ static int pf_carica_da_file(Process *p, vaddr_t fault_addr)
         da_leggere = v->file_fine - pagina;
         if (da_leggere > PAGE_SIZE) da_leggere = PAGE_SIZE;
         off_file = v->file_off + (pagina - v->vstart);
+    }
+
+    /* ! A WHOLE READ-ONLY PAGE IS THE SAME FOR EVERY PROCESS (0.369,
+     * debug/bug_FIREFOX001 C2): code and constants of an executable come
+     * from filecache.c, one frame for the whole machine, and a second
+     * Firefox process reads nothing from the disk. Writable pages, the
+     * page where the file ends and a page not aligned in the file stay
+     * private, as before; so does any page the cache cannot give. */
+    if (!(v->pg_flags & PG_WRITABLE) && da_leggere == PAGE_SIZE &&
+        (off_file & (PAGE_SIZE - 1)) == 0) {
+        phys = fc_pagina(p->exe_handle, off_file / PAGE_SIZE);
+        if (phys != 0) {
+            if (paging_get_physical(p->page_directory, pagina) != 0) {
+                pmm_free_page(phys);    /* another thread mapped it meanwhile */
+                return 1;
+            }
+            if (paging_map_page(p->page_directory, pagina, phys, v->pg_flags) != 0) {
+                pmm_free_page(phys);
+                klog(LOG_ERROR, "PF: mapping fallito per 0x%08x (PID %u)", pagina, p->pid);
+                return 0;
+            }
+            return 1;
+        }
     }
 
     if (da_leggere > 0) {

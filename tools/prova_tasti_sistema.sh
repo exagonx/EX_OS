@@ -41,7 +41,7 @@ d = open(sys.argv[1], "rb").read().split(b"\n", 3)
 w, h = map(int, d[1].split()); px = d[3]
 # La barra del titolo attiva, in mezzo allo schermo: e' il dialogo.
 n = sum(1 for y in range(h // 3, 2 * h // 3) for x in range(w // 4, 3 * w // 4)
-        if px[(y * w + x) * 3:(y * w + x) * 3 + 3] == bytes((30, 77, 125)))
+        if px[(y * w + x) * 3:(y * w + x) * 3 + 3] == bytes((49, 77, 139)))
 sys.exit(0 if n > 1000 else 1)
 EOF
 then echo "  [OK]  la barra chiede che cosa fare"

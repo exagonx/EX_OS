@@ -102,7 +102,9 @@ EXTLS="lib/extls/extls_client.c lib/extls/extls_pem.c lib/extls/extls_kdf.c lib/
     lib/excrypt/chacha20.c lib/excrypt/poly1305.c lib/excrypt/x25519.c lib/excrypt/fe25519.c \
     lib/excrypt/sha512.c lib/excrypt/aes.c lib/excrypt/gcm.c lib/excrypt/p256.c lib/excrypt/sha1.c"
 if [ $# -eq 0 ]; then
-    so_fai exwin   lib/exwin/exwin.ver     "lib/exwin/exwin.c lib/exfont/exfont.c kernel/arch/x86/font8x16.c" ""
+    # extema.c and temi/: the themes (debug/implementazione_TEMA001)
+    so_fai exwin   lib/exwin/exwin.ver     "lib/exwin/exwin.c lib/exwin/extema.c $(ls lib/exwin/temi/*.c | tr '\n' ' ') \
+        lib/exfont/exfont.c kernel/arch/x86/font8x16.c" ""
     so_fai exdlg   lib/exdlg/exdlg.ver     "lib/exdlg/exdlg.c lib/exdlg/scarichi.c" "exwin.so"
     so_fai eximg   lib/eximg/eximg.ver     "lib/eximg/eximg.c lib/eximg/png.c lib/eximg/ico.c lib/eximg/jpg.c \
         lib/eximg/gif.c lib/eximg/bmp.c lib/eximg/inflate.c lib/eximg/webp.c lib/eximg/vp8.c" ""
@@ -159,7 +161,7 @@ fatte=0; saltate=""
 # (font8x16.c e' il carattere di sistema: sta col kernel, e entra in exwin.so;
 # qui entra nell'archivio dei programmi statici)
 # gfbasic/gf_basic.c is the BASIC interpreter `runbas` runs.
-for s in lib/rete.c lib/dns.c lib/audio.c lib/wifi.c kernel/arch/x86/font8x16.c gfbasic/gf_basic.c lib/ex*/*.c; do
+for s in lib/rete.c lib/dns.c lib/audio.c lib/wifi.c kernel/arch/x86/font8x16.c gfbasic/gf_basic.c lib/ex*/*.c lib/exwin/temi/*.c; do
     # The stubs of the six libraries are gone (they are linked as .so); the
     # optional ones stay - exjs_stub.c, excss_stub.c, exsuono_stub.c - and open
     # their library with dlopen. ExJs and QuickJS export the same names: they
@@ -170,7 +172,7 @@ for s in lib/rete.c lib/dns.c lib/audio.c lib/wifi.c kernel/arch/x86/font8x16.c 
     if gcc $CF $INC $piu -I"$(dirname "$s")" -c "$s" -o "$o" > "$REG/$(basename "$o").log" 2>&1; then
         ar rc "$LIBD/libexos.a" "$o"   # the stubs open with dlopen, static too
         case "$s" in
-        lib/exwin/exwin.c|lib/exfont/exfont.c|lib/exfont/exfont_ttf.c|lib/exfont/ttf.c|lib/exfont/raster.c|\
+        lib/exwin/exwin.c|lib/exwin/extema.c|lib/exwin/temi/*|lib/exfont/exfont.c|lib/exfont/exfont_ttf.c|lib/exfont/ttf.c|lib/exfont/raster.c|\
         lib/exdlg/exdlg.c|lib/exdlg/scarichi.c|lib/exhttp/exhttp.c|lib/exhttp/http.c|lib/exhtml/html.c|\
         lib/excss/css.c|lib/exdom/exdom.c|lib/exzip/exzip.c|lib/exsuono/exsuono.c|\
         lib/eximg/eximg.c|lib/eximg/png.c|lib/eximg/ico.c|lib/eximg/jpg.c|lib/eximg/gif.c|lib/eximg/bmp.c|\

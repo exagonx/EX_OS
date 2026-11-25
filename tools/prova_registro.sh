@@ -54,7 +54,7 @@ xs, ys = [], []
 for y in range(h):
     for x in range(w):
         i = (y * w + x) * 3
-        if px[i] == 30 and px[i + 1] == 77 and px[i + 2] == 125:
+        if px[i] == 49 and px[i + 1] == 77 and px[i + 2] == 139:
             xs.append(x); ys.append(y)
 if not xs:
     print("  [NO]  nessuna finestra si e' aperta"); sys.exit(1)

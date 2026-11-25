@@ -158,7 +158,7 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         int i, y = 6 + MENU_H;
 
         /* Sotto la barra dei menu: il fondo comincia da li'. */
-        ex_fill_rect(f, 0, MENU_H, FIN_W, FIN_H - MENU_H, EX_GRAY);
+        ex_fill_rect(f, 0, MENU_H, FIN_W, FIN_H - MENU_H, ex_tema_colore(EX_TC_FONDO));
 
         /* Il metro: il font di sistema, che c'e' sempre. */
         ex_draw_text(f, 8, y, "font di sistema 8x16:", EX_BLACK);

@@ -1831,6 +1831,10 @@ sis_drv: dirs $(SIS_OUT)
 
 # --- /bin/winprova: la prova del toolkit ExWin -------------------------------
 EXWIN_SRC := lib/exwin/exwin.c
+# the themes (debug/implementazione_TEMA001): the engine and the ten themes,
+# compiled into exwin.so (and later into wserver for the window frames)
+EXTEMA_SRC := lib/exwin/extema.c $(sort $(wildcard lib/exwin/temi/*.c))
+EXTEMA_HDR := lib/exwin/extema.h
 # ! TRE HEADER PER TRE LINGUAGGI, UNA LIBRERIA SOLA. exwin.hpp e exwin.bi non
 # sono due toolkit in piu': avvolgono le stesse funzioni C. Se ex_crea()
 # cambia, il C++ non compila piu' e lo si scopre subito.
@@ -2267,7 +2271,7 @@ exdom_so: dirs $(EXDOM_SO)
 EXLIB_HDR     := lib/include/exlib.h
 
 
-$(EXWIN_SO): $(EXWIN_SRC) $(EXWIN_HDR) \
+$(EXWIN_SO): $(EXWIN_SRC) $(EXWIN_HDR) $(EXTEMA_SRC) $(EXTEMA_HDR) \
              $(EXLIB_HDR) $(WIN_PROTO) $(FONT_SRC) $(EXIMG_HDR) \
              $(EXFONT_SRC) $(EXFONT_HDR) \
              $(LIBC_HDR) lib/exwin/exwin.ver $(LD_EXOS_SO) $(SEGNO_FLAG)
@@ -2276,8 +2280,13 @@ $(EXWIN_SO): $(EXWIN_SRC) $(EXWIN_HDR) \
 	$(CC) $(CFLAGS_SO) -I lib/include -I lib/exwin -I lib/exfont -I lib/eximg -I drivers/wserver -I drivers/kbd -c $(EXWIN_SRC) -o $(BUILD_OBJ)/so_exwin.o
 	$(CC) $(CFLAGS_SO) -I lib/include -I lib/exfont -c $(EXFONT_SRC) -o $(BUILD_OBJ)/so_exfont.o
 	$(CC) $(CFLAGS_SO) -I lib/include -I kernel/include -c $(FONT_SRC) -o $(BUILD_OBJ)/so_font.o
+	@for f in $(EXTEMA_SRC); do \
+	    echo "  tema: $$f"; \
+	    $(CC) $(CFLAGS_SO) -I lib/include -I lib/exwin -c $$f -o $(BUILD_OBJ)/so_$$(basename $$f .c).o || exit 1; \
+	done
 	$(LD) -m $(CROSS_LD_EMU) $(LD_SO) -soname exwin.so --version-script lib/exwin/exwin.ver \
 	    $(BUILD_OBJ)/so_exwin.o \
+	    $(foreach f,$(EXTEMA_SRC),$(BUILD_OBJ)/so_$(basename $(notdir $(f))).o) \
 	    $(BUILD_OBJ)/so_exfont.o \
 	    $(BUILD_OBJ)/so_font.o $(LIBC_SO_DIN) -o $@
 	@echo "[OK] exwin.so compilata: $@"
@@ -5842,6 +5851,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/mm/shm.c \
                   $(KERNEL_DIR)/mm/shmfd.c \
                   $(KERNEL_DIR)/mm/swap.c \
+                  $(KERNEL_DIR)/mm/filecache.c \
                   $(KERNEL_DIR)/sched/sched.c \
                   $(KERNEL_DIR)/sched/segnali.c \
                   $(KERNEL_DIR)/ipc/ipc.c \
@@ -6788,7 +6798,7 @@ ESOS_STUB := lib/exwin/exwin.h      lib/include/exlib.h \
 $(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) $(ESOS_STUB) $(VLCAPRI_BIN) \
             lib/programma.ld \
             $(LIBC_SRC) $(LIBC_HDR) $(LIBC_START) \
-            $(EXWIN_HDR) $(EXWIN_SRC) $(WIN_PROTO) \
+            $(EXWIN_HDR) $(EXWIN_SRC) $(EXTEMA_HDR) $(EXTEMA_SRC) $(WIN_PROTO) \
             $(ISO_DOC) $(FB_CD_FILE) $(FB_CD_DOC) $(LIBC_HDR) $(LIBC_DIN)
 	@echo "=== Creazione CD degli strumenti ==="
 	@# ! IL CONTROLLO CHE SAREBBE SERVITO. Qui dentro finiscono binari
@@ -6815,6 +6825,8 @@ $(ISO_IMG): Makefile $(BINARI_ESTERNI) $(ISO_MKISO) $(ISO_PROVE) $(ESOS_STUB) $(
 	@# eseguibile statico che si tira dietro cio' che usa, esattamente come
 	@# fa gia' con libc.c.
 	@cp $(EXWIN_HDR) $(EXWIN_SRC) $(ISO_ROOT)/exos/include/ 2>/dev/null || true
+	@# exwin.c draws with the themes: the engine and the ten themes beside it
+	@cp $(EXTEMA_HDR) $(EXTEMA_SRC) $(ISO_ROOT)/exos/include/ 2>/dev/null || true
 	@cp $(WIN_PROTO) $(ISO_ROOT)/exos/include/ 2>/dev/null || true
 	@# ! E GLI STUB DELLE LIBRERIE CONDIVISE, dal 3 settembre 2026. Senza,
 	@# chi compila dentro EX-OS poteva solo tirarsi dentro exwin.c INTERO —
@@ -8693,6 +8705,7 @@ sdk-fresco: $(LIBC_DIN)
 	@if [ -d $(ISO_ROOT)/exos/include ]; then \
 	    cp -r lib/include/. $(ISO_ROOT)/exos/include/; \
 	    cp $(EXWIN_HDR) $(EXWIN_SRC) $(WIN_PROTO) $(ISO_ROOT)/exos/include/; \
+	    cp $(EXTEMA_HDR) $(EXTEMA_SRC) $(ISO_ROOT)/exos/include/; \
 	    for f in $(ESOS_STUB); do cp $$f $(ISO_ROOT)/exos/include/; done; \
 	    cp lib/programma.ld $(ISO_ROOT)/exos/programma.ld; \
 	    cp $(LIBC_DIN) $(LIBC_START) $(ISO_ROOT)/exos/; \

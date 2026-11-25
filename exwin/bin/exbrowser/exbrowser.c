@@ -6527,7 +6527,7 @@ void disegna_barra(void)
     if (scorri_max() == 0) return;
 
     pollice(&py, &ph);
-    ex_fill_rect(g_f, x + 1, py, SCORRI_W - 2, ph, EX_GRAY);
+    ex_fill_rect(g_f, x + 1, py, SCORRI_W - 2, ph, ex_tema_colore(EX_TC_FONDO));
     ex_draw_raised(g_f, x + 1, py, SCORRI_W - 2, ph);
 }
 

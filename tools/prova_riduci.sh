@@ -56,7 +56,7 @@ for y in range(h):
     r = y * w
     for x in range(w):
         i = (r + x) * 3
-        if px[i] == 30 and px[i + 1] == 77 and px[i + 2] == 125:
+        if px[i] == 49 and px[i + 1] == 77 and px[i + 2] == 139:
             xs.append(x); ys.append(y)
 if xs: print(min(xs), min(ys), max(xs), max(ys))
 EOF

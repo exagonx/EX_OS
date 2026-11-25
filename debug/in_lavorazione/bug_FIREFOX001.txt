@@ -1,0 +1,479 @@
+BUG FIREFOX001 - Firefox a piu' processi e' lento e si chiude con tre
+                  schede: ogni processo si fa una copia privata di omni.ja
+                  (106 MB) e del codice; finita la RAM, i programmi prendono
+                  le ultime pagine della fascia del kernel e il padre muore
+===============================================================================
+Gravita':   ALTA (il browser si chiude intero; la macchina rallenta per tutti)
+Programma:  lib/libc.c (mmap dei file), kernel EX-OS (sys_mmap,
+            pf_carica_da_file, pmm), Exilla 0.008 (multiprocesso di serie)
+Sorgenti:   lib/libc.c                   mmap: il blocco "UN FILE SI MAPPA
+                                         COPIANDOLO" (sotto !EXOS_LIBC_SO,
+                                         quindi anche in /lib/ld-exos.so)
+            kernel/syscall/syscall_impl.c sys_mmap (fd non anonimo: ENODEV;
+                                         indirizzo = heap_end), sys_munmap
+            kernel/mm/paging.c           pf_carica_da_file, pagina_utente,
+                                         paging_riserva/paging_pigra
+            kernel/mm/pmm.c              pmm_alloc_page_dentro ("ultima
+                                         risorsa: la fascia kernel")
+            kernel/loader/condivise.c    la cache delle .so (0.351): il
+                                         modello da estendere
+            firefox-main/modules/libjar/nsZipArchive.cpp  nsZipHandle::Init
+                                         (PR_MemMap di omni.ja)
+Rilevato su: kernel 0.366 e 0.367 (ISO del 24/11 22:42 e del 25/11 04:42),
+            a 32 bit, in QEMU con KVM, notte del 25/11/2026.
+Prove e dati: ~/ex_os/prove-firefox/ (script, ISO, seriali, foto; vedi 6).
+
+-------------------------------------------------------------------------------
+1. SINTESI
+-------------------------------------------------------------------------------
+Dal kernel 0.358 / Exilla 0.008 Firefox gira a piu' processi (voce 115):
+appena avviato sono 8 processi firefox, 9-11 con qualche scheda (un
+processo per sito). Misurato in QEMU:
+
+  memoria usata                       1 processo (E10S spento)   piu' processi
+  Firefox appena avviato              570 MB (3 processi)        1325 MB (8)
+  con tre schede (pagine locali)      589 MB                     1498 MB (9)
+
+Ogni processo in piu' costa ~150 MB anche vuoto. Di questi, ~106 MB sono la
+COPIA PRIVATA dei due omni.ja (50 + 56 MB) che la libc fa per emulare
+mmap() di un file, e ~16-20 MB la copia privata del codice di firefox (un
+eseguibile unico da 277 MB con libxul dentro: la cache condivisa delle .so
+non lo copre).
+
+Con tre siti diversi (tre processi dei contenuti, pagine che tengono 150
+MB come un sito vero):
+  - 2048 MB di RAM: arriva a 2026 MB usati, 985 "fascia kernel esaurita"
+    e 463 "OOM durante map_page" nella seriale; sopravvive per poco;
+  - 1536 MB di RAM: il processo padre muore (codice -11, fault a
+    0x00000000 dopo un map_page fallito), la finestra di Firefox sparisce:
+    E' IL SINTOMO SEGNALATO ("si chiude con tre tab").
+
+Con il prototipo della correzione (punti 3.1 e 3.2: le pagine di sola
+lettura di eseguibili e file mappati in UNA copia per tutta la macchina),
+stesse prove:
+
+  memoria usata                       prima          prototipo
+  Firefox appena avviato (8 proc.)    1325 MB        675 MB    (-49%)
+  tre schede locali (9 proc.)         1498 MB        701 MB    (-53%)
+  tre siti a 1536 MB                  CHIUSO         11 processi vivi,
+                                                     1272 MB, 0 errori
+
+Lentezza: ogni processo nuovo legge 106 MB di omni.ja con pread (fino a
+325 ms col lucchetto del kernel per chiamata, seriale: "lucchetto del
+kernel tenuto 325 ms ... ultima chiamata 0x8" = SYS_PREAD) e fa centinaia
+di letture da 4 KB del codice tenendo il lucchetto del VFS ("VFS:
+lucchetto tenuto 600-720 ms ... (read)" dai figli). Sulla macchina vera (il
+.253, disco in PIO a ~12 MB/s, voce 117) e' quello che si vede come "il
+sistema si ferma mentre Firefox apre una scheda". Con 3.1 e 3.2 il secondo
+processo e i successivi non leggono quasi niente.
+
+-------------------------------------------------------------------------------
+2. LE CAUSE, UNA PER UNA (con l'esito della verifica)
+-------------------------------------------------------------------------------
+C1  CONFERMATA - mmap di un file = copia privata di tutto il file.
+    lib/libc.c, mmap(): per fd non anonimo e non FD_SHM la libc fa una
+    zona anonima privata grande quanto la richiesta e la riempie con
+    pread() dell'intero file. Gecko mappa omni.ja e browser/omni.ja interi
+    (nsZipHandle::Init -> PR_CreateFileMap/PR_MemMap): 106 MB di copia,
+    in OGNI processo, e 106 MB letti a ogni processo nuovo. Prima di 0.358
+    (un processo) erano 106 MB in tutto; con 8-11 processi sono 0,8-1,1 GB.
+    Il kernel non sa mappare un file (sys_mmap: ENODEV, voce 37 "mmap di
+    un file", aperta).
+    Misura: prototipo kernel+libc -> 614 MB di pagine non ricopiate in
+    una prova da 9 processi (contatore EXC nella seriale).
+
+C2  CONFERMATA - le pagine di codice di un eseguibile sono private.
+    pf_carica_da_file legge UNA pagina da 4 KB con vfs_read a ogni fault e
+    la mette in un frame nuovo del processo (voce 34, aperta). firefox e'
+    ET_EXEC: 149 MB di .text e 41 MB di .rodata, a indirizzo fisso; la
+    cache delle .so (condivise.c, 0.351) vale solo per ET_DYN.
+    Misura: prototipo solo-eseguibile -> 156 MB riusati, 1325 -> 1195 MB.
+
+C3  CONFERMATA, IL MECCANISMO DELLA CHIUSURA - la fascia del kernel come
+    ultima risorsa dei programmi.
+    pmm_alloc_page_dentro da' ai programmi le pagine SOPRA i 64 MB e,
+    quando sono finite, quelle della fascia (0-64 MB). Ma dalla fascia
+    vengono le tabelle delle pagine, le pile del kernel dei fili, lo heap
+    del kernel. Con la RAM quasi finita i programmi si prendono le ultime
+    pagine della fascia, poi map_page non trova una pagina per una tabella
+    ("PAGING: OOM durante map_page"), il fault non si risolve e il processo
+    che lo stava facendo muore con un accesso a 0x00000000 - nella prova a
+    1536 MB il PADRE (PID 40, codice -11), quindi tutto il browser. Non c'e'
+    swap attivo (nessuna area in kernel.cfg).
+
+C4  CONFERMATA COME DIFETTO, NON COME CAUSA DI QUESTA CHIUSURA - mmap non
+    riusa i buchi (voce 16, aperta).
+    spaziomisura (schema di mozjemalloc: 2 MB, si tiene 1 MB allineato, al
+    massimo 64 MB vivi): mmap fallisce al giro 2679 con gli indirizzi
+    saliti da 0x08066000 a 0xaf700000; su Linux non fallisce mai. Con il
+    prototipo del punto 3.3: 20000 giri, indirizzi fra 0x08067000 e
+    0x0c300000. In Firefox la pagina "churn" (33 GB allocati e resi in 140
+    s) NON ha fatto cadere niente: mozjemalloc ricicla le proprie zone.
+    Resta un rischio per le sessioni lunghe (un processo che vive giorni,
+    il padre di Firefox, MariaDB, Apache) e va corretto.
+
+C5  CONFERMATA, CONTRIBUISCE ALLA LENTEZZA - riserve e promesse di mmap una
+    pagina per volta col lucchetto del kernel.
+    sys_mmap con PROT_NONE chiama paging_riserva per ogni pagina, con
+    PROT_READ|WRITE paging_pigra per ogni pagina (una paging_map_page e
+    un invlpg ciascuna): una riserva da 128 MB sono 32768 giri in una
+    chiamata. Seriale: "BKL 1s: ... 613 ms, max 325: preso pid 36 sc 0x5a"
+    (0x5a = SYS_MMAP). Con KVM pesa poco (4 secondi su 10 minuti con piu'
+    di 300 ms); su una CPU vera di 15 anni fa pesa di piu'.
+
+SMENTITA - l'IPC lento. ipcmisura (socketpair, 1 e 2 processori): 5 us di
+    andata e ritorno per 64 byte, 200-400 MB/s. Le pipe da 4 KB non sono
+    il collo di bottiglia.
+
+MINORE - getsockopt(SO_SNDBUF) su un capo di socketpair risponde "non e'
+    un socket" (seriale: "Unable to determine pipe buffer size",
+    ipc_channel_posix.cc:123). Gecko in quel caso non limita le scritture:
+    innocuo, ma va reso vero (punto 3.6).
+
+-------------------------------------------------------------------------------
+3. LE CORREZIONI (in ordine di effetto)
+-------------------------------------------------------------------------------
+3.1 mmap DI UN FILE NEL KERNEL, con pagine condivise caricate al primo
+    accesso  (C1 - la correzione che conta: -600 MB in 9 processi)
+
+  Modello: quello di condivise.c, generalizzato a qualunque file. Una
+  cache per file, chiave = identita' VFS + misura + mtime (quella di
+  condivise.c: "THE KEY IS THE FILE, NOT ITS NAME"), con un vettore di
+  frame per pagina del file. La cache tiene un riferimento su ogni frame
+  (pmm_ref_inc); ogni mappatura un altro. Un netupdate che sostituisce il
+  file fa una voce nuova; la vecchia esce dalla cache quando nessuno la
+  mappa piu'.
+
+  a) La cache (kernel/mm/filecache.c, nuovo)
+
+    typedef struct FileCache {
+        uint32_t  ident, dim;
+        int64_t   mtime;
+        uint32_t  n;            /* pagine del file */
+        paddr_t  *f;            /* frame per pagina, 0 = non ancora letto */
+        int       usi;          /* mappature vive (processi x zone) */
+        int       fuori;        /* tolta dall'elenco: si libera a usi == 0 */
+        struct FileCache *dopo;
+    } FileCache;
+
+    /* la voce del file aperto h (la crea); usi++ */
+    FileCache *fc_prendi(int h);
+    void       fc_lascia(FileCache *c);        /* usi--; a 0 e fuori: libera */
+    /* il frame della pagina idx, con un riferimento per chi lo mappa;
+     * pagina intera: condiviso (letto la prima volta, poi riusato);
+     * ultima pagina parziale o oltre la fine: frame privato con gli zeri */
+    paddr_t    fc_pagina(FileCache *c, int h, uint32_t idx);
+
+  fc_pagina e' exc_frame del prototipo (~/ex_os/prove-firefox/src/kernel/
+  mm/paging.c), con due cose in piu' rispetto al prototipo:
+   - LETTURA ANTICIPATA: su un buco legge 16 pagine (64 KB) con UNA
+     vfs_read in un buffer del kernel e riempie le 16 voci; il prototipo
+     leggeva pagina per pagina e l'avvio era 11 s invece di 8;
+   - il lucchetto: la voce si cerca e si riempie a interrupt spenti (stato
+     IF salvato, voce 54) ma la vfs_read si fa FUORI, e chi arriva secondo
+     sulla stessa pagina trova il frame gia' messo e libera il suo.
+
+  b) Le zone di un processo (serve anche a 3.3: e' la "lista delle zone"
+     della voce 16)
+
+    typedef struct {
+        uint32_t   inizio, fine;     /* pagine */
+        uint32_t   pg_flags;         /* PG_USER, mai PG_WRITABLE per i file */
+        uint8_t    tipo;             /* ZONA_ANON, ZONA_FILE, ZONA_SHM ... */
+        FileCache *fc;               /* ZONA_FILE */
+        int        h;                /* ZONA_FILE: handle VFS (vfs_dup) */
+        uint32_t   pag0;             /* ZONA_FILE: pagina del file a inizio */
+    } Zona;
+    /* nel Process del capogruppo: Zona *zone; uint32_t n_zone, posti_zone;
+       ordinate per inizio, crescono raddoppiando (niente tetto fisso,
+       regola dell'utente del 28/10) */
+
+  c) sys_mmap, al posto di "if (!(p->flags & MAP_ANONYMOUS) && p->fd >=
+     0) return ERR(ENODEV);":
+
+    if (!(p->flags & MAP_ANONYMOUS) && p->fd >= 0 && p->fd < FD_N(proc) &&
+        FDV(proc, p->fd).type == FD_FILE) {
+        int h = (int)FDV(proc, p->fd).inode;
+        FileCache *fc;
+        if (p->offset & (PAGE_SIZE - 1)) return ERR(EINVAL);
+        if (p->prot & PROT_WRITE) {
+            if (p->flags & MAP_SHARED) return ERR(ENODEV);  /* scrittura che
+                                    torna al file: la libc ripiega (sotto) */
+            /* MAP_PRIVATE scrivibile: le stesse pagine condivise ma
+               copia-su-scrittura (PG_COW), come dopo un fork */
+        }
+        if ((FDV(proc, p->fd).flags & 3u) == O_WRONLY) return ERR(EACCES);
+        fc = fc_prendi(h);
+        if (!fc) return ERR(ENOMEM);
+        if (zona_aggiungi(proc, vaddr, pages, ZONA_FILE, fc, vfs_dup(h),
+                          p->offset / PAGE_SIZE,
+                          PG_USER | ((p->prot & PROT_WRITE) ? PG_COW : 0)) != 0) {
+            fc_lascia(fc);
+            return ERR(ENOMEM);
+        }
+        /* NIENTE pagine adesso: arrivano al primo accesso (d) */
+        for (i = 0; i < pages; i++)
+            paging_riserva_file(proc->page_directory, vaddr + i * PAGE_SIZE);
+        ...heap_end come oggi...
+        return (int32_t)vaddr;
+    }
+
+    paging_riserva_file scrive una voce non presente con un segno (come
+    PG_PIGRA): serve a cerca_buco (3.3) per sapere che la pagina e'
+    occupata, e al fault per sapere che deve cercare una zona.
+
+  d) Il fault: nel page_fault_handler, accanto a paging_pigra_tocca e a
+     pf_carica_da_file:
+
+    static int pf_da_zona_file(Process *p, vaddr_t addr)
+    {
+        Zona   *z = zona_di(immagine_di(p), PAGINA_DI(addr));
+        paddr_t fr;
+        if (!z || z->tipo != ZONA_FILE) return 0;
+        fr = fc_pagina(z->fc, z->h, z->pag0 + (PAGINA_DI(addr) - z->inizio) / PAGE_SIZE);
+        if (!fr) return 0;                       /* RAM: vedi 3.4 */
+        if (paging_get_physical(p->page_directory, PAGINA_DI(addr))) {
+            pmm_free_page(fr);                    /* un altro filo l'ha gia' messa */
+            return 1;
+        }
+        if (paging_map_page(p->page_directory, PAGINA_DI(addr), fr,
+                            PG_PRESENT | z->pg_flags) != 0) {
+            pmm_free_page(fr);
+            return 0;
+        }
+        return 1;
+    }
+
+  e) munmap / mprotect / fork / exit:
+     - munmap: le pagine presenti si staccano (pmm_free_page = un
+       riferimento in meno, la cache tiene il suo), la zona si accorcia o si
+       spezza; zona vuota -> vfs_close(h), fc_lascia(fc);
+     - mprotect in scrittura su una pagina di file: c'e' gia' la regola
+       giusta (frame con piu' proprietari -> PG_COW, paging_proteggi);
+     - fork: le zone si copiano con vfs_dup(h) e fc->usi++; le pagine
+       presenti il fork le condivide gia' (paging_copia_spazio);
+     - exit/exec: tutte le zone via (vfs_close, fc_lascia).
+     - Lo swap (paging_vittima) non sceglie le pagine con piu' proprietari:
+       le pagine di file non vanno mai nello swap, e va bene, perche' si
+       possono rileggere dal file. Quando la RAM serve, la cache le puo'
+       LASCIARE: fc_cedi(n) libera i frame con riferimento 1 (solo la cache
+       li tiene), chiamato da pagina_utente accanto a blk_cache_cedi.
+
+  f) libc (lib/libc.c, mmap): prima dell'emulazione, come nel prototipo:
+
+    if (fd != -1 && !(flags & MAP_ANONYMOUS) &&
+        !((flags & MAP_SHARED) && (prot & PROT_WRITE))) {
+        ...p.fd = fd...
+        r = _syscall1(SYS_MMAP, (uintptr_t)&p);
+        if (r != 0 && (uint32_t)r < 0xFFFFF001u) return (void *)(uintptr_t)(uint32_t)r;
+        if (r != -ENODEV) { errno = (r != 0) ? -r : ENOMEM; return MAP_FAILED; }
+        /* ENODEV: kernel vecchio o MAP_SHARED scrivibile -> emulazione */
+    }
+
+     L'emulazione resta per MAP_SHARED scrivibile (che deve tornare al file
+     con msync/munmap: mappa_ricorda, gia' scritto) e per i kernel vecchi.
+     ld-exos.so (EXOS_LIBC_ELF) prende il blocco come libc.a.
+
+  g) Gecko: niente da cambiare. nsZipHandle::Init mappa e poi fa
+     madvise(MADV_WILLNEED): la libc puo' tradurlo in una lettura anticipata
+     di tutto (oggi madvise e' probabilmente un no-op: va bene cosi', il
+     fault con la lettura anticipata da 64 KB basta).
+
+3.2 IL CODICE DEGLI ESEGUIBILI CONDIVISO  (C2: -130/-160 MB in 9 processi,
+    e il secondo processo non rilegge 60 MB dal disco)
+
+  In pf_carica_da_file, una pagina INTERA di una VMA di sola lettura (niente
+  PG_WRITABLE) viene dalla stessa FileCache del file eseguibile
+  (p->exe_handle):
+
+    if (!(v->pg_flags & PG_WRITABLE) && da_leggere == PAGE_SIZE &&
+        !(off_file & (PAGE_SIZE - 1))) {
+        if (!p->exe_fc) p->exe_fc = fc_prendi(p->exe_handle);   /* all'exec */
+        fr = fc_pagina(p->exe_fc, p->exe_handle, off_file / PAGE_SIZE);
+        ... mappa fr con v->pg_flags, come in pf_da_zona_file ...
+        return 1;
+    }
+    /* il resto (pagine scrivibili, pagine di confine) come oggi */
+
+  E' esattamente il prototipo (ExeCache, provato: 9 processi, 3 schede,
+  nessun guasto), con la cache spostata in filecache.c e fc_lascia a
+  exit/exec (Process.exe_fc). Le pagine dove un segmento di sola lettura e
+  uno scrivibile si toccano restano private (stessa regola di condivise.c).
+  Per i TEXTREL (nessuno fra i porting): mprotect li rende copia-su-
+  scrittura, come gia' per le .so.
+
+3.3 mmap CERCA IL PRIMO BUCO  (C4, voce 16)
+
+  Con le zone di 3.1 b) la ricerca si fa sull'elenco ordinato (primo buco
+  fra heap_start e heap_max abbastanza grande): O(numero di zone). Finche'
+  l'elenco non c'e', il prototipo provato (paging_cerca_buco) cerca fra
+  heap_start e heap_end le voci di tabella A ZERO (niente pagina, riserva,
+  promessa, swap, file), una tabella assente = una tabella intera libera:
+
+    uint32_t paging_cerca_buco(PDE *pd, uint32_t da, uint32_t a, uint32_t pagine)
+    {
+        uint32_t va = da, inizio = da, n = 0;
+        const uint32_t TAB = PAGE_SIZE * PTE_PER_TAB;  /* 4 MB a 32 bit, 2 MB a 64 */
+        while (va < a) {
+            if (!TAB_C_E(pd, va)) {
+                uint32_t fine = (va & ~(TAB - 1)) + TAB;
+                if (fine > a) fine = a;
+                if (n == 0) inizio = va;
+                n += (fine - va) / PAGE_SIZE; va = fine;
+            } else if (TAB_GRANDE(pd, va)) { n = 0; va = (va & ~(TAB - 1)) + TAB; }
+            else if (TAB_DI(pd, va)[NELLA_TAB(va)] == 0) { if (!n) inizio = va; n++; va += PAGE_SIZE; }
+            else { n = 0; va += PAGE_SIZE; }
+            if (n >= pagine) return inizio;
+        }
+        return 0;
+    }
+
+    /* sys_mmap, ramo senza MAP_FIXED, prima del controllo del tetto: */
+    b = paging_cerca_buco(proc->page_directory,
+                          ALIGN_UP(proc->heap_start, PAGE_SIZE), vaddr, pages);
+    if (b) vaddr = b;
+
+  ! Il prototipo ha la costante 0x400000 (32 bit): a 64 bit una tabella
+  copre 2 MB (512 voci, NELLA_TAB = (v >> 12) & 511). Usare la costante
+  giusta per architettura.
+  ! Fili: lo spazio e' del gruppo (immagine_di), e due fili che fanno mmap
+  insieme non devono ricevere lo stesso buco: la ricerca e la
+  prenotazione (paging_riserva della prima pagina) nella stessa sezione
+  critica, o un lucchetto della memoria del gruppo.
+  ! sbrk non cambia: cresce da heap_end, e i buchi stanno sotto.
+
+3.4 LA FASCIA DEL KERNEL NON SI DA' AI PROGRAMMI FINO ALL'ULTIMA PAGINA
+    (C3: e' il meccanismo che trasforma "RAM finita" in "browser chiuso")
+
+  pmm_alloc_page_dentro, "Ultima risorsa: la fascia kernel": tenere una
+  RISERVA che i programmi non possono prendere, per le tabelle delle
+  pagine e le pile del kernel che servono a far morire bene un processo:
+
+    #define FASCIA_RISERVA_PAGINE  (2048u)     /* 8 MB; kernel.cfg:
+                                                  riservakernel = 8M */
+    ...
+    /* Ultima risorsa: la fascia kernel, MENO la riserva */
+    if (pmm_libere_fascia() <= FASCIA_RISERVA_PAGINE) {
+        klog_una_volta(LOG_ERROR, "PMM: RAM finita per i programmi (resta "
+                       "la riserva del kernel, %u pagine)", FASCIA_RISERVA_PAGINE);
+        return 0;
+    }
+
+  pmm_libere_fascia(): un contatore tenuto con g_free_pages (o un giro della
+  bitmap fino a pmm_limite_kernel, che e' di 16384 bit: si puo' fare a
+  ogni chiamata solo quando la fascia e' gia' l'ultima risorsa).
+  Con la riserva: la RAM finita si vede come pagina_utente() == 0 nel
+  processo che chiede (il fault da' "RAM esaurita" e uccide LUI, con un
+  messaggio chiaro), map_page per le tabelle trova ancora pagine, il padre
+  di Firefox non muore per il figlio che consuma.
+  Meglio ancora (implementazione_LIM001): un tetto per utente e la scelta
+  di chi uccidere (il processo che usa di piu', non quello che chiede).
+
+  E l'avviso: oggi la seriale dice "fascia kernel esaurita ... pagine
+  libere altrove" centinaia di volte (985 in una prova): una riga al
+  secondo con il conto basta.
+
+3.5 RISERVE E PROMESSE A TABELLE INTERE  (C5)
+
+  paging_riserva e paging_pigra lavorano una pagina per volta con una
+  paging_map_page (ricerca della tabella, eventuale allocazione) e un
+  invlpg ciascuna. Una funzione per intervallo:
+
+    int paging_segna_intervallo(PDE *pd, uint32_t da, uint32_t pagine, PTE voce)
+    {
+        while (pagine) {
+            PTE *pt = tabella_assicura(pd, da);          /* alloca se manca */
+            uint32_t k = NELLA_TAB(da), quante = PTE_PER_TAB - k;
+            if (!pt) return -1;
+            if (quante > pagine) quante = pagine;
+            for (uint32_t j = 0; j < quante; j++) pt[k + j] = voce;
+            da += quante * PAGE_SIZE; pagine -= quante;
+        }
+        /* nessun invlpg: le voci erano assenti (non c'era niente in TLB);
+           se l'intervallo sostituiva qualcosa (MAP_FIXED) un solo
+           paging_tlb_altrove alla fine */
+        return 0;
+    }
+
+  sys_mmap la chiama con voce = PG_RISERVA (PROT_NONE) o PG_PIGRA | flags
+  (promessa). E per riserve grandi: cedere il lucchetto del kernel ogni
+  1024 tabelle (bkl_lascia/bkl_entra come la copia PIO della 0.362).
+
+3.6 getsockopt(SO_SNDBUF/SO_RCVBUF) sui capi di socketpair
+
+  libc: getsockopt su un fd che fstat dice S_IFSOCK e che non e' di ip.drv
+  -> SO_SNDBUF e SO_RCVBUF rendono PIPE_DIM (4096) o meglio la misura vera
+  del tubo (una syscall o un campo di Stat); SO_TYPE rende SOCK_STREAM.
+  Con il valore vero Gecko spezza le scritture alla misura del tubo
+  (PipeBufHasSpaceAfter) invece di tentarle intere.
+
+-------------------------------------------------------------------------------
+4. ORDINE CONSIGLIATO
+-------------------------------------------------------------------------------
+  1. 3.4 (riserva della fascia): poche righe, e da sola trasforma la
+     chiusura del browser in una scheda che muore con un messaggio.
+  2. 3.2 (codice condiviso): il prototipo c'e' gia' e funziona.
+  3. 3.1 (mmap dei file, zone): il grosso del risparmio; la struttura delle
+     zone serve anche a 3.3 e alle voci 17, 37, 39.
+  4. 3.3, 3.5, 3.6.
+  In attesa, per chi usa Firefox sul .253 oggi: EXILLA_UN_PROCESSO=1 (o il
+  lanciatore /exwin/bin/exilla con quella variabile) torna a 3 processi e
+  ~570 MB; e attivare lo swap (kernel.cfg swap = hdXpY) da' margine. Sono
+  ripieghi, non correzioni.
+
+-------------------------------------------------------------------------------
+5. COSA NON E' STATO VERIFICATO
+-------------------------------------------------------------------------------
+  - A 64 BIT la MISURA c'e' (tre-schede-64, dist/exos64.iso del 25/11
+    04:47, kernel 0.367, Firefox a 64 bit da 310 MB): 1383 MB dopo l'avvio
+    con 8 processi, 1564 MB con tre schede - lo stesso quadro dei 32 bit
+    (la libc e' la stessa: C1 c'e' anche li'). Il PROTOTIPO invece e'
+    provato solo a 32 bit: a 64 bit va rifatto (costante della tabella in
+    3.3, paging64). Il kernel a 64 bit ha la RAM sopra i 4 GB come secondo
+    serbatoio per i programmi, quindi C3 morde piu' tardi su macchine con
+    piu' di 4 GB (il .253 ne ha 3,8).
+  - Il prototipo 3.1 mappa IN ANTICIPO (legge tutto il file alla mmap):
+    la versione definitiva al primo accesso va provata con le stesse
+    prove, piu' una che mappa, legge, smappa, rimappa, e con fork in mezzo.
+  - Il .253 vero: la lentezza attribuita alle letture (VFS e lucchetto del
+    kernel) e' dedotta dai registri di QEMU e dalla voce 117, non misurata
+    li'.
+
+-------------------------------------------------------------------------------
+6. COME RIFARE LE PROVE (tutto in ~/ex_os/prove-firefox/)
+-------------------------------------------------------------------------------
+  tre-schede-p.sh   Firefox (pacchetto di ~/ex_os/cross_build/exilla-obj),
+                    tre schede file://, "mem" e "ps" dopo ogni passo.
+                    ISO=... ISTANZA=... OUT=... EXOS_RAM=...
+  un-processo-p.sh  lo stesso con MOZ_FORCE_DISABLE_E10S=1
+  siti.sh           tre siti (10.0.2.10/11/12 via guestfwd + nc verso un
+                    http.server sull'host, porta 18080), pagina web/
+                    pesante.html che tiene 150 MB; netdetect -c, dhcp
+  churn.sh          pagina churn.html (alloca e rende 24 MB ogni 100 ms)
+  ipc-p.sh          ipcmisura (latenza e banda di socketpair e pipe) e
+                    spaziomisura (C4), in una macchina piccola (SMP=1/2)
+  iso/exos-base.iso      l'ISO del 25/11 04:42 (kernel 0.367) usata come base
+  iso/exos-proto3.iso    base + kernel col prototipo (3.1 anticipato, 3.2,
+                         3.3) + /lib/ld-exos.so col blocco 3.1 f)
+  src/              la copia dei sorgenti col prototipo (diff rispetto
+                    all'albero: kernel/mm/paging.c, kernel/syscall/
+                    syscall_impl.c, lib/libc.c; cercare "PROTOTIPO")
+  fuori/            la build della copia (EXOS_FUORI separato)
+
+  Risultati (seriale.txt, foto/*.png, inizio/fine):
+    tre-schede-1        base 0.366, piu' processi
+    un-processo         base 0.367, un processo
+    proto-tre-schede    prototipo solo eseguibile (3.2)
+    proto2-tre-schede   prototipo eseguibile + file (3.2 + 3.1)
+    churn-base          C4 in Firefox (non cade)
+    siti-base           tre siti, 2048 MB: al limite, 985 errori di fascia
+    siti-base-1536      tre siti, 1536 MB: Firefox CHIUSO
+    siti-proto3-1536    tre siti, 1536 MB, prototipo: tutto vivo
+    tre-schede-64       base 0.367 a 64 bit, piu' processi
+    ipc2, ipc2p3        ipcmisura e spaziomisura (base / prototipo)
+
+  ! Per rifare un'ISO di prova si usa tools/mkiso.py su una copia di
+  ~/ex_os/build/iso-exos (con xorriso -update i nomi come libstdc++.so.6
+  cambiano e il caricatore non trova le librerie: provato), oppure si
+  sovrascrive soltanto boot.img al suo settore El Torito (12991 nell'ISO
+  di base) per cambiare il solo kernel.

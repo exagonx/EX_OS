@@ -334,6 +334,29 @@ int ex_key_info(ExKeyInfo *out);
 #define EX_HIGHLIGHT         0x00FFFFFF
 #define EX_SHADOW        0x00000000
 
+/* =============================================================================
+ * THE THEME (exwin.so 0.026)
+ *
+ * The controls are drawn with the colours of a theme (today the classic one,
+ * whose panels are 0xD4D0C8 and not EX_GRAY). A program that paints part of
+ * its window itself asks the theme, or its patches show: ex_tema_colore
+ * (EX_TC_FONDO) is the panel behind the controls. EX_GRAY and the others
+ * above stay what they were, for whoever wants exactly that colour.
+ * ============================================================================= */
+#define EX_TC_FONDO          0   /* panels, the window background            */
+#define EX_TC_TESTO          1   /* text on the panel                        */
+#define EX_TC_TESTO_SPENTO   2   /* disabled text                            */
+#define EX_TC_CAMPO          3   /* text boxes and lists                     */
+#define EX_TC_CAMPO_TESTO    4
+#define EX_TC_ACCENTO        5   /* the selection                            */
+#define EX_TC_ACCENTO_TESTO  6
+#define EX_TC_LUCE           7   /* the relief: light (upper left)           */
+#define EX_TC_OMBRA          8   /* the relief: shadow (lower right)         */
+#define EX_TC_BORDO          9   /* thin outlines                            */
+#define EX_TC_SCRIVANIA     10   /* the desktop                              */
+unsigned int ex_tema_colore(int quale);
+const char  *ex_tema_nome(void);     /* "classico" */
+
 /* -----------------------------------------------------------------------------
  * Creare
  *
