@@ -232,7 +232,10 @@ int http_richiesta_testa_da(char *out, unsigned int max, const HttpUrl *u,
      * compressione. Un «Accept-Encoding: gzip» farebbe arrivare pagine
      * compresse — che sapremmo pure srotolare, inflate c'e' — ma e' un pezzo
      * in piu' da sbagliare prima ancora di aver visto una pagina intera. Si
-     * aggiunge quando il resto funziona. */
+     * aggiunge quando il resto funziona.
+     * ! 25 November 2026: it is added, by exhttp.c and only for who asks
+     * (exhttp_srotola, debug/implementazione_BROWSER002 P2); this head stays
+     * without it, as netupdate and tools/prove/httpprova.c expect. */
     /* ! I BISCOTTI VANNO PRIMA DI Accept, e l'ordine non conta per il
      * protocollo: conta per chi legge un dump. Le intestazioni che dipendono
      * da CHI siamo — User-Agent, Cookie — stanno insieme, e quelle che dicono

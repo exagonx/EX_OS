@@ -1305,7 +1305,7 @@ static int pezzo_vicino(int x, int y)
 
         if (g_pez[i].rif >= 0) continue;
         py = g_pez[i].y - g_scorri;
-        h  = ex_font_height(g_pez[i].font);
+        h  = car_altezza(g_pez[i].font);
         if (py > y) continue;
         if (y < py + h && g_pez[i].x > x) continue;     /* same line, further right */
         best = i;
@@ -2300,11 +2300,61 @@ static int bis_qui(HttpUrl *u)
 }
 
 /* --- la porta dell'HTTP: i due ganci che exhttp chiama -------------------- */
+/* =============================================================================
+ * THE CONTEXT OF A REQUEST, FOR SameSite (BROWSER002 P5)
+ *
+ * exhttp asks for the cookies of each request (and of each hop of a
+ * redirection) without saying why it is made; the browser knows:
+ *  - while vai() fetches the page itself, it is a TOP-LEVEL NAVIGATION (GET,
+ *    or POST when a form sends it), and its "site for cookies" is the site
+ *    that started it: the page with the link, the form or the script
+ *    (g_nav_da). Typed in the bar, a bookmark, home, back: nobody started it
+ *    from a page, and it is same-site (as in every browser).
+ *  - every other request (sheets, scripts, images, frames, fetch) belongs to
+ *    the page shown, and is same-site if its host has the site of that page.
+ * Same site = the same registrable domain (bis_sito, the Public Suffix List)
+ * AND the same scheme ("schemeful", RFC 6265bis 5.2): http://a.com is
+ * another site for https://a.com.
+ * ========================================================================== */
+static char g_nav_prossimo_da[EXHTTP_URL_MAX];  /* set just before vai()   */
+static char g_nav_da[EXHTTP_URL_MAX];           /* of the navigation now   */
+static int  g_nav_in_corso = 0, g_nav_post = 0;
+
+/* A navigation that a PAGE starts: link, form, location. */
+static void nav_dalla_pagina(void)
+{
+    strncpy(g_nav_prossimo_da, g_principale.qui, sizeof(g_nav_prossimo_da) - 1);
+    g_nav_prossimo_da[sizeof(g_nav_prossimo_da) - 1] = '\0';
+}
+
+static int stesso_sito_di(const char *url, const char *host, int cifrata)
+{
+    HttpUrl u;
+    char    a[128], b[128];
+
+    if (!url[0] || e_locale(url)) return 1;     /* a local page: as before */
+    if (!http_url(url, &u)) return 1;
+    if ((u.cifrato != 0) != (cifrata != 0)) return 0;
+    bis_sito(u.host, a, sizeof(a));
+    bis_sito(host, b, sizeof(b));
+    return strcmp(a, b) == 0;
+}
+
 static void bis_chiedi(void *dato, const char *host, const char *percorso,
                        int cifrata, char *fuori, unsigned int max)
 {
+    int stesso, nav;
+
     (void)dato;
-    bis_da_mandare(&g_bis, host, percorso, cifrata, 0, ora_epoca(), fuori, max);
+    if (g_nav_in_corso) {
+        nav    = g_nav_post ? BIS_NAV_POST : BIS_NAV_GET;
+        stesso = !g_nav_da[0] || stesso_sito_di(g_nav_da, host, cifrata);
+    } else {
+        nav    = BIS_NAV_NO;
+        stesso = stesso_sito_di(g_principale.qui, host, cifrata);
+    }
+    bis_da_mandare_ss(&g_bis, host, percorso, cifrata, 0, ora_epoca(),
+                      stesso, nav, fuori, max);
 }
 
 static void bis_arrivo(void *dato, const char *host, const char *riga, int cifrata)
@@ -2333,16 +2383,36 @@ static void bis_per_script(char *fuori, unsigned int max)
 
 /* ! QUEL CHE UNO SCRIPT HA SCRITTO SI RACCOGLIE A PEZZI E SI CONFRONTA. Il
  * ponte tiene una stringa sola — «a=1; b=2» — e non dice QUALE riga e'
- * cambiata: la si spezza e si rimette dentro ogni pezzo. Rimetterne uno che
- * c'era gia' non fa niente, ed e' molto piu' semplice che tenere due elenchi
- * d'accordo fra loro. */
+ * cambiata: la si spezza e si rimette dentro ogni pezzo.
+ * ! MA UN PEZZO CHE C'ERA GIA', UGUALE, SI SALTA (25 November 2026, P5).
+ * Qui stava scritto «rimetterne uno che c'era gia' non fa niente», e non era
+ * vero: rimetterlo e' una scrittura da script, «n=v» senza attributi, e
+ * toglieva al biscotto la scadenza (uno persistente diventava di sessione e
+ * spariva alla chiusura) e, dal P5, SameSite: lo Strict di un sito tornava
+ * Lax dopo il primo script della pagina, e partiva con una navigazione da
+ * un altro sito. Trovato con la prova di SameSite in QEMU. */
 static ExDom *bis_ponte(void);          /* vedi motore_apri, piu' avanti */
+
+/* `pezzo` («n=v») is one of the items of `elenco` («a=1; n=v; b=2») as is */
+static int bis_c_e_gia(const char *elenco, const char *pezzo)
+{
+    unsigned int l = (unsigned int)strlen(pezzo);
+    const char  *p = elenco;
+
+    while (*p) {
+        while (*p == ' ' || *p == ';') p++;
+        if (!strncmp(p, pezzo, l) && (p[l] == ';' || p[l] == '\0')) return 1;
+        while (*p && *p != ';') p++;
+    }
+    return 0;
+}
 
 static void bis_dallo_script(void)
 {
     const char  *s;
     HttpUrl      u;
     char         pezzo[BIS_NOME_MAX + BIS_VAL_MAX + 4];
+    static char  gia[4096];
     unsigned int i = 0, k;
 
     { ExDom *D = bis_ponte();
@@ -2350,6 +2420,7 @@ static void bis_dallo_script(void)
       if (!D || !bis_qui(&u)) return;
       s = exdom_biscotti(D); }
     if (!s || !s[0]) return;
+    bis_per_script(gia, sizeof(gia));       /* what the scripts were given */
 
     while (s[i]) {
         while (s[i] == ' ' || s[i] == ';') i++;
@@ -2361,7 +2432,7 @@ static void bis_dallo_script(void)
         }
         while (k > 0 && pezzo[k - 1] == ' ') k--;
         pezzo[k] = '\0';
-        if (pezzo[0] &&
+        if (pezzo[0] && !bis_c_e_gia(gia, pezzo) &&
             bis_da_script(&g_bis, u.host, u.percorso, pezzo, ora_epoca(), u.cifrato))
             g_bis_sporca = 1;
     }
@@ -2427,9 +2498,86 @@ static void ram_metti(const char *url, const unsigned char *dati, unsigned int n
     g_ram[scelta].uso  = g_ram_orologio++;
 }
 
+/* =============================================================================
+ * IL DEPOSITO DEGLI ANTICIPI (25 November 2026, debug/implementazione_BROWSER002
+ * P3)
+ *
+ * ! WHAT WAS FETCHED IN PARALLEL WAITS HERE, and the code that uses it does
+ * not change: sheets, scripts and images still go one by one through
+ * cache_leggi, in the order of the document, and find their bytes already
+ * here. Only the waiting is done together (anticipa).
+ * ! IN MEMORY, CAPPED, EMPTIED AT EVERY PAGE: the RAM cache is 8 slots of
+ * 64 KB, too small for Google's scripts, and on a CD the disk cache is off.
+ * ========================================================================== */
+#define ANT_MAX      64
+#define ANT_BYTE     (8u * 1024u * 1024u)
+#define ANT_INSIEME  4              /* requests in flight together */
+
+typedef struct {
+    char           url[NAV_URL_MAX];
+    unsigned char *dati;
+    unsigned int   n;
+} Anticipo;
+
+static Anticipo     g_ant[ANT_MAX];
+static char         g_ant_url[ANT_MAX][NAV_URL_MAX];   /* what anticipa is given */
+static int          g_ant_n = 0;
+static unsigned int g_ant_byte = 0;
+
+static void ant_svuota(void)
+{
+    int i;
+
+    for (i = 0; i < g_ant_n; i++) free(g_ant[i].dati);
+    g_ant_n = 0;
+    g_ant_byte = 0;
+}
+
+static int ant_c_e(const char *url)
+{
+    int i;
+
+    for (i = 0; i < g_ant_n; i++) if (uguale(g_ant[i].url, url)) return 1;
+    return 0;
+}
+
+static void ant_metti(const char *url, const unsigned char *d, unsigned int n)
+{
+    Anticipo *a;
+
+    if (g_ant_n >= ANT_MAX || g_ant_byte + n > ANT_BYTE) return;
+    if (strlen(url) >= NAV_URL_MAX || ant_c_e(url)) return;
+    a = &g_ant[g_ant_n];
+    a->dati = (unsigned char *)malloc(n);
+    if (!a->dati) return;
+    memcpy(a->dati, d, n);
+    a->n = n;
+    strcpy(a->url, url);
+    g_ant_n++;
+    g_ant_byte += n;
+}
+
+static int ant_cerca(const char *url, unsigned char *buf, unsigned int max,
+                     unsigned int *quanti)
+{
+    int i;
+
+    for (i = 0; i < g_ant_n; i++) {
+        if (!uguale(g_ant[i].url, url)) continue;
+        if (g_ant[i].n > max) return 0;
+        memcpy(buf, g_ant[i].dati, g_ant[i].n);
+        *quanti = g_ant[i].n;
+        return 1;
+    }
+    return 0;
+}
+
 static int cache_leggi(const char *url, unsigned char *buf, unsigned int max,
                        unsigned int *quanti)
 {
+    /* the parallel fetches of this page first: they are what was just asked */
+    if (ant_cerca(url, buf, max, quanti)) return 1;
+
     /* ! SPENTA VUOL DIRE ANCHE «NON LEGGERE», non solo «non scrivere». Una
      * cache che smette di riempirsi ma continua a servire quel che ha
      * dentro sarebbe la cosa peggiore: chi la spegne lo fa proprio perche'
@@ -2531,6 +2679,47 @@ static int g_ferma   = 0;       /* qualcuno ha premuto Esc */
  * while the page loads, reset by vai(). */
 static unsigned int g_t_rete, g_t_rete_n, g_t_js, g_t_css, g_t_imp;
 
+static int rete_mentre_aspetta(void *dato);
+
+/* =============================================================================
+ * prendi_via — one GET through exhttp's new road (P3/P4) instead of
+ * exhttp_prendi: the same answer in the same buffer, but on the connections
+ * the parallel fetches keep, and in HTTP/2 where the server speaks it. The
+ * page and its sheets then share one connection and one handshake.
+ * ! ONLY PLAIN GETs: a POST, a download to disk (verso, Range) and the
+ * requests of scripts (their own headers) stay on exhttp_prendi.
+ * Returns as exhttp_prendi: 1 with an answer (even a 404), 0 with e->errore.
+ * ========================================================================== */
+static int prendi_via(const char *url, unsigned char *buf, unsigned int max,
+                      ExHttpEsito *e)
+{
+    ExHttpRichiesta     *R = exhttp_parti(url, max);
+    const unsigned char *d;
+    unsigned int         n = 0, prima = 0;
+
+    if (!R) return exhttp_prendi(url, buf, max, e);
+    while (!exhttp_avanza(R)) {
+        if (!rete_mentre_aspetta(0)) {
+            exhttp_lascia(R);
+            memset(e, 0, sizeof(*e));
+            strcpy(e->errore, "fermata");
+            return 0;
+        }
+        /* a breath only when nothing came: a big page must not pay 10 ms a
+         * turn while its bytes are flowing */
+        exhttp_risposta(R, 0, &n);
+        if (n == prima) usleep(10000);
+        prima = n;
+    }
+    d = exhttp_risposta(R, e, &n);
+    if (n > max) n = max;
+    if (d && n) memcpy(buf, d, n);
+    e->byte = n;
+    diario("exbrowser: [%s] %d, %u byte: %s\n", exhttp_protocollo(R), e->codice, n, url);
+    exhttp_lascia(R);
+    return e->codice != 0;
+}
+
 static int prendi_in_rete(const char *url, unsigned char *buf,
                           unsigned int max, ExHttpEsito *e)
 {
@@ -2540,11 +2729,95 @@ static int prendi_in_rete(const char *url, unsigned char *buf,
     if (g_in_rete) return 0;
     g_in_rete = 1;
     t0 = uptime_ms();
-    ok = exhttp_prendi(url, buf, max, e);
+    ok = prendi_via(url, buf, max, e);
     g_t_rete += uptime_ms() - t0;
     g_t_rete_n++;
     g_in_rete = 0;
     return ok;
+}
+
+/* Already here without the network: RAM, disk cache, deposit. */
+static int gia_in_casa(const char *url)
+{
+    unsigned int i;
+    char         p[CACHE_PERC_MAX + 24];
+    int          fd;
+
+    if (ant_c_e(url)) return 1;
+    for (i = 0; i < RAM_VOCI; i++)
+        if (g_ram[i].byte && uguale(g_ram[i].url, url)) return 1;
+    if (!g_cache_accesa || !g_cache[0]) return 0;
+    cache_nome(url, p, sizeof(p));
+    fd = open(p, O_RDONLY);
+    if (fd < 0) return 0;
+    close(fd);
+    return 1;
+}
+
+/* =============================================================================
+ * anticipa — `n` addresses fetched ANT_INSIEME at a time into the deposit
+ * (P3). Each answer 200, whole, goes to the deposit and to the cache as the
+ * one-by-one fetch would have put it; the others are left to that fetch,
+ * which then fails or succeeds as before. The window stays alive (the same
+ * hook as every network wait) and Esc stops everything.
+ * ========================================================================== */
+static void anticipa(char (*urls)[NAV_URL_MAX], int n, unsigned int max1)
+{
+    ExHttpRichiesta *volo[ANT_INSIEME];
+    int              chi[ANT_INSIEME];
+    int              prossimo = 0, attivi = 0, k;
+    unsigned int     t0;
+
+    if (n <= 0 || g_in_rete) return;
+    g_in_rete = 1;
+    t0 = uptime_ms();
+    memset(volo, 0, sizeof(volo));
+
+    for (;;) {
+        int finite = 0;
+
+        for (k = 0; k < ANT_INSIEME; k++) {
+            if (volo[k] || prossimo >= n || g_ferma) continue;
+            chi[k]  = prossimo;
+            volo[k] = exhttp_parti(urls[prossimo++], max1);
+            if (volo[k]) attivi++;
+        }
+        if (attivi == 0) break;
+
+        for (k = 0; k < ANT_INSIEME; k++) {
+            ExHttpEsito          e;
+            unsigned int         q = 0;
+            const unsigned char *d;
+
+            if (!volo[k] || !exhttp_avanza(volo[k])) continue;
+            d = exhttp_risposta(volo[k], &e, &q);
+            if (e.codice == 200 && !e.troncata && q > 0 && d) {
+                ant_metti(urls[chi[k]], d, q);
+                cache_scrivi(urls[chi[k]], d, q);
+            }
+            /* the protocol first: a long address is cut at the end of the line */
+            diario("exbrowser: in parallelo [%s] %d, %u byte%s%s: %s\n",
+                   exhttp_protocollo(volo[k]), e.codice, q,
+                   e.errore[0] ? ", " : "", e.errore, urls[chi[k]]);
+            exhttp_lascia(volo[k]);
+            volo[k] = 0;
+            attivi--;
+            finite++;
+            g_t_rete_n++;
+        }
+
+        if (!rete_mentre_aspetta(0)) g_ferma = 1;
+        if (g_ferma) {
+            for (k = 0; k < ANT_INSIEME; k++) { exhttp_lascia(volo[k]); volo[k] = 0; }
+            break;
+        }
+        /* ! A BREATH WHEN NOTHING ENDED: avanza only reads what is there, and
+         * asking the stack hundreds of times a second starves it (the same
+         * ten milliseconds as exhttp's leggi_a_pezzi) */
+        if (!finite) usleep(10000);
+    }
+    g_t_rete += uptime_ms() - t0;
+    g_in_rete = 0;
 }
 
 static int imm_prendi(int k)
@@ -2721,6 +2994,29 @@ static int immagini_prendi(void)
      * perche' la rete e' lenta, e vuole leggere. */
     if (!g_img_accese) return 0;
 
+    /* ! THE NEAR ONES TOGETHER FIRST (P3): the same choice as the loop below
+     * - waiting, near, with room - fetched four at a time into the deposit;
+     * the loop then finds them there and decodes them one by one. */
+    {
+        int na = 0;
+
+        for (k = 0; k < g_imm_n && na < ANT_MAX; k++) {
+            int y = imm_y(k);
+
+            if (g_imm[k].stato != 0) continue;
+            if (y >= 0 && (y > fino || y + (int)g_imm[k].ris_h < g_scorri - area_h())) continue;
+            if (!imm_ci_sta(k)) continue;
+            if (!risolvi(g_imm[k].src, g_ant_url[na], NAV_URL_MAX)) continue;
+            if (e_locale(g_ant_url[na]) || gia_in_casa(g_ant_url[na])) continue;
+            na++;
+        }
+        if (na > 1) {
+            sprintf(msg, "%d immagini, %d alla volta...", na, ANT_INSIEME);
+            dico(msg);
+            anticipa(g_ant_url, na, sizeof(g_imm_buf));
+        }
+    }
+
     for (k = 0; k < g_imm_n; k++) {
         if (g_imm[k].stato != 0) continue;
 
@@ -2825,6 +3121,99 @@ static void immagini_vicine(void)
  * cose che spariscono. Meglio aspettare quei pochi decimi, con un tetto
  * dichiarato di quanti seguirne.
  * --------------------------------------------------------------------------- */
+/* =============================================================================
+ * THE PAGE'S FONTS (@font-face, P6, 25 November 2026)
+ *
+ * After the sheets: every @font-face that covers Latin (its unicode-range
+ * has 'A', or it has none) is fetched - in parallel, as the sheets were -
+ * and given to browser_caratteri.c, which opens it with FreeType and
+ * HarfBuzz. ! BEFORE THE FIRST LAYOUT, as the sheets: drawing the page in
+ * Liberation and then again in its fonts would move every line under the
+ * reader's eyes. A tenth of a second more, for files of 20-40 KB.
+ * ! A CAP, AND ONLY WHAT IS MISSING: raccogli_css runs again after a script
+ * changes the page, and only the files not yet asked for are asked.
+ * ========================================================================== */
+#define CAR_FILE_MAX   24
+#define CAR_FILE_BYTE  (2u * 1024u * 1024u)
+
+static void caratteri_della_pagina(void)
+{
+    static CssFontFace ff[CAR_FILE_MAX];
+    char               rel[NAV_URL_MAX];
+    unsigned int       i;
+    int                n = 0, k, da_rete = 0;
+    unsigned char     *buf;
+
+    if (!css_font_face(&g_css, 0, &ff[0])) return;
+    {
+        /* the first time, the libraries are read from the disk: say how long */
+        static int detto = 0;
+        unsigned int t0 = uptime_ms();
+        int          ok = car_disponibile();
+
+        if (!detto) {
+            detto = 1;
+            diario("exbrowser: freetype e harfbuzz %s (%u ms), woff2 %s\n",
+                   ok ? "aperte" : "NON ci sono", uptime_ms() - t0, car_woff2_pronto() ? "si'" : "no");
+        }
+        if (!ok) return;
+    }
+    for (i = 0; n < CAR_FILE_MAX && css_font_face(&g_css, i, &ff[n]); i++) {
+        int ok;
+
+        if (!car_copre_latino(ff[n].intervallo)) continue;
+        if (!car_scegli_src(ff[n].src, rel, sizeof(rel))) continue;
+        if (ff[n].base && ff[n].base[0]) {
+            char era[NAV_URL_MAX];
+
+            strncpy(era, g_base, sizeof(era) - 1); era[sizeof(era) - 1] = 0;
+            strncpy(g_base, ff[n].base, sizeof(g_base) - 1); g_base[sizeof(g_base) - 1] = 0;
+            ok = risolvi(rel, g_ant_url[n], NAV_URL_MAX);
+            strcpy(g_base, era);
+        } else {
+            ok = risolvi(rel, g_ant_url[n], NAV_URL_MAX);
+        }
+        if (!ok || car_gia(g_ant_url[n])) continue;
+        for (k = 0; k < n; k++) if (uguale(g_ant_url[k], g_ant_url[n])) break;
+        if (k < n) continue;
+        n++;
+    }
+    if (n == 0) return;
+
+    /* the network, all together; what is on disk or already here is read below */
+    for (k = 0; k < n; k++) if (!e_locale(g_ant_url[k]) && !gia_in_casa(g_ant_url[k])) da_rete++;
+    if (da_rete > 0 && !g_in_rete) {
+        char msg[64];
+
+        sprintf(msg, "%d caratteri della pagina...", da_rete);
+        dico(msg);
+        anticipa(g_ant_url, n, CAR_FILE_BYTE);
+    }
+    buf = (unsigned char *)malloc(CAR_FILE_BYTE);
+    if (!buf) return;
+    for (k = 0; k < n; k++) {
+        unsigned int q = 0, t0;
+        int          letto = 0, troncato = 0;
+        const char  *come = "";
+
+        if (e_locale(g_ant_url[k])) letto = locale_leggi(g_ant_url[k], buf, CAR_FILE_BYTE, &q, &troncato) && !troncato;
+        else letto = cache_leggi(g_ant_url[k], buf, CAR_FILE_BYTE, &q);
+        if (!letto || q == 0) {
+            diario("exbrowser: carattere della pagina NON arrivato: %s\n", g_ant_url[k]);
+            continue;
+        }
+        t0 = uptime_ms();
+        if (car_aggiungi(g_ant_url[k], &ff[k], buf, q, &come))
+            diario("exbrowser: carattere della pagina \"%s\" %u-%u%s, %u byte (%s, %u ms): %s\n",
+                   ff[k].famiglia, ff[k].peso_min, ff[k].peso_max, ff[k].corsivo ? " corsivo" : "",
+                   q, come, uptime_ms() - t0, g_ant_url[k]);
+        else
+            diario("exbrowser: carattere della pagina \"%s\" NON aperto (%s): %s\n",
+                   ff[k].famiglia, come, g_ant_url[k]);
+    }
+    free(buf);
+}
+
 static void raccogli_css(void)
 {
     int i, presi = 0;
@@ -2842,6 +3231,9 @@ static void raccogli_css(void)
         int minimo = (m && m[0]) ? atoi(m) : 1280;
 
         css_media_larghezza(area_w() > minimo ? area_w() : minimo);
+        /* ! THE HEIGHT IS THE REAL ONE (P6): min-height, orientation and vh
+         * have no desktop habit to protect, and 100vh is the window */
+        css_media_altezza(area_h() > 0 ? area_h() : 600);
     }
     css_prepara(&g_css, g_css_reg, CSS_REGOLE_MAX, g_css_pezzi, CSS_PEZZI_MAX,
                 g_css_dich, CSS_DICH_MAX, g_css_arena, CSS_ARENA_MAX);
@@ -2931,6 +3323,7 @@ static void raccogli_css(void)
             presi++;
         }
     }
+    caratteri_della_pagina();
 }
 
 /* =============================================================================
@@ -3733,7 +4126,7 @@ static int nodo_sotto(int x, int y)
         /* Anything foreign (image or control) has its own height; a
          * control's piece has no font of its own to measure. */
         int h  = (g_pez[i].rif >= 0) ? g_pez[i].h
-                                     : ex_font_height(g_pez[i].font);
+                                     : car_altezza(g_pez[i].font);
 
         if (g_pez[i].nodo < 0) continue;
         if (x >= g_pez[i].x && x < g_pez[i].x + g_pez[i].w &&
@@ -3881,6 +4274,7 @@ static int segui_location(void)
 
     if (g_v == &g_principale) ex_set_text(g_url, assoluto);
     g_js_salta = 1;
+    nav_dalla_pagina();
     vai(assoluto, 1, 0);
     return 1;
 }
@@ -3953,6 +4347,22 @@ static unsigned int gz_srotola(unsigned int n)
     return fatti;
 }
 
+static int prendi_dalla_rete(const char *url, ExHttpEsito *e);
+
+/* The page itself, as a top-level navigation for SameSite (bis_chiedi). */
+static int nav_prendi(const char *url, ExHttpEsito *e)
+{
+    int ok;
+
+    g_nav_in_corso = (g_v == &g_principale);
+    g_nav_post     = g_da_postare != 0;
+    ok = prendi_dalla_rete(url, e);
+
+    g_nav_in_corso = 0;
+    g_nav_post = 0;
+    return ok;
+}
+
 static int prendi_dalla_rete(const char *url, ExHttpEsito *e)
 {
     int          ok;
@@ -3964,7 +4374,7 @@ static int prendi_dalla_rete(const char *url, ExHttpEsito *e)
 
         ok = g_da_postare
              ? exhttp_posta(url, g_da_postare, g_pagina, g_pagina_max, e)
-             : exhttp_prendi(url, g_pagina, g_pagina_max, e);
+             : prendi_via(url, g_pagina, g_pagina_max, e);
         g_t_rete += uptime_ms() - t0;
         g_t_rete_n++;
     }
@@ -4238,9 +4648,13 @@ static int scarica_in(const char *url, const char *dove)
     g_scarico_n = 0;
     g_ferma = 0;
     exhttp_verso(verso_disco, 0);
+    /* ! THE FILE AS THE SERVER HAS IT: a .tar.gz served with
+     * «Content-Encoding: gzip» must not be saved as a .tar */
+    exhttp_srotola(0);
     g_in_rete = 1;
     ok = exhttp_prendi(url, g_pagina, g_pagina_max, &e);
     g_in_rete = 0;
+    exhttp_srotola(1);
     exhttp_verso(0, 0);
     close(g_scarico_fd);
     g_scarico_fd = -1;
@@ -4371,12 +4785,65 @@ static void non_e_una_pagina_(const char *url, const char *tipo)
  * ============================================================================= */
 static void cornici_chiudi(void);
 
+/* =============================================================================
+ * The external sheets and scripts of the page just parsed, fetched together
+ * (P3) before esegui_script and raccogli_css ask for them one by one, in the
+ * order of the document. The same choices as those two: rel containing
+ * "stylesheet" (CSS_FOGLI_MAX of them), <script src> of JavaScript when
+ * scripts are on; nothing local, nothing already here.
+ * ========================================================================== */
+static int rel_foglio(const char *rel)
+{
+    int a;
+
+    for (a = 0; rel[a] && rel[a+1] && rel[a+2] && rel[a+3] && rel[a+4] && rel[a+5]; a++)
+        if ((rel[a] | 32) == 's' && (rel[a+1] | 32) == 't' && (rel[a+2] | 32) == 'y' &&
+            (rel[a+3] | 32) == 'l' && (rel[a+4] | 32) == 'e' && (rel[a+5] | 32) == 's')
+            return 1;
+    return 0;
+}
+
+static void anticipa_fogli_script(void)
+{
+    int i, na = 0, fogli = 0;
+
+    if (g_v == &g_principale) ant_svuota();
+    for (i = 0; i < (int)g_doc.nodi_n && na < ANT_MAX; i++) {
+        const char *nome, *rif = 0;
+
+        if (g_doc.nodi[i].tipo != HTML_ELEMENTO) continue;
+        nome = html_nome(&g_doc, i);
+        if (uguale(nome, "link")) {
+            const char *rel = html_attr(&g_doc, i, "rel");
+
+            if (!rel || !rel_foglio(rel) || fogli >= CSS_FOGLI_MAX) continue;
+            rif = html_attr(&g_doc, i, "href");
+            fogli++;
+        } else if (uguale(nome, "script") && g_js_acceso && e_javascript(i)) {
+            rif = html_attr(&g_doc, i, "src");
+        }
+        if (!rif || !rif[0]) continue;
+        if (!risolvi(rif, g_ant_url[na], NAV_URL_MAX)) continue;
+        if (e_locale(g_ant_url[na]) || gia_in_casa(g_ant_url[na])) continue;
+        na++;
+    }
+    if (na > 1) {
+        char msg[64];
+
+        sprintf(msg, "%d fogli e script, %d alla volta...", na, ANT_INSIEME);
+        dico(msg);
+        anticipa(g_ant_url, na, sizeof(g_js_buf) - 1);
+    }
+}
+
 static void documento_nuovo(unsigned int n)
 {
     /* The page's iframes belong to the page that is leaving. */
     if (g_v == &g_principale) cornici_chiudi();
 
     if (g_v == &g_principale) imm_libera_tutte();
+    /* and its fonts (P6): the next page has its own */
+    if (g_v == &g_principale) car_pagina_nuova();
 
     /* ! E CON LORO SE NE VA IL MOTORE, per lo stesso identico motivo: un
      * contesto JavaScript e' pieno di involucri che sono indici in QUESTO
@@ -4406,6 +4873,8 @@ static void documento_nuovo(unsigned int n)
             break;
         }
     }
+
+    anticipa_fogli_script();
 
     g_scorri = 0;
     g_ctrl_n = 0;
@@ -4776,6 +5245,9 @@ void disegna_tutto(void)
 static void vai(const char *url, int in_storia, int usa_cache)
 {
     ExHttpEsito  e;
+    /* who started this navigation (SameSite): taken once, then forgotten */
+    strcpy(g_nav_da, g_nav_prossimo_da);
+    g_nav_prossimo_da[0] = '\0';
     /* ! CENTOSESSANTA BYTE NON BASTAVANO, E IL MODO DI SCOPRIRLO E' STATO IL
      * PEGGIORE. Con tutte le note accese — «copia locale», pagina troncata,
      * albero troncato, stile troncato — piu' i quattro contatori, la riga
@@ -4923,7 +5395,7 @@ static void vai(const char *url, int in_storia, int usa_cache)
         e.byte   = n;
         strncpy(e.finale, url, sizeof(e.finale) - 1);
         da_cache = 1;
-    } else if (!prendi_dalla_rete(url, &e)) {
+    } else if (!nav_prendi(url, &e)) {
         /* =====================================================================
          * ! LA RETE NON RISPONDE: SE LA COPIA SU DISCO C'E', VALE. E' il motivo
          * per cui una cache che sopravvive ai riavvii serve davvero — la pagina
@@ -5945,6 +6417,7 @@ static void segui_dove(int k, int nuova)
     if (!nuova && g_link_nuova[k]) nuova = 2;
     if (nuova == 1) { finestra_nuova(nuovo); return; }
     if (nuova >= 2) { scheda_nuova(nuovo, nuova == 3); return; }
+    nav_dalla_pagina();
     vai(nuovo, 1, 0);
 }
 
@@ -5956,7 +6429,7 @@ static int link_sotto(int x, int y)
     for (i = 0; i < g_pez_n; i++) {
         int py = g_pez[i].y - g_scorri;
         int h  = EST_E_IMM(g_pez[i].rif) ? g_pez[i].h
-                                         : ex_font_height(g_pez[i].font);
+                                         : car_altezza(g_pez[i].font);
 
         if (g_pez[i].link < 0) continue;
         {
@@ -6366,6 +6839,7 @@ static void manda_modulo(int m, int attivato)
             }
 
             ex_set_text(g_url, assoluto);
+            nav_dalla_pagina();
             vai(assoluto, 1, 0);
         }
     }
@@ -6900,7 +7374,7 @@ static int tab_indice(void)
 
 static int pezzo_alto(int i)
 {
-    return (g_pez[i].rif >= 0) ? g_pez[i].h : ex_font_height(g_pez[i].font);
+    return (g_pez[i].rif >= 0) ? g_pez[i].h : car_altezza(g_pez[i].font);
 }
 
 /* Moves the focus one stop in `verso` (+1 or -1). Returns 0 when there is no
@@ -7761,6 +8235,10 @@ int main(int argc, char **argv)
      * piu' niente — nemmeno il tasto per fermare. */
     exhttp_attesa(rete_mentre_aspetta, 0);
     exhttp_passo(rete_a_che_punto, 0);
+    /* ! COMPRESSED PAGES (25 November 2026, BROWSER002 P2): gzip, br, zstd
+     * asked for and decoded by exhttp for pages, sheets, scripts, images and
+     * fetch; off only around a download to disk (scarica_in). */
+    exhttp_srotola(1);
     if (!g_home[0]) home_predefinita();
 
     /* Tab past the bar's last control goes into the page (tab_muovi). */

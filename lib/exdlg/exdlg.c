@@ -1007,7 +1007,7 @@ static long rg_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 }
 
 static int riga(const char *titolo, const char *domanda, const char *ok,
-                char *valore, unsigned int max)
+                char *valore, unsigned int max, int nascosta)
 {
     ExWindow   f;
     ExMsg        m;
@@ -1029,7 +1029,7 @@ static int riga(const char *titolo, const char *domanda, const char *ok,
     ex_create("label", domanda ? domanda : "", EX_CHILD,
             12, 28, 396, 16, f, 0, 0);
 
-    g_rg_casella = ex_create("textbox", valore, EX_CHILD,
+    g_rg_casella = ex_create("textbox", valore, EX_CHILD | (nascosta ? EX_PASSWORD : 0),
                            12, 50, 396, 24, f, 0, 0);
 
     {
@@ -1059,6 +1059,8 @@ static int riga(const char *titolo, const char *domanda, const char *ok,
         if (t) { for (i = 0; i + 1 < max && t[i]; i++) valore[i] = t[i]; }
         valore[i] = '\0';
     }
+    /* a password does not stay in the box's text after the window is gone */
+    if (nascosta) ex_set_text(g_rg_casella, "");
 
     ex_destroy(f);
     return g_rg_fatto == 1;
@@ -1067,11 +1069,18 @@ static int riga(const char *titolo, const char *domanda, const char *ok,
 int ex_dlg_riga(const char *titolo, const char *domanda,
                 char *valore, unsigned int max)
 {
-    return riga(titolo, domanda, "Va bene", valore, max);
+    return riga(titolo, domanda, "Va bene", valore, max, 0);
 }
 
 int ex_dlg_chiedi(const char *titolo, const char *domanda, const char *ok,
                   char *valore, unsigned int max)
 {
-    return riga(titolo, domanda, ok ? ok : "Va bene", valore, max);
+    return riga(titolo, domanda, ok ? ok : "Va bene", valore, max, 0);
+}
+
+int ex_dlg_password(const char *titolo, const char *domanda, const char *ok,
+                    char *valore, unsigned int max)
+{
+    if (valore && max) valore[0] = '\0';
+    return riga(titolo, domanda, ok ? ok : "Va bene", valore, max, 1);
 }

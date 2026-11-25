@@ -119,7 +119,15 @@ Il **tasto destro** apre un menu: Apri, Nuova cartella, Nuovo file,
 Rinomina, Copia, Taglia, Incolla, Cancella. Si scelgono **più righe** con
 Ctrl+clic e Shift+clic, o segnandole con la barra spaziatrice; trascinate su
 una cartella dell'albero a sinistra, una finestra chiede se copiarle,
-spostarle o lasciar perdere.
+spostarle o lasciar perdere. Mentre si trascina, accanto al puntatore c'è un
+**foglio**, **tre fogli** uno sopra l'altro se le voci sono più d'una
+(exwin.so 0.027).
+
+**Opzioni > Visualizzazione** (filemgr 0.016) ha due scelte, accese di serie:
+mostrare i file e le cartelle nascosti (quelli che cominciano con `.`), e
+mostrare l'estensione (spenta: `nota` invece di `nota.txt`). Restano in
+`~/.exwin/config/filemgr.cfg` (`nascosti = 0|1`, `estensione = 0|1`) e cambiano
+solo cosa si vede: copiare e cancellare una cartella prendono anche i nascosti.
 
 **Dal 16 settembre 2026 l'elenco ha quattro colonne e si ordina cliccando**
 (`filemgr` 0.002):
@@ -189,6 +197,53 @@ programmi non aprono ancora gli indirizzi (`http://`, `ftp://`, `smb://` si
 scelgono, nessuno li usa), Firefox non si propone come navigatore
 predefinito, e un'applicazione installata da netupdate o ExPackage non si
 prende da sola i suoi tipi.
+
+### La risoluzione: Impostazioni > Video (pm 0.031)
+
+Un modo della lista, poi **Prova...** (riavvia in quel modo e chiede conferma
+entro 30 s) o **Applica** (dal prossimo avvio). Il modo lo sceglie il
+caricatore col BIOS, prima che esistano kernel e dischi, quindi `svga.drv` lo
+scrive due volte: la voce `svga` di `/boot/kernel.cfg`, e un byte dentro
+`/boot/stage2.bin` che il caricatore legge da sé; a ogni avvio il kernel li
+confronta.
+
+Tutti e due i file sono di root e la scrivania gira col suo utente (kernel
+0.359): la scrivania chiede una **password come sudo**, la tua se sei in
+`/boot/amministratori`, altrimenti quella di root, e diventa root solo
+`svga.drv`. Lo stesso per *Spegni lo schermo* qui sotto (`dpms.drv`). Provato
+con `tools/prova_root_video.sh`.
+
+### Il salvaschermo: Impostazioni > Video (pm 0.031, voce 116)
+
+Nella scheda **Video** di Impostazioni, sotto i modi dello schermo e una
+linea che separa le due parti, il gruppo **Salvaschermo** ha:
+
+- **Tipo**: *Nessuno*, *Scritta* (un testo che attraversa lo schermo, ogni
+  passaggio col suo lato, la sua altezza, grandezza e colore) o *Cerchio* (un
+  cerchio che rimbalza sui bordi, da 200 pixel di diametro a un punto e
+  ritorno, e lascia la scia finche' lo schermo e' coperto, poi ricomincia di
+  un altro colore);
+- **Dopo**: dopo quanti minuti senza toccare tastiera e mouse (da 1 a 60);
+- **Scritta**: cosa scrive *Scritta* (EX-OS se vuoto);
+- **Spegni lo schermo**: *Non cambiare* (di serie), *Mai*, o *dopo 5-60
+  minuti*; e' `dpms.drv -dopo:M`, scritto nell'avvio con `-install M`
+  (`-remove` per *Mai*). Serve root: da utente la scheda dice "solo root" e
+  salva il resto;
+- **Prova** lo fa partire subito (*Cerchio* se il tipo e' *Nessuno*);
+  **Applica** salva.
+
+Il primo tasto, clic o movimento del mouse lo chiude. I minuti li conta il
+kernel per tutta la macchina (`attivita_da()`, lo stesso orologio di
+dpms.drv), quindi conta anche il mouse mosso sopra la barra. Si lancia anche
+da un terminale: `/exwin/bin/salvaschermo cerchio` o
+`/exwin/bin/salvaschermo scritta "TESTO"`.
+
+| File | Cosa contiene |
+|---|---|
+| `~/.exwin/config/pm.cfg` | `salvaschermo = Nessuno\|Scritta\|Cerchio`, `salvaschermo_minuti = N`, `salvaschermo_scritta = TESTO` |
+
+**Non ancora**: al ritorno non chiede la password (da decidere). Lo prova
+`tools/prova_salvaschermo.sh` (32 e 64 bit).
 
 ### Il terminale in finestra
 

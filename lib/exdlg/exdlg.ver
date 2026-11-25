@@ -11,6 +11,7 @@
         ex_dlg_riga;
         ex_dlg_percorso;
         ex_dlg_chiedi;
+        ex_dlg_password;
         ex_dlg_scegli;
         ex_scarico_avvia;
         ex_scarico_info;

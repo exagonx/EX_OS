@@ -1,0 +1,43 @@
+<html><head><title>@media</title><style>
+body { font-family: sans-serif; }
+.si, .no { display: none; }
+.si { color: #008000; }
+.no { color: #c00000; }
+@media screen and (min-width: 600px) { .s1 { display: block; } }
+@media (width >= 600px) { .s2 { display: block; } }
+@media (hover) and (pointer: fine) { .s3 { display: block; } }
+@media (orientation: landscape) and (min-height: 200px) { .s4 { display: block; } }
+@media not print { .s5 { display: block; } }
+@media (prefers-color-scheme: light) { .s6 { display: block; } }
+@media screen and ((max-width: 100px) or (min-aspect-ratio: 1/1)) { .s7 { display: block; } }
+@media print { .n1 { display: block; } }
+@media (max-width: 300px) { .n2 { display: block; } }
+@media (prefers-reduced-motion: reduce) { .n3 { display: block; } }
+@media (min-resolution: 2dppx), (-webkit-min-device-pixel-ratio: 2) { .n4 { display: block; } }
+@media (orientation: portrait) { .n5 { display: block; } }
+@media (forced-colors: active) { .n6 { display: block; } }
+@media (300px < width < 500px) { .n7 { display: block; } }
+</style></head><body>
+<h1>@media (P6): righe verdi, nessuna rossa</h1>
+<p class="si s1">SI 1. screen and (min-width: 600px)</p>
+<p class="si s2">SI 2. (width &gt;= 600px)</p>
+<p class="si s3">SI 3. (hover) and (pointer: fine)</p>
+<p class="si s4">SI 4. landscape, min-height 200px</p>
+<p class="si s5">SI 5. not print</p>
+<p class="si s6">SI 6. prefers-color-scheme: light</p>
+<p class="si s7">SI 7. screen and (( ) or ( ))</p>
+<p class="no n1">NO 1. print</p>
+<p class="no n2">NO 2. max-width: 300px</p>
+<p class="no n3">NO 3. prefers-reduced-motion: reduce</p>
+<p class="no n4">NO 4. schermo ad alta densita'</p>
+<p class="no n5">NO 5. portrait</p>
+<p class="no n6">NO 6. forced-colors: active</p>
+<p class="no n7">NO 7. (300px &lt; width &lt; 500px)</p>
+<p id="mm">8. matchMedia: ...</p>
+<script>
+var e = document.getElementById('mm');
+e.textContent = '8. matchMedia("(hover) and (min-width: 600px)") = ' +
+  matchMedia('(hover) and (min-width: 600px)').matches +
+  ', matchMedia("print") = ' + matchMedia('print').matches;
+</script>
+</body></html>

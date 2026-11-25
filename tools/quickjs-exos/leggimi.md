@@ -4,7 +4,7 @@ Questa directory tiene **cio' che di QuickJS cambiamo noi**. I sorgenti non
 stanno nel repository — `/quickjs/` e' in `.gitignore`, vale la stessa regola
 di GCC, della userland e dei sorgenti dei font.
 
-    quickjs-ng 0.16.2, licenza MIT
+    quickjs-ng 0.18.0, licenza MIT (dal 25/11/2026; prima 0.16.2)
     Fabrice Bellard, Charlie Gordon, Ben Noordhuis, Saul Ibarra Corretge
 
 ## In due comandi
@@ -23,13 +23,27 @@ costruisce `/exwin/lib/quickjs.so`, la libreria condivisa vera.
 
 ## Il risultato, misurato
 
-    quickjs.c     537 630 byte di codice        -Os, i386
-    libunicode.c   57 707
-    libregexp.c    26 208
-    dtoa.c          8 134
+    quickjs.c     538 968 byte di codice        -Os, i386, 0.18.0
+    libunicode.c   57 762
+    libregexp.c    26 250
+    dtoa.c          8 176
     + openlibm e i quattro nomi di libgcc
     ------------------------------------------
-    TOTALE        654 824 byte  (639 KB)
+    TOTALE        656 741 byte  (641 KB)
+
+! **DALLA 0.16.2 ALLA 0.18.0 (25/11/2026, BROWSER002 P1)**: le cinque
+modifiche di `applica.py` si applicano intere, i file `.c` sono gli stessi,
+il codice cresce di 1,5 KB (0.16.2: 655 260 byte con lo stesso script) e i
+simboli chiesti alla libc sono identici. In `quickjs.h` cambiano tre cose
+che `exqjs.c` non usa: `JSInterruptHandler` riceve il contesto e non il
+runtime, `JS_LoadModule` ha l'argomento degli attributi, e `JSValueUnion`
+non ha piu' `int32`. `make prova-exqjs`: 267 prove, 0 sbagliate, uscita
+identica alla 0.16.2. L'archivio e' in
+`~/ex_os/cross_build/terze-parti/quickjs-ng/`, la 0.16.2 adattata in
+`~/ex_os/prove-quickjs/quickjs-0.16.2`.
+! `prova-compila.sh` cerca la toolchain in `<progetto>/cross_build`
+(`tools/toolchain.sh`), che dal 22 novembre sta in `~/ex_os`: si lancia con
+`TC=~/ex_os/cross_build tools/quickjs-exos/prova-compila.sh quickjs`.
 
 ! **CI STA IN UNA FETTA DA UN MEGABYTE.** La previsione scritta in `exwin.ld`
 — «un motore JavaScript, che in un megabyte non ci sta per definizione» — era

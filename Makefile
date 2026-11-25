@@ -427,7 +427,7 @@ PROGRAMMI_FLOPPY := shell id date_prog chmod shutdown ls mem stack ps_prog kill_
 # =============================================================================
 PROGRAMMI_CD := sync_prog guardia polltest modulo wifid extaskbar prova64 sha256sum cattura grep readlink aggiungi dmesg smpprova cpu ahci cdinstall swaptest libctest filiprova hello netdetect nettest ping ipcfg dhcp host tcptest tcpserv crypttest ftp ftpswap soccorso scarica telnet telnetd sshd senderror netspeed xcp winprova exwincmd audio netupdate wifi blkscan automount eject fbprova memprova gfedit zip_prog tar_prog runbas_prog shmtest help_prog kbprova
 # Le applicazioni grafiche non stanno in PROGRAMMI_CD: hanno un albero loro.
-PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova finestreprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume exwifi expackage exilla vlcapri scegli
+PROGRAMMI_EXWIN := exwin_so exdlg_so exsuono_so exzip_so eximg_so exfont_so exhttp_so exhtml_so excss_so exjs_so exdom_so wserver pm filemgr exeditor term fontprova finestreprova orologio exbrowser exide archivi calctor pennello immagini exklondike exspider exmajong exgo explayer exvolume exwifi expackage exilla vlcapri scegli salvaschermo
 
 # I driver, con la stessa regola dei programmi. Quelli di base stanno gia'
 # dentro PROGRAMMI_FLOPPY (floppy_drv, kbd_drv): sul floppy servono a
@@ -2028,15 +2028,25 @@ EXTLS_INC    := -I lib/extls -I lib/excert -I lib/exasn1 -I lib/exbig \
 EXHTTP_SRC  := lib/exhttp/exhttp.c
 EXHTTP_HTTP := lib/exhttp/http.c
 EXHTTP_HDR  := lib/exhttp/exhttp.h lib/exhttp/http.h
+# ! srotola.c ONLY IN exhttp.so (25 November 2026, BROWSER002 P2): the
+# compressed pages, through libz/libzstd/libbrotlidec opened with dlopen.
+# netupdate compiles exhttp.c without it: exhttp.c names it as weak symbols.
+EXHTTP_SROT := lib/exhttp/srotola.c
+# ! h2.c THE SAME WAY (25 November 2026, BROWSER002 P4): HTTP/2 through
+# libnghttp2.so.14 opened with dlopen, weak symbols in exhttp.c.
+EXHTTP_H2   := lib/exhttp/h2.c
 
 
 $(EXHTTP_SO): $(EXHTTP_SRC) $(EXHTTP_HTTP) $(EXHTTP_HDR) \
               $(EXLIB_HDR) $(IP_PROTO) $(DNS_SRC) $(RETE_SRC) \
-              $(EXTLS_CLIENT) $(LIBC_HDR) lib/exhttp/exhttp.ver $(LD_EXOS_SO) $(SEGNO_FLAG)
+              $(EXTLS_CLIENT) $(LIBC_HDR) lib/exhttp/exhttp.ver $(LD_EXOS_SO) $(SEGNO_FLAG) \
+              $(EXHTTP_SROT) lib/exhttp/srotola.h $(EXHTTP_H2) lib/exhttp/h2.h
 	@echo "=== Compilazione libreria condivisa /exwin/lib/exhttp.so ==="
 	@mkdir -p $(BUILD_EXWIN_LIB) $(BUILD_OBJ)
 	$(CC) $(CFLAGS_SO) -I lib/include -I lib/exhttp $(EXTLS_INC) -I drivers/net -c $(EXHTTP_SRC) -o $(BUILD_OBJ)/sohttp_main.o
 	$(CC) $(CFLAGS_SO) -I lib/exhttp -c $(EXHTTP_HTTP) -o $(BUILD_OBJ)/sohttp_http.o
+	$(CC) $(CFLAGS_SO) -I lib/include -I lib/exhttp -c $(EXHTTP_SROT) -o $(BUILD_OBJ)/sohttp_srotola.o
+	$(CC) $(CFLAGS_SO) -I lib/include -I lib/exhttp -c $(EXHTTP_H2) -o $(BUILD_OBJ)/sohttp_h2.o
 	$(CC) $(CFLAGS_SO) -I lib/include -I drivers/net -I drivers/pci -c $(DNS_SRC)  -o $(BUILD_OBJ)/sohttp_dns.o
 	$(CC) $(CFLAGS_SO) -I lib/include -I drivers/net -I drivers/pci -c $(RETE_SRC) -o $(BUILD_OBJ)/sohttp_rete.o
 	@# I mattoni dell'https: non toccano la libc, e si compilano da soli.
@@ -2048,7 +2058,7 @@ $(EXHTTP_SO): $(EXHTTP_SRC) $(EXHTTP_HTTP) $(EXHTTP_HDR) \
 	$(LD) -m $(CROSS_LD_EMU) $(LD_SO) -soname exhttp.so --version-script lib/exhttp/exhttp.ver \
 	    $(BUILD_OBJ)/sohttp_main.o \
 	    $(BUILD_OBJ)/sohttp_http.o $(BUILD_OBJ)/sohttp_dns.o \
-	    $(BUILD_OBJ)/sohttp_rete.o \
+	    $(BUILD_OBJ)/sohttp_rete.o $(BUILD_OBJ)/sohttp_srotola.o $(BUILD_OBJ)/sohttp_h2.o \
 	    $(foreach f,$(EXTLS_CLIENT),$(BUILD_OBJ)/sohttp_$(basename $(notdir $(f))).o) \
 	    $(LIBC_SO_DIN) -o $@
 	@echo "[OK] exhttp.so compilata: $@"
@@ -2693,19 +2703,20 @@ PM_SRC := exwin/bin/pm/pm.c
 PM_BIN := $(BUILD_EXWIN_BIN)/pm
 PM_LD  := exwin/bin/pm/pm.ld
 
-$(PM_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(PM_SRC) $(PM_LD) $(EXWIN_SO) $(EXDLG_SO) $(EXSUONO_STUB) $(EXSUONO_HDR) $(EXLIB_HDR) \
+$(PM_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(EXUSER_SRC) $(PM_SRC) $(PM_LD) $(EXWIN_SO) $(EXDLG_SO) $(EXSUONO_STUB) $(EXSUONO_HDR) $(EXLIB_HDR) \
            $(EXWIN_HDR) $(WIN_PROTO) drivers/net/wifid_proto.h drivers/net/wifi_proto.h \
            $(FONT_SRC) $(LIBC_HDR) $(LIBC_DIN) $(LIBC_START) $(SEGNO_FLAG)
 	@echo "=== Compilazione /exwin/bin/pm ==="
 	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
-	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exinfo -I lib/exsuono -I drivers/wserver -I drivers/kbd -I drivers/net -c $(PM_SRC) -o $(BUILD_OBJ)/pm_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/exdlg -I lib/exinfo -I lib/exsuono -I lib/exuser -I drivers/wserver -I drivers/kbd -I drivers/net -c $(PM_SRC) -o $(BUILD_OBJ)/pm_main.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exuser -I drivers/kbd -c $(EXUSER_SRC) -o $(BUILD_OBJ)/pm_user.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exinfo -c $(EXINFO_SRC) -o $(BUILD_OBJ)/pm_info.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exsuono -c $(EXSUONO_STUB) -o $(BUILD_OBJ)/pm_suono.o
 	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/pm_start.o
 	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections $(LD_DIN) \
 	    $(BUILD_OBJ)/pm_start.o $(BUILD_OBJ)/pm_main.o \
 	    $(EXWIN_SO) $(EXDLG_SO) \
-	    $(BUILD_OBJ)/pm_info.o $(BUILD_OBJ)/pm_suono.o \
+	    $(BUILD_OBJ)/pm_info.o $(BUILD_OBJ)/pm_suono.o $(BUILD_OBJ)/pm_user.o \
 	    $(LIBC_DIN) -o $@
 	@echo "[OK] pm compilato: $@"
 
@@ -3052,6 +3063,27 @@ $(SCEGLI_BIN): $(SCEGLI_SRC) $(SCEGLI_LD) $(EXWIN_SO) $(EXLIB_HDR) $(EXWIN_HDR) 
 .PHONY: scegli
 scegli: dirs $(SCEGLI_BIN)
 
+# --- /exwin/bin/salvaschermo: the screen savers (voce 116) -------------------
+# pm starts it after the minutes of Impostazioni > Scrivania without keys or
+# mouse; it ends by itself at the first one. See the top of the source.
+SALVASCH_SRC := exwin/bin/salvaschermo/salvaschermo.c
+SALVASCH_BIN := $(BUILD_EXWIN_BIN)/salvaschermo
+SALVASCH_LD  := exwin/bin/salvaschermo/salvaschermo.ld
+
+$(SALVASCH_BIN): $(SALVASCH_SRC) $(SALVASCH_LD) $(EXWIN_SO) $(EXLIB_HDR) $(EXWIN_HDR) \
+             $(WIN_PROTO) $(LIBC_HDR) $(LIBC_DIN) $(LIBC_START) $(SEGNO_FLAG)
+	@echo "=== Compilazione /exwin/bin/salvaschermo ==="
+	@mkdir -p $(BUILD_EXWIN_BIN) $(BUILD_OBJ)
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I drivers/wserver -I drivers/kbd -c $(SALVASCH_SRC) -o $(BUILD_OBJ)/salvaschermo_main.o
+	$(CC) -m32 -c $(LIBC_START)            -o $(BUILD_OBJ)/salvaschermo_start.o
+	$(LD) -m $(CROSS_LD_EMU) -nostdlib --gc-sections $(LD_DIN) \
+	    $(BUILD_OBJ)/salvaschermo_start.o $(BUILD_OBJ)/salvaschermo_main.o \
+	    $(EXWIN_SO) $(LIBC_DIN) -o $@
+	@echo "[OK] salvaschermo compilato: $@"
+
+.PHONY: salvaschermo
+salvaschermo: dirs $(SALVASCH_BIN)
+
 # --- /exwin/bin/exklondike, exspider, exmajong, exgo: i giochi (@GIOCHI, 3 ottobre 2026)
 #
 # Quattro programmi con la stessa forma, e quindi una regola sola. Dentro
@@ -3291,6 +3323,7 @@ BROWSER_SRC := exwin/bin/exbrowser/exbrowser.c
 BROWSER_IMP := exwin/bin/exbrowser/browser_impagina.c
 BROWSER_EST := exwin/bin/exbrowser/browser_estranei.c
 BROWSER_PRE := exwin/bin/exbrowser/browser_preludio.c
+BROWSER_CAR := exwin/bin/exbrowser/browser_caratteri.c
 BROWSER_ESTH := exwin/bin/exbrowser/browser_estranei.h
 BROWSER_VISTA := exwin/bin/exbrowser/browser_vista.h
 BROWSER_PRIV := exwin/bin/exbrowser/browser_priv.h
@@ -3303,12 +3336,32 @@ BROWSER_LD  := exwin/bin/exbrowser/exbrowser.ld
 # si sbagliano in silenzio, e non hanno bisogno ne' di uno schermo ne' di una
 # rete per essere messe alla prova.
 BROWSER_BIS := exwin/bin/exbrowser/biscotti.c
-BROWSER_BISH := exwin/bin/exbrowser/biscotti.h
+# ! THE PUBLIC SUFFIX TABLE IS MADE HERE, NOT KEPT IN THE REPOSITORY (25
+# November 2026, the user): the list has domains with names the repository
+# keeps out. tools/psl-scarica.sh fetches the list once (publicsuffix.org,
+# the only address its authors allow), tools/psl-tabella.py turns it into
+# build/generati/psl_tabella.h. A newer list (psl-scarica.sh -nuova) makes
+# a new table at the next build.
+PSL_DAT := $(EXOS_FUORI)/cross_build/terze-parti/publicsuffix/public_suffix_list.dat
+PSL_DIR := $(BUILD_DIR)/generati
+PSL_H   := $(PSL_DIR)/psl_tabella.h
+BROWSER_BISH := exwin/bin/exbrowser/biscotti.h $(PSL_H)
+
+$(PSL_DAT):
+	@bash tools/psl-scarica.sh
+
+$(PSL_H): $(PSL_DAT) tools/psl-tabella.py
+	@bash tools/psl-scarica.sh
+	@mkdir -p $(PSL_DIR)
+	@python3 -I tools/psl-tabella.py $(PSL_DAT) $@
+
+.PHONY: psl-tabella
+psl-tabella: $(PSL_H)
 
 $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
              $(BROWSER_IMP) $(BROWSER_PRIV) \
              $(BROWSER_EST) $(BROWSER_ESTH) $(BROWSER_VISTA) $(BROWSER_PRE) \
-             $(BROWSER_BIS) $(BROWSER_BISH) $(EXWIN_SO) \
+             $(BROWSER_CAR) $(BROWSER_BIS) $(BROWSER_BISH) $(EXWIN_SO) \
              $(EXIMG_INFLATE) lib/eximg/inflate.h \
              $(EXLIB_HDR) $(EXWIN_HDR) $(WIN_PROTO) $(EXHTTP_SRC) \
              $(EXHTTP_HTTP) $(EXHTTP_HDR) lib/eximg/eximg.h \
@@ -3325,7 +3378,9 @@ $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_IMP) -o $(BUILD_OBJ)/browser_imp.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_EST) -o $(BUILD_OBJ)/browser_est.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_PRE) -o $(BUILD_OBJ)/browser_pre.o
-	$(CC) $(CFLAGS_USER) -I lib/include -I exwin/bin/exbrowser -c $(BROWSER_BIS) -o $(BUILD_OBJ)/browser_bis.o
+	@# the page's own fonts (P6): FreeType, HarfBuzz and woff2 with dlopen
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_CAR) -o $(BUILD_OBJ)/browser_car.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I exwin/bin/exbrowser -I $(PSL_DIR) -c $(BROWSER_BIS) -o $(BUILD_OBJ)/browser_bis.o
 	@# ! inflate.c COMPILED IN, as netupdate and exzip do: some servers
 	@# (amazon.com, 23 Sept 2026) send a gzip body without Content-Encoding.
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/eximg -c $(EXIMG_INFLATE) -o $(BUILD_OBJ)/browser_inflate.o
@@ -3341,6 +3396,7 @@ $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
 	    $(BUILD_OBJ)/browser_start.o $(BUILD_OBJ)/browser_main.o \
 	    $(BUILD_OBJ)/browser_imp.o \
 	    $(BUILD_OBJ)/browser_est.o $(BUILD_OBJ)/browser_pre.o \
+	    $(BUILD_OBJ)/browser_car.o \
 	    $(BUILD_OBJ)/browser_bis.o $(BUILD_OBJ)/browser_inflate.o \
 	    $(EXWIN_SO) $(EXHTTP_SO) \
 	    $(EXHTML_SO) $(BUILD_OBJ)/browser_css.o \
@@ -8030,11 +8086,11 @@ prova-excss:
 # di una rete o di un disco, e l'ora si passa come numero.
 # =============================================================================
 .PHONY: prova-biscotti
-prova-biscotti:
+prova-biscotti: $(PSL_H)
 	@mkdir -p $(PROVE_HOST_DIR)
 	@cc -Wall -Wextra -O2 -o $(PROVE_HOST_DIR)/bisprova \
 	    tools/prove/bisprova.c exwin/bin/exbrowser/biscotti.c \
-	    -I exwin/bin/exbrowser
+	    -I exwin/bin/exbrowser -I $(PSL_DIR)
 	@$(PROVE_HOST_DIR)/bisprova
 
 .PHONY: prova-exhttp

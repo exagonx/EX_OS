@@ -6,6 +6,9 @@
 
 **Contents**
 
+- [The file manager hides dot files and extensions on request, and dragged rows show a sheet beside the pointer (filemgr 0.016, exwin.so 0.027, voce 114) — tested in QEMU](#the-file-manager-hides-dot-files-and-extensions-on-request-and-dragged-rows-show-a-sheet-beside-the-pointer-filemgr-0016-exwinso-0027-voce-114--tested-in-qemu)
+- [Exilla plays video and sound again with several processes, YouTube included (exos-media.js) — tested in QEMU](#exilla-plays-video-and-sound-again-with-several-processes-youtube-included-exos-mediajs--tested-in-qemu)
+- [ExWin has a screen saver: a text or a circle after the minutes chosen, the screen switched off by dpms.drv (salvaschermo 0.001, pm 0.031, voce 116) — tested in QEMU](#exwin-has-a-screen-saver-a-text-or-a-circle-after-the-minutes-chosen-the-screen-switched-off-by-dpmsdrv-salvaschermo-0001-pm-0031-voce-116--tested-in-qemu)
 - [Firefox with many processes takes half the memory and no longer closes with three tabs (kernel 0.368-0.370) — tested in QEMU](#firefox-with-many-processes-takes-half-the-memory-and-no-longer-closes-with-three-tabs-kernel-0368-0370--tested-in-qemu)
 - [ExWin wears the classic theme: warmer panels, two-ring relief, shaded buttons (exwin.so 0.026, wserver 0.019) — tested in QEMU](#exwin-wears-the-classic-theme-warmer-panels-two-ring-relief-shaded-buttons-exwinso-0026-wserver-0019--tested-in-qemu)
 - [Kernel 0.367 and the network: su, terminals, shared memory and the kernel log have an owner; signed updates; sshd, TCP and DNS against blind attacks — tested in QEMU](#kernel-0367-and-the-network-su-terminals-shared-memory-and-the-kernel-log-have-an-owner-signed-updates-sshd-tcp-and-dns-against-blind-attacks--tested-in-qemu)
@@ -258,6 +261,47 @@
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### The file manager hides dot files and extensions on request, and dragged rows show a sheet beside the pointer (filemgr 0.016, exwin.so 0.027, voce 114) — tested in QEMU
+
+- **Opzioni > Visualizzazione**: show the hidden files and folders (starting with `.`), and show the
+  extension (off: `nota` instead of `nota.txt`). On by default, as before; kept in
+  `~/.exwin/config/filemgr.cfg`. Only the view changes: copy and delete still take hidden files.
+- **Dragging rows** out of the list: a sheet with lines beside the pointer, three sheets one over the
+  other with more than one row chosen or marked with the space bar. The pixels under it are kept
+  and put back, nothing is redrawn at every move (`ex_list_set_drag_count`, new in exwin.so).
+- **Tested** by `tools/prova_visualizza.sh` at 32 and 64 bit: the list with the choices off and on,
+  the window of the menu, one sheet, three sheets, gone when released.
+  See [the desktop manual](scrivania.md#the-file-manager).
+
+### Exilla plays video and sound again with several processes, YouTube included (exos-media.js) — tested in QEMU
+
+- **What was wrong**: since exilla 0.008 (Firefox with several processes) no video or sound
+  played, not even YouTube; a local file said "Failed to open media". The page's process hands
+  video to the RDD process and audio to the utility process, and in Gecko's StaticPrefList.yaml
+  both are on for XP_LINUX and off in the `#else`: Gecko for EX-OS is XP_EXOS. With one process the
+  parent decodes by itself, so it worked before.
+- **Now**: `tools/exilla/exos-media.js` goes into Exilla's `defaults/pref` and turns the RDD process
+  on (audio too, since `media.utility-process.enabled` is locked by Gecko). The lasting fix is in
+  the patches: XP_EXOS beside XP_LINUX in the seven media prefs, in the next Gecko build.
+- **Measured**: `tools/exilla/prova-media.sh`, now with several processes as Exilla runs it
+  (`UN_PROCESSO=1` is the old one-process run, which is why it never saw this): the 8 files, Ogg,
+  FLAC, MP3, AAC, VP8, VP9, AV1 and H.264, play at 32 and 64 bit.
+- **Right away, without updating**: `EXILLA_UN_PROCESSO=1`.
+
+### ExWin has a screen saver: a text or a circle after the minutes chosen, the screen switched off by dpms.drv (salvaschermo 0.001, pm 0.031, voce 116) — tested in QEMU
+
+- **Where**: Impostazioni > Video, under the screen modes and a line, group *Salvaschermo*: the type (*Nessuno*, *Scritta*,
+  *Cerchio*), after how many minutes (1-60), the text, and when to switch the screen off
+  (`dpms.drv`, root only). **Prova** starts it at once, **Applica** saves in `pm.cfg`.
+- **Scritta**: the text crosses the screen, every pass with its own side, height, size and colour.
+  **Cerchio**: a circle bounces on the edges, from 200 pixels across to a dot and back, until its
+  trail covers the screen; then again in another colour.
+- **It ends at the first key, click or mouse move**, counted by the kernel for the whole machine
+  (`attivita_da()`), so the mouse over the bar counts too.
+- **Tested** by `tools/prova_salvaschermo.sh` at 32 and 64 bit: started by hand (both types) and by
+  pm after a minute of nothing; the photo shows the saver over the bar, and the desktop back
+  after one mouse move. See [the desktop manual](scrivania.md#the-screen-saver-impostazioni--video-pm-0031-voce-116).
 
 ### Firefox with many processes takes half the memory and no longer closes with three tabs (kernel 0.368-0.370) — tested in QEMU
 

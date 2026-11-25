@@ -118,6 +118,14 @@ The **right button** opens a menu: Open, New folder, New file, Rename, Copy,
 Cut, Paste, Delete. **Several rows** are chosen with Ctrl+click and
 Shift+click, or marked with the space bar; dragged onto a folder of the tree on
 the left, a window asks whether to copy them, move them or leave them.
+While rows are dragged a **sheet** follows the pointer, **three sheets**
+one over the other for more than one (exwin.so 0.027).
+
+**Opzioni > Visualizzazione** (filemgr 0.016) has two choices, both on by
+default: show the hidden files and folders (the ones starting with `.`), and
+show the extension (off: `nota` instead of `nota.txt`). They are kept in
+`~/.exwin/config/filemgr.cfg` (`nascosti = 0|1`, `estensione = 0|1`) and change
+only what is shown: copying and deleting a folder take the hidden files too.
 
 **Since 16 September 2026 the list has four columns and sorts on a click**
 (`filemgr` 0.002):
@@ -186,6 +194,51 @@ programs do not open addresses yet (`http://`, `ftp://`, `smb://` can be
 chosen, nothing uses them), Firefox does not offer itself as the default
 browser, and an application installed by netupdate or ExPackage does not take
 its types by itself.
+
+### The resolution: Impostazioni > Video (pm 0.031)
+
+A mode from the list, then **Prova...** (reboots into it and asks to confirm
+within 30 s) or **Applica** (from the next boot). The mode is chosen by the
+boot loader through the BIOS, before the kernel and the disks exist, so
+`svga.drv` writes it twice: the `svga` entry of `/boot/kernel.cfg`, and one byte
+inside `/boot/stage2.bin` that the loader reads from itself; the kernel
+compares them at every boot.
+
+Both files are root's and the desktop runs as its user (kernel 0.359): the
+desktop asks a **password as sudo does**, yours if `/boot/amministratori`
+names you, root's otherwise, and only `svga.drv` becomes root. The same for
+*Spegni lo schermo* below (`dpms.drv`). Tested by `tools/prova_root_video.sh`.
+
+### The screen saver: Impostazioni > Video (pm 0.031, voce 116)
+
+In the **Video** tab of Impostazioni, under the screen modes and a line
+that parts the two, the group **Salvaschermo** has:
+
+- **Tipo**: *Nessuno*, *Scritta* (a text crossing the screen, every pass
+  with its own side, height, size and colour) or *Cerchio* (a circle that
+  bounces on the edges, from 200 pixels across to a dot and back, and leaves
+  its trail until the screen is covered, then starts again in another
+  colour);
+- **Dopo**: after how many minutes nobody touches keyboard or mouse (1 to 60);
+- **Scritta**: what *Scritta* writes (EX-OS if empty);
+- **Spegni lo schermo**: *Non cambiare* (the default), *Mai*, or *dopo 5-60
+  minuti*; it is `dpms.drv -dopo:M`, written into the start-up with
+  `-install M` (`-remove` for *Mai*). It needs root: as a user the tab says
+  "solo root" and keeps the rest;
+- **Prova** starts the saver at once (*Cerchio* if the type is *Nessuno*);
+  **Applica** saves.
+
+The first key, click or mouse move ends it. The minutes are counted by the
+kernel for the whole machine (`attivita_da()`, the same clock dpms.drv uses),
+so a mouse moved over the bar counts too. It can be started from a terminal:
+`/exwin/bin/salvaschermo cerchio` or `/exwin/bin/salvaschermo scritta "TEXT"`.
+
+| File | What it holds |
+|---|---|
+| `~/.exwin/config/pm.cfg` | `salvaschermo = Nessuno\|Scritta\|Cerchio`, `salvaschermo_minuti = N`, `salvaschermo_scritta = TEXT` |
+
+**Not yet**: coming back does not ask for the password (to be decided).
+Tested by `tools/prova_salvaschermo.sh` (32 and 64 bit).
 
 ### The terminal in a window
 

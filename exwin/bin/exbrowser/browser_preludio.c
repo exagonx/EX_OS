@@ -35,7 +35,8 @@
  *     every page (motore_chiudi): what a page stores is gone at the next.
  *   - postMessage and MessageChannel pass the object itself, not a copy
  *     (no structured clone), and every origin is accepted.
- *   - matchMedia answers min-width/max-width on the window, and never fires:
+ *   - matchMedia answers as the sheets do, through excss (css_media_vale,
+ *     P6: the same width, at least 1280, see raccogli_css), and never fires:
  *     the window's width does not change.
  *   - getComputedStyle returns the element's inline style, not the cascade.
  *   - MutationObserver never calls back.
@@ -48,6 +49,19 @@
 
 /* __exos_casuali(n): n bytes from the kernel's entropy, as an array of
  * numbers, or null if the system has not gathered enough yet. */
+/* matchMedia(q).matches: what excss says of the same query for the sheets
+ * (P6), so a script and the page's style agree. */
+static ExJsVal nat_media(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                         int n_arg, void *dato)
+{
+    const char *q;
+
+    (void)questo; (void)dato;
+    if (n_arg < 1) return exjs_booleano(0);
+    q = exjs_a_stringa(c, a[0]);
+    return exjs_booleano(q && css_media_vale(q, (unsigned int)strlen(q)));
+}
+
 static ExJsVal nat_casuali(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
                            int n_arg, void *dato)
 {
@@ -230,11 +244,15 @@ static const char PRELUDIO[] =
 "  function Canale() { this.port1 = new Porta(); this.port2 = new Porta(); this.port1._altra = this.port2; this.port2._altra = this.port1; }\n"
 "  def('MessageChannel', Canale); def('MessagePort', Porta);\n"
 "\n"
-"  /* media queries, on the window's width only */\n"
+"  /* media queries: the sheets' own answer (P6, __exos_media); without it,\n"
+"     on the window's width only */\n"
 "  def('matchMedia', function (q) {\n"
 "    var s = String(q), m = true, r = /\\((min|max)-width:\\s*([0-9.]+)px\\)/g, x, any = false;\n"
-"    while ((x = r.exec(s))) { any = true; if (x[1] === 'min' ? G.innerWidth < +x[2] : G.innerWidth > +x[2]) m = false; }\n"
-"    if (!any) m = /^\\s*(all|screen)\\s*$/.test(s);\n"
+"    if (typeof G.__exos_media === 'function') m = G.__exos_media(s);\n"
+"    else {\n"
+"      while ((x = r.exec(s))) { any = true; if (x[1] === 'min' ? G.innerWidth < +x[2] : G.innerWidth > +x[2]) m = false; }\n"
+"      if (!any) m = /^\\s*(all|screen)\\s*$/.test(s);\n"
+"    }\n"
 "    return { matches: m, media: s, onchange: null, addListener: function () {}, removeListener: function () {},\n"
 "             addEventListener: function () {}, removeEventListener: function () {} };\n"
 "  });\n"
@@ -315,6 +333,8 @@ void preludio_esegui(ExJsCtx *js, int dentro_w, int dentro_h)
     if (!js) return;
     exjs_metti(js, exjs_globale(js), "__exos_casuali",
                exjs_nativa(js, nat_casuali, 0, "__exos_casuali"));
+    exjs_metti(js, exjs_globale(js), "__exos_media",
+               exjs_nativa(js, nat_media, 0, "__exos_media"));
 
     ex_screen_size(&sw, &sh);
     snprintf(testa, sizeof(testa),

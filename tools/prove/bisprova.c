@@ -362,6 +362,80 @@ int main(void)
     ok("__Secure- da http: rifiutato",
        bis_arrivato(&d, "a.com", "/", "__Secure-w=1; Secure", ORA, 0) == 0, "");
 
+    printf("\n=== la Public Suffix List intera (BROWSER002 P5) ===\n");
+    {
+        static const struct { const char *host, *sito; } S[] = {
+            { "www.bbc.co.uk",          "bbc.co.uk" },
+            { "a.b.example.com",        "example.com" },
+            { "tizio.github.io",        "tizio.github.io" },
+            { "github.io",              "github.io" },
+            { "www.comune.milano.it",   "comune.milano.it" },
+            { "x.city.kawasaki.jp",     "city.kawasaki.jp" },   /* !city.kawasaki.jp */
+            { "a.b.kawasaki.jp",        "a.b.kawasaki.jp" },    /* *.kawasaki.jp */
+            { "www.ck",                 "www.ck" },             /* !www.ck */
+            { "a.foo.ck",               "a.foo.ck" },           /* *.ck */
+            { "localhost",              "localhost" },
+            { "a.b.sconosciuto",        "b.sconosciuto" },      /* the rule "*" */
+            { "10.0.0.1",               "10.0.0.1" },
+            { "WWW.Google.COM",         "google.com" },
+            { "s3.eu-west-1.amazonaws.com", "s3.eu-west-1.amazonaws.com" },
+            { 0, 0 }
+        };
+        int  k;
+        char s[128], nome[96];
+
+        for (k = 0; S[k].host; k++) {
+            bis_sito(S[k].host, s, sizeof(s));
+            snprintf(nome, sizeof(nome), "sito di %s", S[k].host);
+            uguale(nome, s, S[k].sito);
+        }
+    }
+    bis_azzera(&d);
+    ok("Domain=blogspot.com: rifiutato (privata)",
+       bis_arrivato(&d, "io.blogspot.com", "/", "x=1; Domain=blogspot.com", ORA, 1) == 0, "");
+    ok("Domain=kawasaki.jp da a.b.kawasaki.jp: rifiutato (*.)",
+       bis_arrivato(&d, "a.b.kawasaki.jp", "/", "x=1; Domain=b.kawasaki.jp", ORA, 1) == 0, "");
+    ok("Domain=city.kawasaki.jp: ammesso (eccezione !)",
+       bis_arrivato(&d, "www.city.kawasaki.jp", "/", "x=1; Domain=city.kawasaki.jp", ORA, 1) == 1, "");
+    ok("Domain=pvt.k12.ma.us: rifiutato (tre etichette)",
+       bis_arrivato(&d, "a.pvt.k12.ma.us", "/", "x=1; Domain=pvt.k12.ma.us", ORA, 1) == 0, "");
+
+    printf("\n=== SameSite (BROWSER002 P5) ===\n");
+    {
+        static char b[1024];
+        bis_azzera(&d);
+        bis_arrivato(&d, "a.com", "/", "n=1; SameSite=None; Secure", ORA, 1);
+        bis_arrivato(&d, "a.com", "/", "l=1; SameSite=Lax", ORA, 1);
+        bis_arrivato(&d, "a.com", "/", "s=1; SameSite=Strict", ORA, 1);
+        bis_arrivato(&d, "a.com", "/", "d=1", ORA, 1);
+        ok("SameSite=None senza Secure: rifiutato",
+           bis_arrivato(&d, "a.com", "/", "z=1; SameSite=None", ORA, 1) == 0, "");
+        bis_da_mandare_ss(&d, "a.com", "/", 1, 0, ORA, 1, BIS_NAV_NO, b, sizeof(b));
+        uguale("stesso sito: tutti", b, "n=1; l=1; s=1; d=1");
+        bis_da_mandare_ss(&d, "a.com", "/", 1, 0, ORA + 600, 0, BIS_NAV_NO, b, sizeof(b));
+        uguale("risorsa da un altro sito: solo None", b, "n=1");
+        bis_da_mandare_ss(&d, "a.com", "/", 1, 0, ORA + 600, 0, BIS_NAV_GET, b, sizeof(b));
+        uguale("navigazione GET da un altro sito: None, Lax, non detti", b, "n=1; l=1; d=1");
+        bis_da_mandare_ss(&d, "a.com", "/", 1, 0, ORA + 600, 0, BIS_NAV_POST, b, sizeof(b));
+        uguale("POST da un altro sito, dopo 10 minuti: solo None", b, "n=1");
+        bis_da_mandare_ss(&d, "a.com", "/", 1, 0, ORA + 60, 0, BIS_NAV_POST, b, sizeof(b));
+        uguale("POST da un altro sito entro 2 minuti: + i non detti", b, "n=1; d=1");
+        bis_da_mandare(&d, "a.com", "/", 1, 0, ORA, b, sizeof(b));
+        uguale("bis_da_mandare di prima: tutti", b, "n=1; l=1; s=1; d=1");
+        {
+            static char f[4096];
+            Dispensa e;
+            bis_arrivato(&d, "a.com", "/", "p=1; SameSite=Strict; Max-Age=3600", ORA, 1);
+            bis_salva(&d, f, sizeof(f), ORA);
+            bis_azzera(&e);
+            bis_carica(&e, f, ORA);
+            bis_da_mandare_ss(&e, "a.com", "/", 1, 0, ORA, 0, BIS_NAV_GET, b, sizeof(b));
+            uguale("Strict sopravvive al file", b, "");
+            bis_da_mandare_ss(&e, "a.com", "/", 1, 0, ORA, 1, BIS_NAV_GET, b, sizeof(b));
+            uguale("  e va allo stesso sito", b, "p=1");
+        }
+    }
+
     printf("\n%d prove, %d sbagliate\n\n", fatte, sbagliate);
     return sbagliate ? 1 : 0;
 }

@@ -17,7 +17,7 @@ ancora arrivati. Senza, le immagini di 2 KB su una rete locale arrivano prima
 che si riesca a guardare.
 """
 import os, sys, time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 RITARDO = float(os.environ.get("RITARDO", "6"))
@@ -107,4 +107,8 @@ class H(BaseHTTPRequestHandler):
         sys.stderr.write("%.1f  %s\n" % (time.time() % 1000, f % a))
 
 if __name__ == "__main__":
-    HTTPServer(("0.0.0.0", 8000), H).serve_forever()
+    # ! A THREAD PER CONNECTION (P6, 25 November 2026): the browser asks up to
+    # four things at once on kept connections (P3), and a server that serves
+    # one connection at a time let the others time out. PORTA: another port,
+    # for a second copy of the site next to this one.
+    ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("PORTA", "8000"))), H).serve_forever()

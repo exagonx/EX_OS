@@ -83,3 +83,25 @@ subito dopo.
 La copia della voce «Operating system» di Wikipedia con cui si sono misurati i
 tempi. E' 672 KB di testo altrui sotto CC BY-SA: si riscarica in un secondo con
 `curl` quando serve, e non ha senso portarsela dietro nel repository.
+
+## Le pagine del P6 (25 novembre 2026)
+
+- `var.html`: le proprieta' personalizzate e var() (ripieghi, ereditarieta',
+  cicli, l'attributo style), calc(), min(), clamp(), la scorciatoia font.
+- `media.html`: le @media del livello 4 e matchMedia. Devono vedersi solo le
+  righe verdi (SI); una riga rossa (NO) e' un difetto.
+- `caratteri.html`: @font-face in woff2, woff, ttf e otf (CFF). ! I FILE DEI
+  CARATTERI NON SONO NEL PROGETTO (licenze loro): si copiano accanto a
+  servi.py dai pacchetti di Debian, in una copia del sito fuori da MEGA:
+
+      cp -r tools/prove/sito ~/ex_os/prove-font/sito
+      cp /usr/share/sphinx_rtd_theme/static/fonts/{Lato-Regular,Lato-Bold,Lato-Italic,RobotoSlab-Regular}.woff2 \
+         /usr/share/sphinx_rtd_theme/static/fonts/{Lato-Regular,Lato-Bold}.ttf \
+         /usr/share/sphinx_rtd_theme/static/fonts/fontawesome-webfont.woff \
+         /usr/share/fonts/opentype/urw-base35/NimbusSans-Regular.otf ~/ex_os/prove-font/sito/
+
+  Senza i file ogni riga ripiega sulla generica che nomina, e anche quello
+  e' un comportamento da provare. Il browser ha bisogno in /lib di
+  libfreetype.so.6, libharfbuzz.so.0, libwoff2common.so.1.0.2,
+  libwoff2dec.so.1.0.2, libbrotlidec.so.1, libbrotlicommon.so.1 e libz.so.1.
+

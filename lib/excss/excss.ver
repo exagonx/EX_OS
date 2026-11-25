@@ -14,5 +14,9 @@
         css_segno_lista;
         css_base;
         css_sfondo_url;
+        css_media_altezza;
+        css_media_vale;
+        css_variabili;
+        css_font_face;
     local: *;
 };

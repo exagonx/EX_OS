@@ -246,6 +246,7 @@ declare sub ex_screen_size cdecl alias "ex_screen_size" (byval larghezza as ulon
 #define ex_lista_multipla        ex_list_set_multiselect
 #define ex_lista_scelte          ex_list_get_selection
 #define ex_lista_riga_a          ex_list_row_at
+#define ex_lista_trascina_quanti ex_list_set_drag_count
 #define ex_finestra_riduci       ex_minimize_window_id
 #define ex_mouse_passaggio       ex_track_mouse_hover
 #define ex_ridisegna             ex_redraw

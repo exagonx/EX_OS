@@ -19,6 +19,10 @@
 # Run after tools/exilla/prova-gecko.sh, which makes the package.
 # QEMU_PIU="-smp 2" adds QEMU options: 2 processors, as on the laptop (the
 # threads of Firefox run together from kernel 0.321).
+# ! SEVERAL PROCESSES, AS EXILLA RUNS IT (exilla 0.008): until 25/11 this test
+# ran Firefox with one process, and so it never saw that with several no
+# file played (tools/exilla/exos-media.js says why). UN_PROCESSO=1 is the
+# old way, one process.
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
@@ -30,6 +34,8 @@ P="$O/dist/firefox"
 S="$D/media-disco"
 rm -rf "${S:?}"; mkdir -p "$S/profilo" "$S/casa" "$S/font" "$S/m"
 cp -a "$P" "$S/firefox"; cp exwin/font/*.ttf "$S/font/"
+mkdir -p "$S/firefox/defaults/pref"; cp tools/exilla/exos-media.js "$S/firefox/defaults/pref/"
+UNO=(); [ "${UN_PROCESSO:-}" = 1 ] && UNO=("export MOZ_FORCE_DISABLE_E10S=1@1")
 FILE="${FILE:-sound.ogg small-shot.flac small-shot.mp3 small-shot.m4a bipbop_short_vp8.webm vp9cake.webm av1.mp4 gizmo.mp4}"
 for f in $FILE; do cp "firefox-main/dom/media/test/$f" "$S/m/"; done
 # the system's FFmpeg (tools/ffmpeg-exos, shared since 3 November 2026):
@@ -101,7 +107,7 @@ SER=/tmp/exos/serialmedia$SUFF.txt; rm -f "$SER" "$D/media-uscita.wav"
 # word, twice out of two on 22/11 (32 and 64 bit), and Firefox had no sound
 # card ("Can't get cubeb context"). Voce 97, as exwin there. As prova-lampi.
 timeout "${ATTESA:-1500}" python3 tools/qemu_drive.py "mount hd0p1 /disk@5" "echo attendo la fine dei lavori di avvio@60" "audio -i@40" "audio@5" \
-    "export MOZ_FORCE_DISABLE_E10S=1@1" "export MOZ_HEADLESS=1@1" \
+    "${UNO[@]}" "export MOZ_HEADLESS=1@1" \
     "export HOME=/disk/casa@1" "export LD_LIBRARY_PATH=/disk/lib@1" "export MOZ_LOG=${MOZ_LOG:-}@1" "export LANG=it_IT.UTF-8@1" "export EXILLA_FONTS=/disk/font@1" \
     "/disk/firefox/firefox --headless -no-remote -profile /disk/profilo --window-size 800,600 file:///disk/media.html &@${SECONDI:-600}" \
     "echo FINE-MEDIA@2" > "$D/media-1.log" 2>&1

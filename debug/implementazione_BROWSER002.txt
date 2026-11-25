@@ -1,0 +1,1127 @@
+IMPLEMENTAZIONE BROWSER002 - EXBrowser: il motore nativo fino ai servizi
+                             Google e ai siti fatti in JavaScript
+===============================================================================
+Priorita':  ALTA (richiesta dell'utente del 25/11/2026: "exbrowser deve aprire
+            i servizi google")
+Programma:  exwin/bin/exbrowser (EXBrowser 0.034) e le librerie del motore:
+            lib/exhtml, lib/excss, lib/exdom, lib/exjs, lib/exqjs (QuickJS-ng),
+            lib/exhttp, lib/extls, lib/eximg, lib/exfont
+Scritto:    25/11/2026, albero di quel giorno. Niente e' stato modificato nei
+            sorgenti di EX-OS: questo file, i cloni in terze_browser/ e gli
+            archivi in ~/ex_os/cross_build/terze-parti/ sono le sole cose nuove.
+Vedi anche: diario_browser.txt (le misure di settembre su Google, Amazon,
+            Stack Overflow, eBay), BROWSER001 (cookie e suffissi pubblici).
+
+LA DIREZIONE (l'utente, 25/11/2026, scelta esplicita e ripetuta in
+collaborazione.txt): EXBrowser ha un MOTORE SUO e resta indipendente da
+Exilla. Niente Gecko, niente pezzi di firefox-main, niente libxul, niente
+processi di Exilla, e niente motore intero di un altro browser (litehtml,
+Servo, Ladybird, WebKit). Le librerie di terzi entrano solo come PEZZI del
+motore (un parser, un algoritmo di impaginazione, un decodificatore), come
+librerie condivise (.so) a 32 e 64 bit, all'ultima versione pubblica, coi
+sorgenti sul CD degli strumenti (tools/librerie-exos/comune.sh). Quel che
+manca al sistema (kernel, libc, exwin) si scrive nel sistema, mai aggirato
+nei sorgenti di terzi.
+
+I MARCHI USATI QUI SOTTO: [MISURATO] e' stato visto il 25/11 o e' nel diario
+con la prova; [LETTO] e' nel codice dell'albero; [FONTE] e' documentato da
+Google o dalle specifiche; [STIMA] e' un giudizio, da verificare; [PROPOSTA]
+e' codice o struttura da scrivere, NON compilato e NON provato.
+
+
+===============================================================================
+0. IN SINTESI
+===============================================================================
+
+  - Il muro piu' alto non e' tecnico: e' l'ACCESSO A GOOGLE (sezione 1).
+    Google fa entrare nell'account solo i browser che riconosce come
+    supportati (Chrome, Firefox, Safari, Edge, versione attuale e
+    precedente) e blocca quelli "non sicuri" o incorporati. Un motore nuovo
+    puo' fare tutto giusto ed essere rifiutato lo stesso. Va saputo prima di
+    investire mesi, e va provato PRESTO (passo P0) con la sola pagina di
+    accesso, che e' leggera.
+  - Le pagine di Google che NON chiedono l'accesso (ricerca, Maps in lettura,
+    YouTube senza account, Traduttore, Documenti pubblicati) sono
+    raggiungibili con il lavoro delle sezioni 3-8.
+  - Il motore oggi ha basi giuste (cascata con indice delle regole, iframe
+    con un documento proprio, QuickJS-ng 0.16.2, TLS 1.3, cookie), ma tre
+    strati vanno RIFATTI e non estesi: l'impaginazione (un flusso con i casi
+    speciali, non un albero di riquadri), la rete (stato globale, una
+    richiesta per volta, niente HTTP/2) e il ciclo degli eventi (sveglia a
+    200 ms). Il resto si estende.
+  - Le librerie sono scaricate (sezione 9): cloni in terze_browser/, archivi
+    verificati in ~/ex_os/cross_build/terze-parti/. Gia' portate e da NON
+    riportare: freetype 2.15.0, harfbuzz 15.0.0, zstd 1.5.7, libpng, zlib,
+    FFmpeg 9.0.2 (con dav1d, libvpx, opus, vorbis), Mesa 26.2.6.
+
+
+===============================================================================
+1. L'ACCESSO A GOOGLE: COSA DICE GOOGLE, E COSA NON SI FA
+===============================================================================
+
+[FONTE] support.google.com/accounts/answer/7675428 ("Sign in with a supported
+browser"): Google puo' rifiutare l'accesso da browser che non supporta, da
+software di automazione e da browser incorporati in un'altra applicazione.
+L'elenco dei supportati: Chrome, Safari, Firefox, Opera, Edge.
+[FONTE] developers.googleblog.com, agosto 2020 e giugno 2021: blocco dei
+browser "meno sicuri", dei framework incorporati (CEF, webview) e di chi
+intermedia o altera il traffico; JavaScript e cookie obbligatori.
+[FONTE] knowledge.workspace.google.com, "Supported browsers for Google
+Workspace": Chrome pieno; Firefox, Safari, Edge versione attuale e
+precedente; cookie e JavaScript accesi.
+
+Che cosa vuol dire per EXBrowser [STIMA]:
+  a) La pagina di accesso (accounts.google.com/v3/signin/...) e' un'app
+     JavaScript (Wiz/Closure) che raccoglie segnali dal browser e li manda
+     a Google; il server decide se il browser e' "sicuro". I segnali non
+     sono pubblici. Lo user-agent e' uno di questi, ma non l'unico (lo
+     dicono le pagine qui sopra: "framework incorporati" non si riconoscono
+     dal solo user-agent).
+  b) EXBrowser oggi si presenta come "EX-OS" (lib/exhttp/http.c, la
+     costruzione della richiesta). Il diario (5b) ha gia' deciso la forma
+     di Gecko, "Mozilla/5.0 (<piattaforma>; rv:<x>) Gecko/20100101
+     EXBrowser/<versione>", che dice il motore di riferimento e il nome
+     vero. MA EXBrowser NON E' Gecko: scrivere "Gecko/20100101" e
+     soprattutto un "Firefox/158.0" che non c'e' sarebbe presentarsi per
+     un altro. ! IL DIARIO (2) HA GIA' LA REGOLA: "NON SI FALSIFICA NIENTE".
+     La resa onesta e': "Mozilla/5.0 (X11; EX-OS i686) EXBrowser/0.035"
+     (Mozilla/5.0 e' il prefisso storico che tutti i motori usano e i
+     server si aspettano; non dice di essere un altro browser).
+     ! DECISO DALL'UTENTE IL 25/11/2026: lo user-agent e' AUTONOMO, senza
+     Gecko/20100101 e senza Firefox/: "Mozilla/5.0 (X11; EX-OS i686)
+     EXBrowser/<versione>" (x86_64 a 64 bit). Quando EXBrowser funzionera'
+     con tutti i servizi, l'utente chiedera' a Google di riconoscerlo come
+     browser supportato. Questo sostituisce la forma della 5b del diario.
+  c) Con la resa onesta e' probabile [STIMA] che Google mostri "Questo
+     browser o questa app potrebbero non essere sicuri" a prescindere dal
+     motore. Se succede NON si ferma niente (decisione dell'utente, 1 b):
+     si va avanti con tutti i passi, e il riconoscimento lo chiede l'utente
+     a Google quando i servizi funzionano. Per chiederlo serve poter
+     mostrare che il browser fa le cose per bene: i risultati di
+     web-platform-tests (sezione 8) sono quella prova.
+  d) Cosa NON si fa, per nessuna ragione: rimandare a Google gettoni o
+     risposte calcolati fuori dal browser, imitare le impronte di Chrome,
+     risolvere reCAPTCHA in automatico. Lo dice gia' il diario (2, 2.3 c):
+     e' aggirare un controllo anti-robot, non navigare.
+
+-> PASSO P0 (prima di tutto il resto, mezza giornata): una persona, sul
+   ferro e da una rete che non sia quella delle prove di settembre (il 429
+   del diario 2.1), apre accounts.google.com con EXBrowser e lo user-agent
+   onesto, e annota la risposta: pagina d'accesso, "browser non supportato",
+   o 429. Con la console di EXBrowser sulla seriale si annotano anche gli
+   errori JavaScript. La risposta NON ferma il piano (1 c): e' la misura
+   di partenza, da rifare a ogni passo, e la base della richiesta di
+   riconoscimento a Google.
+
+
+===============================================================================
+2. IL MOTORE OGGI, STRATO PER STRATO  [LETTO]
+===============================================================================
+
+  strato        dove                           oggi
+  ------------  -----------------------------  ---------------------------------
+  rete          lib/exhttp (http.c, exhttp.c)  HTTP/1.1, keep-alive, redirezioni;
+                                               stato GLOBALE (g_tcp, g_stato_tls,
+                                               g_passo...): una richiesta per
+                                               processo alla volta; niente
+                                               Accept-Encoding (il gzip non
+                                               chiesto si srotola solo per la
+                                               pagina, gz_srotola in exbrowser.c);
+                                               niente HTTP/2, niente WebSocket
+  TLS           lib/extls                      1.3 e la meta' moderna di 1.2,
+                                               X25519 e P-256, RSA e ECDSA; ALPN
+                                               fisso a "http/1.1"
+  cookie        exbrowser/biscotti.c           dispensa; BROWSER001 aperto (niente
+                                               suffissi pubblici, HttpOnly
+                                               scrivibile, Secure da http)
+  HTML          lib/exhtml/html.c (849 righe)  tokenizzatore e albero "a
+                                               tolleranza", non l'algoritmo di
+                                               costruzione dell'albero WHATWG
+                                               (modi di inserimento, adoption
+                                               agency, <template>, document.write)
+  CSS           lib/excss/css.c (2447)         57 proprieta' (colori, sfondo,
+                                               box model, float, position e i
+                                               quattro lati, flex-direction/wrap/
+                                               grow, justify-content, align-items,
+                                               gap, opacity...); selettori
+                                               completi con indice delle regole
+                                               (diario 3.7); @media e le altre @
+                                               saltate per intero; niente var(),
+                                               calc(), @font-face, transform,
+                                               :hover dinamico
+  impaginazione exbrowser/browser_impagina.c   un FLUSSO di pezzi di testo con i
+                (2202)                         casi speciali (tabelle, float,
+                                               inline-block, una fila flex
+                                               semplice); non un albero di
+                                               riquadri; niente grid, niente
+                                               contesti di impilamento (z-index),
+                                               niente overflow con scorrimento
+                                               interno, niente position:fixed
+  disegno       exbrowser.c, lib/exwin         rettangoli pieni, testo, immagini;
+                                               niente angoli tondi, ombre,
+                                               sfumature, trasformazioni, SVG,
+                                               <canvas>
+  DOM           lib/exdom/exdom.c (3609)       nodi, attributi, eventi con
+                                               cattura e bolla, querySelector,
+                                               iframe con un documento loro
+                                               (diario 2.3); niente Shadow DOM,
+                                               customElements ASSENTE apposta,
+                                               MutationObserver che non richiama
+  JavaScript    quickjs/ (QuickJS-ng 0.16.2)   ES2023+ (Promise, async, moduli
+                lib/exqjs, ExJs di riserva     nel motore); niente Intl, niente
+                                               WebAssembly, niente Worker
+  preludio      exbrowser/browser_preludio.c   self/top, performance, rAF,
+                                               storage IN MEMORIA, TextEncoder,
+                                               crypto.getRandomValues, Event,
+                                               postMessage, matchMedia che non
+                                               scatta, getComputedStyle che rende
+                                               lo stile in linea; niente
+                                               crypto.subtle, IndexedDB, WebSocket
+  tempo         exbrowser.c (EXM_TIMER)        sveglia a 200 ms: setTimeout(f,0),
+                                               rAF e i microcompiti di rete
+                                               aspettano fino a 200 ms
+  caratteri     lib/exfont                     TrueType (glyf) col rasterizzatore
+                                               suo; niente CFF/OpenType-PS, niente
+                                               WOFF/WOFF2, niente shaping
+                                               (legature, arabo, indiano)
+  immagini      lib/eximg                      PNG, JPEG, GIF, BMP, ICO, WebP
+                                               (VP8, VP8L, ALPH; primo fotogramma
+                                               delle animazioni); niente SVG, AVIF
+  media         -                              niente <video>/<audio>, niente MSE
+
+
+===============================================================================
+3. COSA CHIEDONO I SERVIZI GOOGLE  [STIMA, da misurare col metodo del diario]
+===============================================================================
+
+Il metodo e' quello gia' usato a settembre (diario 2): la pagina salvata,
+gli script fatti girare sull'host nello stesso QuickJS con un DOM spia che
+annota ogni proprieta' toccata. Va rifatto per ogni servizio, UNA volta,
+dalla macchina vera, e l'elenco che ne esce sostituisce questa sezione.
+! Da questa rete non si insiste (diario 2.1: 429 di Google, 403 di eBay).
+
+  servizio            senza account   cosa serve oltre a oggi (in ordine di peso)
+  ------------------  --------------  -------------------------------------------
+  Ricerca             si'             SearchGuard gira gia' (diario 2.1);
+                                      risultati: flex, grid, position, @media,
+                                      var(), SVG in linea (le icone), WOFF2
+  accounts.google.com -               fetch/XHR con CORS e credenziali, cookie
+                                      corretti (__Host-, __Secure-, SameSite,
+                                      Partitioned), crypto.subtle (SHA-256,
+                                      HMAC), Intl, iframe con postMessage vero,
+                                      e il "si'" di Google (sezione 1)
+  YouTube             si'             Custom Elements v1 e Shadow DOM (l'app e'
+                                      fatta di <ytd-*>), Intl (numeri e date),
+                                      fetch in streaming, IntersectionObserver,
+                                      ResizeObserver, MSE + H.264/VP9/AV1 + AAC/
+                                      Opus (FFmpeg c'e' gia'), WOFF2
+  Maps                si'             <canvas> 2D e WebGL (Mesa c'e'), Web
+                                      Worker, WebAssembly, eventi puntatore e
+                                      rotella con preventDefault
+  Gmail, Drive, Docs  no              tutto il resto, piu' IndexedDB (stato
+                                      locale), Worker, WebSocket o fetch lunghi,
+                                      contenteditable e Selection/Range (Docs
+                                      disegna su <canvas> dal 2021), appunti
+                                      (navigator.clipboard)
+  Traduttore          si'             il minimo: fetch, flex, WOFF2
+
+
+===============================================================================
+4. LE MANCANZE, STRATO PER STRATO, CON LA LIBRERIA CHE LE COPRE
+===============================================================================
+
+4.1  RETE
+-----
+  a) Accept-Encoding: gzip, br, zstd. Oggi i server mandano in chiaro
+     (Amazon a volte gzip lo stesso). Google serve brotli a chi lo chiede:
+     meno byte, cioe' meno tempo (la misura del diario 3.9: il tempo di una
+     pagina e' della RETE). Librerie: inflate.c (c'e'), BROTLI (nuova),
+     zstd (c'e'). Codice in 10.1.
+  b) RETE RIENTRANTE: lo stato di exhttp esce dalle globali e va in una
+     struttura per connessione (ExHttpConn), come si e' fatto con le viste
+     del browser (diario 2.3 a, tools/locali/vista_taglio.py: stesso
+     metodo, una macro per globale, nessuna funzione cambiata al primo
+     passo). Senza, niente richieste in parallelo e niente HTTP/2.
+  c) HTTP/2 con ALPN "h2" (Google lo parla dappertutto; 75 richieste in
+     serie a 220 ms l'una sono i 16 s di Amazon): NGHTTP2 (nuova) per i
+     frame, HPACK e il controllo di flusso, sopra il tubo di extls.
+     extls.h ha gia' il campo alpn: si passa "h2,http/1.1" e si legge
+     quale ha scelto il server (manca la funzione che lo dice: 10.2).
+  d) WebSocket (RFC 6455): WSLAY (nuova) per i frame; l'apertura e' una
+     richiesta HTTP/1.1 con Upgrade, quindi passa da exhttp.
+  e) CORS, Origin, Referer-Policy, fetch con credentials, redirect manuale,
+     AbortController, corpo in streaming (ReadableStream): sono specifica
+     Fetch, lavoro nostro, niente librerie.
+  f) Cookie: chiudere BROWSER001 con la PUBLIC SUFFIX LIST (scaricata,
+     ~/ex_os/cross_build/terze-parti/publicsuffix), poi SameSite, i
+     prefissi __Host-/__Secure-, Partitioned (CHIPS). La lista si compila
+     in una tabella ordinata al momento della costruzione (10.6).
+
+4.2  HTML
+-----
+  a) L'ALGORITMO DI COSTRUZIONE DELL'ALBERO WHATWG: i siti di Google
+     contano su <template>, su tabelle malformate corrette "come i browser",
+     sulle regole di chiusura implicita. LEXBOR (nuova) lo implementa per
+     intero ed e' scritto in C99 senza dipendenze. Il suo albero NON
+     diventa il DOM di EXBrowser: si visita e si copia in exdom (10.3), cosi'
+     exdom resta l'unico DOM e le 255 prove di prova-exdom valgono ancora.
+     Piu' avanti si puo' decidere di tenere l'albero di lexbor come DOM: e'
+     una seconda decisione, non la prima.
+  b) document.write durante il caricamento: con il parser a pezzi di
+     lexbor (lxb_html_document_parse_chunk_begin/_chunk/_end) si fa come la
+     specifica (lo script scrive nel flusso d'ingresso del parser).
+  c) La codifica (Content-Type, <meta charset>, BOM): lexbor/encoding.
+  d) L'analisi degli URL (WHATWG URL): lexbor/url. Oggi gli indirizzi
+     relativi li risolve il browser a mano.
+
+4.3  CSS
+-----
+  a) @media (min-width, max-width, prefers-color-scheme, hover, pointer)
+     e @supports: oggi le @ si saltano per intero (diario 3.3).
+  b) Proprieta' personalizzate e var(), calc(), min(), max(), clamp():
+     sono ovunque nei fogli di Google. Il parser dei valori di lexbor/css
+     (o il nostro) ne fa i nodi; il calcolo va nello stile calcolato.
+  c) @font-face con WOFF2 (BROTLI + WOFF2, nuove), WOFF1 (inflate.c) e
+     TTF/OTF; poi i caratteri passano da FREETYPE (c'e', 2.15.0: sa anche
+     il CFF che exfont non sa) e lo SHAPING da HARFBUZZ (c'e', 15.0.0).
+     ! exfont resta per il font di sistema; FreeType entra per i caratteri
+     delle pagine. Decodifica in 10.4.
+  d) Le proprieta' che mancano, in ordine di peso sui fogli veri: flex
+     intero (flex-shrink, flex-basis, order, align-self, align-content),
+     grid (grid-template-*, grid-area, auto-flow), overflow, z-index,
+     position: fixed/sticky, transform, border-radius, box-shadow,
+     linear-gradient, white-space, text-overflow, line-height, letter-
+     spacing, @keyframes e transition (si possono saltare all'ultimo
+     fotogramma finche' non c'e' l'animazione).
+  e) Lo stile calcolato vero, per getComputedStyle (oggi rende lo stile in
+     linea) e per l'impaginazione.
+
+4.4  IMPAGINAZIONE: IL PEZZO DA RIFARE
+-----
+  Il diario (5b) l'ha gia' deciso: un ALBERO DI RIQUADRI costruito dallo
+  stile calcolato, come i frame di Gecko (nsBlockFrame, nsInlineFrame,
+  nsFlexContainerFrame), e la cascata separata dall'impaginazione.
+  La libreria: TAFFY 0.16.0 (nuova, Rust, MIT). SCELTA DALL'UTENTE IL
+  25/11/2026. Implementa block, float,
+  flexbox (anche flex-wrap: balance), CSS Grid, calc() e le misure dei
+  contenuti; non disegna, non sa del testo: chiede al chiamante quanto e'
+  grande una foglia. E' esattamente il taglio di browser_vista.h ("quanto e'
+  largo questo pezzo estraneo"). Il testo e l'inline (righe, a capo,
+  allineamento) restano NOSTRI: Taffy chiede la misura di un blocco di
+  testo, e risponde browser_impagina.c.
+  Rust gira gia' su EX-OS con la std (tools/rust-exos, @RUST-STD 29/29).
+  Taffy si espone in C con un crate piccolo nostro (10.5) e diventa
+  libtaffy_exos.so.
+  SCARTATA, tenuta solo per confronto: YOGA 3.2.2 (C++20, MIT, con API C: YGNodeNew,
+  YGNodeCalculateLayout, YGNodeLayoutGetLeft...). Fa SOLO flexbox: per grid
+  e block resterebbe tutto da scrivere. Scaricata per confronto.
+  ! IL PASSAGGIO SI FA SENZA REGRESSIONI: le sette pagine di riferimento del
+  diario (bordi, tabella, font, script, modulo, con, dinamico) fotografate
+  prima e dopo con confronta_ppm.py, piu' le prove di tools/prove/sito/.
+
+4.5  DISEGNO
+-----
+  a) Angoli tondi, ombre, sfumature, trasformazioni, opacita' per gruppo,
+     ritagli: PLUTOVG 1.3.3 (nuova, C, MIT), un rasterizzatore vettoriale
+     con antialias, percorsi, tratti, sfumature lineari e radiali, matrici.
+     Disegna su un buffer ARGB32 premoltiplicato: va convertito una volta al
+     formato di exwin.
+  b) <canvas> 2D: l'API CanvasRenderingContext2D si scrive sopra plutovg
+     (percorsi, fill, stroke, drawImage, getImageData, fillText con
+     FreeType/HarfBuzz).
+  c) SVG (le icone e i loghi di Google sono SVG in linea o file .svg):
+     RESVG 0.50.0 (nuova, Rust, con l'API C del crate c-api; l'archivio
+     porta tutti i crate in vendor/). In alternativa, per le sole icone,
+     un sottoinsieme SVG nostro (path, rect, circle, fill, viewBox) sopra
+     plutovg: copre le icone Material, non i disegni complessi.
+  d) WebGL: Mesa e' portata (voce 88). Viene dopo il 2D.
+  e) Lo scorrimento per riquadro (overflow: auto) e i contesti di
+     impilamento: lavoro nostro sull'albero dei riquadri.
+
+4.6  DOM ED EVENTI
+-----
+  a) Shadow DOM (attachShadow, slot, :host, la cascata per albero) e
+     Custom Elements v1 (define, upgrade, connectedCallback...): YouTube e'
+     fatto cosi'. Lavoro nostro in exdom; la specifica e' "DOM Standard" e
+     "HTML, 4.13 Custom elements".
+  b) MutationObserver che richiama davvero (microcompito dopo la mutazione),
+     IntersectionObserver e ResizeObserver (dipendono dall'albero dei
+     riquadri: si calcolano dopo l'impaginazione, prima del disegno).
+  c) Range, Selection, contenteditable, eventi di input (beforeinput,
+     input, composition*), appunti asincroni.
+  d) Eventi puntatore (pointerdown/move/up, setPointerCapture), rotella con
+     passive e preventDefault, focus/blur/focusin, :hover e :focus
+     dinamici (oggi sono validi e non valgono mai, diario 3.7).
+
+4.7  JAVASCRIPT E CICLO DEGLI EVENTI
+-----
+  a) IL CICLO DEGLI EVENTI DELLA SPECIFICA HTML: compiti (timer, rete,
+     input), microcompiti dopo ogni compito (QuickJS: JS_ExecutePendingJob
+     finche' non ne restano), rAF prima del disegno, impaginazione solo
+     quando serve. La sveglia a 200 ms (EXM_TIMER) diventa un'attesa sul
+     prossimo timer: ! QUI SERVE AL SISTEMA un'attesa con scadenza in
+     millisecondi che si svegli anche per i messaggi di exwin e per i
+     descrittori di rete (poll con timeout, o ipc_recv_timeout insieme a
+     poll): da chiedere all'agente del kernel in collaborazione.txt, se non
+     c'e' gia'.
+  b) QuickJS-ng da 0.16.2 a 0.18.0 (scaricata): prima cosa, perche' tutte
+     le altre prove si fanno dopo.
+  c) Intl (DateTimeFormat, NumberFormat, PluralRules, RelativeTimeFormat,
+     Collator, Segmenter, Locale): QuickJS-ng non lo ha. Si scrive un
+     modulo Intl in C sopra ICU4C 79.1 (scaricata, firmata). ICU4C e' grande
+     (i dati completi sono ~30 MB); si costruisce con un file di dati
+     RIDOTTO alle lingue che EX-OS ha (it, en, e quelle della tastiera) con
+     l'icu-data-filter ufficiale. Il clone di ICU4X resta per confronto
+     (C API piu' piccola, ma decine di crate da fornire senza cargo).
+  d) WebAssembly: WASM-MICRO-RUNTIME 2.4.6 (nuova, Apache-2.0 con
+     eccezione LLVM), in modo INTERPRETE prima (nessuna memoria eseguibile);
+     l'API JS (WebAssembly.Module/Instance/Memory, compileStreaming) si
+     scrive sopra wasm_runtime_load/instantiate. WASM3 0.9.1-beta.1 (MIT,
+     interprete veloce, progetto fermo dal 2024) e' l'alternativa.
+  e) Web Worker: un filo POSIX per worker con un JSRuntime suo (QuickJS non
+     condivide oggetti fra runtime: va bene, i worker comunicano per
+     copia), postMessage con lo structured clone vero (oggi passa
+     l'oggetto, preludio). Le pthread ci sono (tappa 1 di Exilla, 15/15).
+  f) crypto.subtle: digest (SHA-1, SHA-256, SHA-384, SHA-512), HMAC,
+     AES-GCM, ECDSA P-256, Ed25519, X25519, importKey/exportKey: lib/excrypt
+     ha gia' quasi tutto (aes.c, gcm.c, p256.c, sha1.c, sha512.c, ed25519.c,
+     x25519.c). Manca SHA-256 come funzione pubblica: c'e' in extls? Da
+     leggere; altrimenti si aggiunge a excrypt (10.7).
+  g) Storage persistente: localStorage su disco (un file per origine in
+     ~/.exbrowser/storage), IndexedDB sopra SQLITE 3.54.1 (scaricata; oggi
+     su EX-OS c'e' solo la copia dentro firefox-main, che la direzione
+     esclude). Schema in 10.8.
+
+4.8  MEDIA
+-----
+  <video>/<audio> con FFmpeg (gia' portato, condiviso, H.264, VP8, VP9, AV1
+  via dav1d, AAC, Opus, Vorbis, MP3), l'uscita audio di /drv/audio, e Media
+  Source Extensions (YouTube manda il video a pezzi fMP4/WebM via
+  SourceBuffer.appendBuffer). Viene dopo tutto il resto.
+
+
+===============================================================================
+5. COSA SERVE AL SISTEMA (da chiedere all'agente del kernel, non aggirare)
+===============================================================================
+
+  a) Un'attesa unica con scadenza in ms su messaggi di exwin + descrittori
+     di rete (4.7 a). RISPOSTA dell'agente del kernel (25/11): C'E' GIA'.
+     sys_poll (SYS_POLL 244) accetta FD_IPC accanto ai descrittori, col
+     timeout in ms; ex_get_message() fa poll su FD_IPC e sui descrittori
+     registrati con ex_watch_fd(fd, fn, dato) (lib/exwin/exwin.h). EXBrowser
+     deve registrare i suoi socket con ex_watch_fd invece della sveglia.
+     MANCA un timer piu' fine dei 200 ms di ex_set_timer: lo aggiunge lui in
+     exwin.so (scadenza del poll di ex_get_message) quando P8 lo chiede.
+  b) Memoria eseguibile (mmap con PROT_EXEC, o mprotect da RW a RX) per
+     l'AOT/JIT di WAMR: SOLO in un secondo tempo; l'interprete non la
+     chiede. RISPOSTA (25/11): C'E'. mmap e mprotect accettano PROT_EXEC,
+     il JIT di SpiderMonkey in Exilla lo usa dal 3/10/2026 (RW poi RX);
+     nessun W^X imposto dal kernel.
+  c) Un posto per lo stato per utente: ~/.exbrowser/ (cookie, storage,
+     IndexedDB, cache HTTP). Nessuna novita' di sistema se $HOME c'e'
+     sempre.
+  d) Caratteri di ripiego per le pagine: Noto CJK c'e' (tools/font-cjk);
+     servono anche un ripiego per gli emoji e i simboli (Noto Emoji in
+     bianco e nero, o Noto Color Emoji se FreeType ha il PNG/COLR) e un
+     elenco dei caratteri di sistema leggibile dal browser (fontconfig no:
+     un file di testo basta).
+     RISPOSTA (25/11): oggi ci sono DejaVu Sans, Liberation e Noto CJK;
+     niente per emoji e simboli, niente in coda. PROPOSTA dell'agente del
+     kernel: Noto Emoji in bianco e nero (OFL, TTF senza tavole a colori)
+     come pacchetto, come tools/font-cjk, e il ripiego per codepoint in
+     lib/exfont, cosi' lo usano tutte le applicazioni ExWin. DA DECIDERE
+     CON L'UTENTE.
+  e) Le librerie condivise nuove sul CD degli strumenti e in netinst
+     (tools/librerie-exos/su-cd.sh le prende gia' da cross_build/*-exos<bit>).
+
+
+===============================================================================
+6. LE LICENZE (EX-OS e' GPL-2.0-or-later)
+===============================================================================
+
+  brotli MIT, woff2 MIT, nghttp2 MIT, wslay MIT, utf8proc MIT, plutovg MIT,
+  quickjs-ng MIT, yoga MIT, taffy MIT, wasm3 MIT, resvg MIT o Apache-2.0
+  (si sceglie MIT), sqlite pubblico dominio, icu4c Unicode-3.0 (permissiva),
+  public suffix list MPL-2.0 (sono DATI: la tabella generata la si
+  distribuisce col suo avviso), freetype FTL o GPL-2.0, harfbuzz MIT.
+  ! APACHE-2.0: lexbor e wasm-micro-runtime. Apache-2.0 e' compatibile con
+  la GPLv3 ma NON con la GPLv2 "sola". EX-OS e' GPL-2.0-OR-LATER, quindi un
+  EXBrowser collegato a lexbor o a WAMR si distribuisce sotto GPLv3. E'
+  lecito, e l'utente l'ha accettato il 25/11/2026 (11 b). Le alternative MIT esistono per
+  WAMR (wasm3); per lexbor no (un parser HTML5 completo in C con licenza
+  GPLv2-compatibile non c'e': html5ever e' Rust, MIT/Apache, e porterebbe
+  con se' una parte di Servo, che la direzione esclude).
+
+
+===============================================================================
+7. L'ORDINE DEI PASSI, OGNUNO CON LA SUA PROVA
+===============================================================================
+
+  P0  accounts.google.com a mano dal ferro (sezione 1). Mezza giornata.
+  P1  QuickJS-ng 0.18.0 dentro lib/exqjs.          FATTO il 25/11, vedi 7.1
+  P2  Accept-Encoding gzip/br/zstd, brotli portato  prova: pagina br e zstd
+      (tools/brotli-exos), gz_srotola in exhttp.    servite dall'host; scarica
+                                                    salva il file srotolato
+  P3  richieste in parallelo, 4 connessioni     FATTO il 25/11, vedi 7.3
+      in parallelo per fogli, script, immagini.     "tempi: rete" < meta'
+  P4  HTTP/2 con nghttp2 e ALPN.     FATTO il 25/11, vedi 7.4
+                                                    in h2 (lo dice la console)
+  P5  BROWSER001 + PSL + SameSite + prefissi.  FATTO il 25/11, vedi 7.5
+  P6  @media, var(), calc(), @font-face + WOFF2 +   tools/prove/sito/ nuove
+      FreeType/HarfBuzz per i caratteri delle       pagine: media.html,
+      pagine.                                       var.html, font.html
+  P7  L'ALBERO DEI RIQUADRI con Taffy: block, flex, le sette pagine identiche,
+      grid; il testo resta nostro.                  poi flex.html, grid.html
+  P8  Ciclo degli eventi vero (4.7 a), Mutation-,   prove dei microcompiti e
+      Intersection-, ResizeObserver.                dei timer a 0/4/16 ms
+  P9  Shadow DOM e Custom Elements.                 web-platform-tests in
+                                                    terze_browser/wpt (dom/,
+                                                    custom-elements da
+                                                    aggiungere allo sparse)
+  P10 plutovg: angoli, ombre, sfumature, canvas 2D; la ricerca di Google
+      SVG (resvg o il sottoinsieme).                leggibile e coi loghi
+  P11 Intl su ICU4C, crypto.subtle, localStorage    accounts.google.com fino
+      su disco, IndexedDB su SQLite, Worker,        alla risposta del server
+      WebSocket.                                    (vedi P0)
+  P12 WebAssembly (WAMR interprete).                wpt wasm/jsapi
+  P13 <video>, MSE con FFmpeg.                      YouTube senza account
+  Ogni passo: make prova-exdom, prova-exqjs, prova-excss, prova-exhttp a
+  zero errori; le sette pagine di riferimento identiche; QEMU 32 e 64 bit.
+
+7.1  P1 FATTO (25/11/2026): QuickJS-ng 0.16.2 -> 0.18.0
+-----
+  - Archivio verificato: ~/ex_os/cross_build/terze-parti/quickjs-ng/. Il
+    quickjs/ del progetto (in .gitignore) e' ora la 0.18.0 adattata; la
+    0.16.2 adattata e' in ~/ex_os/prove-quickjs/quickjs-0.16.2.
+  - tools/quickjs-exos/applica.py: le cinque modifiche si applicano intere.
+    Stessi file .c della 0.16.2. Nessuna funzione nuova: la 0.18 porta
+    correzioni e l'API degli import() dinamici (JS_SetDynamicImportFunc,
+    JS_FinishDynamicImport), che servira' ai moduli ES della pagina.
+  - quickjs.h cambia in tre punti che exqjs.c non usa: JSInterruptHandler
+    riceve il contesto, JS_LoadModule ha l'argomento degli attributi,
+    JSValueUnion non ha piu' int32. exqjs.c non e' cambiato di una riga.
+  - Misure (stessa regola del Makefile, 32 bit): quickjs.so 0.16.2 690 488
+    byte di codice, 0.18.0 691 252 (+764). prova-compila.sh: 655 260 ->
+    656 741 byte, simboli chiesti alla libc identici.
+    ! La quickjs.so dell'ISO di oggi alle 16:03 aveva 602 643 byte di
+    codice: la differenza (~88 KB) c'e' anche con la 0.16.2 costruita oggi
+    con la stessa regola, quindi non viene da QuickJS. Segnalato all'agente
+    del kernel in collaborazione.txt.
+  - make prova-exqjs: 267 prove, 0 sbagliate, uscita IDENTICA alla 0.16.2
+    (comprese le prime righe di tools/prove/sito/script.html).
+  - make quickjs_so: ~/ex_os/build/exwin/lib/quickjs.so (32 bit). A 64 bit
+    gli stessi comandi di tools/costruisci-utente64.sh, nella cartella di
+    prova, collegano con -z defs (nessun simbolo irrisolto); build-64 lo
+    rifa' l'agente del kernel con costruisci-utente64.sh.
+  - IN QEMU, su ISO private (~/ex_os/prove-quickjs/exos-qjs018.iso e
+    exos64-qjs018.iso, la quickjs.so nuova al posto della vecchia),
+    EXBrowser su ~/ex_os/prove-quickjs/sito/es.html, servita dall'host:
+    14 prove di JavaScript moderno (campi privati e static, ?. e ??=,
+    BigInt, at/findLast/toSorted/with, Object e Map.groupBy, metodi dei
+    Set, Iterator helpers, RegExp con gruppi, lookbehind e flag v/d,
+    replaceAll/isWellFormed, Error.cause, WeakRef, ArrayBuffer
+    ridimensionabile e transfer, async/await con withResolvers,
+    allSettled, Array.fromAsync, for await, e Intl):
+        32 bit  13 su 14       64 bit  13 su 14       host  13 su 14
+    L'unico NO e' Intl, atteso: QuickJS non lo ha (P11). Che giri QuickJS
+    e non ExJs lo dicono i campi privati e i BigInt, che ExJs (ES3) non
+    sa. E script.html a 32 bit: riquadri 1-2 come sempre (fotografia in
+    ~/ex_os/prove-quickjs/sc.png).
+  - DA FARE, non mio: es.html sta in ~/ex_os/prove-quickjs/sito; se
+    l'utente la vuole fra le pagine di prova, va in tools/prove/sito con
+    la sua riga in leggimi.md.
+
+7.2  P2 FATTO (25/11/2026): le pagine compresse, gzip, deflate, br, zstd
+-----
+  Il piano scritto prima in collaborazione.txt (18:20). Diverso dal codice
+  proposto in 10.1 in tre punti, e il perche':
+   a) Accept-Encoding NON in http.c e NON per tutti: lo mette exhttp.c solo
+      se il programma ha chiamato exhttp_srotola(1). scarica, netupdate,
+      sshd, ftp restano byte per byte come prima: un .tar.gz servito con
+      Content-Encoding: gzip srotolato per strada sarebbe un .tar col nome
+      di un .tar.gz, e una firma che non torna. EXBrowser la accende
+      all'avvio e la spegne attorno al salvataggio di un file su disco.
+   b) LE LIBRERIE SI APRONO CON dlopen al primo uso, non si collegano:
+      libz.so.1 (gzip, deflate), libzstd.so.1, libbrotlidec.so.1. Quella
+      che manca e' una codifica che non si chiede. exhttp.so non ha
+      DT_NEEDED nuovi e parte dove partiva. Il gzip lo fa zlib e non
+      inflate.c: inflate.c srotola un buffer intero, qui serve a pezzi.
+   c) srotola.c sta SOLO in exhttp.so: netupdate compila exhttp.c dentro di
+      se' (statico) e i punti di srotola.c li vede come simboli deboli (#pragma
+      weak), a zero. La sua regola nel Makefile non e' cambiata.
+  File:
+   - tools/brotli-exos/costruisci.sh (nuovo): brotli 1.2.1 con comune.sh,
+     senza CMake (le stesse tre liste di sorgenti). 32 e 64 bit in
+     ~/ex_os/cross_build/brotli-exos<bit>: libbrotlicommon.so.1 (137 KB),
+     libbrotlidec.so.1 (55 KB), libbrotlienc.so.1 (662 KB), le .a, il
+     programma brotli. Soname di upstream (ABI 3-2 = 1).
+   - lib/exhttp/srotola.c, srotola.h (nuovi): decodifica a pezzi, finestra
+     di 16 KB. gzip a piu' membri (RFC 1952), deflate zlib o nudo (lo dicono
+     i primi due byte), zstd con finestra massima 8 MB (RFC 9659), br.
+   - lib/exhttp/exhttp.c: exhttp_srotola(); Accept-Encoding con le codifiche
+     aperte; Content-Encoding letto dalle intestazioni; il corpo, a pezzi o
+     no, passa dal decodificatore e poi da posa() (buffer, verso, tronca:
+     le stesse regole del corpo in chiaro). Content-Length conta i byte
+     compressi; exhttp_attesi() dice 0 mentre si srotola. Un corpo rovinato
+     fallisce («corpo br rovinato»); uno che finisce prima della fine del
+     suo flusso e' troncata («corpo br incompleto»). Il decodificatore si
+     chiude in exhttp_scambio, su ogni uscita (scambio ne ha venti).
+     Una codifica che non si sa srotolare passa com'e', come prima.
+   - lib/exhttp/exhttp.h, exhttp.ver: + exhttp_srotola. http.c: un commento.
+   - Makefile, solo la regola di exhttp.so: srotola.c compilato e collegato.
+   - EXBrowser 0.035: exhttp_srotola(1) all'avvio, (0) attorno a scarica_in.
+  Prove:
+   - make prova-exhttp: tutto a posto. netupdate (statico, 32 bit) collegato
+     a parte con i comandi del Makefile: +128 byte, i simboli deboli a zero.
+   - IN QEMU, ISO private in ~/ex_os/prove-srotola (exos-srot.iso,
+     exos64-srot.iso: exhttp.so ed exbrowser nuovi, le quattro .so in /lib),
+     server sulla 8018 (~/ex_os/prove-srotola/servi.py) che manda la stessa
+     pagina di 146 176 byte (1500 paragrafi e in fondo uno script che li
+     conta) in gzip, deflate, br, zstd, br a pezzi (chunked) e br troncato
+     a 1100 byte; e fetch.html che prende un JSON di 60 008 byte in br:
+                     32 bit                 64 bit
+        br       146176 byte, 1501 p.   uguale
+        gzip     1501 paragrafi         uguale
+        zstd     146176 byte, 1501 p.   uguale
+        deflate  1501 paragrafi         uguale
+        br pezzi 146196 byte, 1501 p.   uguale
+        fetch br FETCH: 60000           uguale
+        br rotto «pagina troncata», lo script in fondo non c'e' (atteso)
+     Il server ha ricevuto «Accept-Encoding: gzip, deflate, br, zstd».
+     Fotografie: ~/ex_os/prove-srotola/p-*.png, insieme64.png, rotto.png.
+   - ISO SENZA le quattro .so (exos-senza.iso): EXBrowser parte, la
+     richiesta non porta Accept-Encoding, la pagina in chiaro si apre.
+     ! La prima richiesta costa ~1,4 s in piu' (1590 ms contro ~200): sono
+     i tre dlopen che cercano in sei cartelle, CD compreso. Una volta per
+     processo; con le .so in /lib non c'e'.
+   - 64 bit costruito a parte (copia di costruisci-utente64.sh con
+     srotola.c nella riga di exhttp, EXOS_FUORI=~/ex_os/prove-srotola/f64):
+     build-64 non l'ho toccato.
+   - NON provato: il salvataggio su disco senza Accept-Encoding (scarica_in)
+     in QEMU; il codice e' due righe attorno a exhttp_prendi.
+  Chiesto all'agente del kernel (collaborazione.txt): la riga di srotola.c
+  in costruisci-utente64.sh, le quattro .so in /lib delle ISO 32 e 64, il
+  gruppo [brotli] sul CD degli strumenti.
+
+7.3  P3 FATTO (25/11/2026): le richieste in parallelo
+-----
+  Il piano in collaborazione.txt (19:05). NON e' l'exhttp "rientrante" di
+  4.1 b (tutto lo stato in una struttura per connessione, macro per
+  globale): e' meno, e il perche':
+   a) exhttp_prendi, exhttp_posta, scambio, g_vivo, il verso e il Range
+      restano come sono: li usano netupdate, scarica, sshd, ftp, e nessuno
+      di loro ha bisogno del parallelo. Rifarli tutti per il browser era
+      rischio senza guadagno.
+   b) Accanto c'e' una strada NUOVA, solo GET, non bloccante: exhttp_parti,
+      exhttp_avanza, exhttp_risposta, exhttp_lascia (exhttp.h). Lo stato e'
+      tutto nella richiesta (ExHttpRichiesta) e nelle sue connessioni (8,
+      tenute aperte per host, porta e schema), cioe' e' gia' la forma che
+      serve a HTTP/2 (P4): una connessione, piu' richieste.
+   c) UN FILO, E NESSUNA DOMANDA ALLO STACK SENZA RISPOSTA SUBITO.
+      exhttp_avanza legge solo quando lo stack dice che i byte ci sono gia'
+      (quanti > 0): le risposte dello stack non sono numerate (svuota_stack),
+      e con una domanda per volta non serve che lo siano. Il parallelo lo
+      fanno le connessioni TCP dentro lo stack.
+   d) Aprire resta bloccante (DNS, TCP, stretta TLS): si sovrappongono i
+      trasferimenti, non le aperture. Le connessioni tenute fanno pagare la
+      stretta una volta per connessione.
+  File:
+   - lib/exhttp/exhttp.c: g_tcp da uno statico a un insieme di 16 (il piu'
+     vecchio si riusa se sono tutti occupati, come faceva lo statico);
+     exhttp_tls_sopra diventa tls_sopra(..., alpn, con_attesa) (FTPS "ftp"
+     come prima; le connessioni del parallelo "http/1.1" e la stretta col
+     gancio dell'attesa); in fondo il motore delle richieste in parallelo.
+   - lib/exhttp/exhttp.h, exhttp.ver: le quattro funzioni.
+   - EXBrowser 0.036: un deposito in memoria (64 voci, 8 MB, svuotato a ogni
+     pagina) che cache_leggi guarda per primo; anticipa() scarica 4 alla
+     volta. Fogli e script esterni subito dopo l'analisi dell'HTML (prima di
+     esegui_script e raccogli_css, con le loro stesse scelte), le immagini
+     vicine prima del giro di immagini_prendi. L'ORDINE DI ESECUZIONE NON
+     CAMBIA: script e fogli si eseguono uno per volta nell'ordine del
+     documento, prendendo i byte dal deposito.
+  Prove:
+   - make prova-exhttp: tutto a posto. Compilazione senza avvisi.
+   - Server dell'host sulla 8019 che risponde dopo 300 ms (un server
+     lontano), pagina con 4 fogli, 6 script, 12 immagini
+     (~/ex_os/prove-parallelo), QEMU 32 bit, stessa macchina stessa ora:
+        EXBrowser 0.035 (in fila)      rete 8760 ms in 23 richieste
+        EXBrowser 0.036 (parallelo)    rete 2650 ms in 23 richieste
+     Il server ha visto 4 richieste in volo su 4 connessioni, riusate dai
+     fogli agli script alle immagini. La pagina e' giusta: "SCRIPT 6
+     ordine 123456", i fogli applicati, le 12 immagini (exos-par.png).
+   - amazon.com oggi risponde con una pagina corta (4 richieste: 2920 ms
+     prima, 2960 dopo, niente da mettere in parallelo): non e' una misura.
+   - it.wikipedia.org/wiki/Venezia, QEMU 32 bit, internet vero:
+        EXBrowser 0.035 (in fila)      rete 30570 ms in 10 richieste
+        EXBrowser 0.036 (parallelo)    rete 10090 ms in 10 richieste
+     Un terzo: la prova del passo ("tempi: rete < meta'") passa. Script,
+     css e regole uguali (863 regole in tutt'e due).
+     ! Misure fatte mentre l'agente del kernel ricostruiva Gecko con la CPU
+     piena: i numeri assoluti sono alti, il confronto e' alla pari (stessa
+     macchina, una dopo l'altra).
+   - NON provato: il 64 bit (exhttp.c a 64 bit compila con lo stesso
+     costruisci-utente64.sh, che rifa' l'agente del kernel); e una
+     connessione tenuta che il server chiude fra una pagina e l'altra
+     (c'e' il riprova una volta, come in exhttp_prendi, ma non l'ho visto
+     scattare).
+
+7.4  P4 FATTO (25/11/2026): HTTP/2 con nghttp2 e ALPN
+-----
+  Il piano in collaborazione.txt (19:50).
+  File:
+   - tools/nghttp2-exos/costruisci.sh (nuovo): nghttp2 1.71.0, solo lib/,
+     senza configure (tre -D: arpa/inet.h, netinet/in.h, clock_gettime),
+     libnghttp2.so.14 (soname di upstream, 44-30) e .a, 32 e 64 bit, ~200 KB.
+   - lib/extls/extls_client.c, extls.h: ExTlsOpzioni.alpn puo' essere un
+     elenco ("h2,http/1.1"; una parola sola da' i byte di prima); l'ALPN
+     scelto si legge da EncryptedExtensions (1.3) e dal ServerHello (1.2),
+     e uno non offerto e' errore di protocollo (RFC 7301); funzione nuova
+     extls_alpn_scelto(). Era il codice proposto in 10.2.
+   - lib/exhttp/h2.c, h2.h (nuovi): una connessione HTTP/2, piu' flussi,
+     sopra nghttp2 aperta con dlopen (come srotola.c: tipi scritti a mano,
+     solo in exhttp.so, simboli deboli in exhttp.c; netupdate non lo vede).
+     Byte dentro (h2_dai), byte fuori (la scrivi di exhttp): il socket resta
+     di exhttp. Niente push, finestra per flusso 256 KB.
+   - lib/exhttp/exhttp.c: nella strada del P3, una connessione https offre
+     "h2,http/1.1" se libnghttp2.so.14 si apre; se il server sceglie h2 la
+     connessione porta fino a 64 richieste insieme (flussi), e leggere la
+     connessione fa avanzare tutti i suoi flussi. Un flusso che finisce
+     male e' affar suo; una connessione che cade fa fallire (o riprovare
+     una volta, se riusata e ancora muti) i suoi flussi, riconosciuti dal
+     numero di generazione della connessione. exhttp_protocollo(r).
+     exhttp_prendi e il resto: HTTP/1.1 come prima.
+   - Makefile, solo la regola di exhttp.so: + h2.c.
+   - EXBrowser 0.037: le GET semplici (la pagina, un foglio, uno script,
+     un'immagine) passano anche loro dalla strada nuova (prendi_via): cosi'
+     la pagina e le sue risorse stanno sulla stessa connessione, in h2 se
+     il server lo parla. Restano su exhttp_prendi il POST, il salvataggio
+     su disco (verso, Range) e le richieste degli script (le loro
+     intestazioni). La console dice [h2] o [http/1.1] per ogni richiesta.
+  Prove (QEMU, ISO private in ~/ex_os/prove-h2 con le cinque .so in /lib,
+  internet vero, mentre l'agente del kernel ricostruiva Gecko):
+                                   32 bit                 64 bit
+    www.google.com                 5 su 5 [h2], 6060 ms   5 su 5 [h2], 3600 ms
+    it.wikipedia.org/wiki/Venezia  10 su 10 [h2], 9940 ms 10 su 10 [h2], 9060 ms
+    pagina locale (8019, P3)       23 [http/1.1], 2730 ms 23 [http/1.1], 2630 ms
+  La prova del passo ("google.com e wikipedia in h2, lo dice la console")
+  passa. Wikipedia: 1 299 228 byte arrivati interi in h2; la pagina
+  locale in HTTP/1.1 e' quella del P3, uguale. I tempi di internet
+  oscillano (Wikipedia in parallelo h2 una volta 7990, una 9940 ms): il
+  guadagno di h2 rispetto a http/1.1 in parallelo non e' misurabile cosi';
+  il guadagno vero e' una connessione e una stretta per sito invece di
+  quattro.
+   - netupdate (statico, 32 bit) ricollegato a parte: nessun simbolo di h2.
+   - 64 bit: copia privata di costruisci-utente64.sh con srotola.c e h2.c
+     nella riga di exhttp (build-64 non toccato).
+   - NON provato: un server che manda GOAWAY a meta' (il codice ferma i
+     flussi nuovi su quella connessione e ne apre un'altra), RST_STREAM dal
+     server.
+  Chiesto all'agente del kernel: srotola.c e h2.c nella riga di exhttp di
+  costruisci-utente64.sh; libnghttp2.so.14 in /lib accanto alle .so del P2.
+
+7.5  P5 FATTO (25/11/2026): la Public Suffix List intera e SameSite
+-----
+  Il dettaglio e le prove stanno nella sezione 5 di BROWSER001 (chiuso).
+  File: tools/psl-tabella.py (nuovo), exwin/bin/exbrowser/psl_tabella.h
+  (nuovo, generato: 10946 regole), biscotti.c e biscotti.h (la lista intera
+  al posto di g_psl_corta, bis_sito, SameSite, bis_da_mandare_ss),
+  exbrowser.c (il contesto delle richieste: bis_chiedi, nav_dalla_pagina,
+  nav_prendi; e il difetto del ponte di document.cookie, bis_c_e_gia),
+  tools/prove/bisprova.c (+27 prove), Makefile (psl_tabella.h fra le
+  dipendenze di EXBrowser: BROWSER_BISH). EXBrowser 0.038.
+  Il binario di EXBrowser cresce di ~200 KB (la tabella: 157 KB di testo e
+  44 KB di indici). Se pesa, la si puo' stringere (trie o indici a 3 byte).
+  Nessun file di exhttp toccato: SameSite e' una decisione del browser.
+
+
+===============================================================================
+8. web-platform-tests
+===============================================================================
+
+terze_browser/wpt e' una copia PARZIALE (sparse checkout) del repository
+ufficiale al 25/11/2026 (commit 048b2e13): dom, html/semantics/scripting-1,
+html/webappapis, css/css-flexbox, css/css-grid, css/selectors,
+css/css-position, css/css-display, fetch/api, url, encoding, xhr, resources.
+Si allarga con:
+    git -C terze_browser/wpt sparse-checkout add custom-elements shadow-dom \
+        IndexedDB webstorage websockets workers wasm/jsapi WebCryptoAPI
+Le prove testharness.js girano nel browser stesso: una pagina, il suo
+testharnessreport.js che scrive i risultati sulla seriale (dump della
+console, come la prova di carico del diario 1.1). E' il metro oggettivo di
+ogni passo: un numero di prove passate, non un'impressione.
+
+
+===============================================================================
+9. LE LIBRERIE SCARICATE IL 25/11/2026
+===============================================================================
+
+  CLONI (terze_browser/, git --depth 1, ognuno sul tag della release):
+  nome                 tag             licenza        a cosa serve (sezione)
+  -------------------  --------------  -------------  ----------------------
+  lexbor               v3.0.1          Apache-2.0     HTML5, encoding, URL (4.2)
+  taffy                v0.16.0         MIT            block/flex/grid (4.4)
+  yoga                 v3.2.2          MIT            flex, alternativa (4.4)
+  brotli               v1.2.1          MIT            br, WOFF2 (4.1, 4.3)
+  woff2                v1.0.2          MIT            WOFF2 -> TTF (4.3)
+  nghttp2              v1.71.0         MIT            HTTP/2 (4.1 c)
+  wslay                release-1.1.1   MIT            WebSocket (4.1 d)
+  plutovg              v1.3.3          MIT            disegno vettoriale (4.5)
+  resvg                v0.50.0         MIT/Apache     SVG (4.5 c)
+  utf8proc             v2.12.0         MIT            normalizzazione, larghezze
+                                                      Unicode (String.normalize
+                                                      senza ICU, a capo)
+  quickjs-ng           v0.18.0         MIT            JavaScript (4.7 b)
+  wasm-micro-runtime   WAMR-2.4.6      Apache-2.0+LLVM WebAssembly (4.7 d)
+  wasm3                v0.9.1-beta.1   MIT            WebAssembly, alternativa
+  icu4x                icu@2.4.0       Unicode-3.0    Intl, solo confronto
+  wpt                  048b2e13        BSD-3          prove (sezione 8)
+
+  ARCHIVI PER LA COSTRUZIONE (~/ex_os/cross_build/terze-parti/<nome>/, ognuno
+  con .sha256 e PROVENIENZA.txt che dice come e' stato verificato):
+    brotli-1.2.1, woff2-1.0.2, lexbor-3.0.1, plutovg-1.3.3,
+    quickjs-ng-0.18.0, wasm-micro-runtime-2.4.6, yoga-3.2.2,
+    wasm3-0.9.1-beta.1     archivi dei tag GitHub, contenuto identico al
+                           clone dello stesso tag (diff -r)
+    nghttp2-1.71.0         firma GPG valida (F4F3B914...D673C366, Tatsuhiro
+                           Tsujikawa) e checksums.txt
+    icu4c-79.1             sorgenti e dati, firma GPG valida (ICU Release
+                           Robot, E52F0787...D06E7001) e SHASUM512.txt
+    sqlite-3540100         SHA3-256 di sqlite.org/download.html
+    resvg-0.50.0           release con vendor/ dei crate
+    taffy-0.16.0           .crate da crates.io + crate/ (slotmap 1.1.1,
+                           rustc-hash 2.1.3, smallvec 1.16.6, version_check
+                           0.9.5), sha256 uguali all'indice di crates.io
+    publicsuffix           public_suffix_list.dat, VERSION 2026-11-25_10-02-46
+  GIA' PORTATE, NON RISCARICATE: freetype 2.15.0, harfbuzz 15.0.0, zstd
+  1.5.7, libpng 1.6.59, zlib, ffmpeg 9.0.2, mesa 26.2.6.
+  TOLTE di proposito: litehtml (e' un motore HTML/CSS intero: la direzione
+  lo esclude), libwebp (eximg ha gia' VP8, VP8L e ALPH).
+
+
+===============================================================================
+10. CODICE  [PROPOSTA: non compilato, non provato]
+===============================================================================
+
+10.1  Accept-Encoding e lo srotolamento, in exhttp (P2)
+-----
+In lib/exhttp/http.c, nella costruzione della richiesta, al posto del
+commento "SI DICHIARA DI ACCETTARE QUALUNQUE COSA, e non si chiede la
+compressione":
+
+    if (!metti(out, max, &n, "\r\nAccept-Encoding: gzip, br, zstd")) return 0;
+
+e un file nuovo lib/exhttp/srotola.c, che prende il posto di gz_srotola
+(exbrowser.c) e vale per tutti (browser, scarica, script, fogli):
+
+    /* lib/exhttp/srotola.c - Content-Encoding: gzip, br, zstd, a pezzi.
+     * One decoder per response, fed as bytes arrive, so a 30 MB download
+     * never needs 30 MB twice. */
+    #include <brotli/decode.h>
+    #include <zstd.h>
+    #include "inflate.h"          /* lib/eximg/inflate.c, as today */
+
+    typedef enum { SR_NIENTE, SR_GZIP, SR_BR, SR_ZSTD } SrTipo;
+
+    typedef struct {
+        SrTipo tipo;
+        BrotliDecoderState *br;
+        ZSTD_DStream       *zs;
+        InflateStato        gz;   /* streaming state: inflate.c must get one
+                                   * (today it inflates a whole buffer) */
+        int                 errore;
+    } Srotola;
+
+    /* Content-Encoding value -> type; an unknown coding is an error, as in
+     * Fetch ("unknown content coding" fails the response). */
+    int srotola_apri(Srotola *s, const char *codifica)
+    {
+        memset(s, 0, sizeof *s);
+        if (!codifica || !*codifica || !strcasecmp(codifica, "identity")) return 0;
+        if (!strcasecmp(codifica, "gzip") || !strcasecmp(codifica, "x-gzip")) {
+            s->tipo = SR_GZIP; return inflate_apri_gzip(&s->gz);
+        }
+        if (!strcasecmp(codifica, "br")) {
+            s->tipo = SR_BR;
+            s->br = BrotliDecoderCreateInstance(NULL, NULL, NULL);
+            return s->br ? 0 : -1;
+        }
+        if (!strcasecmp(codifica, "zstd")) {
+            s->tipo = SR_ZSTD;
+            s->zs = ZSTD_createDStream();
+            if (!s->zs) return -1;
+            /* RFC 9659: a decoder for HTTP needs at most an 8 MB window;
+             * refusing more stops a server from making us allocate more */
+            ZSTD_DCtx_setParameter(s->zs, ZSTD_d_windowLogMax, 23);
+            return 0;
+        }
+        return -1;
+    }
+
+    /* Feeds `n` bytes; writes what comes out to `scrivi`. Returns 0, or -1
+     * on corrupt data (the caller drops the response, it does not show
+     * half-decoded garbage). */
+    int srotola_dai(Srotola *s, const unsigned char *in, size_t n,
+                    int (*scrivi)(void *, const unsigned char *, size_t), void *u)
+    {
+        unsigned char buf[16384];
+        switch (s->tipo) {
+        case SR_NIENTE:
+            return scrivi(u, in, n);
+        case SR_BR: {
+            const uint8_t *pi = in; size_t ai = n;
+            for (;;) {
+                uint8_t *po = buf; size_t ao = sizeof buf;
+                BrotliDecoderResult r = BrotliDecoderDecompressStream(s->br,
+                                            &ai, &pi, &ao, &po, NULL);
+                if (po > buf && scrivi(u, buf, (size_t)(po - buf))) return -1;
+                if (r == BROTLI_DECODER_RESULT_ERROR) return -1;
+                if (r != BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT) return 0;
+            }
+        }
+        case SR_ZSTD: {
+            ZSTD_inBuffer zi = { in, n, 0 };
+            while (zi.pos < zi.size) {
+                ZSTD_outBuffer zo = { buf, sizeof buf, 0 };
+                size_t r = ZSTD_decompressStream(s->zs, &zo, &zi);
+                if (ZSTD_isError(r)) return -1;
+                if (zo.pos && scrivi(u, buf, zo.pos)) return -1;
+            }
+            return 0;
+        }
+        case SR_GZIP:
+            return inflate_dai(&s->gz, in, n, scrivi, u);   /* to be written */
+        }
+        return -1;
+    }
+
+    void srotola_chiudi(Srotola *s)
+    {
+        if (s->br) BrotliDecoderDestroyInstance(s->br);
+        if (s->zs) ZSTD_freeDStream(s->zs);
+        memset(s, 0, sizeof *s);
+    }
+
+! Il gzip NON CHIESTO di Amazon (diario 1.2) resta: senza Content-Encoding
+si guarda la firma 1f 8b 08 come oggi, ma qui, per tutti.
+Prova: python3 tools/prove/sito/servi.py con tre file compressi (gzip -9,
+brotli -q 11, zstd -19) serviti con Content-Encoding; la pagina dice
+"SROTOLATO gzip/br/zstd"; un br troncato non si mostra.
+
+10.2  ALPN: dire quale protocollo ha scelto il server (P4)
+-----
+In lib/extls/extls.h, accanto a ExTlsOpzioni.alpn:
+
+    /* The protocol the server chose in EncryptedExtensions (ALPN), or ""
+     * when it chose none. Valid after the handshake. */
+    const char *extls_alpn_scelto(const ExTls *t);
+
+e in extls_client.c, dove si leggono le EncryptedExtensions, il tipo 16
+(application_layer_protocol_negotiation): una lista di un solo nome che
+DEVE essere fra quelli offerti (RFC 7301, 3.2: altrimenti alert
+no_application_protocol). Il browser offre "h2,http/1.1" in formato wire
+(lunghezza + nome per ognuno).
+
+10.3  lexbor -> exdom (passo da mettere fra P6 e P7, vedi 4.2)
+-----
+    #include <lexbor/html/html.h>
+    #include "exdom.h"
+
+    /* Copies lexbor's tree into exdom: lexbor builds the tree as the WHATWG
+     * algorithm says, exdom stays the only DOM the browser and the scripts
+     * see. Iterative, with an explicit stack: a page nested 10000 deep
+     * (they exist) must not eat the C stack. */
+    static int copia_nodo(lxb_dom_node_t *ln, ExDomNodo *padre, ExDom *d)
+    {
+        size_t len;
+        switch (ln->type) {
+        case LXB_DOM_NODE_TYPE_ELEMENT: {
+            lxb_dom_element_t *el = lxb_dom_interface_element(ln);
+            const lxb_char_t *nome = lxb_dom_element_local_name(el, &len);
+            ExDomNodo *e = exdom_crea_elemento(d, (const char *)nome, len);
+            for (lxb_dom_attr_t *a = lxb_dom_element_first_attribute(el); a;
+                 a = lxb_dom_element_next_attribute(a)) {
+                size_t nl, vl;
+                const lxb_char_t *an = lxb_dom_attr_local_name(a, &nl);
+                const lxb_char_t *av = lxb_dom_attr_value(a, &vl);
+                exdom_metti_attr_n(e, (const char *)an, nl,
+                                   av ? (const char *)av : "", av ? vl : 0);
+            }
+            exdom_aggiungi_figlio(padre, e);
+            return exdom_indice(e);
+        }
+        case LXB_DOM_NODE_TYPE_TEXT: {
+            lxb_dom_text_t *t = lxb_dom_interface_text(ln);
+            exdom_aggiungi_figlio(padre, exdom_crea_testo(d,
+                (const char *)t->char_data.data.data, t->char_data.data.length));
+            return -1;
+        }
+        case LXB_DOM_NODE_TYPE_COMMENT: /* exdom keeps them? today no */
+        default: return -1;
+        }
+    }
+! I nomi exdom_crea_elemento, exdom_metti_attr_n, exdom_aggiungi_figlio,
+exdom_crea_testo, exdom_indice sono quelli che servono, non quelli di
+oggi: si leggono le funzioni di exdom.h che costruiscono l'albero per
+html.c e si usano quelle. I nomi di lexbor sono verificati sulla v3.0.1
+(element.h, attr.h, document.h; lxb_dom_element_next_attribute in
+element.h, il campo char_data.data in text.h e character_data.h).
+<template> ha il suo DocumentFragment (content): in exdom serve un nodo
+figlio speciale, come per gli iframe.
+
+10.4  WOFF2 -> TrueType, per @font-face (P6)
+-----
+lib/exfont/woff2_exos.cc (C++, l'unico punto in C++ del motore), API C:
+
+    #include <woff2/decode.h>
+    extern "C" unsigned char *woff2_in_ttf(const unsigned char *d, size_t n,
+                                           size_t *esce)
+    {
+        size_t tot = woff2::ComputeWOFF2FinalSize(d, n);
+        if (tot == 0 || tot > 32u * 1024 * 1024) return nullptr;
+        unsigned char *out = (unsigned char *)malloc(tot);
+        if (!out) return nullptr;
+        if (!woff2::ConvertWOFF2ToTTF(out, tot, d, n)) { free(out); return nullptr; }
+        *esce = tot;      /* ComputeWOFF2FinalSize is an upper bound; the
+                           * TTF's own table directory says the real end */
+        return out;
+    }
+(ComputeWOFF2FinalSize e ConvertWOFF2ToTTF verificate in
+woff2/include/woff2/decode.h, v1.0.2.) Il TTF va a FreeType
+(FT_New_Memory_Face), o a exttf_apri() se e' glyf. WOFF1 e' piu'
+semplice: una tabella per volta, ognuna zlib (inflate.c), e si ricompone
+l'intestazione sfnt. ! Un carattere che non si decodifica NON ferma la
+pagina: si usa il ripiego di font-family, come i browser.
+
+10.5  Taffy in C: il crate taffy_exos (P7)
+-----
+tools/taffy-exos/taffy_exos/Cargo.toml:
+    [package]   name = "taffy_exos"  version = "0.1.0"  edition = "2021"
+    [lib]       crate-type = ["cdylib", "staticlib"]
+    [dependencies]  taffy = { version = "=0.16.0" }
+e src/lib.rs, una tela sottile (handle opachi, niente tipi Rust al confine):
+
+    use taffy::prelude::*;
+    use std::ffi::c_void;
+
+    pub struct Albero { t: TaffyTree<u32>, misura: Option<extern "C" fn(
+        u32, f32, f32, *mut f32, *mut f32, *mut c_void)>, utente: *mut c_void }
+
+    #[no_mangle] pub extern "C" fn tx_nuovo() -> *mut Albero {
+        Box::into_raw(Box::new(Albero { t: TaffyTree::new(), misura: None,
+                                        utente: std::ptr::null_mut() }))
+    }
+    /* One node per box; `ctx` is exbrowser's box index, handed back to the
+     * measure callback for text and replaced elements. */
+    #[no_mangle] pub unsafe extern "C" fn tx_nodo(a: *mut Albero, ctx: u32) -> u64 {
+        let a = &mut *a;
+        a.t.new_leaf_with_context(Style::default(), ctx)
+            .map(|n| u64::from(n)).unwrap_or(u64::MAX)
+    }
+    #[no_mangle] pub unsafe extern "C" fn tx_figlio(a: *mut Albero, p: u64, f: u64) -> i32 {
+        (&mut *a).t.add_child(NodeId::from(p), NodeId::from(f)).is_ok() as i32 - 1
+    }
+    /* Style setters, one per group, filled from excss's computed style:
+     * tx_display, tx_flex(dir, wrap, grow, shrink, basis), tx_dim(w,h,
+     * min,max in px or %, NAN = auto), tx_margini, tx_padding, tx_bordi,
+     * tx_grid_righe/colonne (a list of track sizes), tx_posizione... */
+    #[no_mangle] pub unsafe extern "C" fn tx_calcola(a: *mut Albero, radice: u64,
+                                                   larghezza: f32) -> i32 {
+        let a = &mut *a;
+        let (cb, u) = (a.misura, a.utente);
+        a.t.compute_layout_with_measure(NodeId::from(radice),
+            Size { width: AvailableSpace::Definite(larghezza),
+                   height: AvailableSpace::MaxContent },
+            |known, avail, _id, ctx, _style| {
+                let (Some(cb), Some(&mut c)) = (cb, ctx) else { return Size::ZERO };
+                let (mut w, mut h) = (0f32, 0f32);
+                let aw = known.width.unwrap_or(match avail.width {
+                    AvailableSpace::Definite(x) => x, _ => f32::INFINITY });
+                cb(c, aw, known.height.unwrap_or(f32::NAN), &mut w, &mut h, u);
+                Size { width: w, height: h }
+            }).is_ok() as i32 - 1
+    }
+    #[no_mangle] pub unsafe extern "C" fn tx_esito(a: *const Albero, n: u64,
+            x: *mut f32, y: *mut f32, w: *mut f32, h: *mut f32) {
+        if let Ok(l) = (&*a).t.layout(NodeId::from(n)) {
+            *x = l.location.x; *y = l.location.y;
+            *w = l.size.width; *h = l.size.height;
+        }
+    }
+(new_leaf_with_context, compute_layout_with_measure, add_child, layout
+verificati in taffy/src/tree/taffy_tree.rs, v0.16.0; i tipi esatti della
+chiusura di misura vanno riletti li': cambiano fra versioni.) Le
+dipendenze sono gia' in terze-parti/taffy/crate/: si costruisce offline
+con una directory vendor fatta da quei .crate (rust-fornitori.py di Exilla
+sa gia' fare i .cargo-checksum.json). Il crate taffy_exos ha licenza
+GPL-2.0-or-later come il resto.
+
+10.6  La Public Suffix List come tabella (P5)
+-----
+tools/psl-tabella.py (sull'host, alla costruzione) legge
+public_suffix_list.dat e scrive exwin/bin/exbrowser/psl_tabella.h: le
+regole rovesciate per etichette e ordinate ("com", "uk.co", "*.ck",
+"!www.ck") in un unico array di stringhe, con la cerca binaria in C. La
+regola e' l'algoritmo di publicsuffix.org/list/: vince la regola che
+combacia con piu' etichette, l'eccezione "!" vince su tutto, e senza regole
+vale "*". In biscotti.c, metti(): un Domain che E' un suffisso pubblico si
+rifiuta (salvo che sia proprio l'host, e allora il cookie diventa solo-host,
+come Firefox, network.cookie e RFC 6265bis 5.6.3 passo 9).
+
+10.7  crypto.subtle.digest sopra excrypt (P11)
+-----
+Nel preludio, una Promise che chiama un nativo:
+    crypto.subtle = { digest: function (alg, dati) {
+        return new Promise(function (ok, no) {
+            var n = (typeof alg === "string" ? alg : alg.name).toUpperCase();
+            var r = __exos_digest(n, dati);       /* native, below */
+            r ? ok(r) : no(new DOMException("Algorithm: " + n, "NotSupportedError"));
+        }); } };
+e in exqjs.c il nativo __exos_digest(nome, BufferSource) -> ArrayBuffer che
+chiama sha1/sha256/sha384/sha512 di excrypt. ! Mai rendere un risultato
+"finto" per un algoritmo che non c'e': il preludio lo dice gia' (meglio
+assente che sbagliato), e una Promise rifiutata e' il comportamento della
+specifica.
+
+10.8  IndexedDB sopra SQLite (P11)
+-----
+Un file per origine, ~/.exbrowser/idb/<origine-in-esadecimale>.sqlite:
+    CREATE TABLE db      (nome TEXT PRIMARY KEY, versione INTEGER);
+    CREATE TABLE negozio (db TEXT, nome TEXT, keypath TEXT, autoinc INTEGER,
+                          prossimo INTEGER, PRIMARY KEY (db, nome));
+    CREATE TABLE indice  (db TEXT, negozio TEXT, nome TEXT, keypath TEXT,
+                          unico INTEGER, multi INTEGER,
+                          PRIMARY KEY (db, negozio, nome));
+    CREATE TABLE dato    (db TEXT, negozio TEXT, chiave BLOB, valore BLOB,
+                          PRIMARY KEY (db, negozio, chiave)) WITHOUT ROWID;
+    CREATE TABLE voce    (db TEXT, negozio TEXT, indice TEXT, chiave BLOB,
+                          primaria BLOB,
+                          PRIMARY KEY (db, negozio, indice, chiave, primaria))
+                          WITHOUT ROWID;
+La chiave si codifica come fa Gecko (dom/indexedDB/Key.cpp, lo si legge per
+l'idea e non lo si copia): un byte di tipo e poi il valore, in modo che
+memcmp dia l'ordine della specifica (numero < data < stringa < binario <
+array). Il valore e' lo structured clone serializzato (lo stesso dei
+Worker, 4.7 e). Le transazioni di IndexedDB diventano transazioni SQLite
+(BEGIN IMMEDIATE per readwrite), chiuse quando non restano richieste e il
+compito che le ha create e' finito: serve il ciclo degli eventi di P8.
+
+
+===============================================================================
+11. LE DECISIONI
+===============================================================================
+
+  PRESE DALL'UTENTE IL 25/11/2026:
+  a) Lo user-agent e' autonomo: "Mozilla/5.0 (X11; EX-OS i686)
+     EXBrowser/<versione>" (1 b). Il riconoscimento come browser lo chiede
+     l'utente a Google quando EXBrowser funziona con tutti i servizi.
+  c) L'impaginazione si fa con Taffy (4.4, 10.5).
+  d) Un rifiuto di Google a P0 non ferma il piano: si fanno tutti i passi
+     (1 c).
+
+  b) Licenze (6): va bene GPL-2.0-or-later (l'utente: "licenza gpl 2 o
+     superiore ok"). Si usano lexbor e wasm-micro-runtime; i sorgenti di
+     EXBrowser restano GPL-2.0-or-later, e il programma collegato a loro si
+     distribuisce sotto GPLv3, come permette "or later". wasm3 resta solo
+     per confronto.
+
+  Non resta niente di aperto: si comincia da P0 e P1 (sezione 7).

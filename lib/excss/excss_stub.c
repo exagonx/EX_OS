@@ -46,6 +46,10 @@ static struct {
     int  (*segno)(void);
     void (*base)(CssFoglio *, const char *);
     int  (*sfondo_url)(const CssFoglio *, const CssStile *, char *, unsigned int, const char **);
+    void (*media_h)(int);
+    int  (*media_vale)(const char *, unsigned int);
+    void (*variabili)(void *, unsigned int);
+    int  (*font_face)(const CssFoglio *, unsigned int, CssFontFace *);
 } P;
 
 static int assicura(void)
@@ -81,6 +85,13 @@ static int assicura(void)
             P.base       = (void (*)(CssFoglio *, const char *))exlib_simbolo(t, "css_base");
             P.sfondo_url = (int (*)(const CssFoglio *, const CssStile *, char *, unsigned int,
                                     const char **))exlib_simbolo(t, "css_sfondo_url");
+            /* FACOLTATIVE (P6, 25 novembre 2026): con un'excss.so di prima
+             * niente altezza delle @media, niente var() ne' @font-face. */
+            P.media_h    = (void (*)(int))exlib_simbolo(t, "css_media_altezza");
+            P.media_vale = (int (*)(const char *, unsigned int))exlib_simbolo(t, "css_media_vale");
+            P.variabili  = (void (*)(void *, unsigned int))exlib_simbolo(t, "css_variabili");
+            P.font_face  = (int (*)(const CssFoglio *, unsigned int, CssFontFace *))
+                           exlib_simbolo(t, "css_font_face");
         }
     }
 
@@ -182,4 +193,24 @@ int css_sfondo_url(const CssFoglio *f, const CssStile *s, char *out, unsigned in
 {
     if (base) *base = 0;
     return (assicura() && P.sfondo_url) ? P.sfondo_url(f, s, out, max, base) : 0;
+}
+
+void css_media_altezza(int px)
+{
+    if (assicura() && P.media_h) P.media_h(px);
+}
+
+int css_media_vale(const char *q, unsigned int n)
+{
+    return (assicura() && P.media_vale) ? P.media_vale(q, n) : 0;
+}
+
+void css_variabili(void *buf, unsigned int n)
+{
+    if (assicura() && P.variabili) P.variabili(buf, n);
+}
+
+int css_font_face(const CssFoglio *f, unsigned int i, CssFontFace *out)
+{
+    return (assicura() && P.font_face) ? P.font_face(f, i, out) : 0;
 }

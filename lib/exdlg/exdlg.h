@@ -110,6 +110,12 @@ int ex_dlg_riga(const char *titolo, const char *domanda,
 int ex_dlg_chiedi(const char *titolo, const char *domanda, const char *ok,
                   char *valore, unsigned int max);
 
+/* The same with the letters hidden, for a password (pm asks it to do a
+ * root job like sudo, 25 November 2026). `valore` comes back empty if
+ * cancelled; the caller wipes it once used. */
+int ex_dlg_password(const char *titolo, const char *domanda, const char *ok,
+                    char *valore, unsigned int max);
+
 int ex_dlg_conferma(const char *titolo, const char *testo,
                     const char *si, const char *no);
 

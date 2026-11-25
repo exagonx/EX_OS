@@ -384,6 +384,8 @@ if [ -f "$EXILLA_DIST/firefox" ] && [ -f "$EXILLA_LANCIA" ]; then
     # names of the faces of [font-cjk], read by Gecko from defaults/pref.
     mkdir -p "$E/defaults/pref"
     cp tools/font-cjk/exos-cjk.js "$E/defaults/pref/"
+    # audio and video with several processes: see the file
+    cp tools/exilla/exos-media.js "$E/defaults/pref/"
 
     elenco_a_parte exilla "$EXILLA_PEZZO" "$EXILLA_DOVE"
     EXILLA_MB=$(mb_di exilla)

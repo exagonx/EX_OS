@@ -6,6 +6,9 @@
 
 **Indice**
 
+- [Il file manager nasconde i file col punto e le estensioni a richiesta, e le righe trascinate mostrano un foglio accanto al puntatore (filemgr 0.016, exwin.so 0.027, voce 114) — testato in QEMU](#il-file-manager-nasconde-i-file-col-punto-e-le-estensioni-a-richiesta-e-le-righe-trascinate-mostrano-un-foglio-accanto-al-puntatore-filemgr-0016-exwinso-0027-voce-114--testato-in-qemu)
+- [Exilla fa di nuovo video e suono a più processi, YouTube compreso (exos-media.js) — testato in QEMU](#exilla-fa-di-nuovo-video-e-suono-a-più-processi-youtube-compreso-exos-mediajs--testato-in-qemu)
+- [ExWin ha il salvaschermo: una scritta o un cerchio dopo i minuti scelti, lo schermo spento da dpms.drv (salvaschermo 0.001, pm 0.031, voce 116) — testato in QEMU](#exwin-ha-il-salvaschermo-una-scritta-o-un-cerchio-dopo-i-minuti-scelti-lo-schermo-spento-da-dpmsdrv-salvaschermo-0001-pm-0031-voce-116--testato-in-qemu)
 - [Firefox a più processi usa metà della memoria e non si chiude più con tre schede (kernel 0.368-0.370) — testato in QEMU](#firefox-a-più-processi-usa-metà-della-memoria-e-non-si-chiude-più-con-tre-schede-kernel-0368-0370--testato-in-qemu)
 - [ExWin veste il tema classico: pannelli più caldi, rilievo a due anelli, pulsanti sfumati (exwin.so 0.026, wserver 0.019) — testato in QEMU](#exwin-veste-il-tema-classico-pannelli-più-caldi-rilievo-a-due-anelli-pulsanti-sfumati-exwinso-0026-wserver-0019--testato-in-qemu)
 - [Kernel 0.367 e la rete: su, terminali, memoria condivisa e registro del kernel hanno un proprietario; aggiornamenti firmati; sshd, TCP e DNS contro gli attacchi alla cieca — testato in QEMU](#kernel-0367-e-la-rete-su-terminali-memoria-condivisa-e-registro-del-kernel-hanno-un-proprietario-aggiornamenti-firmati-sshd-tcp-e-dns-contro-gli-attacchi-alla-cieca--testato-in-qemu)
@@ -258,6 +261,50 @@
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### Il file manager nasconde i file col punto e le estensioni a richiesta, e le righe trascinate mostrano un foglio accanto al puntatore (filemgr 0.016, exwin.so 0.027, voce 114) — testato in QEMU
+
+- **Opzioni > Visualizzazione**: mostrare i file e le cartelle nascosti (che cominciano con `.`), e
+  mostrare l'estensione (spenta: `nota` invece di `nota.txt`). Accese di serie, come prima; restano
+  in `~/.exwin/config/filemgr.cfg`. Cambia solo cosa si vede: copia e cancella prendono anche i
+  nascosti.
+- **Trascinando righe** fuori dall'elenco: accanto al puntatore un foglio con le righe, tre fogli
+  sovrapposti se le voci scelte o segnate con la barra spaziatrice sono più d'una. I pixel sotto si
+  tengono e si rimettono, niente ridisegno a ogni movimento (`ex_list_set_drag_count`, nuova in
+  exwin.so).
+- **Provato** con `tools/prova_visualizza.sh` a 32 e 64 bit: l'elenco con le scelte spente e
+  accese, la finestra del menu, un foglio, tre fogli, spariti al rilascio.
+  Vedi [il manuale della scrivania](scrivania.it.md#il-file-manager).
+
+### Exilla fa di nuovo video e suono a più processi, YouTube compreso (exos-media.js) — testato in QEMU
+
+- **Cosa non andava**: da exilla 0.008 (Firefox a più processi) nessun video né suono partiva,
+  neanche YouTube; un file locale diceva "Failed to open media". Il processo della pagina passa i
+  video al processo RDD e l'audio al processo utility, e nella StaticPrefList.yaml di Gecko sono
+  accesi per XP_LINUX e spenti nell'`#else`: il Gecko per EX-OS è XP_EXOS. A un processo solo
+  decodifica il padre da sé, per questo prima andava.
+- **Adesso**: `tools/exilla/exos-media.js` va in `defaults/pref` di Exilla e accende il processo
+  RDD (anche per l'audio, perché `media.utility-process.enabled` Gecko lo blocca). La correzione
+  vera è nelle patch: XP_EXOS accanto a XP_LINUX nelle sette preferenze dei media, alla prossima
+  costruzione di Gecko.
+- **Misurato**: `tools/exilla/prova-media.sh`, adesso a più processi come lo lancia Exilla
+  (`UN_PROCESSO=1` è la prova vecchia a un processo, ed è per questo che non se n'era accorta): gli
+  8 file, Ogg, FLAC, MP3, AAC, VP8, VP9, AV1 e H.264, suonano a 32 e 64 bit.
+- **Subito, senza aggiornare**: `EXILLA_UN_PROCESSO=1`.
+
+### ExWin ha il salvaschermo: una scritta o un cerchio dopo i minuti scelti, lo schermo spento da dpms.drv (salvaschermo 0.001, pm 0.031, voce 116) — testato in QEMU
+
+- **Dove**: Impostazioni > Video, sotto i modi dello schermo e una linea, gruppo *Salvaschermo*: il tipo (*Nessuno*, *Scritta*,
+  *Cerchio*), dopo quanti minuti (1-60), la scritta, e quando spegnere lo schermo (`dpms.drv`, solo
+  root). **Prova** lo fa partire subito, **Applica** salva in `pm.cfg`.
+- **Scritta**: il testo attraversa lo schermo, ogni passaggio col suo lato, altezza, grandezza e
+  colore. **Cerchio**: un cerchio rimbalza sui bordi, da 200 pixel di diametro a un punto e
+  ritorno, finche' la sua scia copre lo schermo; poi di nuovo, di un altro colore.
+- **Si chiude al primo tasto, clic o movimento del mouse**, contati dal kernel per tutta la
+  macchina (`attivita_da()`): conta anche il mouse sopra la barra.
+- **Provato** da `tools/prova_salvaschermo.sh` a 32 e 64 bit: lanciato a mano (tutti e due i tipi)
+  e da pm dopo un minuto fermo; la foto mostra il salvaschermo sopra la barra, e la scrivania di
+  nuovo dopo un movimento del mouse. Vedi [il manuale della scrivania](scrivania.it.md#il-salvaschermo-impostazioni--video-pm-0031-voce-116).
 
 ### Firefox a più processi usa metà della memoria e non si chiude più con tre schede (kernel 0.368-0.370) — testato in QEMU
 

@@ -1,0 +1,34 @@
+<html><head><title>@font-face</title><style>
+/* ! I FILE DEI CARATTERI NON STANNO NEL PROGETTO: Lato (OFL), Roboto Slab
+ * (Apache 2.0), Nimbus Sans (URW, GPL con l'eccezione dei caratteri) e Font
+ * Awesome (OFL) vengono dai pacchetti di Debian dell'host; tools/prove/sito/
+ * leggimi.md dice quali file copiare accanto a questa pagina. Senza, ogni
+ * riga ripiega sulla generica che nomina. */
+@font-face { font-family: "Lato Prova"; src: url(Lato-Regular.woff2) format("woff2"), url(Lato-Regular.ttf) format("truetype"); font-weight: 400; }
+@font-face { font-family: "Lato Prova"; src: url(Lato-Bold.woff2) format("woff2"); font-weight: 700; }
+@font-face { font-family: "Lato Prova"; src: url(Lato-Italic.woff2) format("woff2"); font-style: italic; }
+@font-face { font-family: Slab; src: url("RobotoSlab-Regular.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131; }
+@font-face { font-family: Slab; src: url(cirillico-non-va-chiesto.woff2) format("woff2"); unicode-range: U+0400-045F; }
+@font-face { font-family: SoloTtf; src: url(Lato-Bold.ttf); }
+@font-face { font-family: Nimbus; src: local("Nimbus Sans"), url(NimbusSans-Regular.otf) format("opentype"); }
+@font-face { font-family: Icone; src: url(fontawesome-webfont.woff) format("woff"); }
+@font-face { font-family: Manca; src: url(manca.woff2) format("woff2"); }
+body { font-size: 20px; }
+.lato { font-family: "Lato Prova", serif; }
+.slab { font-family: Slab, monospace; }
+.ttf { font-family: SoloTtf, monospace; }
+.otf { font-family: Nimbus, serif; }
+.icone { font-family: Icone, monospace; }
+.manca { font-family: Manca, monospace; }
+</style></head><body>
+<h1 class="lato">@font-face (P6)</h1>
+<p class="lato">1. Lato woff2: Hamburgefonstiv AVA To Wa fi fl 0123</p>
+<p class="lato"><b>2. Lato grassetto</b> e <i>3. Lato corsivo</i></p>
+<p class="slab">4. Roboto Slab woff2, il pezzo latino soltanto</p>
+<p class="ttf">5. TTF nudo (Lato Bold) senza format()</p>
+<p class="otf">6. OTF con contorni CFF (Nimbus Sans)</p>
+<p class="icone">7. WOFF1 (Font Awesome): le lettere non le ha, ripiega su monospace</p>
+<p class="manca">8. un file che non c'e': monospace</p>
+<p style="font: italic 18px/1.5 'Lato Prova', sans-serif">9. la scorciatoia font, corsivo da 18</p>
+<p>10. senza famiglia: il serif di sempre (Liberation)</p>
+</body></html>

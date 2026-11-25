@@ -351,6 +351,7 @@ typedef struct {
     int           multi;
     unsigned char *segni;
     unsigned int  ancora;
+    unsigned int  trascina_n;           /* ex_list_set_drag_count, 0 = segni */
 } Lista;
 
 static Lista      **g_lista = 0;
@@ -1745,6 +1746,13 @@ int ex_list_get_selection(ExWindow f, unsigned int *righe, int max)
         for (i = 0; i < L->n && n < max; i++) if (L->segni[i]) righe[n++] = i;
     if (n == 0) { righe[0] = L->sel; n = 1; }
     return n;
+}
+
+void ex_list_set_drag_count(ExWindow f, unsigned int n)
+{
+    Lista *L = lista_da_h(f);
+
+    if (L) L->trascina_n = n;
 }
 
 int ex_list_row_at(ExWindow f, int y)
@@ -8041,6 +8049,104 @@ static void avviso_sopra(ExWindow f)
         ex_draw_text(f, x + 5, y + 3 + i * alt, riga[i], g_avviso.scritta);
 }
 
+/* =============================================================================
+ * THE SHEET BESIDE THE POINTER WHILE ROWS ARE DRAGGED (exwin.so 0.027,
+ * voce 114: the user, 23/11/2026). Rows of a list dragged out of it carry a
+ * sheet with lines next to the pointer; more than one row chosen, three
+ * sheets one over the other. Every list has it, the file manager first.
+ *
+ * ! IT LIVES IN THE WINDOW'S PIXELS, AS THE POPUP, and what it covers is
+ * kept aside and put back at every move: redrawing the whole window at every
+ * pixel would be the river EXM_MOUSE_MOVE warns about. A window drawn again
+ * while it is up loses nothing either: foglio_via puts back what was under
+ * it only if the window is the same one.
+ * ============================================================================= */
+#define FOGLIO_W   20
+#define FOGLIO_H   26
+#define FOGLIO_SC  4                    /* the shift between three sheets */
+
+static struct {
+    ExWindow      f;                    /* 0 = none */
+    int           x, y, w, h;
+    unsigned int *sotto;                /* w * h pixels it covers */
+    unsigned int  posti;
+} g_foglio;
+
+static void foglio_via(void)
+{
+    Oggetto *r = radice(g_foglio.f);
+    int j;
+
+    if (!g_foglio.f) return;
+    if (r && r->pix) {
+        for (j = 0; j < g_foglio.h; j++)
+            memcpy(r->pix + (unsigned int)(g_foglio.y + j) * r->passo_px + (unsigned int)g_foglio.x,
+                   g_foglio.sotto + (unsigned int)(j * g_foglio.w),
+                   (size_t)g_foglio.w * sizeof(unsigned int));
+        ex_update_rect(g_foglio.f, g_foglio.x, g_foglio.y, g_foglio.w, g_foglio.h);
+    }
+    g_foglio.f = 0;
+}
+
+static void foglio_uno(ExWindow f, int x, int y)
+{
+    int k;
+
+    ex_fill_rect(f, x, y, FOGLIO_W, FOGLIO_H, EX_WHITE);
+    ex_draw_rect(f, x, y, FOGLIO_W, FOGLIO_H, EX_DARK_GRAY);
+    for (k = 0; k < 5; k++)
+        ex_fill_rect(f, x + 4, y + 5 + k * 4, k == 4 ? 7 : FOGLIO_W - 8, 1, EX_GRAY);
+}
+
+/* The sheet with the pointer at x, y (the window's area); molti: three. */
+static void foglio_a(ExWindow f, int x, int y, int molti)
+{
+    Oggetto *r = radice(f);
+    int fx = x + 14, fy = y + 16, w, h, j, k;
+    unsigned int serve;
+
+    foglio_via();
+    if (!r || !r->pix) return;
+    w = FOGLIO_W + (molti ? 2 * FOGLIO_SC : 0);
+    h = FOGLIO_H + (molti ? 2 * FOGLIO_SC : 0);
+    if (fx + w > r->w) fx = x - w - 4;          /* no room on the right */
+    if (fy + h > r->h) fy = y - h - 4;          /* no room below */
+    if (fx < 0) fx = 0;
+    if (fy < 0) fy = 0;
+    if (fx + w > r->w) w = r->w - fx;
+    if (fy + h > r->h) h = r->h - fy;
+    if (w <= 0 || h <= 0) return;
+    serve = (unsigned int)(w * h);
+    if (serve > g_foglio.posti) {
+        unsigned int *n = (unsigned int *)realloc(g_foglio.sotto, serve * sizeof(unsigned int));
+
+        if (!n) return;                         /* no sheet, the drag goes on */
+        g_foglio.sotto = n; g_foglio.posti = serve;
+    }
+    for (j = 0; j < h; j++)
+        memcpy(g_foglio.sotto + (unsigned int)(j * w),
+               r->pix + (unsigned int)(fy + j) * r->passo_px + (unsigned int)fx,
+               (size_t)w * sizeof(unsigned int));
+    g_foglio.f = f; g_foglio.x = fx; g_foglio.y = fy; g_foglio.w = w; g_foglio.h = h;
+    if (molti)
+        for (k = 2; k >= 0; k--) foglio_uno(f, fx + (2 - k) * FOGLIO_SC, fy + k * FOGLIO_SC);
+    else
+        foglio_uno(f, fx, fy);
+    ex_update_rect(f, fx, fy, w, h);
+}
+
+/* More than one row chosen in a list? */
+static int lista_molte(const Lista *L)
+{
+    unsigned int i, n = 0;
+
+    if (!L) return 0;
+    if (L->trascina_n) return L->trascina_n > 1;
+    if (!L->multi || !L->segni) return 0;
+    for (i = 0; i < L->n; i++) if (L->segni[i] && ++n > 1) return 1;
+    return 0;
+}
+
 /* EXM_CHANGED for this window's text boxes and text areas: 1 to receive it. */
 void ex_notify_changes(ExWindow f, int si)
 {
@@ -8653,9 +8759,14 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 if (controllo_in(f, (int)e.x, (int)e.y) == g_trascinato) {
                     Lista *L = lista_di(co);
                     unsigned int prima = L ? L->sel : 0;
+
+                    foglio_via();               /* back inside: no sheet */
                     lista_punta(co, (int)e.y);
                     if (L && L->multi && L->sel != prima && !L->segni[L->sel]) lista_uno(L);
                     if (!ridisegna_controllo(co)) ridisegna_finestra(f);
+                } else if (lista_di(co) && lista_di(co)->n > 0) {
+                    /* out of the list: the rows travel, the sheet shows it */
+                    foglio_a(f, (int)e.x, (int)e.y, lista_molte(lista_di(co)));
                 }
                 continue;
             }
@@ -8664,6 +8775,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
         }
 
         case WIN_EV_MOUSE_SU: {
+            foglio_via();                       /* the dragged rows' sheet */
             g_area_barra = 0;                   /* a thumb, if one was held */
             g_lista_barra = 0;
             g_mdi_trascina = 0;
@@ -9578,7 +9690,7 @@ void ex_item_rename(ExWindow c, unsigned int i, const char *testo)
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
  * 0.002 = ex_enable() ed EX_DISABLED; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.026"   /* 0.026: i temi (extema.c, debug/implementazione_TEMA001), il classico rifinito, ex_tema_colore e ex_tema_nome; 0.025: ex_update_rect (debug/bug_EXIDE001), gli appunti di misura sbagliata rifiutati (debug/bug_SHM001); 0.024: ex_open_file apre le cartelle col programma del tipo "/" (il file manager); 0.023: i programmi per tipo scelti in Impostazioni (ex_types, ex_type_set, ex_type_program, /boot/tipi.cfg); 0.022: tabulazioni nelle aree (ex_textarea_set_tab, ex_textarea_get_column), voci di menu spente (ex_menu_enable) */
+#define EXWIN_VERSIONE "0.027"   /* 0.027: il foglio accanto al puntatore quando si trascinano righe di una lista, tre fogli per piu' righe (voce 114); 0.026: i temi (extema.c, debug/implementazione_TEMA001), il classico rifinito, ex_tema_colore e ex_tema_nome; 0.025: ex_update_rect (debug/bug_EXIDE001), gli appunti di misura sbagliata rifiutati (debug/bug_SHM001); 0.024: ex_open_file apre le cartelle col programma del tipo "/" (il file manager); 0.023: i programmi per tipo scelti in Impostazioni (ex_types, ex_type_set, ex_type_program, /boot/tipi.cfg); 0.022: tabulazioni nelle aree (ex_textarea_set_tab, ex_textarea_get_column), voci di menu spente (ex_menu_enable) */
 
 const char *ex_version(void) { return EXWIN_VERSIONE; }
 

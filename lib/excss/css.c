@@ -69,6 +69,8 @@ static int ug_min(const char *a, const char *b)
  * campo a zero vuol dire «non c'e'» e non «la stringa vuota», e i due casi non
  * si confondono mai.
  * --------------------------------------------------------------------------- */
+static void var_azzera(void);
+
 static unsigned int arena_metti(CssFoglio *f, const char *s, unsigned int n)
 {
     unsigned int inizio = f->arena_n, i;
@@ -157,6 +159,7 @@ void css_prepara(CssFoglio *f,
     f->troncato   = 0;
 
     if (arena && arena_max > 0) { arena[0] = '\0'; f->arena_n = 1; }
+    var_azzera();
 }
 
 /* -----------------------------------------------------------------------------
@@ -303,10 +306,55 @@ static int leggi_misura(const char *v, unsigned int n, int *out)
 #define REL_REM     2u
 #define REL_PERC    3u
 #define REL_ZERO    0x800000u            /* centesimi con segno, spostati */
+/* calc() and its kin (P6, 25 November 2026): the low 24 bits are not a value
+ * but where the TEXT of the expression is - in the sheet's arena (F) or in
+ * g_loc (L), see calc_testo(). */
+#define REL_CALC_F  4u
+#define REL_CALC_L  5u
+
+/* Declarations that are not a property of CssStile (P6): their CssDich
+ * says where their text is in the arena. They are above CSS_P_N, so whoever
+ * walks the declarations of a rule without knowing them skips them.
+ *   PERSONALE  --name: value         "--name\0value\0"
+ *   RIMANDATA  a value with var()    "property\0value\0", read in css_calcola
+ *   FONTFACE   an @font-face block   see fontface_metti(); in no rule */
+#define CSS_P_PERSONALE 0xFFF0u
+#define CSS_P_RIMANDATA 0xFFF1u
+#define CSS_P_FONTFACE  0xFFF2u
 
 static int g_media_w;                    /* la larghezza delle @media, piu' giu' */
+static int g_media_h;                    /* e l'altezza */
 static int g_opaca = 1, g_punta = 1;     /* vedi nascosto_applica() */
 static int g_segno = 2;                  /* vedi css_segno_lista() in css.h */
+
+/* =============================================================================
+ * WHAT A DECLARATION NEEDS FROM ITS ELEMENT (P6, 25 November 2026)
+ *
+ * A value with var() cannot be read when the sheet is read: what it says
+ * depends on the element. A calc() with em or % neither. Both are kept as
+ * TEXT and read in css_calcola, where these say which sheet, which element:
+ *   g_fog_calc   the sheet css_calcola is working for (0 outside it)
+ *   g_loc        texts made during ONE css_calcola (an attribute style's
+ *                calc(), a value after var() was replaced): emptied at the
+ *                start of every css_calcola, and of a css_stile_inline
+ *                called from outside it.
+ * ============================================================================= */
+static const CssFoglio *g_fog_calc = 0;
+static int              g_in_calcola = 0;
+static char             g_loc[16384];
+static unsigned int     g_loc_n = 1;
+
+/* `n` bytes and a 0 into g_loc; the offset, 0 = no room */
+static unsigned int loc_metti(const char *s, unsigned int n)
+{
+    unsigned int o = g_loc_n, i;
+
+    if (g_loc_n + n + 1 > sizeof(g_loc)) return 0;
+    for (i = 0; i < n; i++) g_loc[o + i] = s[i];
+    g_loc[o + n] = 0;
+    g_loc_n += n + 1;
+    return o;
+}
 
 static unsigned int rel_codifica(unsigned int unita, int centesimi)
 {
@@ -318,12 +366,16 @@ static unsigned int rel_codifica(unsigned int unita, int centesimi)
 /* Una lunghezza, codificata per il campo CssDich.numero: px (e pt, vw) come
  * sempre — m + 32768 — oppure relativa con REL_BIT. Rende 0 se non si capisce.
  * `neg` = 0 rifiuta i negativi (padding, bordi). */
+static int e_calc(const char *v, unsigned int n);
+static int leggi_calc(const char *v, unsigned int n, int neg, unsigned int *out);
+
 static int leggi_lunghezza(const char *v, unsigned int n, int neg, unsigned int *out)
 {
     unsigned int i = 0, k;
     int segno = 1, cent = 0, cifre = 0, dec = 0;
     char u[4];
 
+    if (e_calc(v, n)) return leggi_calc(v, n, neg, out);
     if (i < n && (v[i] == '-' || v[i] == '+')) { if (v[i] == '-') segno = -1; i++; }
     while (i < n && v[i] >= '0' && v[i] <= '9') { cent = cent * 10 + (v[i] - '0'); i++; cifre = 1; if (cent > 1000000) return 0; }
     cent *= 100;
@@ -351,6 +403,7 @@ static int leggi_lunghezza(const char *v, unsigned int n, int neg, unsigned int 
     }
     if (!strcmp_c(u, "pt")) { *out = (unsigned int)(cent * 4 / 300 + 32768); return 1; }   /* 1pt = 4/3 px */
     if (!strcmp_c(u, "vw")) { *out = (unsigned int)(g_media_w * cent / 10000 + 32768); return 1; }
+    if (!strcmp_c(u, "vh")) { *out = (unsigned int)(g_media_h * cent / 10000 + 32768); return 1; }
     if (!strcmp_c(u, "em"))  { *out = rel_codifica(REL_EM, cent);   return 1; }
     if (!strcmp_c(u, "rem")) { *out = rel_codifica(REL_REM, cent);  return 1; }
     if (!strcmp_c(u, "%"))   { *out = rel_codifica(REL_PERC, cent); return 1; }
@@ -366,15 +419,409 @@ static int leggi_lunghezza(const char *v, unsigned int n, int neg, unsigned int 
  * della larghezza del CONTENITORE, che excss non conosce — la sa
  * l'impaginatore, dopo. La finestra e' giusta per i blocchi di primo livello e
  * troppo larga per quelli annidati. */
+static const char *calc_testo(unsigned int num);
+static int calc_valuta_testo(const char *s, int base_em, int base_perc, int perc_ignota,
+                             int *px, int *tinto);
+
 static int rel_px(unsigned int num, int base_em, int base_perc)
 {
     unsigned int unita = (num >> 24) & 0x7Fu;
     int cent = (int)(num & 0xFFFFFFu) - (int)REL_ZERO;
     int base = (unita == REL_EM) ? base_em : (unita == REL_REM) ? CSS_CORPO_PREDEFINITO : base_perc;
 
+    if (unita == REL_CALC_F || unita == REL_CALC_L) {
+        int px = 0, tinto;
+        const char *s = calc_testo(num);
+
+        if (!s || !calc_valuta_testo(s, base_em, base_perc, 0, &px, &tinto)) return 0;
+        return px;
+    }
+
     /* em e rem sono volte (1.5em = 150 centesimi di volta), la % e' gia'
      * cento volte piu' grande (150% = 15000 centesimi di punto percentuale). */
     return (int)((long)cent * base / (unita == REL_PERC ? 10000 : 100));
+}
+
+/* =============================================================================
+ * calc(), min(), max(), clamp() (P6, 25 November 2026)
+ *
+ * Google's sheets and every framework write lengths as expressions:
+ * `calc(100% - 2*var(--gap))`, `min(100%, 1200px)`, `clamp(14px, 1vw +
+ * 8px, 20px)`. Until today the whole declaration was thrown away.
+ *
+ * ! THE TEXT IS KEPT, AND READ WHEN THE ELEMENT IS KNOWN. An expression with
+ * only px, pt, vw, vh, rem is a number already, and becomes one when the
+ * sheet is read (leggi_calc). One with em or % depends on the element (em
+ * on its font size, % on the container): its text stays in the arena and
+ * rel_px reads it at the end of css_calcola, as the plain em do.
+ *
+ * ! THE % OF A WIDTH IS THE CONTAINER'S, which only the layout knows, and
+ * CssStile has room for a percentage OR pixels, not both (posa_relativa):
+ *   calc(100% / 3)      a percentage           -> 33.33%
+ *   min(100%, 1200px)   the % is dropped in min/max/clamp -> 1200px
+ *   calc(100% - 20px)   neither               -> the declaration is lost
+ * This is the point where P7 (Taffy, a computed style of its own) takes over.
+ *
+ * Doubles: x87 code, no library call (the libc of the host or none).
+ * ============================================================================= */
+static int parola_e(const char *v, unsigned int n, const char *p);
+
+typedef struct {
+    double em;           /* px of 1em   */
+    double perc;         /* px of 100%  */
+    double rem;          /* px of 1rem: our body size, 16 in a media query */
+    int    perc_ignota;  /* 1: % cannot be known here, and taints what uses it */
+} CalcBasi;
+
+typedef struct { double v; int lung; int tinto; } CalcVal;   /* v in px if lung */
+
+typedef struct {
+    const char     *s;
+    unsigned int    i, n;
+    const CalcBasi *b;
+    int             prof;
+} CalcL;
+
+#define CALC_TETTO 1.0e7
+
+static void c_spazi(CalcL *l)
+{
+    while (l->i < l->n && spazio((unsigned char)l->s[l->i])) l->i++;
+}
+
+static int c_lettera(int c)
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+}
+
+static int c_cifra(int c) { return c >= '0' && c <= '9'; }
+
+static int c_somma(CalcL *l, CalcVal *out);
+
+/* the px of one `u` (k letters), or -1: not a length unit */
+static double c_unita(const char *u, unsigned int k, const CalcBasi *b)
+{
+    static const struct { const char *n; double px; } FISSE[] = {
+        { "px", 1.0 }, { "pt", 4.0 / 3.0 }, { "pc", 16.0 }, { "in", 96.0 },
+        { "cm", 96.0 / 2.54 }, { "mm", 96.0 / 25.4 }, { "q", 96.0 / 101.6 },
+        { 0, 0 }
+    };
+    int j;
+
+    for (j = 0; FISSE[j].n; j++) if (parola_e(u, k, FISSE[j].n)) return FISSE[j].px;
+    if (parola_e(u, k, "em") || parola_e(u, k, "ic")) return b->em;
+    if (parola_e(u, k, "ex") || parola_e(u, k, "ch")) return b->em / 2;
+    if (parola_e(u, k, "cap")) return b->em * 0.7;
+    if (parola_e(u, k, "lh"))  return b->em * 1.2;
+    if (parola_e(u, k, "rem")) return b->rem;
+    if (parola_e(u, k, "rlh")) return b->rem * 1.2;
+    if (parola_e(u, k, "vw") || parola_e(u, k, "svw") || parola_e(u, k, "lvw") ||
+        parola_e(u, k, "dvw")) return g_media_w / 100.0;
+    if (parola_e(u, k, "vh") || parola_e(u, k, "svh") || parola_e(u, k, "lvh") ||
+        parola_e(u, k, "dvh")) return g_media_h / 100.0;
+    if (parola_e(u, k, "vmin")) return (g_media_w < g_media_h ? g_media_w : g_media_h) / 100.0;
+    if (parola_e(u, k, "vmax")) return (g_media_w > g_media_h ? g_media_w : g_media_h) / 100.0;
+    return -1;
+}
+
+/* a number, with its unit or its % */
+static int c_numero(CalcL *l, CalcVal *out)
+{
+    double v = 0, sc = 1;
+    int    cifre = 0, neg = 0;
+    unsigned int k;
+
+    out->lung = out->tinto = 0;
+    if (l->i < l->n && (l->s[l->i] == '+' || l->s[l->i] == '-')) { neg = l->s[l->i] == '-'; l->i++; }
+    while (l->i < l->n && c_cifra(l->s[l->i])) { v = v * 10 + (l->s[l->i] - '0'); l->i++; cifre = 1; }
+    if (l->i < l->n && l->s[l->i] == '.') {
+        l->i++;
+        while (l->i < l->n && c_cifra(l->s[l->i])) { sc /= 10; v += (l->s[l->i] - '0') * sc; l->i++; cifre = 1; }
+    }
+    if (!cifre) return 0;
+    /* 1e3, 2E-2: an exponent only when a digit follows (1em is a unit) */
+    if (l->i + 1 < l->n && (l->s[l->i] == 'e' || l->s[l->i] == 'E') &&
+        (c_cifra(l->s[l->i + 1]) ||
+         ((l->s[l->i + 1] == '-' || l->s[l->i + 1] == '+') && l->i + 2 < l->n && c_cifra(l->s[l->i + 2])))) {
+        int e = 0, eneg = 0;
+
+        l->i++;
+        if (l->s[l->i] == '-' || l->s[l->i] == '+') { eneg = l->s[l->i] == '-'; l->i++; }
+        while (l->i < l->n && c_cifra(l->s[l->i]) && e < 40) { e = e * 10 + (l->s[l->i] - '0'); l->i++; }
+        while (e-- > 0) v = eneg ? v / 10 : v * 10;
+    }
+    if (neg) v = -v;
+    if (l->i < l->n && l->s[l->i] == '%') {
+        l->i++;
+        if (l->b->perc_ignota) out->tinto = 1;
+        out->v = v * l->b->perc / 100.0;
+        out->lung = 1;
+        return 1;
+    }
+    for (k = 0; l->i + k < l->n && c_lettera(l->s[l->i + k]); k++) {}
+    if (k) {
+        double u = c_unita(l->s + l->i, k, l->b);
+
+        if (u < 0) return 0;
+        l->i += k;
+        out->v = v * u;
+        out->lung = 1;
+        return 1;
+    }
+    out->v = v;
+    return 1;
+}
+
+/* min() and max(): a list. Under perc_ignota a tainted argument does not
+ * take part (min(100%, 1200px) is 1200px); all tainted, the result is. */
+static int c_lista(CalcL *l, CalcVal *out, int massimo)
+{
+    int     primo = 1, tutti_tinti = 1;
+    CalcVal x;
+
+    out->v = 0; out->lung = 0; out->tinto = 0;
+    for (;;) {
+        if (!c_somma(l, &x)) return 0;
+        if (!primo && !tutti_tinti && !x.tinto && x.lung != out->lung) return 0;
+        if (!x.tinto) {
+            if (tutti_tinti || (massimo ? x.v > out->v : x.v < out->v)) { out->v = x.v; out->lung = x.lung; }
+            tutti_tinti = 0;
+        } else if (tutti_tinti) {
+            out->lung = x.lung;
+        }
+        primo = 0;
+        c_spazi(l);
+        if (l->i < l->n && l->s[l->i] == ',') { l->i++; continue; }
+        break;
+    }
+    out->tinto = tutti_tinti;
+    return 1;
+}
+
+static int c_chiudi(CalcL *l)
+{
+    c_spazi(l);
+    if (l->i >= l->n || l->s[l->i] != ')') return 0;
+    l->i++;
+    return 1;
+}
+
+static int c_fattore(CalcL *l, CalcVal *out)
+{
+    char         c;
+    unsigned int a, k;
+    int          ok = 0;
+
+    c_spazi(l);
+    if (l->i >= l->n || l->prof > 32) return 0;
+    c = l->s[l->i];
+    if (c == '(') {
+        l->i++;
+        l->prof++;
+        ok = c_somma(l, out) && c_chiudi(l);
+        l->prof--;
+        return ok;
+    }
+    if (c_cifra(c) || c == '.' ||
+        ((c == '+' || c == '-') && l->i + 1 < l->n &&
+         (c_cifra(l->s[l->i + 1]) || l->s[l->i + 1] == '.')))
+        return c_numero(l, out);
+    if (c == '-' && l->i + 1 < l->n && (l->s[l->i + 1] == '(' || c_lettera(l->s[l->i + 1])) &&
+        !(l->i + 8 <= l->n && parola_e(l->s + l->i, 8, "-webkit-")) &&
+        !(l->i + 5 <= l->n && parola_e(l->s + l->i, 5, "-moz-"))) {
+        l->i++;
+        if (!c_fattore(l, out)) return 0;
+        out->v = -out->v;
+        return 1;
+    }
+
+    /* a function */
+    a = l->i;
+    for (k = a; k < l->n && (c_lettera(l->s[k]) || l->s[k] == '-'); k++) {}
+    if (k >= l->n || l->s[k] != '(' || k == a) return 0;
+    l->i = k + 1;
+    l->prof++;
+    if (parola_e(l->s + a, k - a, "calc") || parola_e(l->s + a, k - a, "-webkit-calc") ||
+        parola_e(l->s + a, k - a, "-moz-calc")) {
+        ok = c_somma(l, out) && c_chiudi(l);
+    } else if (parola_e(l->s + a, k - a, "min")) {
+        ok = c_lista(l, out, 0) && c_chiudi(l);
+    } else if (parola_e(l->s + a, k - a, "max")) {
+        ok = c_lista(l, out, 1) && c_chiudi(l);
+    } else if (parola_e(l->s + a, k - a, "clamp")) {
+        CalcVal x, y, z;
+
+        /* clamp(MIN, VAL, MAX) = max(MIN, min(VAL, MAX)), a tainted one left out */
+        if (c_somma(l, &x)) {
+            c_spazi(l);
+            if (l->i < l->n && l->s[l->i] == ',') {
+                l->i++;
+                if (c_somma(l, &y)) {
+                    c_spazi(l);
+                    if (l->i < l->n && l->s[l->i] == ',') {
+                        l->i++;
+                        if (c_somma(l, &z) && c_chiudi(l)) {
+                            CalcVal m;
+
+                            if (y.tinto && !z.tinto)      m = z;        /* min(VAL, MAX) */
+                            else if (z.tinto && !y.tinto) m = y;
+                            else                          m = (z.v < y.v) ? z : y;
+                            if (!x.tinto && (m.tinto || x.v > m.v)) m = x;   /* max(MIN, .) */
+                            *out = m;
+                            ok = 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    l->prof--;
+    return ok;
+}
+
+static int c_prodotto(CalcL *l, CalcVal *out)
+{
+    CalcVal b;
+
+    if (!c_fattore(l, out)) return 0;
+    for (;;) {
+        char op;
+
+        c_spazi(l);
+        if (l->i >= l->n || (l->s[l->i] != '*' && l->s[l->i] != '/')) return 1;
+        op = l->s[l->i++];
+        if (!c_fattore(l, &b)) return 0;
+        if (op == '*') {
+            if (out->lung && b.lung) return 0;
+            out->v *= b.v;
+            out->lung |= b.lung;
+        } else {
+            if (b.lung || b.v == 0) return 0;
+            out->v /= b.v;
+        }
+        out->tinto |= b.tinto;
+        if (out->v > CALC_TETTO) out->v = CALC_TETTO;
+        if (out->v < -CALC_TETTO) out->v = -CALC_TETTO;
+    }
+}
+
+static int c_somma(CalcL *l, CalcVal *out)
+{
+    CalcVal b;
+
+    if (!c_prodotto(l, out)) return 0;
+    for (;;) {
+        char op;
+
+        c_spazi(l);
+        if (l->i >= l->n || (l->s[l->i] != '+' && l->s[l->i] != '-')) return 1;
+        op = l->s[l->i++];
+        if (!c_prodotto(l, &b)) return 0;
+        /* a bare 0 next to a length is a length (browsers forgive it) */
+        if (out->lung != b.lung && !(b.v == 0 && !b.lung) && !(out->v == 0 && !out->lung)) return 0;
+        out->v = (op == '+') ? out->v + b.v : out->v - b.v;
+        out->lung |= b.lung;
+        out->tinto |= b.tinto;
+    }
+}
+
+static int c_arrotonda(double v)
+{
+    if (v > CALC_TETTO) v = CALC_TETTO;
+    if (v < -CALC_TETTO) v = -CALC_TETTO;
+    return v >= 0 ? (int)(v + 0.5) : -(int)(-v + 0.5);
+}
+
+/* The whole value `s` (n bytes), which must be one expression: its px. */
+static int calc_valuta(const char *s, unsigned int n, const CalcBasi *b, int *px, int *tinto)
+{
+    CalcL   l;
+    CalcVal v;
+
+    l.s = s; l.i = 0; l.n = n; l.b = b; l.prof = 0;
+    if (!c_somma(&l, &v)) return 0;
+    c_spazi(&l);
+    if (l.i != l.n) return 0;
+    if (!v.lung && v.v != 0) return 0;      /* a number is not a length */
+    *px = c_arrotonda(v.v);
+    *tinto = v.tinto;
+    return 1;
+}
+
+static int calc_valuta_testo(const char *s, int base_em, int base_perc, int perc_ignota,
+                             int *px, int *tinto)
+{
+    CalcBasi     b;
+    unsigned int n = 0;
+
+    while (s[n]) n++;
+    b.em = base_em; b.perc = base_perc; b.perc_ignota = perc_ignota;
+    b.rem = CSS_CORPO_PREDEFINITO;
+    return calc_valuta(s, n, &b, px, tinto);
+}
+
+static int e_calc(const char *v, unsigned int n)
+{
+    static const char *const NOMI[] = { "calc(", "-webkit-calc(", "-moz-calc(",
+                                        "min(", "max(", "clamp(", 0 };
+    int j;
+
+    for (j = 0; NOMI[j]; j++) {
+        unsigned int k = 0;
+
+        while (NOMI[j][k] && k < n && minusc((unsigned char)v[k]) == NOMI[j][k]) k++;
+        if (!NOMI[j][k]) return 1;
+    }
+    return 0;
+}
+
+static CssFoglio *g_fog_legge;              /* defined (= 0) with leggi_url */
+
+static const char *calc_testo(unsigned int num)
+{
+    unsigned int unita = (num >> 24) & 0x7Fu, off = num & 0xFFFFFFu;
+
+    if (unita == REL_CALC_L) return off < sizeof(g_loc) ? g_loc + off : 0;
+    if (unita == REL_CALC_F && g_fog_calc && off < g_fog_calc->arena_n) return g_fog_calc->arena + off;
+    return 0;
+}
+
+/* A length written as an expression. Constant: px now. Otherwise its text,
+ * kept where it lives as long as the declaration does. */
+static int leggi_calc(const char *v, unsigned int n, int neg, unsigned int *out)
+{
+    CalcBasi     b1, b2;
+    int          p1, p2, t;
+    unsigned int off, unita;
+
+    b1.em = 16; b1.perc = 1000; b1.perc_ignota = 0; b1.rem = CSS_CORPO_PREDEFINITO;
+    b2.em = 23; b2.perc = 1777; b2.perc_ignota = 0; b2.rem = CSS_CORPO_PREDEFINITO;
+    if (!calc_valuta(v, n, &b1, &p1, &t) || !calc_valuta(v, n, &b2, &p2, &t)) return 0;
+    if (p1 == p2) {
+        /* ! A NEGATIVE RESULT IS CLAMPED, NOT REFUSED, where negatives are
+         * not allowed: so says css-values for calc(), at computed time */
+        if (!neg && p1 < 0) p1 = 0;
+        if (p1 < -20000) p1 = -20000;
+        if (p1 >  20000) p1 =  20000;
+        *out = (unsigned int)(p1 + 32768);
+        return 1;
+    }
+    if (g_fog_legge) {
+        CssFoglio *f = g_fog_legge;
+
+        if (f->arena_n + n + 1 > f->arena_max || f->arena_n + n + 1 > 0xFFFFFFu) { f->troncato = 1; return 0; }
+        off = f->arena_n;
+        for (t = 0; t < (int)n; t++) f->arena[off + (unsigned int)t] = v[t];
+        f->arena[off + n] = 0;
+        f->arena_n += n + 1;
+        unita = REL_CALC_F;
+    } else {
+        off = loc_metti(v, n);
+        if (!off) return 0;
+        unita = REL_CALC_L;
+    }
+    *out = REL_BIT | (unita << 24) | off;
+    return 1;
 }
 
 /* -----------------------------------------------------------------------------
@@ -432,12 +879,27 @@ static int fam_uguale(const char *v, unsigned int n, const char *nome)
     return i == n;
 }
 
-static int leggi_famiglia(const char *v, unsigned int n, unsigned int *out)
+static int ff_famiglia(const CssFoglio *f, const char *nome, unsigned int n);
+static unsigned int arena_coppia(CssFoglio *f, const char *a, unsigned int na,
+                                 const char *b, unsigned int nb, int minuscolo);
+
+/* ! A font-family IN A SHEET IS READ IN css_calcola (P6), not here: whether
+ * «Roboto» is the page's own @font-face or just a name for sans-serif
+ * depends on the @font-face blocks, which may come in a later sheet. The
+ * list is kept in the arena, and its CssDich says FAM_RINVIO + where. */
+#define FAM_RINVIO 0x40000000u
+
+/* The list against the page's families and ours: the first page family
+ * named, with the first generic after it (CSS_FAM_PAGINA), or the first of
+ * ours, as before. */
+static int famiglia_risolvi(const CssFoglio *f, const char *v, unsigned int n, unsigned int *out)
 {
     unsigned int i = 0;
+    int          k = -1;
 
     while (i < n) {
-        unsigned int a, b, k;
+        unsigned int a, b;
+        int          q2;
 
         while (i < n && (v[i] == ' ' || v[i] == '\t' ||
                          v[i] == '"' || v[i] == '\'')) i++;
@@ -451,17 +913,35 @@ static int leggi_famiglia(const char *v, unsigned int n, unsigned int *out)
                          v[b - 1] == '"' || v[b - 1] == '\'')) b--;
         if (b <= a) continue;
 
-        for (k = 0; FAMIGLIE[k].nome; k++)
-            if (fam_uguale(v + a, b - a, FAMIGLIE[k].nome)) {
-                *out = FAMIGLIE[k].fam;
+        if (f && k < 0) {
+            int q = ff_famiglia(f, v + a, b - a);
+
+            if (q >= 0) { k = q; continue; }
+        }
+        for (q2 = 0; FAMIGLIE[q2].nome; q2++)
+            if (fam_uguale(v + a, b - a, FAMIGLIE[q2].nome)) {
+                *out = k >= 0 ? (unsigned int)CSS_FAM_PAGINA(k, FAMIGLIE[q2].fam) : FAMIGLIE[q2].fam;
                 return 1;
             }
     }
+    if (k >= 0) { *out = (unsigned int)CSS_FAM_PAGINA(k, CSS_FAM_SANS); return 1; }
 
     /* ! NESSUN NOME RICONOSCIUTO: LA DICHIARAZIONE SI BUTTA, e non si ripiega
      * sul serif. Buttarla lascia in piedi quella ereditata, che e' quasi sempre
      * piu' vicina al vero di una scelta presa a caso da noi. */
     return 0;
+}
+
+static int leggi_famiglia(const char *v, unsigned int n, unsigned int *out)
+{
+    if (g_fog_legge) {
+        unsigned int o = arena_coppia(g_fog_legge, v, n, "", 0, 0);
+
+        if (!o || o >= FAM_RINVIO) return 0;
+        *out = FAM_RINVIO | o;
+        return 1;
+    }
+    return famiglia_risolvi(g_fog_calc, v, n, out);
 }
 
 /* -----------------------------------------------------------------------------
@@ -603,6 +1083,8 @@ static int leggi_stile_bordo(const char *v, unsigned int n, unsigned int *out)
  * css_sfondo_url() distingue i due casi dall'indirizzo: dentro l'arena o no.
  * ========================================================================== */
 static CssFoglio *g_fog_legge = 0;          /* il foglio che css_analizza sta leggendo */
+static int        g_sost_attiva;            /* defined with var_in_linea */
+static unsigned int var_testo_metti_url(const char *s, unsigned int n);
 
 static int leggi_url(const char *v, unsigned int n, unsigned int *out)
 {
@@ -649,6 +1131,13 @@ static int leggi_url(const char *v, unsigned int n, unsigned int *out)
         dove[4 + (b - a)] = 0;
         f->arena_n += serve;
         *out = (unsigned int)(dove + 4);
+    } else if (g_sost_attiva) {
+        /* ! A VALUE MADE BY var() LIVES IN g_loc, which the next element
+         * empties: the address is copied where it lasts the whole layout */
+        unsigned int t = var_testo_metti_url(v + a, b - a);
+
+        if (!t) return 0;
+        *out = t;
     } else {
         *out = (unsigned int)(v + a);
     }
@@ -992,6 +1481,240 @@ static void coda_metti(DichIter *it, unsigned short p, unsigned int v)
     if (it->coda_n < DICH_CODA) { it->coda_p[it->coda_n] = p; it->coda_v[it->coda_n] = v; it->coda_n++; }
 }
 
+/* "a\0b\0" into the arena (`a` in lower case if asked): the offset, 0 if
+ * there is no room (and the sheet says it is cut). */
+static unsigned int arena_coppia(CssFoglio *f, const char *a, unsigned int na,
+                                 const char *b, unsigned int nb, int minuscolo)
+{
+    unsigned int o = f->arena_n, i;
+
+    if (f->arena_n + na + nb + 2 > f->arena_max) { f->troncato = 1; return 0; }
+    for (i = 0; i < na; i++) f->arena[o + i] = minuscolo ? (char)minusc((unsigned char)a[i]) : a[i];
+    f->arena[o + na] = 0;
+    for (i = 0; i < nb; i++) f->arena[o + na + 1 + i] = b[i];
+    f->arena[o + na + 1 + nb] = 0;
+    f->arena_n += na + nb + 2;
+    return o;
+}
+
+/* Is there a var() (or env()) in the value? Not as part of a longer name. */
+static int ha_var(const char *v, unsigned int n)
+{
+    unsigned int i;
+
+    for (i = 0; i + 4 <= n; i++) {
+        if (v[i + 3] != '(') continue;
+        if (i > 0 && (nomeok((unsigned char)v[i - 1]))) continue;
+        if ((minusc((unsigned char)v[i]) == 'v' && minusc((unsigned char)v[i + 1]) == 'a' &&
+             minusc((unsigned char)v[i + 2]) == 'r') ||
+            (minusc((unsigned char)v[i]) == 'e' && minusc((unsigned char)v[i + 1]) == 'n' &&
+             minusc((unsigned char)v[i + 2]) == 'v')) return 1;
+    }
+    return 0;
+}
+
+static void var_in_linea(DichIter *it, const char *nome, unsigned int nn,
+                         const char *v, unsigned int n);
+
+/* =============================================================================
+ * @font-face (P6, 25 November 2026)
+ *
+ * The block says: this family name, in this weight and style, is in these
+ * files. It applies to no element: it is kept in the arena, with a CssDich
+ * that no rule points to (CSS_P_FONTFACE), and css_font_face() gives the
+ * blocks to the browser, which fetches and draws them.
+ *
+ * The record, aligned to 4: the sheet's address as an arena offset (4
+ * bytes, 0 = the page), weight from and to (2 + 2), italic (1), three bytes
+ * of nothing, then "family\0src\0unicode-range\0", the family in lower case
+ * and without quotes.
+ * ============================================================================= */
+#define FF_TESTA 12
+
+/* the next «name: value» of a block, raw; 0 at the end */
+static int dich_grezza(const char *t, unsigned int *pi, unsigned int n,
+                       unsigned int *na, unsigned int *nb, unsigned int *va, unsigned int *vb)
+{
+    unsigned int i = *pi;
+
+    for (;;) {
+        unsigned int liv = 0;
+
+        while (i < n && (spazio((unsigned char)t[i]) || t[i] == ';')) i++;
+        if (i + 1 < n && t[i] == '/' && t[i + 1] == '*') {
+            for (i += 2; i + 1 < n && !(t[i] == '*' && t[i + 1] == '/'); i++) {}
+            i += 2;
+            continue;
+        }
+        if (i >= n) { *pi = n; return 0; }
+        *na = i;
+        while (i < n && nomeok((unsigned char)t[i])) i++;
+        *nb = i;
+        while (i < n && spazio((unsigned char)t[i])) i++;
+        if (i >= n || t[i] != ':') {
+            while (i < n && t[i] != ';') i++;
+            continue;
+        }
+        i++;
+        while (i < n && spazio((unsigned char)t[i])) i++;
+        *va = i;
+        while (i < n && (liv || t[i] != ';')) {
+            if (t[i] == '"' || t[i] == '\'') {
+                char q = t[i];
+
+                for (i++; i < n && t[i] != q; i++) if (t[i] == '\\') i++;
+            } else if (t[i] == '(') liv++;
+            else if (t[i] == ')' && liv) liv--;
+            if (i < n) i++;
+        }
+        *vb = i;
+        while (*vb > *va && spazio((unsigned char)t[*vb - 1])) (*vb)--;
+        *pi = i;
+        return 1;
+    }
+}
+
+/* a font-weight: «bold», «400», «100 900» */
+static void ff_peso(const char *v, unsigned int n, unsigned short *da, unsigned short *a)
+{
+    unsigned int i = 0, x[2] = { 0, 0 }, k = 0;
+
+    if (parola_e(v, n, "bold")) { *da = *a = 700; return; }
+    if (parola_e(v, n, "normal")) { *da = *a = 400; return; }
+    while (i < n && k < 2) {
+        while (i < n && !c_cifra(v[i])) i++;
+        if (i >= n) break;
+        while (i < n && c_cifra(v[i])) { x[k] = x[k] * 10 + (unsigned int)(v[i] - '0'); i++; }
+        while (i < n && (c_cifra(v[i]) || v[i] == '.')) i++;
+        k++;
+    }
+    if (k == 0 || x[0] < 1 || x[0] > 1000) return;
+    *da = (unsigned short)x[0];
+    *a  = (unsigned short)(k == 2 && x[1] >= x[0] && x[1] <= 1000 ? x[1] : x[0]);
+}
+
+static void fontface_metti(CssFoglio *f, const char *t, unsigned int n)
+{
+    unsigned int   i = 0, na, nb, va, vb, fa = 0, fb = 0, sa = 0, sb = 0, ua = 0, ub = 0, o, k, base;
+    unsigned short pda = 400, pa = 400;
+    unsigned char  cors = 0;
+
+    while (dich_grezza(t, &i, n, &na, &nb, &va, &vb)) {
+        if (parola_e(t + na, nb - na, "font-family")) { fa = va; fb = vb; }
+        else if (parola_e(t + na, nb - na, "src")) { sa = va; sb = vb; }
+        else if (parola_e(t + na, nb - na, "unicode-range")) { ua = va; ub = vb; }
+        else if (parola_e(t + na, nb - na, "font-weight")) ff_peso(t + va, vb - va, &pda, &pa);
+        else if (parola_e(t + na, nb - na, "font-style"))
+            cors = (vb - va >= 6 && (minusc((unsigned char)t[va]) == 'i' || minusc((unsigned char)t[va]) == 'o'));
+    }
+    while (fb > fa && (t[fa] == '"' || t[fa] == '\'' || spazio((unsigned char)t[fa]))) fa++;
+    while (fb > fa && (t[fb - 1] == '"' || t[fb - 1] == '\'' || spazio((unsigned char)t[fb - 1]))) fb--;
+    if (fb <= fa || sb <= sa || f->dich_n >= f->dich_max) return;
+
+    base = f->base ? (unsigned int)(f->base - f->arena) : 0;
+    f->arena_n = (f->arena_n + 3u) & ~3u;
+    o = f->arena_n;
+    if (o + FF_TESTA + (fb - fa) + (sb - sa) + (ub - ua) + 3 > f->arena_max) { f->troncato = 1; return; }
+    f->arena[o + 0] = (char)(base & 0xFF);         f->arena[o + 1] = (char)((base >> 8) & 0xFF);
+    f->arena[o + 2] = (char)((base >> 16) & 0xFF); f->arena[o + 3] = (char)((base >> 24) & 0xFF);
+    f->arena[o + 4] = (char)(pda & 0xFF); f->arena[o + 5] = (char)(pda >> 8);
+    f->arena[o + 6] = (char)(pa & 0xFF);  f->arena[o + 7] = (char)(pa >> 8);
+    f->arena[o + 8] = (char)cors; f->arena[o + 9] = f->arena[o + 10] = f->arena[o + 11] = 0;
+    k = o + FF_TESTA;
+    for (i = fa; i < fb; i++) f->arena[k++] = (char)minusc((unsigned char)t[i]);
+    f->arena[k++] = 0;
+    for (i = sa; i < sb; i++) f->arena[k++] = t[i];
+    f->arena[k++] = 0;
+    for (i = ua; i < ub; i++) f->arena[k++] = t[i];
+    f->arena[k++] = 0;
+    f->arena_n = k;
+    f->dich[f->dich_n].proprieta = CSS_P_FONTFACE;
+    f->dich[f->dich_n].numero    = o;
+    f->dich[f->dich_n].prossima  = -1;
+    f->dich_n++;
+}
+
+/* The index of the blocks of ONE sheet, made again when the sheet grows. */
+#define FF_MAX 256
+static struct {
+    const CssFoglio *f;
+    unsigned int     dich_n, arena_n, regole_n;
+    unsigned int     n, off[FF_MAX];
+    unsigned char    k[FF_MAX];
+    unsigned int     nk, fam[CSS_FAM_PAGINA_MAX + 1];
+} g_ff;
+
+static void ff_indice(const CssFoglio *f)
+{
+    unsigned int i;
+
+    if (g_ff.f == f && g_ff.dich_n == f->dich_n && g_ff.arena_n == f->arena_n &&
+        g_ff.regole_n == f->regole_n) return;
+    g_ff.f = f; g_ff.dich_n = f->dich_n; g_ff.arena_n = f->arena_n; g_ff.regole_n = f->regole_n;
+    g_ff.n = g_ff.nk = 0;
+    for (i = 0; i < f->dich_n && g_ff.n < FF_MAX; i++) {
+        const char  *nome;
+        unsigned int q;
+
+        if (f->dich[i].proprieta != CSS_P_FONTFACE) continue;
+        nome = f->arena + f->dich[i].numero + FF_TESTA;
+        for (q = 0; q < g_ff.nk; q++) if (ug_min(f->arena + g_ff.fam[q], nome)) break;
+        if (q == g_ff.nk) {
+            if (g_ff.nk > CSS_FAM_PAGINA_MAX) continue;      /* too many families */
+            g_ff.fam[g_ff.nk++] = f->dich[i].numero + FF_TESTA;
+        }
+        g_ff.off[g_ff.n] = f->dich[i].numero;
+        g_ff.k[g_ff.n] = (unsigned char)q;
+        g_ff.n++;
+    }
+}
+
+static int ff_famiglia(const CssFoglio *f, const char *nome, unsigned int n)
+{
+    unsigned int q;
+
+    if (!f || !f->dich) return -1;
+    ff_indice(f);
+    for (q = 0; q < g_ff.nk; q++) {
+        const char  *x = f->arena + g_ff.fam[q];
+        unsigned int j = 0;
+
+        while (j < n && x[j] && x[j] == minusc((unsigned char)nome[j])) j++;
+        if (j == n && x[j] == 0) return (int)q;
+    }
+    return -1;
+}
+
+int css_font_face(const CssFoglio *f, unsigned int i, CssFontFace *out)
+{
+    const char  *r;
+    unsigned int base;
+
+    if (!f || !f->dich || !out) return 0;
+    ff_indice(f);
+    if (i >= g_ff.n) return 0;
+    r = f->arena + g_ff.off[i];
+    base = (unsigned int)(unsigned char)r[0] | (unsigned int)(unsigned char)r[1] << 8 |
+           (unsigned int)(unsigned char)r[2] << 16 | (unsigned int)(unsigned char)r[3] << 24;
+    out->base       = base ? f->arena + base : 0;
+    out->peso_min   = (unsigned short)((unsigned char)r[4] | (unsigned char)r[5] << 8);
+    out->peso_max   = (unsigned short)((unsigned char)r[6] | (unsigned char)r[7] << 8);
+    out->corsivo    = (unsigned char)r[8];
+    out->k          = g_ff.k[i];
+    out->famiglia   = r + FF_TESTA;
+    out->src        = out->famiglia;
+    while (*out->src) out->src++;
+    out->src++;
+    out->intervallo = out->src;
+    while (*out->intervallo) out->intervallo++;
+    out->intervallo++;
+    if (!out->intervallo[0]) out->intervallo = 0;
+    return 1;
+}
+static void vp_metti(const char *nome, unsigned int nn, const char *val, unsigned int vn,
+                     unsigned int peso);
+static int  g_raccogli;
+
 /* Le parole di un valore, separate da spazi ma non dentro le parentesi —
  * rgb(1, 2, 3) e' una parola sola. Al piu' `max`; rende quante. */
 static unsigned int parole(const char *v, unsigned int n, unsigned int *da,
@@ -1109,6 +1832,46 @@ static int scorciatoia(DichIter *it, const char *nome, unsigned int nn,
         if (bk == 1 && (short)(unsigned short)a < 0 && (short)(unsigned short)a > -100) b = a;   /* cover, contain */
         coda_metti(it, CSS_P_SFONDO_MW, a);
         coda_metti(it, CSS_P_SFONDO_MH, b);
+        return 1;
+    }
+
+    /* =====================================================================
+     * font: [style] [variant] [weight] [stretch] size[/line-height] family
+     * (P6). Google writes almost all its text this way. ! WHAT IT DOES
+     * NOT SAY GOES BACK TO normal, as with every shorthand. A system font
+     * («font: menu») is not ours to know: the declaration is dropped.
+     * ===================================================================== */
+    if (parola_e(nome, nn, "font")) {
+        unsigned int fd[8], fl[8], fk, fq, stile = 0, peso = 0, corpo, fam, z, w;
+
+        fk = parole(v, n, fd, fl, 8);
+        for (fq = 0; fq < fk; fq++) {
+            const char  *t = v + fd[fq];
+            unsigned int l = fl[fq];
+
+            if (parola_e(t, l, "italic") || parola_e(t, l, "oblique")) { stile = 1; continue; }
+            if (parola_e(t, l, "bold") || parola_e(t, l, "bolder")) { peso = 1; continue; }
+            if (parola_e(t, l, "normal") || parola_e(t, l, "small-caps") || parola_e(t, l, "lighter") ||
+                parola_e(t, l, "condensed") || parola_e(t, l, "semi-condensed") ||
+                parola_e(t, l, "expanded") || parola_e(t, l, "semi-expanded")) continue;
+            if (l == 3 && c_cifra(t[0]) && t[1] == '0' && t[2] == '0') { peso = t[0] >= '6'; continue; }
+            /* the size, perhaps with its line height glued on */
+            for (z = 0; z < l && t[z] != '/'; z++) {}
+            if (!leggi_valore(CSS_P_CORPO, t, z, &corpo)) return 1;
+            w = fd[fq] + l;
+            /* «14px / 20px»: the line height as words of its own */
+            if (z == l && fq + 1 < fk && v[fd[fq + 1]] == '/') {
+                w = fd[fq + 1] + fl[fq + 1];
+                if (fl[fq + 1] == 1 && fq + 2 < fk) w = fd[fq + 2] + fl[fq + 2];
+            }
+            while (w < n && spazio((unsigned char)v[w])) w++;
+            if (w >= n || !leggi_valore(CSS_P_FAMIGLIA, v + w, n - w, &fam)) return 1;
+            coda_metti(it, CSS_P_STILE, stile);
+            coda_metti(it, CSS_P_PESO, peso);
+            coda_metti(it, CSS_P_CORPO, corpo);
+            coda_metti(it, CSS_P_FAMIGLIA, fam);
+            return 1;
+        }
         return 1;
     }
 
@@ -1287,6 +2050,33 @@ static int dich_prossima(DichIter *it, unsigned short *prop, unsigned int *val)
             }
         }
 
+        /* ! A CUSTOM PROPERTY, AND A VALUE WITH var() (P6): neither can be
+         * read now. In a sheet they are kept as text (CSS_P_PERSONALE,
+         * CSS_P_RIMANDATA); in an attribute style read by css_calcola the
+         * var() are replaced at once and what comes out is read here; an
+         * attribute style read alone, without an element, cannot. */
+        if (pf - pi > 2 && it->t[pi] == '-' && it->t[pi + 1] == '-') {
+            if (g_raccogli) vp_metti(it->t + pi, pf - pi, it->t + vi, vf - vi, 0xFFFFFFFFu);
+            else if (g_fog_legge &&
+                (*val = arena_coppia(g_fog_legge, it->t + pi, pf - pi, it->t + vi, vf - vi, 0)) != 0) {
+                *prop = CSS_P_PERSONALE;
+                return 1;
+            }
+            continue;
+        }
+        if (g_raccogli) continue;           /* only the custom ones are wanted */
+        if (pf > pi && vf > vi && ha_var(it->t + vi, vf - vi)) {
+            if (g_fog_legge) {
+                if ((*val = arena_coppia(g_fog_legge, it->t + pi, pf - pi, it->t + vi, vf - vi, 1)) != 0) {
+                    *prop = CSS_P_RIMANDATA;
+                    return 1;
+                }
+                continue;
+            }
+            if (g_in_calcola) var_in_linea(it, it->t + pi, pf - pi, it->t + vi, vf - vi);
+            continue;
+        }
+
         if (pf > pi && vf > vi && prop_codice(it->t + pi, pf - pi, prop) &&
             leggi_valore(*prop, it->t + vi, vf - vi, val))
             return 1;
@@ -1344,6 +2134,49 @@ static short *campo_larg(CssStile *s, unsigned short prop)
            prop == CSS_P_LARG_MAX ? &s->larghezza_max : &s->larghezza_min;
 }
 
+/* the lengths that cannot be negative: a calc() below zero becomes zero */
+static int non_negativa(unsigned short p)
+{
+    return p == CSS_P_CORPO || (p >= CSS_P_BORDO_LARG && p < CSS_P_BORDO_LARG + 4) ||
+           (p >= CSS_P_IMBOTTITURA && p < CSS_P_IMBOTTITURA + 4) ||
+           (p >= CSS_P_LARG && p <= CSS_P_LARG_MIN) || p == CSS_P_ALT || p == CSS_P_ALT_MIN ||
+           p == CSS_P_SPAZIO_RIGA || p == CSS_P_SPAZIO_COL;
+}
+
+/* A relative length becomes pixels: `em` px make 1em, `perc` px make 100%.
+ * ! A calc() OF A WIDTH OR A HEIGHT IS READ APART (see the calc() section):
+ * a pure percentage stays one, a % in min/max/clamp is left out, and what
+ * still needs the container is not posed at all. */
+static void posa_relativa(CssStile *s, unsigned short p, unsigned int val, int em, int perc)
+{
+    unsigned int unita = (val >> 24) & 0x7Fu;
+    int          px;
+
+    if ((unita == REL_CALC_F || unita == REL_CALC_L) &&
+        ((p >= CSS_P_LARG && p <= CSS_P_LARG_MIN) || p == CSS_P_ALT || p == CSS_P_ALT_MIN)) {
+        const char *t = calc_testo(val);
+        int         v0, v1, vm, tinto;
+
+        if (!t) return;
+        /* a pure percentage: 0 at 0, and twice at twice (min(100%, 1200px)
+         * is 0 at 0 too, but not linear) */
+        if (p != CSS_P_ALT && p != CSS_P_ALT_MIN &&
+            calc_valuta_testo(t, em, 0, 0, &v0, &tinto) && v0 == 0 &&
+            calc_valuta_testo(t, em, 10000, 0, &v1, &tinto) && v1 > 0 &&
+            calc_valuta_testo(t, em, 5000, 0, &vm, &tinto) && (vm * 2 - v1 <= 1 && v1 - vm * 2 <= 1)) {
+            /* 100% = 10000 px: v1 is the percentage in hundredths */
+            *campo_larg(s, p) = (short)(v1 > 32000 ? 32000 : v1);
+            s->larghezza_perc |= bit_perc(p);
+            return;
+        }
+        if (!calc_valuta_testo(t, em, 0, 1, &px, &tinto) || tinto) return;
+    } else {
+        px = rel_px(val, em, perc);
+    }
+    if (px < 0 && non_negativa(p)) px = 0;
+    posa_px(s, p, px);
+}
+
 static void css_posa(CssStile *s, unsigned short prop, unsigned int val)
 {
     /* ! LA % DI UNA LARGHEZZA NON SI RISOLVE QUI: e' del contenitore, che
@@ -1366,7 +2199,7 @@ static void css_posa(CssStile *s, unsigned short prop, unsigned int val)
             {   /* fuori dalla cascata (un attributo style da solo): la base e'
                  * il corpo che lo stile ha gia', o quello predefinito */
                 int c = (s->corpo == CSS_MISURA_NO) ? CSS_CORPO_PREDEFINITO : s->corpo;
-                posa_px(s, prop, rel_px(val, c, prop == CSS_P_CORPO ? c : g_media_w));
+                posa_relativa(s, prop, val, c, prop == CSS_P_CORPO ? c : g_media_w);
             }
             return;
         }
@@ -1377,7 +2210,16 @@ static void css_posa(CssStile *s, unsigned short prop, unsigned int val)
     case CSS_P_SFONDO:     s->sfondo = val;                            break;
     case CSS_P_PESO:       s->grassetto = (unsigned char)val;          break;
     case CSS_P_STILE:      s->corsivo = (unsigned char)val;            break;
-    case CSS_P_FAMIGLIA:   s->famiglia = (unsigned char)val;           break;
+    case CSS_P_FAMIGLIA:
+        if (val & FAM_RINVIO) {
+            unsigned int fam, n = 0;
+            const char  *t = g_fog_calc && (val & ~FAM_RINVIO) < g_fog_calc->arena_n
+                           ? g_fog_calc->arena + (val & ~FAM_RINVIO) : 0;
+
+            if (t) while (t[n]) n++;
+            if (t && famiglia_risolvi(g_fog_calc, t, n, &fam)) s->famiglia = (unsigned char)fam;
+        } else s->famiglia = (unsigned char)val;
+        break;
     case CSS_P_CORPO:      s->corpo = (short)((int)val - 32768);       break;
     case CSS_P_ALLINEA:    s->allineamento = (unsigned char)val;       break;
     case CSS_P_DISPLAY:    s->display = (unsigned char)val;            break;
@@ -1498,6 +2340,7 @@ void css_stile_inline(const char *testo, unsigned int n, CssStile *s)
     if (!testo || !s) return;
 
     g_fog_legge = 0;            /* un attributo style: l'indirizzo resta dov'e' */
+    if (!g_in_calcola) g_loc_n = 1;
     g_opaca = g_punta = 1;
     it.t = testo; it.i = 0; it.n = n; it.coda_n = it.coda_i = 0;
     while (dich_prossima(&it, &prop, &val)) css_posa(s, prop, val);
@@ -1983,42 +2826,30 @@ static void indice_metti(CssFoglio *f, int k)
  * distingue: resta quello del documento).
  * ============================================================================= */
 static int g_media_w = 800;
+static int g_media_h = 600;
 
 void css_media_larghezza(int px)
 {
     if (px > 0) g_media_w = px;
 }
 
-/* Una misura di una media query: «1120px», «40em», «calc(1120px - 1px)». */
+void css_media_altezza(int px)
+{
+    if (px > 0) g_media_h = px;
+}
+
+/* Una misura di una media query: «1120px», «40em», «calc(1120px - 1px)».
+ * ! em AND rem ARE 16 px HERE, the initial font size, as the spec says: a
+ * media query does not know any element. */
 static int media_misura(const char *s, unsigned int n, int *out)
 {
-    unsigned int i = 0;
-    int          v = 0, neg = 0;
+    CalcBasi b;
+    int      tinto;
 
-    while (i < n && spazio((unsigned char)s[i])) i++;
-    if (i + 5 <= n && minusc((unsigned char)s[i]) == 'c' && s[i + 4] == '(') {
-        int a, b, segno = 1;
-        unsigned int j = i + 5, k;
-
-        k = j;
-        while (k < n && s[k] != '+' && !(s[k] == '-' && k > j && spazio((unsigned char)s[k - 1]))) k++;
-        if (k >= n || !media_misura(s + j, k - j, &a)) return 0;
-        if (s[k] == '-') segno = -1;
-        j = k + 1;
-        k = j;
-        while (k < n && s[k] != ')') k++;
-        if (!media_misura(s + j, k - j, &b)) return 0;
-        *out = a + segno * b;
-        return 1;
-    }
-    if (i < n && s[i] == '-') { neg = 1; i++; }
-    if (i >= n || s[i] < '0' || s[i] > '9') return 0;
-    while (i < n && s[i] >= '0' && s[i] <= '9') v = v * 10 + (s[i++] - '0');
-    if (i < n && s[i] == '.') { i++; while (i < n && s[i] >= '0' && s[i] <= '9') i++; }
-    if (i + 2 <= n && minusc((unsigned char)s[i]) == 'e' && minusc((unsigned char)s[i + 1]) == 'm') v *= 16;
-    else if (i + 3 <= n && minusc((unsigned char)s[i]) == 'r' && minusc((unsigned char)s[i + 1]) == 'e') v *= 16;
-    *out = neg ? -v : v;
-    return 1;
+    while (n > 0 && spazio((unsigned char)s[0])) { s++; n--; }
+    while (n > 0 && spazio((unsigned char)s[n - 1])) n--;
+    b.em = 16; b.rem = 16; b.perc = 0; b.perc_ignota = 1;
+    return n > 0 && calc_valuta(s, n, &b, out, &tinto) && !tinto;
 }
 
 static int pezzo_ug(const char *s, unsigned int n, const char *parola)
@@ -2029,11 +2860,204 @@ static int pezzo_ug(const char *s, unsigned int n, const char *parola)
     return k == n && parola[k] == '\0';
 }
 
-/* «(nome: valore)» o «(nome)», senza le parentesi. */
+/* =============================================================================
+ * The media features (P6, 25 November 2026)
+ *
+ * ! WHAT THIS SCREEN IS, SAID ONCE: a colour screen with a mouse, light
+ * scheme, 1 device pixel per CSS pixel, no wish for less motion or more
+ * contrast. Each feature has its value here; `(feature)` alone is true when
+ * that value is not none / 0 / no-preference, as the spec says.
+ * The sizes are compared as numbers: px for width and height, thousandths for
+ * aspect-ratio (w/h) and resolution (dppx).
+ * ============================================================================= */
+#define MF_LARG    1
+#define MF_ALT     2
+#define MF_RAPP    3
+#define MF_RISOL   4
+#define MF_PAROLA  5
+#define MF_NUMERO  6
+
+typedef struct { const char *nome; unsigned char tipo; const char *parola; int numero; } MediaCar;
+
+static const MediaCar MEDIA_CAR[] = {
+    { "width",                  MF_LARG,   0, 0 },
+    { "device-width",           MF_LARG,   0, 0 },
+    { "height",                 MF_ALT,    0, 0 },
+    { "device-height",          MF_ALT,    0, 0 },
+    { "aspect-ratio",           MF_RAPP,   0, 0 },
+    { "device-aspect-ratio",    MF_RAPP,   0, 0 },
+    { "resolution",             MF_RISOL,  0, 0 },
+    { "-webkit-device-pixel-ratio", MF_RISOL, 0, 0 },
+    { "-moz-device-pixel-ratio",    MF_RISOL, 0, 0 },
+    { "device-pixel-ratio",     MF_RISOL,  0, 0 },
+    { "orientation",            MF_PAROLA, 0, 0 },     /* computed */
+    { "prefers-color-scheme",   MF_PAROLA, "light", 0 },
+    { "prefers-reduced-motion", MF_PAROLA, "no-preference", 0 },
+    { "prefers-contrast",       MF_PAROLA, "no-preference", 0 },
+    { "prefers-reduced-transparency", MF_PAROLA, "no-preference", 0 },
+    { "prefers-reduced-data",   MF_PAROLA, "no-preference", 0 },
+    { "forced-colors",          MF_PAROLA, "none", 0 },
+    { "inverted-colors",        MF_PAROLA, "none", 0 },
+    { "display-mode",           MF_PAROLA, "browser", 0 },
+    { "scripting",              MF_PAROLA, "enabled", 0 },
+    { "update",                 MF_PAROLA, "fast", 0 },
+    { "color-gamut",            MF_PAROLA, "srgb", 0 },
+    { "dynamic-range",          MF_PAROLA, "standard", 0 },
+    { "video-dynamic-range",    MF_PAROLA, "standard", 0 },
+    { "overflow-block",         MF_PAROLA, "scroll", 0 },
+    { "overflow-inline",        MF_PAROLA, "scroll", 0 },
+    { "hover",                  MF_PAROLA, "hover", 0 },
+    { "any-hover",              MF_PAROLA, "hover", 0 },
+    { "pointer",                MF_PAROLA, "fine", 0 },
+    { "any-pointer",            MF_PAROLA, "fine", 0 },
+    { "color",                  MF_NUMERO, 0, 8 },
+    { "color-index",            MF_NUMERO, 0, 0 },
+    { "monochrome",             MF_NUMERO, 0, 0 },
+    { "grid",                   MF_NUMERO, 0, 0 },
+    { 0, 0, 0, 0 }
+};
+
+static int pezzo_ug(const char *s, unsigned int n, const char *parola);
+
+static const MediaCar *media_car(const char *s, unsigned int n)
+{
+    int j;
+
+    for (j = 0; MEDIA_CAR[j].nome; j++) if (pezzo_ug(s, n, MEDIA_CAR[j].nome)) return &MEDIA_CAR[j];
+    return 0;
+}
+
+/* this screen's value of a feature with a size */
+static int media_nostro(const MediaCar *c)
+{
+    switch (c->tipo) {
+    case MF_LARG:  return g_media_w;
+    case MF_ALT:   return g_media_h;
+    case MF_RAPP:  return g_media_h > 0 ? g_media_w * 1000 / g_media_h : 1000;
+    case MF_RISOL: return 1000;
+    case MF_NUMERO: return c->numero;
+    }
+    return 0;
+}
+
+/* a value written in the query, in the feature's numbers */
+static int media_suo(const MediaCar *c, const char *s, unsigned int n, int *out)
+{
+    unsigned int i;
+
+    while (n > 0 && spazio((unsigned char)s[0])) { s++; n--; }
+    while (n > 0 && spazio((unsigned char)s[n - 1])) n--;
+    if (n == 0) return 0;
+    if (c->tipo == MF_LARG || c->tipo == MF_ALT) return media_misura(s, n, out);
+    if (c->tipo == MF_RAPP) {
+        /* «16/9», «16 / 9», or a number */
+        int a = 0, b = 0;
+        unsigned int k;
+
+        for (k = 0; k < n && s[k] != '/'; k++) {}
+        for (i = 0; i < k; i++) if (c_cifra(s[i])) a = a * 10 + (s[i] - '0'); else if (!spazio((unsigned char)s[i])) break;
+        if (k == n) { *out = a * 1000; return a > 0; }
+        for (i = k + 1; i < n; i++) if (c_cifra(s[i])) b = b * 10 + (s[i] - '0'); else if (!spazio((unsigned char)s[i])) break;
+        if (b <= 0) return 0;
+        *out = a * 1000 / b;
+        return 1;
+    }
+    {
+        /* resolution: 2dppx, 2x, 192dpi, 76dpcm; a pixel ratio: a number */
+        double v = 0, sc = 1;
+        int    cifre = 0;
+
+        for (i = 0; i < n && c_cifra(s[i]); i++) { v = v * 10 + (s[i] - '0'); cifre = 1; }
+        if (i < n && s[i] == '.') for (i++; i < n && c_cifra(s[i]); i++) { sc /= 10; v += (s[i] - '0') * sc; cifre = 1; }
+        if (!cifre) return 0;
+        if (pezzo_ug(s + i, n - i, "dpi"))  v /= 96;
+        else if (pezzo_ug(s + i, n - i, "dpcm")) v = v * 2.54 / 96;
+        else if (i < n && !pezzo_ug(s + i, n - i, "dppx") && !pezzo_ug(s + i, n - i, "x")) return 0;
+        *out = c->tipo == MF_RISOL ? (int)(v * 1000 + 0.5) : (int)v;
+        return 1;
+    }
+}
+
+/* the boolean context: «(hover)», «(prefers-reduced-motion)» */
+static int media_vero(const MediaCar *c)
+{
+    if (c->tipo == MF_PAROLA) {
+        if (!c->parola) return 1;                   /* orientation */
+        return !(c->parola && (pezzo_ug(c->parola, 4, "none") ||
+                               pezzo_ug(c->parola, 13, "no-preference")));
+    }
+    return media_nostro(c) != 0;
+}
+
+static int media_confronta(int a, const char *op, unsigned int k, int b)
+{
+    if (k == 1 && op[0] == '<') return a < b;
+    if (k == 1 && op[0] == '>') return a > b;
+    if (k == 1 && op[0] == '=') return a == b;
+    if (k == 2 && op[0] == '<') return a <= b;
+    if (k == 2 && op[0] == '>') return a >= b;
+    return 0;
+}
+
+/* «(nome: valore)», «(nome)», o la forma a intervalli «(width >= 600px)»,
+ * «(400px <= width < 700px)», senza le parentesi. */
 static int media_caratteristica(const char *s, unsigned int n)
 {
-    unsigned int i = 0, ni, nf, vi, vf;
-    int          v;
+    unsigned int i = 0, ni, nf, vi, vf, k;
+    int          v, noi;
+    const MediaCar *c;
+
+    /* the range form: an operator outside parentheses */
+    {
+        unsigned int op[2], opk[2], nop = 0, liv = 0;
+
+        for (k = 0; k < n && nop < 2; k++) {
+            if (s[k] == '(') liv++;
+            else if (s[k] == ')' && liv) liv--;
+            else if (!liv && (s[k] == '<' || s[k] == '>' || s[k] == '=')) {
+                op[nop] = k;
+                opk[nop] = (k + 1 < n && s[k + 1] == '=' && s[k] != '=') ? 2 : 1;
+                k += opk[nop] - 1;
+                nop++;
+            }
+        }
+        if (nop) {
+            /* the pieces: a [op b [op c]] */
+            unsigned int da[3], a[3], q;
+            int          nome_in = -1;
+
+            da[0] = 0; a[0] = op[0];
+            da[1] = op[0] + opk[0]; a[1] = nop > 1 ? op[1] : n;
+            if (nop > 1) { da[2] = op[1] + opk[1]; a[2] = n; }
+            for (q = 0; q <= nop; q++) {
+                unsigned int x = da[q], y = a[q];
+
+                while (x < y && spazio((unsigned char)s[x])) x++;
+                while (y > x && spazio((unsigned char)s[y - 1])) y--;
+                da[q] = x; a[q] = y;
+                if (x < y && (c_lettera(s[x]) || (s[x] == '-' && x + 1 < y && c_lettera(s[x + 1]))) &&
+                    media_car(s + x, y - x)) nome_in = (int)q;
+            }
+            if (nome_in < 0) return 0;
+            c = media_car(s + da[nome_in], a[nome_in] - da[nome_in]);
+            if (c->tipo == MF_PAROLA) return 0;
+            noi = media_nostro(c);
+            for (q = 0; q < nop; q++) {
+                /* operator q is between piece q and piece q+1 */
+                int sx, dx;
+
+                if ((int)q == nome_in) {
+                    sx = noi;
+                    if (!media_suo(c, s + da[q + 1], a[q + 1] - da[q + 1], &dx)) return 0;
+                } else if ((int)q + 1 == nome_in) {
+                    if (!media_suo(c, s + da[q], a[q] - da[q], &sx)) return 0;
+                    dx = noi;
+                } else return 0;
+                if (!media_confronta(sx, s + op[q], opk[q], dx)) return 0;
+            }
+            return 1;
+        }
+    }
 
     while (i < n && spazio((unsigned char)s[i])) i++;
     ni = i;
@@ -2044,56 +3068,114 @@ static int media_caratteristica(const char *s, unsigned int n)
     vf = n;
     while (vf > vi && spazio((unsigned char)s[vf - 1])) vf--;
 
-    if (pezzo_ug(s + ni, nf - ni, "min-width") || pezzo_ug(s + ni, nf - ni, "min-device-width"))
-        return media_misura(s + vi, vf - vi, &v) && g_media_w >= v;
-    if (pezzo_ug(s + ni, nf - ni, "max-width") || pezzo_ug(s + ni, nf - ni, "max-device-width"))
-        return media_misura(s + vi, vf - vi, &v) && g_media_w <= v;
-    if (pezzo_ug(s + ni, nf - ni, "width"))
-        return media_misura(s + vi, vf - vi, &v) && g_media_w == v;
-    if (pezzo_ug(s + ni, nf - ni, "prefers-color-scheme"))
-        return pezzo_ug(s + vi, vf - vi, "light");
-    if (pezzo_ug(s + ni, nf - ni, "prefers-reduced-motion"))
-        return pezzo_ug(s + vi, vf - vi, "no-preference");
-    if (pezzo_ug(s + ni, nf - ni, "orientation"))
-        return pezzo_ug(s + vi, vf - vi, "landscape");
-    if (pezzo_ug(s + ni, nf - ni, "hover") || pezzo_ug(s + ni, nf - ni, "any-hover"))
-        return vi == vf || pezzo_ug(s + vi, vf - vi, "hover");
-    if (pezzo_ug(s + ni, nf - ni, "pointer") || pezzo_ug(s + ni, nf - ni, "any-pointer"))
-        return vi == vf || pezzo_ug(s + vi, vf - vi, "fine");
-    if (pezzo_ug(s + ni, nf - ni, "color"))
-        return 1;
-    return 0;       /* quel che non si conosce non vale */
+    {
+        int          prefisso = 0;           /* 1 min-, 2 max- */
+        char         nome[48];
+        unsigned int a = ni, z = 0, w;
+
+        /* min-width, max-width; -webkit-min-device-pixel-ratio is min- of
+         * -webkit-device-pixel-ratio; min--moz-device-pixel-ratio min- of
+         * -moz-device-pixel-ratio */
+        if (nf - a > 4 && (pezzo_ug(s + a, 4, "min-") || pezzo_ug(s + a, 4, "max-"))) {
+            prefisso = minusc((unsigned char)s[a + 1]) == 'i' ? 1 : 2;
+            a += 4;
+        } else if (nf - a > 12 && (pezzo_ug(s + a, 12, "-webkit-min-") || pezzo_ug(s + a, 12, "-webkit-max-"))) {
+            prefisso = minusc((unsigned char)s[a + 9]) == 'i' ? 1 : 2;
+            for (w = 0; w < 8; w++) nome[z++] = "-webkit-"[w];
+            a += 12;
+        }
+        for (w = a; w < nf && z < sizeof(nome) - 1; w++) nome[z++] = s[w];
+        nome[z] = 0;
+        c = media_car(nome, z);
+        if (!c) return 0;       /* quel che non si conosce non vale */
+        if (vi == vf) return prefisso ? 0 : media_vero(c);
+        if (c->tipo == MF_PAROLA) {
+            if (!c->parola)
+                return pezzo_ug(s + vi, vf - vi, g_media_w >= g_media_h ? "landscape" : "portrait");
+            return prefisso ? 0 : pezzo_ug(s + vi, vf - vi, c->parola);
+        }
+        if (!media_suo(c, s + vi, vf - vi, &v)) return 0;
+        noi = media_nostro(c);
+        return prefisso == 1 ? noi >= v : prefisso == 2 ? noi <= v : noi == v;
+    }
 }
 
-/* Una sola query (senza virgole): [only|not] [tipo] [and (c)]... */
-static int media_una(const char *s, unsigned int n)
+/* A condition of level 4: «(a) and (b)», «(a) or (b)», «not (a)»,
+ * parentheses inside parentheses. */
+static int media_condizione(const char *s, unsigned int n)
 {
     unsigned int i = 0;
-    int          nega = 0, va = 1;
+    int          ris = -1, op = 0, nega_tutto = 0;
 
+    while (i < n && spazio((unsigned char)s[i])) i++;
+    if (i + 3 < n && pezzo_ug(s + i, 3, "not") && (spazio((unsigned char)s[i + 3]) || s[i + 3] == '(')) {
+        nega_tutto = 1; i += 3;
+    }
     while (i < n) {
-        unsigned int p;
+        int v;
 
         while (i < n && spazio((unsigned char)s[i])) i++;
         if (i >= n) break;
         if (s[i] == '(') {
-            int liv = 1;
+            int          liv = 1;
+            unsigned int p = ++i, q, w;
 
-            p = ++i;
             while (i < n && liv) { if (s[i] == '(') liv++; else if (s[i] == ')') liv--; i++; }
-            if (!media_caratteristica(s + p, (i - 1) - p)) va = 0;
-            continue;
+            q = liv ? n : i - 1;
+            /* inside: a feature, or another condition */
+            for (w = p; w < q && spazio((unsigned char)s[w]); w++) {}
+            if (w < q && (s[w] == '(' || (w + 4 < q && pezzo_ug(s + w, 4, "not ")))) v = media_condizione(s + p, q - p);
+            else v = media_caratteristica(s + p, q - p);
+        } else {
+            unsigned int p = i;
+
+            while (i < n && !spazio((unsigned char)s[i]) && s[i] != '(') i++;
+            if (pezzo_ug(s + p, i - p, "and")) { op = 1; continue; }
+            if (pezzo_ug(s + p, i - p, "or"))  { op = 2; continue; }
+            v = 0;                                  /* a word that is not ours */
         }
+        if (ris < 0) ris = v;
+        else if (op == 2) ris = ris || v;
+        else ris = ris && v;
+    }
+    if (ris < 0) ris = 0;
+    return nega_tutto ? !ris : ris;
+}
+
+/* Una sola query (senza virgole): [only|not] [tipo] [and condizione], o una
+ * condizione da sola. */
+static int media_una(const char *s, unsigned int n)
+{
+    unsigned int i = 0, p;
+    int          nega = 0, va = 1;
+
+    while (i < n && spazio((unsigned char)s[i])) i++;
+    if (i >= n) return 1;
+    if (s[i] == '(') return media_condizione(s + i, n - i);
+    if (i + 4 < n && pezzo_ug(s + i, 4, "not ")) {
+        unsigned int w = i + 4;
+
+        while (w < n && spazio((unsigned char)s[w])) w++;
+        if (w < n && s[w] == '(') return media_condizione(s + i, n - i);
+    }
+    p = i;
+    while (i < n && !spazio((unsigned char)s[i]) && s[i] != '(') i++;
+    if (pezzo_ug(s + p, i - p, "not") || pezzo_ug(s + p, i - p, "only")) {
+        nega = pezzo_ug(s + p, i - p, "not");
+        while (i < n && spazio((unsigned char)s[i])) i++;
         p = i;
         while (i < n && !spazio((unsigned char)s[i]) && s[i] != '(') i++;
-        if (pezzo_ug(s + p, i - p, "not"))       nega = 1;
-        else if (pezzo_ug(s + p, i - p, "only") || pezzo_ug(s + p, i - p, "and")) { }
-        else if (pezzo_ug(s + p, i - p, "screen") || pezzo_ug(s + p, i - p, "all")) { }
-        else va = 0;                            /* print, speech, tv... */
+    }
+    if (!(pezzo_ug(s + p, i - p, "screen") || pezzo_ug(s + p, i - p, "all"))) va = 0;   /* print, speech, tv... */
+    while (i < n && spazio((unsigned char)s[i])) i++;
+    if (i + 3 <= n && pezzo_ug(s + i, 3, "and")) {
+        i += 3;
+        if (!media_condizione(s + i, n - i)) va = 0;
+    } else if (i < n) {
+        va = 0;                                     /* something after the type we cannot read */
     }
     return nega ? !va : va;
 }
-
 static int media_va(const char *s, unsigned int n)
 {
     unsigned int i = 0, p = 0;
@@ -2109,6 +3191,14 @@ static int media_va(const char *s, unsigned int n)
         }
     }
     return 0;
+}
+
+/* For matchMedia(): the same answer the sheets get. */
+int css_media_vale(const char *q, unsigned int n)
+{
+    if (!q) return 0;
+    while (n > 0 && spazio((unsigned char)q[0])) { q++; n--; }
+    return media_va(q, n);
 }
 
 /* @supports: not, and, or, (proprieta': valore), selector(...). */
@@ -2177,6 +3267,7 @@ unsigned int css_analizza(CssFoglio *f, const char *testo, unsigned int n,
     if (!f || !f->regole || !f->dich || !f->arena || !testo) return 0;
 
     g_fog_legge = f;            /* gli url() vanno copiati nella sua arena */
+    var_azzera();               /* a new rule may declare a custom property */
 
     while (i < n) {
         unsigned int sel_i, sel_f, gr_i, gr_f, s;
@@ -2221,6 +3312,8 @@ unsigned int css_analizza(CssFoglio *f, const char *testo, unsigned int n,
                     entra = supports_va(testo + pi, pf - pi);
                 else if (pezzo_ug(testo + ni, nf - ni, "layer"))
                     entra = 1;
+                else if (pezzo_ug(testo + ni, nf - ni, "font-face"))
+                    fontface_metti(f, testo + bi, bf - bi);
             }
             if (entra) {
                 fatte += css_analizza(f, testo + bi, bf - bi, origine);
@@ -2604,13 +3697,528 @@ static int regola_combacia(const CssFoglio *f, const HtmlDoc *d, int nodo,
 
 #define CSS_CAND_MAX 2048    /* candidate rules for one element */
 
+/* The rules that match `nodo`, in reading order, into `out` (at most `max`);
+ * returns how many. Apart from css_calcola since P6: the custom properties
+ * of an ancestor need the same list.
+ * ! THE CANDIDATES, THEN IN READING ORDER: at equal weight the rule read
+ * later wins, and that rule is the one with the higher index. Collected from
+ * the buckets of the element's id, classes and type and from the universal
+ * list, sorted, duplicates dropped (two classes can share a bucket). Too
+ * many: the whole list, as before - slower, never wrong. */
+static int abbina(const CssFoglio *f, const HtmlDoc *d, int nodo, int *out, int max)
+{
+    static int   cand[CSS_CAND_MAX];        /* not re-entered: see var_insieme */
+    int          nc = 0, troppe = 0, a, b, n = 0;
+    const char  *nome = html_nome(d, nodo);
+    const char  *idv  = html_attr(d, nodo, "id");
+    const char  *cls  = html_attr(d, nodo, "class");
+    int          lista[3 + 64], nl = 0, q;
+
+    lista[nl++] = f->uni_testa;
+    if (nome) lista[nl++] = f->testa[secchio('t', nome)];
+    if (idv && idv[0]) lista[nl++] = f->testa[secchio('#', idv)];
+    if (cls) {
+        const char *c = cls;
+
+        while (*c && nl < (int)(sizeof(lista) / sizeof(lista[0]))) {
+            while (*c && spazio((unsigned char)*c)) c++;
+            if (!*c) break;
+            lista[nl++] = f->testa[secchio('.', c)];
+            while (*c && !spazio((unsigned char)*c)) c++;
+        }
+    }
+    for (q = 0; q < nl && !troppe; q++)
+        for (a = lista[q]; a >= 0; a = f->regole[a].seguente) {
+            if (nc >= CSS_CAND_MAX) { troppe = 1; break; }
+            cand[nc++] = a;
+        }
+    if (troppe) {
+        nc = 0;
+        for (a = 0; a < (int)f->regole_n && a < CSS_CAND_MAX; a++) cand[nc++] = a;
+        if (f->regole_n > CSS_CAND_MAX) { nc = -1; }
+    } else {
+        for (a = 1; a < nc; a++) {          /* insertion sort: small lists */
+            int v = cand[a];
+
+            for (b = a - 1; b >= 0 && cand[b] > v; b--) cand[b + 1] = cand[b];
+            cand[b + 1] = v;
+        }
+    }
+    for (q = 0; nc < 0 ? q < (int)f->regole_n : q < nc; q++) {
+        int ir = (nc < 0) ? q : cand[q];
+
+        if (nc >= 0 && q > 0 && cand[q] == cand[q - 1]) continue;
+        if (!regola_combacia(f, d, nodo, &f->regole[ir])) continue;
+        if (n < max) out[n++] = ir;
+    }
+    return n;
+}
+
+/* =============================================================================
+ * var() AND THE CUSTOM PROPERTIES (P6, 25 November 2026)
+ *
+ * `--x: 4px` is a property of the element like any other - cascaded,
+ * inherited by the children - with a value nobody reads but var(). Google's
+ * sheets set hundreds on :root and read them everywhere.
+ *
+ * ! THE SET OF AN ELEMENT IS ITS OWN AND ITS PARENT'S: a record of its own
+ * declarations (already resolved: a var() inside a custom property reads
+ * the element where it is DECLARED, as the spec wants) pointing to the
+ * parent's set. A child that declares nothing shares its parent's.
+ *
+ * ! IT LIVES IN THE CALLER'S BUFFER (css_variabili), as everything here, and
+ * for ONE LAYOUT: the browser gives it again before each one, and that is
+ * what keeps it from ageing (css.h). Inside a layout it is filled lazily: an
+ * element's set is made the first time a var() of its own, or of a
+ * descendant, asks for it; an ancestor not met yet has its rules matched
+ * once more, then it is remembered.
+ *
+ * The buffer, in 32-bit words: [0] unused, [1 .. nodi] one per node of the
+ * document (0 not made yet, 1 empty, else where its record is), then the
+ * records {parent, count, (name, value) x count} growing forward, and the
+ * texts growing back from the end; a record names its texts by byte offset.
+ * Full: what does not fit is not remembered, and the var() that needed it
+ * takes its fallback.
+ * ============================================================================= */
+static unsigned int    *g_vb = 0;
+static unsigned int     g_vb_max = 0;       /* words */
+static unsigned int     g_vb_n = 0;         /* words used, from the front */
+static unsigned int     g_vb_t = 0;         /* byte where the texts begin */
+static unsigned int     g_vb_nodi = 0;
+static const HtmlDoc   *g_vb_doc = 0;
+static const CssFoglio *g_vb_fog = 0;
+
+void css_variabili(void *buf, unsigned int n)
+{
+    unsigned int pad = (unsigned int)((4u - ((unsigned long)buf & 3u)) & 3u);
+
+    g_vb = 0;
+    g_vb_doc = 0;
+    g_vb_fog = 0;
+    if (!buf || n < pad + 256) return;
+    g_vb = (unsigned int *)(void *)((char *)buf + pad);
+    g_vb_max = (n - pad) / 4;
+}
+
+static void var_azzera(void)
+{
+    g_vb_doc = 0;
+    g_vb_fog = 0;
+}
+
+static void var_prepara(const CssFoglio *f, const HtmlDoc *d)
+{
+    unsigned int i;
+
+    if (!g_vb || (g_vb_doc == d && g_vb_fog == f)) return;
+    g_vb_doc = d;
+    g_vb_fog = f;
+    g_vb_nodi = d->nodi_n;
+    if (g_vb_nodi + 1 > g_vb_max / 2) g_vb_nodi = 0;   /* no room for the table */
+    for (i = 0; i <= g_vb_nodi; i++) g_vb[i] = 0;
+    g_vb_n = g_vb_nodi + 1;
+    g_vb_t = g_vb_max * 4;
+}
+
+static unsigned int var_memo(int nodo)
+{
+    return (g_vb && nodo >= 0 && (unsigned int)nodo < g_vb_nodi) ? g_vb[1 + nodo] : 0;
+}
+
+static void var_memo_metti(int nodo, unsigned int ins)
+{
+    if (g_vb && nodo >= 0 && (unsigned int)nodo < g_vb_nodi) g_vb[1 + nodo] = ins ? ins : 1;
+}
+
+static const char *var_testo(unsigned int off) { return (const char *)g_vb + off; }
+
+static unsigned int var_testo_metti(const char *s, unsigned int n)
+{
+    unsigned int i;
+
+    if (!g_vb || g_vb_t < n + 1 || g_vb_t - (n + 1) < g_vb_n * 4) return 0;
+    g_vb_t -= n + 1;
+    for (i = 0; i < n; i++) ((char *)g_vb)[g_vb_t + i] = s[i];
+    ((char *)g_vb)[g_vb_t + n] = 0;
+    return g_vb_t;
+}
+
+static unsigned int lun(const char *s)
+{
+    unsigned int n = 0;
+
+    while (s[n]) n++;
+    return n;
+}
+
+/* the value of `nome` in set `ins` and its ancestors, or 0 */
+static const char *var_cerca(unsigned int ins, const char *nome, unsigned int nn)
+{
+    int giri = 0;
+
+    while (ins && giri++ < 4096) {
+        const unsigned int *w = g_vb + ins;
+        unsigned int        k = w[1];
+
+        while (k-- > 0) {
+            const char  *x = var_testo(w[2 + 2 * k]);
+            unsigned int j = 0;
+
+            while (j < nn && x[j] == nome[j]) j++;
+            if (j == nn && x[j] == 0) return var_testo(w[3 + 2 * k]);
+        }
+        ins = w[0];
+    }
+    return 0;
+}
+
+/* The element's own declarations while its set is made. */
+#define VP_MAX 2048
+#define VP_DA_FARE  0
+#define VP_IN_CORSO 1
+#define VP_FATTA    2
+#define VP_INVALIDA 3
+
+typedef struct {
+    const char    *nome, *val;
+    unsigned int   nn, vn, peso, ris;
+    unsigned char  stato, ciclo;
+} VarPropria;
+
+static VarPropria   g_vp[VP_MAX];
+static int          g_vp_n = 0;
+static int          g_vp_attivo = 0;   /* lookups look in g_vp first */
+static unsigned int g_sost_ins = 0;    /* ...then in this set */
+
+static int vp_trova(const char *nome, unsigned int nn)
+{
+    int k;
+
+    for (k = 0; k < g_vp_n; k++) {
+        unsigned int j = 0;
+
+        if (g_vp[k].nn != nn) continue;
+        while (j < nn && g_vp[k].nome[j] == nome[j]) j++;
+        if (j == nn) return k;
+    }
+    return -1;
+}
+
+static void vp_metti(const char *nome, unsigned int nn, const char *val, unsigned int vn,
+                     unsigned int peso)
+{
+    int k = vp_trova(nome, nn);
+
+    if (k < 0) {
+        if (g_vp_n >= VP_MAX) return;
+        k = g_vp_n++;
+        g_vp[k].nome = nome; g_vp[k].nn = nn; g_vp[k].peso = 0;
+    } else if (peso < g_vp[k].peso) return;
+    g_vp[k].val = val; g_vp[k].vn = vn; g_vp[k].peso = peso;
+    g_vp[k].stato = VP_DA_FARE; g_vp[k].ciclo = 0; g_vp[k].ris = 0;
+}
+
+static const char *var_valore(const char *nome, unsigned int nn)
+{
+    if (g_vp_attivo) {
+        int k = vp_trova(nome, nn);
+
+        if (k >= 0 && g_vp[k].stato == VP_FATTA) return var_testo(g_vp[k].ris);
+        /* ! AN OWN ONE THAT IS INVALID IS AS IF UNSET, and a custom property
+         * unset inherits: the parent's value is the one to take */
+    }
+    return var_cerca(g_sost_ins, nome, nn);
+}
+
+/* `in` with every var() and env() replaced, appended to out (at *on, room
+ * for `max`). 0: a var() with neither a value nor a fallback - the whole
+ * declaration is then invalid, as the spec says. */
+static int sost(const char *in, unsigned int n, char *out, unsigned int max, unsigned int *on, int prof)
+{
+    unsigned int i = 0;
+
+    if (prof > 16) return 0;
+    while (i < n) {
+        if (i + 4 <= n && in[i + 3] == '(' && (i == 0 || !nomeok((unsigned char)in[i - 1])) &&
+            ((minusc((unsigned char)in[i]) == 'v' && minusc((unsigned char)in[i + 1]) == 'a' &&
+              minusc((unsigned char)in[i + 2]) == 'r') ||
+             (minusc((unsigned char)in[i]) == 'e' && minusc((unsigned char)in[i + 1]) == 'n' &&
+              minusc((unsigned char)in[i + 2]) == 'v'))) {
+            int          env = minusc((unsigned char)in[i]) == 'e', ha_fb = 0, liv = 0;
+            unsigned int j = i + 4, ni, nf, fi = 0, k;
+            const char  *val = 0;
+
+            while (j < n && spazio((unsigned char)in[j])) j++;
+            ni = j;
+            while (j < n && !spazio((unsigned char)in[j]) && in[j] != ',' && in[j] != ')') j++;
+            nf = j;
+            while (j < n && spazio((unsigned char)in[j])) j++;
+            if (j < n && in[j] == ',') { ha_fb = 1; j++; fi = j; }
+            for (k = j; k < n; k++) {
+                char c = in[k];
+
+                if (c == '"' || c == '\'') {
+                    for (k++; k < n && in[k] != c; k++) if (in[k] == '\\') k++;
+                    continue;
+                }
+                if (c == '(') liv++;
+                else if (c == ')') { if (!liv) break; liv--; }
+            }
+            if (k >= n) return 0;                    /* never closed */
+            if (!env && nf - ni > 2 && in[ni] == '-' && in[ni + 1] == '-')
+                val = var_valore(in + ni, nf - ni);
+            if (val) {
+                unsigned int z = lun(val);
+
+                if (*on + z + 1 >= max) return 0;
+                while (z--) out[(*on)++] = *val++;
+            } else if (ha_fb) {
+                if (!sost(in + fi, k - fi, out, max, on, prof + 1)) return 0;
+            } else if (env) {
+                if (*on + 4 >= max) return 0;
+                out[(*on)++] = '0'; out[(*on)++] = 'p'; out[(*on)++] = 'x';
+            } else {
+                return 0;
+            }
+            i = k + 1;
+            continue;
+        }
+        if (*on + 1 >= max) return 0;
+        out[(*on)++] = in[i++];
+    }
+    return 1;
+}
+
+/* One own declaration, resolved: first the own ones it reads, then itself.
+ * ! A CYCLE (--a: var(--b); --b: var(--a)) makes all of it invalid: every
+ * one still being resolved when the loop closes gets the mark. */
+static void vp_risolvi(int k, int prof)
+{
+    static char  buf[8192];       /* used only after the nested calls are over */
+    VarPropria  *e = &g_vp[k];
+    unsigned int i, on = 0, a, b;
+
+    if (e->stato != VP_DA_FARE) {
+        if (e->stato == VP_IN_CORSO) {
+            int q;
+
+            for (q = 0; q < g_vp_n; q++) if (g_vp[q].stato == VP_IN_CORSO) g_vp[q].ciclo = 1;
+        }
+        return;
+    }
+    if (prof > 16) { e->stato = VP_INVALIDA; return; }
+    e->stato = VP_IN_CORSO;
+    for (i = 0; i + 6 <= e->vn; i++) {
+        unsigned int j;
+        int          t;
+
+        if (e->val[i + 3] != '(' || minusc((unsigned char)e->val[i]) != 'v' ||
+            minusc((unsigned char)e->val[i + 1]) != 'a' || minusc((unsigned char)e->val[i + 2]) != 'r')
+            continue;
+        j = i + 4;
+        while (j < e->vn && spazio((unsigned char)e->val[j])) j++;
+        a = j;
+        while (j < e->vn && !spazio((unsigned char)e->val[j]) && e->val[j] != ',' && e->val[j] != ')') j++;
+        t = vp_trova(e->val + a, j - a);
+        if (t >= 0) vp_risolvi(t, prof + 1);
+        e = &g_vp[k];
+    }
+    if (!sost(e->val, e->vn, buf, sizeof(buf), &on, 0) || e->ciclo) { e->stato = VP_INVALIDA; return; }
+    a = 0; b = on;
+    while (a < b && spazio((unsigned char)buf[a])) a++;
+    while (b > a && spazio((unsigned char)buf[b - 1])) b--;
+    e->ris = var_testo_metti(buf + a, b - a);
+    e->stato = e->ris ? VP_FATTA : VP_INVALIDA;
+}
+
+static int g_raccogli = 0;   /* dich_prossima: the custom ones of an attribute style go to g_vp */
+
+/* The set of an element whose rules are `vinte`, over its parent's. */
+static unsigned int var_proprie(const CssFoglio *f, const HtmlDoc *d, int nodo,
+                                unsigned int padre, const int *vinte, int nv)
+{
+    int          q, k, cnt = 0;
+    unsigned int o, need, nomi[VP_MAX];
+    const char  *st;
+
+    g_vp_n = 0;
+    for (q = 0; q < nv; q++) {
+        const CssRegola *r = &f->regole[vinte[q]];
+        unsigned int     p1 = (unsigned int)r->origine * 1000000u + r->peso + 1u;
+
+        for (k = r->prima_dich; k >= 0; k = f->dich[k].prossima)
+            if (f->dich[k].proprieta == CSS_P_PERSONALE) {
+                const char  *nome = f->arena + f->dich[k].numero;
+                unsigned int nn = lun(nome);
+
+                vp_metti(nome, nn, nome + nn + 1, lun(nome + nn + 1), p1);
+            }
+    }
+    /* the attribute style, above every sheet */
+    st = html_attr(d, nodo, "style");
+    if (st && st[0]) {
+        DichIter       it;
+        unsigned short p;
+        unsigned int   v;
+
+        it.t = st; it.i = 0; it.n = lun(st); it.coda_n = it.coda_i = 0;
+        g_raccogli = 1;
+        while (dich_prossima(&it, &p, &v)) {}
+        g_raccogli = 0;
+    }
+    if (g_vp_n == 0) return padre;
+
+    g_vp_attivo = 1;
+    g_sost_ins = padre;
+    for (k = 0; k < g_vp_n; k++) vp_risolvi(k, 0);
+    g_vp_attivo = 0;
+
+    for (k = 0; k < g_vp_n; k++) {
+        if (g_vp[k].stato != VP_FATTA) continue;
+        nomi[k] = var_testo_metti(g_vp[k].nome, g_vp[k].nn);
+        if (nomi[k]) cnt++; else g_vp[k].stato = VP_INVALIDA;
+    }
+    if (cnt == 0) return padre;
+    need = 2 + 2 * (unsigned int)cnt;
+    if (g_vb_n + need > g_vb_t / 4) return padre;         /* full */
+    o = g_vb_n;
+    g_vb[o] = padre;
+    g_vb[o + 1] = (unsigned int)cnt;
+    for (k = 0, q = 0; k < g_vp_n; k++) {
+        if (g_vp[k].stato != VP_FATTA) continue;
+        g_vb[o + 2 + 2 * q] = nomi[k];
+        g_vb[o + 3 + 2 * q] = g_vp[k].ris;
+        q++;
+    }
+    g_vb_n += need;
+    return o;
+}
+
+/* The set of any node, made top-down from the nearest ancestor that has one. */
+static unsigned int var_insieme(const CssFoglio *f, const HtmlDoc *d, int nodo)
+{
+    static int   catena[256], vinte[CSS_CAND_MAX];
+    int          n = 0, k;
+    unsigned int ins = 0;
+
+    while (nodo >= 0) {
+        unsigned int m = var_memo(nodo);
+
+        if (m) { ins = (m == 1) ? 0 : m; break; }
+        if (n >= 256) break;                   /* deeper than that: from nothing */
+        catena[n++] = nodo;
+        nodo = d->nodi[nodo].padre;
+    }
+    for (k = n - 1; k >= 0; k--) {
+        int x = catena[k];
+
+        if (d->nodi[x].tipo == HTML_ELEMENTO)
+            ins = var_proprie(f, d, x, ins, vinte, abbina(f, d, x, vinte, CSS_CAND_MAX));
+        var_memo_metti(x, ins);
+    }
+    return ins;
+}
+
+/* The element css_calcola is working on: its set is made the first time it
+ * is asked for, from the rules css_calcola has already matched. */
+static const HtmlDoc *g_calc_doc = 0;
+static int            g_calc_nodo = -1;
+static const int     *g_calc_vinte = 0;
+static int            g_calc_nv = 0;
+static int            g_calc_ins = -1;
+static int            g_sost_attiva = 0;   /* reading a value made by sost(): leggi_url copies */
+
+/* the address of a background read out of a var(): in the buffer's texts,
+ * as a pointer the way leggi_url gives them (see the pointer note there) */
+static unsigned int var_testo_metti_url(const char *s, unsigned int n)
+{
+    unsigned int o = var_testo_metti(s, n);
+
+    return o ? (unsigned int)(unsigned long)var_testo(o) : 0;
+}
+
+static unsigned int var_insieme_ora(void)
+{
+    unsigned int m, padre, ins;
+
+    if (g_calc_ins >= 0) return (unsigned int)g_calc_ins;
+    if (!g_vb || !g_calc_doc || !g_fog_calc) { g_calc_ins = 0; return 0; }
+    m = var_memo(g_calc_nodo);
+    if (m) { g_calc_ins = (m == 1) ? 0 : (int)m; return (unsigned int)g_calc_ins; }
+    padre = var_insieme(g_fog_calc, g_calc_doc, g_calc_doc->nodi[g_calc_nodo].padre);
+    ins = var_proprie(g_fog_calc, g_calc_doc, g_calc_nodo, padre, g_calc_vinte, g_calc_nv);
+    var_memo_metti(g_calc_nodo, ins);
+    g_calc_ins = (int)ins;
+    return ins;
+}
+
+/* "nome:" and the value with its var() replaced, in g_loc; its offset and
+ * length, 0 if a var() could not be replaced. */
+static unsigned int var_scrivi(const char *nome, unsigned int nn, const char *v, unsigned int n,
+                               unsigned int *lung)
+{
+    unsigned int o = g_loc_n, on, i;
+
+    if (o + nn + 2 >= sizeof(g_loc)) return 0;
+    for (i = 0; i < nn; i++) g_loc[o + i] = nome[i];
+    g_loc[o + nn] = ':';
+    on = nn + 1;
+    g_sost_ins = var_insieme_ora();
+    g_vp_attivo = 0;
+    if (!sost(v, n, g_loc + o, (unsigned int)sizeof(g_loc) - o, &on, 0)) return 0;
+    g_loc[o + on] = 0;
+    g_loc_n = o + on + 1;
+    *lung = on;
+    return o;
+}
+
+/* An attribute style's declaration with var(): what it says goes in the
+ * queue of the iterator that found it. */
+static void var_in_linea(DichIter *it, const char *nome, unsigned int nn,
+                         const char *v, unsigned int n)
+{
+    unsigned int   o, l = 0, val;
+    unsigned short p;
+    DichIter       sub;
+
+    if (g_sost_attiva) return;                 /* a var() that made a var() */
+    o = var_scrivi(nome, nn, v, n, &l);
+    if (!o) return;
+    sub.t = g_loc + o; sub.i = 0; sub.n = l; sub.coda_n = sub.coda_i = 0;
+    g_sost_attiva = 1;
+    while (dich_prossima(&sub, &p, &val)) coda_metti(it, p, val);
+    g_sost_attiva = 0;
+}
+
+/* A sheet's declaration with var(), on the style, with the weight of its
+ * rule: each property it becomes takes part in the cascade by itself. */
+static void rimandata_applica(CssStile *out, const char *rec, unsigned int p1,
+                              unsigned int *peso_di)
+{
+    unsigned int   nn = lun(rec), o, l = 0, val;
+    unsigned short p;
+    DichIter       sub;
+
+    if (g_sost_attiva) return;
+    o = var_scrivi(rec, nn, rec + nn + 1, lun(rec + nn + 1), &l);
+    if (!o) return;
+    sub.t = g_loc + o; sub.i = 0; sub.n = l; sub.coda_n = sub.coda_i = 0;
+    g_sost_attiva = 1;
+    while (dich_prossima(&sub, &p, &val)) {
+        if (p >= CSS_P_N || p1 < peso_di[p]) continue;
+        peso_di[p] = p1;
+        css_posa(out, p, val);
+    }
+    g_sost_attiva = 0;
+}
+
 void css_calcola(const CssFoglio *f, const HtmlDoc *d, int nodo,
                  const CssStile *ereditato, CssStile *out)
 {
     unsigned int peso_di[CSS_P_N];
     unsigned int rel[CSS_P_N];
+    int          vinte[CSS_CAND_MAX], nv, q, k;
     unsigned int i;
-    int          k;
 
     if (!out) return;
     g_fog_legge = 0;
@@ -2637,78 +4245,39 @@ void css_calcola(const CssFoglio *f, const HtmlDoc *d, int nodo,
     g_rel = rel;
     g_opaca = g_punta = 1;
     g_segno = 2;
+    g_fog_calc = f;
+    g_in_calcola = 1;
+    g_loc_n = 1;
+    g_calc_doc = d;
+    g_calc_nodo = nodo;
+    g_calc_ins = -1;
+    var_prepara(f, d);
 
-    {
-        /* ! THE CANDIDATES, THEN IN READING ORDER: at equal weight the rule
-         * read later wins, and that rule is the one with the higher index.
-         * Collected from the buckets of the element's id, classes and type
-         * and from the universal list, sorted, duplicates dropped (two
-         * classes can share a bucket). Too many: the whole list, as before —
-         * slower, never wrong. */
-        int          cand[CSS_CAND_MAX];
-        int          nc = 0, troppe = 0, a, b;
-        const char  *nome = html_nome(d, nodo);
-        const char  *idv  = html_attr(d, nodo, "id");
-        const char  *cls  = html_attr(d, nodo, "class");
-        int          lista[3 + 64], nl = 0, q;
-
-        lista[nl++] = f->uni_testa;
-        if (nome) lista[nl++] = f->testa[secchio('t', nome)];
-        if (idv && idv[0]) lista[nl++] = f->testa[secchio('#', idv)];
-        if (cls) {
-            const char *c = cls;
-
-            while (*c && nl < (int)(sizeof(lista) / sizeof(lista[0]))) {
-                while (*c && spazio((unsigned char)*c)) c++;
-                if (!*c) break;
-                lista[nl++] = f->testa[secchio('.', c)];
-                while (*c && !spazio((unsigned char)*c)) c++;
-            }
-        }
-        for (q = 0; q < nl && !troppe; q++)
-            for (a = lista[q]; a >= 0; a = f->regole[a].seguente) {
-                if (nc >= CSS_CAND_MAX) { troppe = 1; break; }
-                cand[nc++] = a;
-            }
-        if (troppe) {
-            nc = 0;
-            for (a = 0; a < (int)f->regole_n && a < CSS_CAND_MAX; a++) cand[nc++] = a;
-            if (f->regole_n > CSS_CAND_MAX) { nc = -1; }
-        } else {
-            for (a = 1; a < nc; a++) {          /* insertion sort: small lists */
-                int v = cand[a];
-
-                for (b = a - 1; b >= 0 && cand[b] > v; b--) cand[b + 1] = cand[b];
-                cand[b + 1] = v;
-            }
-        }
-
-        for (q = 0; nc < 0 ? q < (int)f->regole_n : q < nc; q++) {
-            int              ir = (nc < 0) ? q : cand[q];
-            const CssRegola *r;
-            unsigned int     p1;
-
-            if (nc >= 0 && q > 0 && cand[q] == cand[q - 1]) continue;
-            r = &f->regole[ir];
-            if (!regola_combacia(f, d, nodo, r)) continue;
-
+    nv = abbina(f, d, nodo, vinte, CSS_CAND_MAX);
+    g_calc_vinte = vinte;
+    g_calc_nv = nv;
+    for (q = 0; q < nv; q++) {
+        const CssRegola *r = &f->regole[vinte[q]];
         /* ! IL PESO DELL'ORIGINE STA SOPRA QUELLO DEL SELETTORE, e non
          * accanto: un `style=` con un selettore banale deve battere un
          * selettore lunghissimo di un foglio. Sommarli lascerebbe che una
          * specificita' alta scavalchi l'origine, che e' il contrario della
          * cascata. */
-        p1 = (unsigned int)r->origine * 1000000u + r->peso + 1u;
+        unsigned int     p1 = (unsigned int)r->origine * 1000000u + r->peso + 1u;
 
         for (k = r->prima_dich; k >= 0; k = f->dich[k].prossima) {
             unsigned short prop = f->dich[k].proprieta;
 
+            if (prop == CSS_P_RIMANDATA) {
+                rimandata_applica(out, f->arena + f->dich[k].numero, p1, peso_di);
+                continue;
+            }
             if (prop >= CSS_P_N) continue;
             /* «>=» e non «>»: a parita' di peso vince chi arriva dopo, e le
              * regole stanno gia' nell'ordine in cui sono state lette. */
             if (p1 < peso_di[prop]) continue;
             peso_di[prop] = p1;
             css_posa(out, prop, f->dich[k].numero);
-        }
         }
     }
 
@@ -2740,7 +4309,11 @@ void css_calcola(const CssFoglio *f, const HtmlDoc *d, int nodo,
         }
         mio = (out->corpo == CSS_MISURA_NO) ? padre : out->corpo;
         for (p = 0; p < CSS_P_N; p++)
-            if (p != CSS_P_CORPO && rel[p]) posa_px(out, p, rel_px(rel[p], mio, g_media_w));
+            if (p != CSS_P_CORPO && rel[p]) posa_relativa(out, p, rel[p], mio, g_media_w);
     }
     nascosto_applica(out);
+    g_in_calcola = 0;
+    g_fog_calc = 0;
+    g_calc_doc = 0;
+    g_calc_vinte = 0;
 }

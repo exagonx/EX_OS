@@ -49,6 +49,10 @@ CF="-m64 -ffreestanding -fno-builtin -fstack-protector-strong -mstack-protector-
 CFPIC=$(echo "$CF" | sed 's/-fno-pic -fno-pie/-fPIC/')
 INC="-Ilib/include -Ilib"
 for d in lib/ex* drivers/* bin/gfedit lib/terze/* gfbasic; do [ -d "$d" ] && INC="$INC -I$d"; done
+# the public suffix table for EXBrowser's cookies is made at build time, not
+# kept in the repository (Makefile PSL_H): the same file for both widths
+make --no-print-directory -s psl-tabella || echo "! psl-tabella non fatta: exbrowser non compilera'"
+INC="$INC -I${EXOS_FUORI}/build/generati"
 # static: login, install, the drivers... (lib/programma64.ld)
 LD="ld -m elf_x86_64 -nostdlib --gc-sections -z max-page-size=4096 -z noexecstack -T lib/programma64.ld"
 # on /lib/ld-exos.so: the default link script of ld, the same base, as LD_DIN
@@ -109,7 +113,10 @@ if [ $# -eq 0 ]; then
     so_fai eximg   lib/eximg/eximg.ver     "lib/eximg/eximg.c lib/eximg/png.c lib/eximg/ico.c lib/eximg/jpg.c \
         lib/eximg/gif.c lib/eximg/bmp.c lib/eximg/inflate.c lib/eximg/webp.c lib/eximg/vp8.c" ""
     so_fai exfont  lib/exfont/exfont.ver   "lib/exfont/exfont_ttf.c lib/exfont/ttf.c lib/exfont/raster.c" ""
-    so_fai exhttp  lib/exhttp/exhttp.ver   "lib/exhttp/exhttp.c lib/exhttp/http.c lib/dns.c lib/rete.c $EXTLS" ""
+    # srotola.c and h2.c as at 32 bit (BROWSER002 P2, P4): without them the
+    # weak symbols stayed empty and 64 bit had no compressed pages, no HTTP/2
+    so_fai exhttp  lib/exhttp/exhttp.ver   "lib/exhttp/exhttp.c lib/exhttp/http.c lib/exhttp/srotola.c \
+        lib/exhttp/h2.c lib/dns.c lib/rete.c $EXTLS" ""
     so_fai exhtml  lib/exhtml/exhtml.ver   "lib/exhtml/html.c" ""
     so_fai excss   lib/excss/excss.ver     "lib/excss/css.c" "exhtml.so"
     so_fai exjs    lib/exjs/exjs.ver       "lib/exjs/lex.c lib/exjs/parse.c lib/exjs/val.c lib/exjs/run.c \
@@ -173,7 +180,7 @@ for s in lib/rete.c lib/dns.c lib/audio.c lib/wifi.c kernel/arch/x86/font8x16.c 
         ar rc "$LIBD/libexos.a" "$o"   # the stubs open with dlopen, static too
         case "$s" in
         lib/exwin/exwin.c|lib/exwin/extema.c|lib/exwin/temi/*|lib/exfont/exfont.c|lib/exfont/exfont_ttf.c|lib/exfont/ttf.c|lib/exfont/raster.c|\
-        lib/exdlg/exdlg.c|lib/exdlg/scarichi.c|lib/exhttp/exhttp.c|lib/exhttp/http.c|lib/exhtml/html.c|\
+        lib/exdlg/exdlg.c|lib/exdlg/scarichi.c|lib/exhttp/exhttp.c|lib/exhttp/http.c|lib/exhttp/srotola.c|lib/exhttp/h2.c|lib/exhtml/html.c|\
         lib/excss/css.c|lib/exdom/exdom.c|lib/exzip/exzip.c|lib/exsuono/exsuono.c|\
         lib/eximg/eximg.c|lib/eximg/png.c|lib/eximg/ico.c|lib/eximg/jpg.c|lib/eximg/gif.c|lib/eximg/bmp.c|\
         lib/eximg/webp.c|lib/eximg/vp8.c) ;;

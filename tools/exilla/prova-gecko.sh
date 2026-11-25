@@ -55,6 +55,8 @@ rm -rf "${S:?}"; mkdir -p "$S/profilo" "$S/casa" "$S/font"
 cp -a "$P" "$S/firefox"
 # I caratteri di ExWin stanno sulla sua ISO, non sul CD di base: qui sul disco.
 cp exwin/font/*.ttf "$S/font/"
+# as the package: audio and video with several processes
+mkdir -p "$S/firefox/defaults/pref"; cp tools/exilla/exos-media.js "$S/firefox/defaults/pref/"
 # The CJK fonts of the [font-cjk] package (tools/font-cjk/prepara.sh), when
 # they are there: the page has a line in Chinese, Japanese and Korean, which
 # without them comes out as boxes. FONT_CJK=no leaves them out (a disk 93 MB

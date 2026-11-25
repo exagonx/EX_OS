@@ -296,6 +296,51 @@ void exhttp_da(unsigned long primo);
  * Facoltativa nello stub: su una exhttp.so vecchia non fa niente. */
 void exhttp_intestazioni(const char *righe);
 
+/* Compressed pages (25 November 2026, debug/implementazione_BROWSER002.txt
+ * P2). 1: every request from now on carries «Accept-Encoding:» with the
+ * codings this system can decode (gzip, deflate, br, zstd: those whose
+ * library - libz.so.1, libbrotlidec.so.1, libzstd.so.1 - is there), and a
+ * body with Content-Encoding reaches buffer and verso already decoded; a
+ * corrupt one fails («corpo br rovinato»), one cut before its end is
+ * troncata. 0 (the default): the bytes as the server sends them, as always.
+ * ! IT STAYS AS IT IS PUT. Whoever saves a file as it is on the server
+ * (a .tar.gz, something signed) switches it off around that download.
+ * While a body is being decoded exhttp_attesi() says 0: Content-Length is
+ * the compressed size. Not in the static exhttp of netupdate. */
+void exhttp_srotola(int acceso);
+
+/* =============================================================================
+ * RICHIESTE IN PARALLELO (25 November 2026, debug/implementazione_BROWSER002
+ * P3)
+ *
+ * GET only. exhttp_parti prepares one (nothing goes on the network yet);
+ * exhttp_avanza moves it on WITHOUT WAITING for the network - it opens the
+ * connection the first time (that part does wait: DNS, TCP, TLS handshake),
+ * then reads only what the stack already holds - and returns 1 when it is
+ * over, well or badly. Several can be moved on in turn: their transfers
+ * overlap, which is the whole point. exhttp_risposta gives the outcome (as
+ * exhttp_prendi's ExHttpEsito; e->codice 0 and e->errore when it failed) and
+ * the body, which belongs to the request until exhttp_lascia.
+ *
+ * Redirections are followed (EXHTTP_SALTI_MAX), cookies go through the hooks
+ * of exhttp_biscotti*, compression follows exhttp_srotola. A body larger
+ * than `max` is truncated (e->troncata, errore empty). The connections are
+ * kept open (8 of them, per host/port/scheme) for the next requests, apart
+ * from exhttp_prendi's. Not in the static exhttp of netupdate.
+ * ========================================================================== */
+typedef struct ExHttpRichiesta ExHttpRichiesta;
+
+ExHttpRichiesta     *exhttp_parti(const char *url, unsigned int max);
+int                  exhttp_avanza(ExHttpRichiesta *r);
+const unsigned char *exhttp_risposta(const ExHttpRichiesta *r, ExHttpEsito *e,
+                                     unsigned int *n);
+void                 exhttp_lascia(ExHttpRichiesta *r);
+
+/* "h2" or "http/1.1": what the request was carried on (P4: an https server
+ * that chooses h2 in ALPN, when libnghttp2.so.14 is there, carries several
+ * requests on one connection). "" before it went out. */
+const char          *exhttp_protocollo(const ExHttpRichiesta *r);
+
 /* =============================================================================
  * A CHE PUNTO E' LA STRETTA DI MANO
  *

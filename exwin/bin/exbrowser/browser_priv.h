@@ -59,7 +59,7 @@
 #include "biscotti.h"
 
 /* ------------------------------------------------------------------ i tetti */
-#define VERSIONE_APP "0.034"
+#define VERSIONE_APP "0.039"
 /* ! GLI INDIRIZZI DI QUEL CHE LA PAGINA CARICA (fogli, script, immagini) si
  * risolvono in buffer da NAV_URL_MAX, non da EXHTTP_URL_MAX (600): il foglio
  * della pagina dei risultati di Wikipedia ne ha 636, e si perdeva. Quel che si
@@ -306,6 +306,28 @@ ExFont font_per(int neretto, int corsivo, int famiglia, int corpo);
 unsigned int numero(const char *s);
 int riga_w(void);
 int riga_x(void);
+
+/* --------------------- i caratteri della pagina (browser_caratteri.c, P6)
+ *
+ * ! UN ExFont CON CAR_PAGINA ACCESO E' NOSTRO, non di ExWin: e' un carattere
+ * di un @font-face, misurato da HarfBuzz e disegnato da FreeType. Per tutti
+ * gli altri car_altezza, car_larghezza e car_disegna sono ex_font_height,
+ * ex_text_width ed ex_draw_text_font: il testo della pagina passa da qui. */
+#define CAR_PAGINA 0x40000000u
+int    car_disponibile(void);
+int    car_woff2_pronto(void);
+void   car_pagina_nuova(void);
+int    car_gia(const char *url);
+int    car_copre_latino(const char *intervallo);
+int    car_scegli_src(const char *src, char *out, unsigned int max);
+int    car_aggiungi(const char *url, const CssFontFace *ff, const unsigned char *d,
+                    unsigned int n, const char **come);
+void   car_conta(int *buone, int *tutte);
+ExFont car_della_pagina(int famiglia, int neretto, int corsivo, int corpo);
+int    car_altezza(ExFont f);
+int    car_base(ExFont f);
+int    car_larghezza(ExFont f, const char *s);
+void   car_disegna(ExWindow w, ExFont f, int x, int y, const char *s, unsigned int c);
 
 /* --------------------- e quel che il navigatore chiede all'impaginato (3) */
 void impagina(void);

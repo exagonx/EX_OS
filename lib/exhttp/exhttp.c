@@ -20,6 +20,26 @@
 #include "exhttp.h"
 #include "extls.h"
 #include "excert.h"    /* excert_perche: QUALE dei nove casi, non solo «non va» */
+#include "srotola.h"
+/* ! WEAK: srotola.c is linked into exhttp.so only. netupdate compiles this
+ * file into itself without it, and there these are 0: it never decodes and
+ * never asks for a coding (exhttp_srotola, debug/implementazione_BROWSER002). */
+#pragma weak srotola_codifiche
+#pragma weak srotola_apri
+#pragma weak srotola_dai
+#pragma weak srotola_finito
+#pragma weak srotola_nome
+#pragma weak srotola_chiudi
+#include "h2.h"
+/* the same for HTTP/2 (h2.c, BROWSER002 P4): only in exhttp.so */
+#pragma weak h2_disponibile
+#pragma weak h2_apri
+#pragma weak h2_richiesta
+#pragma weak h2_dai
+#pragma weak h2_manda
+#pragma weak h2_lascia
+#pragma weak h2_aperta
+#pragma weak h2_chiudi
 
 /* -----------------------------------------------------------------------------
  * Il trasporto TCP
@@ -51,11 +71,30 @@ typedef struct {
     unsigned int  a_pos, a_fine;
 } TcpStato;
 
-/* ! UNO SOLO PER VOLTA, E VA DETTO. Il browser di oggi scarica una pagina alla
- * volta; il giorno che ne vorra' quattro insieme questo diventera' un vettore,
- * e sara' una modifica di tre righe perche' il trasporto e' gia' una struttura
- * a parte. Meglio un limite dichiarato di un'allocazione che non serve. */
-static TcpStato g_tcp;
+/* ! UNO SOLO PER VOLTA FINO AL 25 NOVEMBRE 2026, e stava scritto che il
+ * giorno che il browser ne avrebbe voluti quattro insieme sarebbe diventato un
+ * vettore: e' quel giorno (debug/implementazione_BROWSER002.txt, P3). Uno
+ * libero ha id 0; tcp_chiudi lo libera.
+ * ! SE SONO TUTTI OCCUPATI SI RIUSA IL PIU' VECCHIO, che e' quel che faceva lo
+ * statico unico con chiunque lo riaprisse: un programma che non chiude le sue
+ * connessioni si comporta come prima, invece di restare senza. */
+#define TCP_INSIEME 16
+static TcpStato     g_tcp[TCP_INSIEME];
+static unsigned int g_tcp_eta[TCP_INSIEME];
+static unsigned int g_tcp_orologio = 0;
+
+static TcpStato *tcp_libero(void)
+{
+    int i, vecchio = 0;
+
+    for (i = 0; i < TCP_INSIEME; i++)
+        if (g_tcp[i].id <= 0) { vecchio = i; goto preso; }
+    for (i = 1; i < TCP_INSIEME; i++)
+        if (g_tcp_eta[i] < g_tcp_eta[vecchio]) vecchio = i;
+preso:
+    g_tcp_eta[vecchio] = ++g_tcp_orologio;
+    return &g_tcp[vecchio];
+}
 
 static int ip_pronto(void)
 {
@@ -405,9 +444,13 @@ int exhttp_tcp(ExHttpTrasporto *t, const char *host, unsigned int porta)
     }
     if (id <= 0) { g_ultimo_errore = id; return 0; }
 
-    g_tcp.id    = id;
-    g_tcp.a_pos = g_tcp.a_fine = 0;
-    t->stato    = &g_tcp;
+    {
+        TcpStato *s = tcp_libero();
+
+        s->id    = id;
+        s->a_pos = s->a_fine = 0;
+        t->stato = s;
+    }
     t->leggi  = tcp_leggi;
     t->quanti = tcp_quanti;
     t->scrivi = tcp_scrivi;
@@ -1130,8 +1173,37 @@ static void tls_chiudi_proprio(void *stato)
     free(s);
 }
 
+/* The handshake of a connection of the parallel requests reads through
+ * leggi_a_pezzi, with the host's waiting hook in between, as the https path
+ * of exhttp_prendi does (stretta_leggi): here the state is the StatoTls. */
+static int stretta_leggi_sua(void *stato, unsigned char *dst, unsigned int max,
+                             unsigned int ms)
+{
+    return leggi_a_pezzi(&((StatoTls *)stato)->tcp, dst, max, ms, 0);
+}
+
+static int stretta_scrivi_sua(void *stato, const unsigned char *src, unsigned int n)
+{
+    StatoTls *s = (StatoTls *)stato;
+
+    return s->tcp.scrivi(s->tcp.stato, src, n);
+}
+
+static int tls_sopra(ExHttpTrasporto *t, const ExHttpTrasporto *tcp,
+                     const char *host, char *errore, unsigned int max,
+                     const char *alpn, int con_attesa);
+
 int exhttp_tls_sopra(ExHttpTrasporto *t, const ExHttpTrasporto *tcp,
                      const char *host, char *errore, unsigned int max)
+{
+    return tls_sopra(t, tcp, host, errore, max, "ftp", 0);
+}
+
+/* `alpn`: what is offered (FTPS "ftp", the parallel requests "http/1.1").
+ * `con_attesa`: the handshake breathes through the host's waiting hook. */
+static int tls_sopra(ExHttpTrasporto *t, const ExHttpTrasporto *tcp,
+                     const char *host, char *errore, unsigned int max,
+                     const char *alpn, int con_attesa)
 {
     StatoTls *s;
     char      adesso[24];
@@ -1150,9 +1222,15 @@ int exhttp_tls_sopra(ExHttpTrasporto *t, const ExHttpTrasporto *tcp,
         return 0;
     }
     s->tcp          = *tcp;
-    s->sotto.stato  = tcp->stato;
-    s->sotto.leggi  = tcp->leggi;
-    s->sotto.scrivi = tcp->scrivi;
+    if (con_attesa) {
+        s->sotto.stato  = s;
+        s->sotto.leggi  = stretta_leggi_sua;
+        s->sotto.scrivi = stretta_scrivi_sua;
+    } else {
+        s->sotto.stato  = tcp->stato;
+        s->sotto.leggi  = tcp->leggi;
+        s->sotto.scrivi = tcp->scrivi;
+    }
     strncpy(s->host, host, sizeof(s->host) - 1);
     adesso_in(adesso, sizeof(adesso));
     {
@@ -1162,7 +1240,7 @@ int exhttp_tls_sopra(ExHttpTrasporto *t, const ExHttpTrasporto *tcp,
         unsigned int  k;
 
         memset(&o, 0, sizeof(o));
-        o.alpn = "ftp";             /* solo FTPS passa di qui: vedi extls.h */
+        o.alpn = alpn;              /* FTPS "ftp", vedi extls.h; HTTP "http/1.1" */
         if (fidata_per(host, fidata)) o.fidata = fidata;
         if (b) {
             o.riprendi = &b->s;
@@ -1311,6 +1389,114 @@ void exhttp_verso(ExHttpVerso f, void *dato)
 void exhttp_da(unsigned long primo)
 {
     g_da = primo;
+}
+
+/* =============================================================================
+ * exhttp_srotola — the compressed pages (25 November 2026, BROWSER002 P2)
+ *
+ * Switched on, every request says «Accept-Encoding: gzip, deflate, br, zstd»
+ * (those whose library srotola.c could open) and a body that comes with a
+ * Content-Encoding is decoded as it arrives: buffer, verso and e->byte see
+ * the page as if it had come uncompressed.
+ *
+ * ! OFF UNTIL SOMEONE SWITCHES IT ON, AND IT STAYS AS IT IS PUT (like the
+ * cookies, not like exhttp_da). A program that saves what it downloads -
+ * scarica, netupdate - must get the bytes the server has: a .tar.gz served
+ * with «Content-Encoding: gzip» decoded on the way would be a .tar with the
+ * name of a .tar.gz, and a signature that no longer matches.
+ * ! THE COUNTS ARE OF THE COMPRESSED BYTES: Content-Length is the size on
+ * the wire, so while decoding exhttp_attesi() says 0 (not known).
+ * ========================================================================== */
+static int      g_srotola = 0;
+static Srotola *g_sr = 0;              /* the decoder of the body arriving  */
+static unsigned long g_grezzi = 0;     /* its bytes as they came: compressed */
+
+void exhttp_srotola(int acceso)
+{
+    g_srotola = acceso ? 1 : 0;
+}
+
+/* Where the decoded bytes go: the caller's buffer, emptied into the verso
+ * when it is full, or truncated without one - the same rule as the bytes
+ * that come uncompressed (exhttp_scambio below). */
+typedef struct {
+    unsigned char *buf;
+    unsigned int   max;
+    ExHttpEsito   *e;
+    int            versa;
+    int            verso_rotto;
+} Posa;
+
+static int posa(void *dato, const unsigned char *p, unsigned int n)
+{
+    Posa *q = (Posa *)dato;
+
+    while (n > 0) {
+        unsigned int spazio = q->max - q->e->byte, k;
+
+        if (spazio == 0) {
+            if (!q->versa) { q->e->troncata = 1; return 1; }
+            if (!g_verso(g_verso_dato, q->buf, q->e->byte)) { q->verso_rotto = 1; return 1; }
+            g_usciti += q->e->byte;
+            q->e->byte = 0;
+            continue;
+        }
+        k = n < spazio ? n : spazio;
+        memcpy(q->buf + q->e->byte, p, k);
+        q->e->byte += k;
+        p += k;
+        n -= k;
+    }
+    return 0;
+}
+
+/* The value of the header `nome` (lower case) in the header block d[0..n),
+ * spaces around taken away; "" when it is not there. */
+static void intest_valore(const unsigned char *d, unsigned int n, const char *nome,
+                          char *out, unsigned int max)
+{
+    unsigned int i = 0, l = (unsigned int)strlen(nome);
+
+    out[0] = '\0';
+    while (i < n) {
+        unsigned int a = i, b, k;
+
+        while (i < n && d[i] != '\n') i++;
+        b = i++;
+        if (b > a && d[b - 1] == '\r') b--;
+        if (b - a <= l || d[a + l] != ':') continue;
+        for (k = 0; k < l; k++) {
+            unsigned char c = d[a + k];
+            if (c >= 'A' && c <= 'Z') c = (unsigned char)(c + 32);
+            if (c != (unsigned char)nome[k]) break;
+        }
+        if (k < l) continue;
+        a += l + 1;
+        while (a < b && (d[a] == ' ' || d[a] == '\t')) a++;
+        while (b > a && (d[b - 1] == ' ' || d[b - 1] == '\t')) b--;
+        for (k = 0; a < b && k + 1 < max; ) out[k++] = (char)d[a++];
+        out[k] = '\0';
+        return;
+    }
+}
+
+/* «Accept-Encoding: ...» before the blank line that ends the head in req. */
+static int intest_codifiche(char *req, int n, unsigned int max)
+{
+    static const char nome[] = "Accept-Encoding: ";
+    const char  *c;
+    unsigned int l;
+
+    if (!g_srotola || !srotola_codifiche) return n;
+    c = srotola_codifiche();
+    if (!c || !c[0]) return n;
+    l = (unsigned int)(sizeof(nome) - 1 + strlen(c) + 2);
+    if (n < 4 || (unsigned int)n + l + 1 > max) return -1;
+    memmove(req + n - 2 + l, req + n - 2, 3);
+    memcpy(req + n - 2, nome, sizeof(nome) - 1);
+    memcpy(req + n - 2 + sizeof(nome) - 1, c, strlen(c));
+    memcpy(req + n - 2 + l - 2, "\r\n", 2);
+    return n + (int)l;
 }
 
 /* =============================================================================
@@ -1539,7 +1725,23 @@ static int stesso_posto(const HttpUrl *u)
 /* -----------------------------------------------------------------------------
  * Lo scambio
  * --------------------------------------------------------------------------- */
+static int scambio(ExHttpTrasporto *t, const HttpUrl *u,
+                   unsigned char *buf, unsigned int max, ExHttpEsito *e,
+                   HttpRisposta *r);
+
+/* ! THE DECODER IS CLOSED HERE, ON EVERY WAY OUT: scambio has twenty
+ * returns, and a zstd window left open is up to 8 MB. */
 int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
+                   unsigned char *buf, unsigned int max, ExHttpEsito *e,
+                   HttpRisposta *r)
+{
+    int esito = scambio(t, u, buf, max, e, r);
+
+    if (g_sr) { srotola_chiudi(g_sr); g_sr = 0; }
+    return esito;
+}
+
+static int scambio(ExHttpTrasporto *t, const HttpUrl *u,
                    unsigned char *buf, unsigned int max, ExHttpEsito *e,
                    HttpRisposta *r)
 {
@@ -1594,6 +1796,7 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
                                     g_corpo ? (long)corpo_len : -1L, 1, bis,
                                     g_da_attivo);
         if (n > 0) n = intest_metti(req, n, sizeof(req));
+        if (n > 0) n = intest_codifiche(req, n, sizeof(req));
     }
     if (n <= 0) { strcpy(e->errore, "richiesta troppo lunga"); return 0; }
     if (t->scrivi(t->stato, (const unsigned char *)req, (unsigned int)n) != n) {
@@ -1681,6 +1884,19 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
     g_usciti = 0;
     g_attesi = r->ha_lunghezza ? r->lunghezza : 0;
 
+    /* ! A CODING WE CANNOT DECODE PASSES AS IT CAME, as before 25 November:
+     * the gzip that amazon.com sends without being asked is inflated by the
+     * browser when it sees 1f 8b (exbrowser.c, gz_srotola). */
+    g_grezzi = 0;
+    if (g_srotola && srotola_apri) {
+        char ce[48];
+        int  rotto = 0;
+
+        intest_valore(acc, (unsigned int)fine, "content-encoding", ce, sizeof(ce));
+        g_sr = srotola_apri(ce, &rotto);
+        if (g_sr) g_attesi = 0;
+    }
+
     /* --- il corpo ------------------------------------------------------ */
     {
         static unsigned char blocco[4096];
@@ -1718,9 +1934,73 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
                 }                                                             \
             } while (0)
 
+        /* ! A COMPRESSED BODY THAT STOPS BEFORE ITS OWN END IS TRUNCATED,
+         * even when the byte count says complete: the server cut it, or a
+         * piece is missing. Half a page decoded does not pass for a page.
+         * An empty body (HEAD, 304) has nothing to finish. */
+        #define SROTOLA_FINITO()                                              \
+            do {                                                              \
+                if (g_sr && g_grezzi > 0 && !srotola_finito(g_sr)) {          \
+                    e->troncata = 1;                                          \
+                    sprintf(e->errore, "corpo %s incompleto",                 \
+                            srotola_nome(g_sr));                              \
+                }                                                             \
+            } while (0)
+
+        Posa po;
+
+        po.buf = buf; po.max = max; po.e = e; po.versa = versa; po.verso_rotto = 0;
+
         for (;;) {
             /* Prima si consuma cio' che si ha gia' in mano. */
             while (resto_n > 0) {
+                /* ! COMPRESSED: the same two ways in (pieces, or bytes as
+                 * they are), one way out, through the decoder into posa(). */
+                if (g_sr) {
+                    static unsigned char grezzo[4096];
+                    const unsigned char *da;
+                    unsigned int quanti;
+                    int esito_sr;
+
+                    if (r->a_pezzi) {
+                        unsigned int usati = 0;
+                        int prodotti = http_pezzi(&pezzi, resto, resto_n, &usati,
+                                                  grezzo, sizeof(grezzo));
+
+                        if (prodotti < 0) {
+                            strcpy(e->errore, "corpo a pezzi malformato");
+                            return 0;
+                        }
+                        resto   += usati;
+                        resto_n -= usati;
+                        /* nothing taken with room to spare: the pieces are
+                         * over, and what follows is not this body */
+                        if (usati == 0 && prodotti == 0) break;
+                        da = grezzo;
+                        quanti = (unsigned int)prodotti;
+                    } else {
+                        quanti = resto_n;
+                        if (r->ha_lunghezza && g_grezzi + quanti > r->lunghezza)
+                            quanti = (unsigned int)(r->lunghezza - g_grezzi);
+                        da = resto;
+                        resto   += resto_n;
+                        resto_n  = 0;
+                    }
+                    g_grezzi += quanti;
+                    esito_sr = srotola_dai(g_sr, da, quanti, posa, &po);
+                    if (esito_sr == SROTOLA_FERMATO) {
+                        if (po.verso_rotto) {
+                            strcpy(e->errore, "non riesco a posare il corpo");
+                            return 0;
+                        }
+                        return 1;                   /* e->troncata is set */
+                    }
+                    if (esito_sr != SROTOLA_OK) {
+                        sprintf(e->errore, "corpo %s rovinato", srotola_nome(g_sr));
+                        return 0;
+                    }
+                    continue;
+                }
                 if (r->a_pezzi) {
                     unsigned int usati = 0;
                     int prodotti;
@@ -1783,6 +2063,7 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
             if (r->a_pezzi) {
                 if (pezzi.stato == HTTP_P_FATTO) {
                     VERSA();
+                    SROTOLA_FINITO();
                     g_riusabile = !r->chiude && !e->troncata;
                     return 1;
                 }
@@ -1790,9 +2071,12 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
                 /* ! IL CONFRONTO E' SUL TOTALE, NON SU QUEL CHE C'E' NEL
                  * BUFFER. Sono la stessa cosa finche' il buffer non si svuota
                  * mai; con un verso registrato no, e guardare `e->byte`
-                 * vorrebbe dire non arrivare mai in fondo a un file lungo. */
-                if (g_usciti + e->byte >= r->lunghezza) {
+                 * vorrebbe dire non arrivare mai in fondo a un file lungo.
+                 * ! COMPRESSED, Content-Length counts the bytes on the wire
+                 * (g_grezzi), not the decoded ones. */
+                if ((g_sr ? g_grezzi : g_usciti + e->byte) >= r->lunghezza) {
                     VERSA();
+                    SROTOLA_FINITO();
                     g_riusabile = !r->chiude && !e->troncata;
                     return 1;
                 }
@@ -1815,7 +2099,9 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
         /* Uscita dalla porta di servizio: il server ha chiuso, e quel che
          * resta nel buffer va consegnato lo stesso. */
         VERSA();
+        SROTOLA_FINITO();
         #undef VERSA
+        #undef SROTOLA_FINITO
 
         /* =====================================================================
          * ! UN CORPO PIU' CORTO DI QUELLO DICHIARATO E' UNA PAGINA TRONCA, E
@@ -1840,10 +2126,10 @@ int exhttp_scambio(ExHttpTrasporto *t, const HttpUrl *u,
          * pila che credeva suo. `errore` c'e' gia', ed e' esattamente il posto
          * dove si dice cosa non ha funzionato.
          * ===================================================================== */
-        if (r->ha_lunghezza && g_usciti + e->byte < r->lunghezza) {
+        if (r->ha_lunghezza && (g_sr ? g_grezzi : g_usciti + e->byte) < r->lunghezza) {
             e->troncata = 1;
             sprintf(e->errore, "corpo incompleto: %lu byte su %lu dichiarati",
-                    (unsigned long)(g_usciti + e->byte),
+                    (unsigned long)(g_sr ? g_grezzi : g_usciti + e->byte),
                     (unsigned long)r->lunghezza);
         }
     }
@@ -2078,4 +2364,707 @@ collegato:
 
     strcpy(e->errore, "troppe redirezioni");
     return 0;
+}
+
+/* =============================================================================
+ * LE RICHIESTE IN PARALLELO (25 novembre 2026, debug/implementazione_BROWSER002
+ * P3)
+ *
+ * ! IL TEMPO DI UNA PAGINA E' DELLA RETE, ED E' FATTO DI ATTESE. Amazon: 75
+ * richieste in fila a 220 ms l'una sono 16 secondi, e in quei 220 ms la
+ * macchina non fa niente - aspetta che il server risponda. Quattro richieste
+ * aperte insieme aspettano insieme.
+ *
+ * ! UN FILO SOLO, E NESSUNA DOMANDA ALLO STACK SENZA RISPOSTA SUBITO. Le
+ * risposte dello stack (ESITO, INFO) non hanno numero: con due domande in
+ * volo non si saprebbe di chi e' la risposta (vedi svuota_stack). Qui si
+ * legge SOLO quando lo stack dice che i byte ci sono gia' (quanti > 0): la
+ * domanda e la risposta stanno una dietro l'altra, e il parallelo lo fanno le
+ * connessioni TCP dentro lo stack, che ricevono tutte mentre noi ne serviamo
+ * una.
+ *
+ * ! APRIRE RESTA BLOCCANTE: DNS, TCP e la stretta del TLS sono di exhttp_tcp e
+ * di extls, e respirano col gancio dell'attesa come quelle di exhttp_prendi.
+ * Si sovrappongono i trasferimenti, non le aperture; con le connessioni tenute
+ * aperte la stretta si paga una volta per connessione, non per richiesta.
+ *
+ * ! NIENTE DI QUESTO TOCCA exhttp_prendi: ha la sua connessione tenuta (g_vivo),
+ * il suo verso, il suo Range. Le due strade condividono solo i biscotti,
+ * l'Accept-Encoding (exhttp_srotola) e l'insieme delle connessioni TCP.
+ * ========================================================================== */
+#define PAR_CONN       8
+#define PAR_TESTA      (16 * 1024)
+#define PAR_ATTESA_MS  20000      /* nessun byte per tanto: il server non risponde */
+#define PAR_RIPOSO_MS  60000      /* una connessione ferma da tanto si chiude    */
+
+#define PAR_APRI    0
+#define PAR_TESTA_F 1
+#define PAR_CORPO   2
+#define PAR_FINITA  3
+
+typedef struct {
+    ExHttpTrasporto t;
+    int             aperta;
+    int             occupata;
+    char            host[HTTP_HOST_MAX];
+    unsigned int    porta;
+    int             cifrato;
+    unsigned int    quando;
+    /* HTTP/2 (P4): the session, how many streams are on it, and a number
+     * that changes every time this slot is a new connection - a request
+     * that kept the old number knows its connection is gone */
+    H2             *h2;
+    int             flussi;
+    unsigned int    gen;
+    unsigned int    ultimo_ms;
+} ParConn;
+
+#define PAR_FLUSSI_MAX 64
+
+static ParConn g_par[PAR_CONN];
+
+struct ExHttpRichiesta {
+    char           url[EXHTTP_URL_LUNGO];
+    HttpUrl        u;
+    int            fase;
+    int            nuova;         /* 1 = non riusare: quella riusata era morta */
+    ParConn       *c;
+    int            riusata;
+    unsigned int   visti;         /* byte arrivati per questa risposta        */
+    unsigned int   ultimo_ms;
+    unsigned char  testa[PAR_TESTA];
+    unsigned int   testa_n;
+    HttpRisposta   r;
+    HttpPezzi      pezzi;
+    Srotola       *sr;
+    unsigned long  grezzi;        /* byte del corpo come sono arrivati        */
+    unsigned char *buf;
+    unsigned int   n, cap, max;
+    ExHttpEsito    e;
+    /* HTTP/2 */
+    int            h2_id;         /* the stream, 0 = HTTP/1.1               */
+    unsigned int   gen;           /* of the connection it was opened on     */
+    int            h2_finito;
+    unsigned int   h2_errore;
+    int            h2_rotto;
+    int            testa_ok;
+    char           ce[48];        /* Content-Encoding                       */
+    char           proto[12];     /* "h2" or "http/1.1"                     */
+};
+
+static void par_h2_testa(void *f, const char *nome, unsigned int nl,
+                         const char *val, unsigned int vl);
+static void par_h2_dati(void *f, const unsigned char *d, unsigned int n);
+static void par_h2_chiuso(void *f, unsigned int errore);
+
+static int par_h2_scrivi(void *tubo, const unsigned char *d, unsigned int n)
+{
+    ParConn *c = (ParConn *)tubo;
+
+    return c->t.scrivi(c->t.stato, d, n);
+}
+
+static void par_rilascia(ParConn *c, int pulita)
+{
+    if (!c) return;
+    if (c->h2) {
+        /* ! AN H2 CONNECTION IS DIRTY ONLY AS A WHOLE: one stream that ends
+         * badly is that stream's business (par_h2_stacca) */
+        if (pulita && c->aperta) {
+            if (c->flussi <= 0) { c->flussi = 0; c->occupata = 0; c->quando = uptime_ms(); }
+            return;
+        }
+        h2_chiudi(c->h2);
+        c->h2 = 0;
+        c->flussi = 0;
+        c->gen++;
+    }
+    if (pulita && c->aperta) {
+        c->occupata = 0;
+        c->quando   = uptime_ms();
+        return;
+    }
+    if (c->aperta) c->t.chiudi(c->t.stato);
+    c->aperta = 0;
+    c->occupata = 0;
+}
+
+/* Le ferme da troppo si chiudono: il server lo ha gia' fatto, quasi sempre. */
+static void par_pota(void)
+{
+    int i;
+
+    for (i = 0; i < PAR_CONN; i++)
+        if (g_par[i].aperta && !g_par[i].occupata && g_par[i].flussi == 0 &&
+            uptime_ms() - g_par[i].quando > PAR_RIPOSO_MS)
+            par_rilascia(&g_par[i], 0);
+}
+
+static ParConn *par_trova(const HttpUrl *u)
+{
+    int i;
+
+    for (i = 0; i < PAR_CONN; i++) {
+        ParConn *c = &g_par[i];
+
+        if (!c->aperta || c->porta != u->porta || c->cifrato != u->cifrato ||
+            strcmp(c->host, u->host)) continue;
+        /* ! HTTP/2 CARRIES MANY AT ONCE: busy is not a reason to look away */
+        if (c->h2) {
+            if (h2_aperta(c->h2) && c->flussi < PAR_FLUSSI_MAX) { c->occupata = 1; return c; }
+            continue;
+        }
+        if (!c->occupata) { c->occupata = 1; return c; }
+    }
+    return 0;
+}
+
+static ParConn *par_nuova(const HttpUrl *u, char *errore, unsigned int max)
+{
+    ParConn *c = 0;
+    int      i;
+
+    for (i = 0; i < PAR_CONN && !c; i++)
+        if (!g_par[i].aperta && !g_par[i].occupata) c = &g_par[i];
+    if (!c) {
+        /* la ferma piu' vecchia lascia il posto */
+        for (i = 0; i < PAR_CONN; i++)
+            if (g_par[i].aperta && !g_par[i].occupata && g_par[i].flussi == 0 &&
+                (!c || g_par[i].quando < c->quando)) c = &g_par[i];
+        if (!c) { strncpy(errore, "troppe connessioni aperte", max - 1); return 0; }
+        par_rilascia(c, 0);
+    }
+
+    if (u->cifrato) {
+        ExHttpTrasporto tcp;
+
+        g_tls_errore[0] = 0;
+        if (!magazzino_carica()) {
+            strncpy(errore, g_tls_errore[0] ? g_tls_errore : "nessun magazzino di CA", max - 1);
+            return 0;
+        }
+        int puo_h2 = h2_disponibile && h2_disponibile();
+
+        if (!exhttp_tcp(&tcp, u->host, u->porta)) goto tcp_no;
+        /* ! "h2" IS OFFERED ONLY IF IT CAN BE SPOKEN: libnghttp2.so.14 there */
+        if (!tls_sopra(&c->t, &tcp, u->host, errore, max,
+                       puo_h2 ? "h2,http/1.1" : "http/1.1", 1)) {
+            tcp.chiudi(tcp.stato);
+            if (!errore[0]) strncpy(errore, "la stretta di mano non riesce", max - 1);
+            return 0;
+        }
+        c->h2 = 0;
+        c->flussi = 0;
+        if (puo_h2 && !strcmp(extls_alpn_scelto(((StatoTls *)c->t.stato)->tls), "h2")) {
+            static const H2Ganci ganci = { par_h2_testa, par_h2_dati, par_h2_chiuso };
+
+            c->h2 = h2_apri(par_h2_scrivi, c, &ganci);
+            if (!c->h2) {
+                c->t.chiudi(c->t.stato);
+                strncpy(errore, "HTTP/2 non parte", max - 1);
+                return 0;
+            }
+        }
+    } else if (!exhttp_tcp(&c->t, u->host, u->porta)) {
+        goto tcp_no;
+    }
+    c->aperta   = 1;
+    c->occupata = 1;
+    c->gen++;
+    c->ultimo_ms = uptime_ms();
+    c->porta    = u->porta;
+    c->cifrato  = u->cifrato;
+    strncpy(c->host, u->host, sizeof(c->host) - 1);
+    c->host[sizeof(c->host) - 1] = '\0';
+    return c;
+
+tcp_no:
+    if (g_ultimo_errore == -1)      strncpy(errore, "la rete non e' pronta", max - 1);
+    else if (g_ultimo_errore == -2) strncpy(errore, "il nome non si risolve", max - 1);
+    else snprintf(errore, max, "non riesco a connettermi (%d)", g_ultimo_errore);
+    return 0;
+}
+
+static int par_manda(ExHttpRichiesta *R)
+{
+    static char req[12 * 1024];
+    static char bis[1024];
+    int         n;
+
+    bis[0] = '\0';
+    if (g_bis_chiedi)
+        g_bis_chiedi(g_bis_dato, R->u.host, R->u.percorso, R->u.cifrato, bis, sizeof(bis));
+    n = http_richiesta_testa_da(req, sizeof(req), &R->u, "EX-OS", -1L, 1, bis, 0);
+    if (n > 0) n = intest_codifiche(req, n, sizeof(req));
+    if (n <= 0) { strcpy(R->e.errore, "richiesta troppo lunga"); return -1; }
+    return R->c->t.scrivi(R->c->t.stato, (const unsigned char *)req, (unsigned int)n) == n;
+}
+
+/* Where the body goes: a buffer that grows, up to `max`. */
+static int par_metti(void *dato, const unsigned char *d, unsigned int n)
+{
+    ExHttpRichiesta *R = (ExHttpRichiesta *)dato;
+
+    if (R->n + n > R->max) {
+        unsigned int q = R->max - R->n;
+        R->e.troncata = 1;
+        n = q;
+    }
+    if (R->n + n > R->cap) {
+        unsigned int  cap = R->cap ? R->cap : 65536;
+        unsigned char *b;
+
+        while (cap < R->n + n) cap *= 2;
+        if (cap > R->max) cap = R->max;
+        b = (unsigned char *)realloc(R->buf, cap);
+        if (!b) { R->e.troncata = 1; strcpy(R->e.errore, "non c'e' memoria per il corpo"); return 1; }
+        R->buf = b;
+        R->cap = cap;
+    }
+    memcpy(R->buf + R->n, d, n);
+    R->n += n;
+    return R->e.troncata ? 1 : 0;
+}
+
+/* -----------------------------------------------------------------------------
+ * HTTP/2: the hooks of h2.c, one stream = one request (P4)
+ * --------------------------------------------------------------------------- */
+static int nome_e(const char *n, unsigned int nl, const char *s)
+{
+    return nl == strlen(s) && !strncmp(n, s, nl);     /* h2 names are lower case */
+}
+
+static void copia_valore(char *dst, unsigned int max, const char *v, unsigned int vl)
+{
+    if (vl >= max) vl = max - 1;
+    memcpy(dst, v, vl);
+    dst[vl] = '\0';
+}
+
+static void par_h2_testa(void *f, const char *nome, unsigned int nl,
+                         const char *val, unsigned int vl)
+{
+    ExHttpRichiesta *R = (ExHttpRichiesta *)f;
+    HttpRisposta    *r = &R->r;
+
+    R->visti++;
+    if (R->testa_ok) return;                      /* trailers: not ours */
+    if (nome_e(nome, nl, ":status")) {
+        unsigned int k;
+        r->codice = 0;
+        for (k = 0; k < vl && val[k] >= '0' && val[k] <= '9'; k++)
+            r->codice = r->codice * 10 + (val[k] - '0');
+    } else if (nome_e(nome, nl, "content-type")) {
+        copia_valore(r->tipo, sizeof(r->tipo), val, vl);
+    } else if (nome_e(nome, nl, "location")) {
+        copia_valore(r->posizione, sizeof(r->posizione), val, vl);
+    } else if (nome_e(nome, nl, "content-encoding")) {
+        copia_valore(R->ce, sizeof(R->ce), val, vl);
+    } else if (nome_e(nome, nl, "set-cookie")) {
+        if (r->n_biscotti < HTTP_BISCOTTI_MAX)
+            copia_valore(r->biscotti[r->n_biscotti++], HTTP_BISCOTTO_MAX, val, vl);
+        else
+            r->biscotti_persi = 1;
+    }
+}
+
+/* The head is over (first byte of body, or end of stream): cookies, decoder. */
+static void par_h2_testa_finita(ExHttpRichiesta *R)
+{
+    int b, rotto = 0;
+
+    if (R->testa_ok) return;
+    R->testa_ok = 1;
+    for (b = 0; b < R->r.n_biscotti; b++) {
+        if (g_bis_arrivato_s)
+            g_bis_arrivato_s(g_bis_dato, R->u.host, R->r.biscotti[b], R->u.cifrato);
+        else if (g_bis_arrivato)
+            g_bis_arrivato(g_bis_dato, R->u.host, R->r.biscotti[b]);
+    }
+    R->grezzi = 0;
+    if (g_srotola && srotola_apri) R->sr = srotola_apri(R->ce, &rotto);
+    R->fase = PAR_CORPO;
+}
+
+static void par_h2_dati(void *f, const unsigned char *d, unsigned int n)
+{
+    ExHttpRichiesta *R = (ExHttpRichiesta *)f;
+    int esito;
+
+    R->visti += n;
+    par_h2_testa_finita(R);
+    if (R->e.troncata || R->h2_rotto || n == 0) return;  /* the rest is let go */
+    R->grezzi += n;
+    if (R->sr) esito = srotola_dai(R->sr, d, n, par_metti, R);
+    else       esito = par_metti(R, d, n) ? SROTOLA_FERMATO : SROTOLA_OK;
+    if (esito != SROTOLA_OK && esito != SROTOLA_FERMATO) {
+        R->h2_rotto = 1;
+        sprintf(R->e.errore, "corpo %s rovinato", srotola_nome(R->sr));
+    }
+}
+
+static void par_h2_chiuso(void *f, unsigned int errore)
+{
+    ExHttpRichiesta *R = (ExHttpRichiesta *)f;
+
+    R->h2_finito = 1;
+    R->h2_errore = errore;
+}
+
+/* The stream leaves its connection; the connection stays for the others. */
+static void par_h2_stacca(ExHttpRichiesta *R, int annulla)
+{
+    ParConn *c = R->c;
+
+    if (c && c->h2 && c->gen == R->gen) {
+        if (annulla && !R->h2_finito) h2_lascia(c->h2, R->h2_id);
+        if (--c->flussi <= 0) { c->flussi = 0; c->occupata = 0; c->quando = uptime_ms(); }
+    }
+    R->c = 0;
+    R->h2_id = 0;
+}
+
+/* The body as it came. -1 broken, 0 more to come, 1 over (or truncated). */
+static int par_corpo(ExHttpRichiesta *R, const unsigned char *d, unsigned int n)
+{
+    static unsigned char grezzo[4096];
+
+    while (n > 0) {
+        const unsigned char *da;
+        unsigned int         q;
+        int                  esito;
+
+        if (R->r.a_pezzi) {
+            unsigned int usati = 0;
+            int prodotti = http_pezzi(&R->pezzi, d, n, &usati, grezzo, sizeof(grezzo));
+
+            if (prodotti < 0) { strcpy(R->e.errore, "corpo a pezzi malformato"); return -1; }
+            d += usati;
+            n -= usati;
+            if (usati == 0 && prodotti == 0) break;
+            da = grezzo;
+            q  = (unsigned int)prodotti;
+        } else {
+            q = n;
+            if (R->r.ha_lunghezza && R->grezzi + q > R->r.lunghezza)
+                q = (unsigned int)(R->r.lunghezza - R->grezzi);
+            da = d;
+            n  = 0;
+        }
+        R->grezzi += q;
+        if (q == 0) continue;
+        if (R->sr) esito = srotola_dai(R->sr, da, q, par_metti, R);
+        else       esito = par_metti(R, da, q) ? SROTOLA_FERMATO : SROTOLA_OK;
+        if (esito == SROTOLA_FERMATO) return 1;
+        if (esito != SROTOLA_OK) {
+            sprintf(R->e.errore, "corpo %s rovinato", srotola_nome(R->sr));
+            return -1;
+        }
+    }
+    if (R->r.a_pezzi) return R->pezzi.stato == HTTP_P_FATTO;
+    if (R->r.ha_lunghezza) return R->grezzi >= R->r.lunghezza;
+    return 0;
+}
+
+static void par_errore(ExHttpRichiesta *R, const char *perche)
+{
+    if (perche && !R->e.errore[0]) strncpy(R->e.errore, perche, sizeof(R->e.errore) - 1);
+    if (R->h2_id) par_h2_stacca(R, 1);
+    else          par_rilascia(R->c, 0);
+    R->c = 0;
+    if (R->sr) { srotola_chiudi(R->sr); R->sr = 0; }
+    R->e.codice = 0;
+    R->fase = PAR_FINITA;
+}
+
+/* The answer is over: `pulita` = it ended where it said, the connection can
+ * carry the next one. Follows a redirection, or closes the request. */
+static void par_fine(ExHttpRichiesta *R, int pulita)
+{
+    HttpRisposta *r = &R->r;
+
+    /* ! TRUNCATED BY US (the caller's `max`) THE ERROR STAYS EMPTY, as in
+     * exhttp_prendi: «the buffer was small» is not «the server cut it» */
+    if (!R->e.troncata && R->sr && R->grezzi > 0 && !srotola_finito(R->sr)) {
+        R->e.troncata = 1;
+        sprintf(R->e.errore, "corpo %s incompleto", srotola_nome(R->sr));
+    }
+    if (!R->e.troncata && !pulita && r->ha_lunghezza && R->grezzi < r->lunghezza) {
+        R->e.troncata = 1;
+        sprintf(R->e.errore, "corpo incompleto: %lu byte su %lu dichiarati",
+                R->grezzi, (unsigned long)r->lunghezza);
+    }
+    if (R->sr) { srotola_chiudi(R->sr); R->sr = 0; }
+    par_rilascia(R->c, pulita && !r->chiude && !R->e.troncata &&
+                       (r->a_pezzi || r->ha_lunghezza));
+    R->c = 0;
+
+    if ((r->codice == 301 || r->codice == 302 || r->codice == 303 ||
+         r->codice == 307 || r->codice == 308) && r->posizione[0]) {
+        char nuovo[EXHTTP_URL_LUNGO];
+
+        if (R->e.salti >= EXHTTP_SALTI_MAX) { par_errore(R, "troppe redirezioni"); return; }
+        unisci_url(&R->u, r->posizione, nuovo, sizeof(nuovo));
+        strncpy(R->url, nuovo, sizeof(R->url) - 1);
+        R->url[sizeof(R->url) - 1] = '\0';
+        R->e.salti++;
+        R->e.troncata = 0;
+        R->e.errore[0] = '\0';
+        R->n = 0;
+        R->nuova = 0;
+        R->h2_id = 0;
+        R->h2_finito = 0;
+        R->h2_errore = 0;
+        R->testa_ok = 0;
+        R->ce[0] = '\0';
+        R->fase = PAR_APRI;
+        return;
+    }
+    R->e.codice = r->codice;
+    strncpy(R->e.tipo, r->tipo, sizeof(R->e.tipo) - 1);
+    R->e.byte = R->n;
+    strncpy(R->e.finale, R->url, sizeof(R->e.finale) - 1);
+    R->fase = PAR_FINITA;
+}
+
+/* The head is complete in R->testa[0..fine): cookies, decoder, then the bytes
+ * of body that came with it. */
+static int par_testa(ExHttpRichiesta *R, int fine)
+{
+    int b;
+
+    for (b = 0; b < R->r.n_biscotti; b++) {
+        if (g_bis_arrivato_s)
+            g_bis_arrivato_s(g_bis_dato, R->u.host, R->r.biscotti[b], R->u.cifrato);
+        else if (g_bis_arrivato)
+            g_bis_arrivato(g_bis_dato, R->u.host, R->r.biscotti[b]);
+    }
+    http_pezzi_avvia(&R->pezzi);
+    R->grezzi = 0;
+    if (g_srotola && srotola_apri) {
+        char ce[48];
+        int  rotto = 0;
+
+        intest_valore(R->testa, (unsigned int)fine, "content-encoding", ce, sizeof(ce));
+        R->sr = srotola_apri(ce, &rotto);
+    }
+    R->fase = PAR_CORPO;
+    /* ! NO BODY AT ALL: 204 and 304 by rule, whatever the headers say */
+    if (R->r.codice == 204 || R->r.codice == 304 ||
+        (R->r.codice >= 100 && R->r.codice < 200))
+        return 1;
+    return par_corpo(R, R->testa + fine, R->testa_n - (unsigned int)fine);
+}
+
+ExHttpRichiesta *exhttp_parti(const char *url, unsigned int max)
+{
+    ExHttpRichiesta *R;
+
+    if (!url || max == 0) return 0;
+    R = (ExHttpRichiesta *)calloc(1, sizeof(*R));
+    if (!R) return 0;
+    R->max  = max;
+    R->fase = PAR_APRI;
+    if (strlen(url) >= sizeof(R->url)) {
+        strcpy(R->e.errore, "indirizzo troppo lungo");
+        R->fase = PAR_FINITA;
+    } else {
+        strcpy(R->url, url);
+    }
+    return R;
+}
+
+int exhttp_avanza(ExHttpRichiesta *R)
+{
+    static unsigned char blocco[4096];
+    int giri;
+
+    if (!R) return 1;
+    if (R->fase == PAR_FINITA) return 1;
+
+    if (R->fase == PAR_APRI) {
+        int m;
+
+        par_pota();
+        strncpy(R->e.finale, R->url, sizeof(R->e.finale) - 1);
+        if (!http_url(R->url, &R->u)) { par_errore(R, "indirizzo illeggibile"); return 1; }
+        R->c = R->nuova ? 0 : par_trova(&R->u);
+        R->riusata = R->c != 0;
+        if (!R->c) {
+            R->c = par_nuova(&R->u, R->e.errore, sizeof(R->e.errore));
+            if (!R->c) { par_errore(R, 0); return 1; }
+        }
+        memset(&R->r, 0, sizeof(R->r));
+        strcpy(R->proto, R->c->h2 ? "h2" : "http/1.1");
+        if (R->c->h2) {
+            /* ! HTTP/2: the same request as par_manda, as header fields */
+            static char        bis[1024], aut[HTTP_HOST_MAX + 8];
+            const char        *nomi[4], *valori[4];
+            int                k = 0, id;
+
+            bis[0] = '\0';
+            if (g_bis_chiedi)
+                g_bis_chiedi(g_bis_dato, R->u.host, R->u.percorso, R->u.cifrato, bis, sizeof(bis));
+            if (R->u.porta != 443) snprintf(aut, sizeof(aut), "%s:%u", R->u.host, R->u.porta);
+            else                   snprintf(aut, sizeof(aut), "%s", R->u.host);
+            nomi[k] = "user-agent"; valori[k++] = "EX-OS";
+            nomi[k] = "accept";     valori[k++] = "*/*";
+            if (g_srotola && srotola_codifiche && srotola_codifiche()[0]) {
+                nomi[k] = "accept-encoding"; valori[k++] = srotola_codifiche();
+            }
+            if (bis[0]) { nomi[k] = "cookie"; valori[k++] = bis; }
+            id = h2_richiesta(R->c->h2, "https", aut, R->u.percorso, nomi, valori, k, R);
+            if (id <= 0) {
+                ParConn *c = R->c;
+
+                R->c = 0;
+                if (c->flussi <= 0) par_rilascia(c, 0);        /* nobody else on it */
+                if (R->riusata) { R->nuova = 1; return 0; }
+                par_errore(R, "HTTP/2: la richiesta non parte");
+                return 1;
+            }
+            R->h2_id     = id;
+            R->gen       = R->c->gen;
+            R->c->flussi++;
+            R->testa_n   = 0;
+            R->visti     = 0;
+            R->ultimo_ms = uptime_ms();
+            R->fase      = PAR_TESTA_F;
+            return 0;
+        }
+        m = par_manda(R);
+        if (m < 0) { par_errore(R, 0); return 1; }
+        if (m == 0) {
+            /* ! UNA CONNESSIONE TENUTA PUO' ESSERE GIA' MORTA, e lo si scopre
+             * scrivendo o leggendo: si riprova una volta, su una nuova. */
+            if (R->riusata) { par_rilascia(R->c, 0); R->c = 0; R->nuova = 1; return 0; }
+            par_errore(R, "non riesco a mandare la richiesta");
+            return 1;
+        }
+        R->testa_n   = 0;
+        R->visti     = 0;
+        R->ultimo_ms = uptime_ms();
+        R->fase      = PAR_TESTA_F;
+        return 0;
+    }
+
+    /* ! HTTP/2: READING THE CONNECTION MOVES EVERY STREAM ON IT, this one and
+     * the others; the hooks put each byte in its own request */
+    if (R->h2_id) {
+        for (giri = 0; giri < 16 && !R->h2_finito; giri++) {
+            ParConn         *c = R->c;
+            ExHttpTrasporto *t;
+            int              q, k;
+
+            if (!c || !c->h2 || c->gen != R->gen) {
+                if (R->visti == 0 && R->riusata) {      /* it died under us: once more */
+                    R->c = 0; R->h2_id = 0; R->nuova = 1; R->fase = PAR_APRI;
+                    return 0;
+                }
+                R->c = 0; R->h2_id = 0;
+                par_errore(R, "connessione interrotta");
+                return 1;
+            }
+            t = &c->t;
+            q = t->quanti ? t->quanti(t->stato) : 1;
+            if (q == 0) {
+                unsigned int ultimo = c->ultimo_ms > R->ultimo_ms ? c->ultimo_ms : R->ultimo_ms;
+                if (uptime_ms() - ultimo > PAR_ATTESA_MS) par_errore(R, "il server non risponde");
+                break;
+            }
+            k = q > 0 ? t->leggi(t->stato, blocco, sizeof(blocco), 10000) : 0;
+            if (k <= 0 || h2_dai(c->h2, blocco, (unsigned int)k) < 0) {
+                par_rilascia(c, 0);                     /* every stream on it is gone */
+                continue;                               /* the gen check above says so */
+            }
+            c->ultimo_ms = uptime_ms();
+        }
+        if (R->fase != PAR_FINITA && R->h2_finito) {
+            par_h2_testa_finita(R);
+            par_h2_stacca(R, 0);
+            if (R->h2_rotto) { par_errore(R, 0); return 1; }
+            if (R->h2_errore && !R->e.troncata) {
+                char m[48];
+                sprintf(m, "il server ha chiuso il flusso (%u)", R->h2_errore);
+                par_errore(R, m);
+                return 1;
+            }
+            par_fine(R, 1);
+        }
+        return R->fase == PAR_FINITA;
+    }
+
+    /* ! A FEW READS AND THEN THE NEXT ONE: four connections share the turns */
+    for (giri = 0; giri < 16 && R->fase != PAR_FINITA && R->fase != PAR_APRI; giri++) {
+        ExHttpTrasporto *t = &R->c->t;
+        int q = t->quanti ? t->quanti(t->stato) : 1;
+        int k = 0, esito;
+
+        if (q == 0) {
+            if (uptime_ms() - R->ultimo_ms > PAR_ATTESA_MS)
+                par_errore(R, "il server non risponde");
+            break;
+        }
+        if (q > 0) {
+            if (R->fase == PAR_TESTA_F) {
+                if (R->testa_n >= PAR_TESTA) { par_errore(R, "intestazioni troppo lunghe"); break; }
+                k = t->leggi(t->stato, R->testa + R->testa_n, PAR_TESTA - R->testa_n, 10000);
+            } else {
+                k = t->leggi(t->stato, blocco, sizeof(blocco), 10000);
+            }
+        }
+        if (q < 0 || k == 0) {                       /* the other end closed */
+            if (R->fase == PAR_TESTA_F) {
+                if (R->visti == 0 && R->riusata) {
+                    par_rilascia(R->c, 0); R->c = 0; R->nuova = 1; R->fase = PAR_APRI;
+                    break;
+                }
+                par_errore(R, "chiusa senza rispondere");
+                break;
+            }
+            par_fine(R, 0);
+            break;
+        }
+        if (k < 0) { par_errore(R, "connessione interrotta"); break; }
+
+        R->ultimo_ms = uptime_ms();
+        R->visti += (unsigned int)k;
+        if (R->fase == PAR_TESTA_F) {
+            int fine;
+
+            R->testa_n += (unsigned int)k;
+            fine = http_intestazioni(R->testa, R->testa_n, &R->r);
+            if (fine < 0) { par_errore(R, "risposta malformata"); break; }
+            if (fine == 0) continue;
+            esito = par_testa(R, fine);
+        } else {
+            esito = par_corpo(R, blocco, (unsigned int)k);
+        }
+        if (esito < 0) { par_errore(R, 0); break; }
+        if (esito > 0) { par_fine(R, !R->e.troncata); break; }
+    }
+    return R->fase == PAR_FINITA;
+}
+
+const unsigned char *exhttp_risposta(const ExHttpRichiesta *R, ExHttpEsito *e,
+                                     unsigned int *n)
+{
+    if (e) { if (R) *e = R->e; else memset(e, 0, sizeof(*e)); }
+    if (n) *n = R ? R->n : 0;
+    return R ? R->buf : 0;
+}
+
+const char *exhttp_protocollo(const ExHttpRichiesta *R)
+{
+    return R ? R->proto : "";
+}
+
+void exhttp_lascia(ExHttpRichiesta *R)
+{
+    if (!R) return;
+    if (R->h2_id) par_h2_stacca(R, 1);   /* the stream is cancelled, the rest stays */
+    else if (R->c) par_rilascia(R->c, 0);   /* half a body: the connection is dirty */
+    if (R->sr) srotola_chiudi(R->sr);
+    free(R->buf);
+    free(R);
 }

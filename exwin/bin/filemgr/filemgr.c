@@ -80,7 +80,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `filemgr -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.015"
+#define VERSIONE_APP "0.016"
 EX_VERSIONE("filemgr", VERSIONE_APP);
 
 #define VOCI_INIZIO 512     /* rows of a folder: the first, then doubling (0.014) */
@@ -198,6 +198,30 @@ static int g_albero_w = ALBERO_W0;
 #define ID_ORD_TIPO   41
 #define ID_ORD_DIM    42
 #define ID_ORD_DATA   43
+
+/* Opzioni > Visualizzazione (0.016, voce 114) */
+#define ID_VISUALIZZA 50
+#define ID_VIS_NASC   51
+#define ID_VIS_EST    52
+#define ID_VIS_OK     53
+#define ID_VIS_NO     54
+
+/* ! WHAT THE USER SEES, NOT WHAT IS THERE: the two choices change only the
+ * rows shown. Copy, move and delete of a folder still take its hidden files,
+ * and a name keeps its extension on the disk. Both on by default: until
+ * 0.015 everything was shown, and nobody loses a file from sight by updating. */
+static int g_vedi_nascosti  = 1;    /* names beginning with "." */
+static int g_vedi_estensione = 1;   /* "nota.txt" or "nota" */
+
+/* A name to leave out of the rows: "." always, ".x" when hidden are hidden.
+ * ".." stays: it is the way up. */
+static int da_nascondere(const char *n)
+{
+    if (n[0] != '.') return 0;
+    if (n[1] == '\0') return 1;
+    if (n[1] == '.' && n[2] == '\0') return 0;
+    return !g_vedi_nascosti;
+}
 
 #define ORD_NOME  0
 #define ORD_TIPO  1
@@ -452,6 +476,7 @@ static void albero_espandi(int i)
             if (v[k].name[0] == '.' &&
                 (v[k].name[1] == '\0' ||
                  (v[k].name[1] == '.' && v[k].name[2] == '\0'))) continue;
+            if (da_nascondere(v[k].name)) continue;
 
             memmove(&g_nodo[ins + 1], &g_nodo[ins],
                     (g_nodi - (unsigned int)ins) * sizeof(Nodo));
@@ -759,8 +784,21 @@ static void elenco_mostra(void)
 
         if (g_segno[i]) riga[C_SEGNO_X] = '*';
 
-        campo(riga, C_NOME_X, C_NOME_W,
-              g_da_ricerca ? coda(g_nome[i], C_NOME_W) : g_nome[i], 0);
+        {
+            /* without the extension: "nota.txt" -> "nota"; ".profilo" and
+             * the folders stay as they are */
+            char        senza[DIRENT_NAME_MAX];
+            const char *n = g_nome[i], *pt = strrchr(n, '.');
+
+            if (!g_vedi_estensione && !g_dir_flag[i] && pt && pt != n && pt[-1] != '/') {
+                size_t l = (size_t)(pt - n);
+
+                if (l >= sizeof(senza)) l = sizeof(senza) - 1;
+                memcpy(senza, n, l); senza[l] = '\0';
+                n = senza;
+            }
+            campo(riga, C_NOME_X, C_NOME_W, g_da_ricerca ? coda(n, C_NOME_W) : n, 0);
+        }
         campo(riga, C_TIPO_X, C_TIPO_W,
               g_dir_flag[i] ? "<DIR>" : "<FILE>", 0);
 
@@ -806,7 +844,7 @@ static void leggi(const char *percorso)
             char        perc[PERC_MAX];
             struct stat st;
 
-            if (v[i].name[0] == '.' && v[i].name[1] == '\0') continue;
+            if (da_nascondere(v[i].name)) continue;
             if (!voci_posto(quante)) {
                 strcpy(g_avviso, "memoria finita: la cartella e' mostrata solo in parte");
                 break;
@@ -910,6 +948,10 @@ static void stato_aggiorna(void)
 {
     char s[220];
     unsigned int segnati = quanti_segnati();
+
+    /* the space-bar marks are ours: the list must know them for the sheet
+     * it shows while the rows are dragged (exwin.so 0.027) */
+    ex_list_set_drag_count(g_elenco, segnati);
 
     /* ! QUANTE VOCI SONO SEGNATE VA SCRITTO, e non basta l'asterisco nella
      * riga: un segno messo in cima a un elenco lungo, dopo aver scorso, non
@@ -1927,9 +1969,27 @@ static int separatore_cfg(char *out, int max, int fai)
     return snprintf(out, (size_t)max, "%s/.exwin/config/filemgr.cfg", casa) < max;
 }
 
+/* "chiave = N" at the start of a line, or -1 */
+static int cfg_numero(const char *t, const char *chiave)
+{
+    size_t      l = strlen(chiave);
+    const char *q = t;
+
+    for (; q && *q; q = strchr(q, '\n'), q = q ? q + 1 : 0) {
+        const char *r = q;
+
+        if (strncmp(r, chiave, l) != 0) continue;
+        r += l;
+        while (*r == ' ') r++;
+        if (*r != '=') continue;
+        return atoi(r + 1);
+    }
+    return -1;
+}
+
 static void separatore_leggi(void)
 {
-    char p[PERC_MAX], t[128], *q;
+    char p[PERC_MAX], t[512];
     int  fd, n;
 
     if (!separatore_cfg(p, sizeof(p), 0)) return;
@@ -1939,21 +1999,24 @@ static void separatore_leggi(void)
     close(fd);
     if (n <= 0) return;
     t[n] = '\0';
-    q = strstr(t, "albero");
-    if (!q || !(q = strchr(q, '='))) return;
-    n = atoi(q + 1);
+    n = cfg_numero(t, "albero");
     if (n >= ALBERO_W_MIN && n <= 1600) g_albero_w = n;
+    n = cfg_numero(t, "nascosti");
+    if (n == 0 || n == 1) g_vedi_nascosti = n;
+    n = cfg_numero(t, "estensione");
+    if (n == 0 || n == 1) g_vedi_estensione = n;
 }
 
 static void separatore_salva(void)
 {
-    char p[PERC_MAX], t[96];
+    char p[PERC_MAX], t[192];
     int  fd, n;
 
     if (!separatore_cfg(p, sizeof(p), 1)) return;
     fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) return;         /* sistema in sola lettura: vale fino alla chiusura */
-    n = snprintf(t, sizeof(t), "# filemgr: lo riscrive il file manager.\nalbero = %d\n", g_albero_w);
+    n = snprintf(t, sizeof(t), "# filemgr: lo riscrive il file manager.\nalbero = %d\n"
+                 "nascosti = %d\nestensione = %d\n", g_albero_w, g_vedi_nascosti, g_vedi_estensione);
     write(fd, t, (unsigned int)n);
     close(fd);
 }
@@ -2002,6 +2065,69 @@ static void disponi(int w, int h)
     if (g_et_cartelle) ex_resize(g_et_cartelle, ALBERO_W - 8, 14);
     g_int_margine = (unsigned int)-1;
     intestazione_incolonna();
+}
+
+/* =============================================================================
+ * Opzioni > Visualizzazione (0.016, voce 114): hidden files and extensions
+ * ============================================================================= */
+static int      g_vis_fatto;                /* 0 open, 1 saved, -1 cancelled */
+
+static long vis_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
+{
+    if (msg == EXM_COMMAND && wp == ID_VIS_OK) { g_vis_fatto = 1;  return 0; }
+    if (msg == EXM_COMMAND && wp == ID_VIS_NO) { g_vis_fatto = -1; return 0; }
+    if (msg == EXM_CLOSE)                      { g_vis_fatto = -1; return 0; }
+    if (msg == EXM_KEY && (wp & KBD_KEY_MASK) == 27) { g_vis_fatto = -1; return 0; }
+    return ex_default_proc(f, msg, wp, lp);
+}
+
+static void separatore_salva(void);
+
+static void visualizzazione(void)
+{
+    ExWindow     f, c_nasc, c_est;
+    ExMsg        m;
+    unsigned int sw = 0, sh = 0;
+    int          w = 420, h = 150;
+
+    ex_screen_size(&sw, &sh);
+    g_vis_fatto = 0;
+    f = ex_create("window", "Visualizzazione",
+                  EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_TOPMOST | EX_MODAL,
+                  ((int)sw - w) / 2, ((int)sh - h) / 2, w, h, 0, 0, vis_proc);
+    if (!f) return;
+    c_nasc = ex_create("checkbox", "Mostra i file e le cartelle nascosti (.nome)",
+                       EX_CHILD, 16, 16, w - 32, 22, f, ID_VIS_NASC, 0);
+    c_est  = ex_create("checkbox", "Mostra l'estensione dei file (nota.txt, non nota)",
+                       EX_CHILD, 16, 46, w - 32, 22, f, ID_VIS_EST, 0);
+    ex_set_checked(c_nasc, g_vedi_nascosti);
+    ex_set_checked(c_est, g_vedi_estensione);
+    ex_create("button", "Salva",   EX_CHILD, w - 196, h - 40, 84, 26, f, ID_VIS_OK, 0);
+    ex_create("button", "Annulla", EX_CHILD, w - 104, h - 40, 84, 26, f, ID_VIS_NO, 0);
+    ex_set_focus(c_nasc);
+    ex_default_proc(f, EXM_PAINT, 0, 0);
+    ex_update(f);
+    while (g_vis_fatto == 0 && ex_get_message(&m)) ex_dispatch(&m);
+
+    if (g_vis_fatto == 1) {
+        int nasc = ex_is_checked(c_nasc) ? 1 : 0, cambia_albero = nasc != g_vedi_nascosti;
+
+        g_vedi_nascosti   = nasc;
+        g_vedi_estensione = ex_is_checked(c_est) ? 1 : 0;
+        separatore_salva();
+        ex_destroy(f);
+        if (cambia_albero) {
+            /* the tree again from the root, open down to where we are */
+            albero_chiudi(0);
+            albero_espandi(0);
+            albero_apri_fino_a(g_dir);
+            albero_mostra();
+        }
+        leggi(g_dir);
+        ridisegna();
+        return;
+    }
+    ex_destroy(f);
 }
 
 static void istruzioni(void)
@@ -2277,6 +2403,7 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         if (wp == ID_ORD_DATA) { ordina_per(ORD_DATA); break; }
 
         if (wp == ID_ISTRUZIONI) { istruzioni();   break; }
+        if (wp == ID_VISUALIZZA) { visualizzazione(); break; }
         if (wp == ID_INFO)       { informazioni(); break; }
         return 0;
 
@@ -2396,6 +2523,8 @@ int main(int argc, char **argv)
     ex_menu_add_item(g_menu, "Comandi", "Nessun segno",     ID_SEGNA_NIENTE);
     ex_menu_add_item(g_menu, "Comandi", "-",                0);
     ex_menu_add_item(g_menu, "Comandi", "Cerca\tCtrl+F",    ID_CERCA);
+
+    ex_menu_add_item(g_menu, "Opzioni", "Visualizzazione...", ID_VISUALIZZA);
 
     ex_menu_add_item(g_menu, "Info", "Istruzioni",      ID_ISTRUZIONI);
     ex_menu_add_item(g_menu, "Info", "Informazioni su", ID_INFO);

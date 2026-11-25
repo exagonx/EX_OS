@@ -1,0 +1,20 @@
+terze_browser/ - sorgenti di terzi per il motore di EXBrowser (25/11/2026)
+
+Cloni git superficiali (--depth 1), ognuno sul tag della sua ultima release,
+per lo studio e per scrivere i porting. Il perche' di ognuno, le licenze e
+l'ordine dei passi: debug/implementazione_BROWSER002.txt (sezioni 4, 6, 9).
+
+! NON SI COSTRUISCE DA QUI. Gli archivi verificati per la costruzione
+(tools/librerie-exos/comune.sh) stanno in ~/ex_os/cross_build/terze-parti/<nome>/,
+con .sha256 e PROVENIENZA.txt.
+
+  lexbor v3.0.1 | taffy v0.16.0 | yoga v3.2.2 | brotli v1.2.1 | woff2 v1.0.2
+  nghttp2 v1.71.0 | wslay release-1.1.1 | plutovg v1.3.3 | resvg v0.50.0
+  utf8proc v2.12.0 | quickjs-ng v0.18.0 | wasm-micro-runtime WAMR-2.4.6
+  wasm3 v0.9.1-beta.1 | icu4x icu@2.4.0 (solo confronto; per Intl si usa
+  ICU4C 79.1, archivio in terze-parti/icu4c)
+  wpt: web-platform-tests, copia parziale (sparse checkout), commit 048b2e13
+
+Aggiornare un clone a una release nuova:
+  git -C <nome> fetch --depth 1 origin refs/tags/<tag>:refs/tags/<tag>
+  git -C <nome> checkout <tag>

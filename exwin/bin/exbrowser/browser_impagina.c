@@ -251,6 +251,16 @@ static ExFont font_di(const CssStile *st)
      * scrive `code { font-family: sans-serif }` lo sta chiedendo davvero, e
      * quel foglio ha l'ultima parola. Ma se non dice niente, <pre> vuole il
      * monospazio — e' il motivo per cui quel tag esiste. */
+    /* ! A FAMILY OF THE PAGE (@font-face, P6): its file if it arrived and
+     * opened, else the generic the list names after it */
+    if (CSS_FAM_E_PAGINA(st->famiglia)) {
+        ExFont p = car_della_pagina(st->famiglia, neretto, corsivo, corpo);
+        int    gen = CSS_FAM_PAGINA_GEN(st->famiglia);
+
+        if (p) return p;
+        fam = gen == CSS_FAM_FISSO ? FAM_MONO : gen == CSS_FAM_SERIF ? FAM_SERIF : FAM_SANS;
+        return font_per(neretto, corsivo, fam, corpo);
+    }
     if (st->famiglia == CSS_FAM_FISSO)      fam = FAM_MONO;
     else if (st->famiglia == CSS_FAM_SANS)  fam = FAM_SANS;
     else if (st->famiglia == CSS_FAM_SERIF) fam = FAM_SERIF;
@@ -323,7 +333,7 @@ static int rettangolo(int x, int y, int w, int h, unsigned int colore)
 
 static int alt_riga_f(ExFont f)
 {
-    int h = ex_font_height(f);
+    int h = car_altezza(f);
 
     return h > 0 ? h + 3 : 19;
 }
@@ -387,7 +397,7 @@ static void parola(const char *t, unsigned int off, int n)
     for (i = 0; i < n; i++) cop[i] = t[i];
     cop[n] = '\0';
 
-    w = ex_text_width(f, cop);
+    w = car_larghezza(f, cop);
 
     /* ! SI VA A CAPO SULLA PAROLA, NON SUL CARATTERE, ed e' cio' che rende il
      * testo leggibile: spezzare in mezzo a una parola si vede subito. Una
@@ -533,7 +543,7 @@ static void parole(const char *t, unsigned int base)
             if (t[i] == ' ' || t[i] == '\t') {
                 int quanti = (t[i] == '\t') ? 8 : 1;
 
-                g_pen_x += quanti * ex_text_width(font_di(&g_stile_ora), " ");
+                g_pen_x += quanti * car_larghezza(font_di(&g_stile_ora), " ");
                 i++;
                 continue;
             }
@@ -562,7 +572,7 @@ static void parole(const char *t, unsigned int base)
         if (bianco(t[i])) {
             while (bianco(t[i])) i++;
             if (g_pen_x > rx())
-                g_pen_x += ex_text_width(font_di(&g_stile_ora), " ");
+                g_pen_x += car_larghezza(font_di(&g_stile_ora), " ");
             continue;
         }
         if (!t[i]) break;
@@ -1711,7 +1721,7 @@ static void impagina_nodo(int v, const CssStile *ered)
                     primo = g_doc.nodi[primo].prossimo;
                 if (segno_mio == 0 && della_lista.display == CSS_DISPLAY_FLEX &&
                     !della_lista.flex_colonna && primo != v)
-                    g_pen_x += ex_text_width(font_di(&mio), "  ");
+                    g_pen_x += car_larghezza(font_di(&mio), "  ");
             }
 
             if (segno_mio == 0) {
@@ -1744,7 +1754,7 @@ static void impagina_nodo(int v, const CssStile *ered)
                     if (off != GENERA_NIENTE) parola("-", off, 1);
                 }
             }
-            if (segno_mio != 0) g_pen_x += ex_text_width(font_di(&mio), " ");
+            if (segno_mio != 0) g_pen_x += car_larghezza(font_di(&mio), " ");
         }
 
         if (uguale(nome, "a")) {
@@ -1850,9 +1860,18 @@ static void impagina_nodo(int v, const CssStile *ered)
     }
 }
 
+/* ! THE CUSTOM PROPERTIES OF EVERY ELEMENT (var(), P6) live here for ONE
+ * layout: excss fills it as it goes, and is given it again, empty, at the
+ * start of each one - a script may have changed the page since (css.h,
+ * css_variabili). One buffer for the page and its iframes: excss starts
+ * again by itself when the document changes. */
+static char g_css_var[512 * 1024];
+
 void impagina(void)
 {
     int pagina_sf = -1;         /* il riquadro dello sfondo della pagina */
+
+    css_variabili(g_css_var, sizeof(g_css_var));
 
     g_pez_n = 0;
     g_link_n = 0;
@@ -2086,7 +2105,7 @@ void disegna_contenuto(void)
     for (i = 0; i < g_pez_n; i++) {
         int y  = g_pez[i].y - g_scorri;
         int ph = (g_pez[i].rif >= 0)
-                 ? g_pez[i].h : ex_font_height(g_pez[i].font);
+                 ? g_pez[i].h : car_altezza(g_pez[i].font);
 
         /* ! SI DISEGNA SOLO CIO' CHE SI VEDE. Con una pagina di migliaia di
          * righe, dipingere tutto vorrebbe dire pagare l'intero documento a
@@ -2159,13 +2178,13 @@ void disegna_contenuto(void)
                     ex_fill_rect(g_f, g_pez[i].x, y, sp > 0 ? sp : g_pez[i].w, ph, EX_BLUE);
                     c = EX_WHITE;
                 }
-                ex_draw_text_font(g_f, f, g_pez[i].x, y, cop, c);
+                car_disegna(g_f, f, g_pez[i].x, y, cop, c);
 
                 /* ! UN COLLEGAMENTO SI SOTTOLINEA, e non basta il colore: su
                  * uno schermo a pochi colori il blu e il nero si distinguono
                  * male, e chi non li distingue non trova i collegamenti. */
                 if (g_pez[i].link >= 0)
-                    ex_fill_rect(g_f, g_pez[i].x, y + ex_font_height(f) - 2,
+                    ex_fill_rect(g_f, g_pez[i].x, y + car_altezza(f) - 2,
                               g_pez[i].w, 1, c);
             }
         }
@@ -2182,7 +2201,7 @@ void disegna_contenuto(void)
 
             if (g_tab_link >= 0 ? g_pez[i].link != g_tab_link
                                 : g_pez[i].rif != g_tab_rif) continue;
-            h = (g_pez[i].rif >= 0) ? g_pez[i].h : ex_font_height(g_pez[i].font);
+            h = (g_pez[i].rif >= 0) ? g_pez[i].h : car_altezza(g_pez[i].font);
             x = g_pez[i].x - 2;
             y = g_pez[i].y - g_scorri - 1;
             w = g_pez[i].w + 4;

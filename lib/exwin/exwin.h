@@ -611,6 +611,11 @@ int         ex_type_set(const char *tipo, const char *prog);
 void        ex_list_set_multiselect(ExWindow lista, int si);
 int         ex_list_get_selection(ExWindow lista, unsigned int *righe, int max);
 int         ex_list_row_at(ExWindow lista, int y);
+/* How many items a drag of rows out of this list carries, for a program that
+ * keeps marks of its own (the file manager's space bar): more than one, and
+ * the sheet beside the pointer is three sheets. 0, the default: the list's
+ * own choice decides (exwin.so 0.027, voce 114). */
+void        ex_list_set_drag_count(ExWindow lista, unsigned int n);
 
 void        ex_minimize_window_id(unsigned int id);
 
@@ -1434,6 +1439,7 @@ void ex_screen_size(unsigned int *larghezza, unsigned int *altezza);
 #define ex_lista_multipla        ex_list_set_multiselect
 #define ex_lista_scelte          ex_list_get_selection
 #define ex_lista_riga_a          ex_list_row_at
+#define ex_lista_trascina_quanti ex_list_set_drag_count
 #define ex_finestra_riduci       ex_minimize_window_id
 #define ex_mouse_passaggio       ex_track_mouse_hover
 #define ex_ridisegna             ex_redraw

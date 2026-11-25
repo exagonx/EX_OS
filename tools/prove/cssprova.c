@@ -17,6 +17,7 @@ static char      g_carena[262144];
 static CssFoglio g_fog;
 
 static int falliti = 0, fatti = 0;
+static char g_vbuf[262144];         /* the sets of the custom properties (P6) */
 
 static void ok(const char *t, int cond)
 {
@@ -73,6 +74,8 @@ static void stile_di(int nodo, CssStile *out)
 int main(void)
 {
     CssStile s;
+
+    css_variabili(g_vbuf, sizeof(g_vbuf));
 
     printf("\n=== il minimo ===\n");
     carica("<p>ciao</p>", "p { color: red }");
@@ -581,6 +584,153 @@ int main(void)
     ok("la forma breve con none dentro", css_segno_lista() == 0);
     stile_di(trova("li"), &s);
     ok("list-style-type: disc sulla voce dice 1", css_segno_lista() == 1);
+
+
+    printf("\n=== var() e le proprieta' personalizzate (P6) ===\n");
+    css_media_larghezza(1280);
+    carica("<p>x</p>", ":root { --c: red } p { color: var(--c) }");
+    stile_di(trova("p"), &s); ok("var() da :root", s.colore == 0xFFFF0000u);
+    carica("<div><p>x</p></div><p>y</p>", "div { --c: #00f } p { color: var(--c) }");
+    stile_di(trova_n("p", 0), &s); ok("la proprieta' personalizzata scende ai figli", s.colore == 0xFF0000FFu);
+    stile_di(trova_n("p", 1), &s); ok("...e fuori dal div non c'e': la dichiarazione cade", s.colore == CSS_NIENTE);
+    carica("<p>x</p>", "p { color: var(--nessuna, green) }");
+    stile_di(trova("p"), &s); ok("il ripiego", s.colore == 0xFF008000u);
+    carica("<p>x</p>", "p { color: var(--a, var(--b, lime)) }");
+    stile_di(trova("p"), &s); ok("il ripiego annidato", s.colore == 0xFF00FF00u);
+    carica("<p>x</p>", ":root { --a: 10px; --b: calc(var(--a) * 2) } p { margin-top: var(--b) }");
+    stile_di(trova("p"), &s); ok("var() dentro una personalizzata, e calc()", s.margine[0] == 20);
+    carica("<div><p>x</p></div>", "div { --a: 1px; --b: var(--a) } p { --a: 5px; margin-top: var(--b) }");
+    stile_di(trova("p"), &s); ok("una personalizzata si risolve dove e' dichiarata", s.margine[0] == 1);
+    carica("<p>x</p>", "p { --a: var(--b); --b: var(--a); color: var(--a, red) }");
+    stile_di(trova("p"), &s); ok("un ciclo: vale il ripiego", s.colore == 0xFFFF0000u);
+    carica("<p>x</p>", "p { --w: 2px; border: var(--w) solid red }");
+    stile_di(trova("p"), &s); ok("var() dentro una scorciatoia", s.bordo[0] == 2 && s.bordo_stile[3] == 1);
+    carica("<p style='color: var(--c)'>x</p>", ":root { --c: red }");
+    stile_di(trova("p"), &s); ok("var() nell'attributo style", s.colore == 0xFFFF0000u);
+    carica("<p style='--c: blue'><span>x</span></p>", "span { color: var(--c) }");
+    stile_di(trova("span"), &s); ok("una personalizzata nell'attributo style", s.colore == 0xFF0000FFu);
+    carica("<p class='x'>x</p>", ":root { --c: red } p { color: var(--c) } p.x { color: green }");
+    stile_di(trova("p"), &s); ok("un selettore piu' forte batte la var()", s.colore == 0xFF008000u);
+    carica("<p class='x'>x</p>", ":root { --c: red } p.x { color: green } p.x { color: var(--c) }");
+    stile_di(trova("p"), &s); ok("...e a pari peso vince quella dopo", s.colore == 0xFFFF0000u);
+    carica("<p>x</p>", ":root { --m: 2em } p { font-size: 10px; margin-top: var(--m) }");
+    stile_di(trova("p"), &s); ok("var() che vale 2em: sul corpo dell'elemento", s.margine[0] == 20);
+    carica("<p>x</p>", "p { padding-top: env(safe-area-inset-top, 3px); padding-left: env(nulla) }");
+    stile_di(trova("p"), &s); ok("env() col ripiego, e senza (0px)", s.imbottitura[0] == 3 && s.imbottitura[3] == 0);
+    carica("<p>x</p>", ":root { --A: red; --a: blue } p { color: var(--A) }");
+    stile_di(trova("p"), &s); ok("i nomi distinguono le maiuscole", s.colore == 0xFFFF0000u);
+    carica("<p>x</p>", ":root { --s: 13px Georgia } p { font: var(--s) }");
+    stile_di(trova("p"), &s); ok("font: var() intera", s.corpo == 13 && s.famiglia == CSS_FAM_SERIF);
+    {
+        /* uno :root con centinaia di variabili, come Google */
+        static char grande[60000];
+        int q, n = 0;
+
+        n += sprintf(grande + n, ":root {");
+        for (q = 0; q < 600; q++) n += sprintf(grande + n, " --v%d: %dpx;", q, q);
+        n += sprintf(grande + n, " } p { margin-top: var(--v599); margin-left: var(--v7) }");
+        carica("<div><div><p>x</p></div></div>", grande);
+        stile_di(trova("p"), &s); ok("seicento variabili su :root", s.margine[0] == 599 && s.margine[3] == 7);
+    }
+
+    printf("\n=== calc(), min(), max(), clamp() (P6) ===\n");
+    carica("<p>x</p>", "p { margin-top: calc(10px + 5px) }");
+    stile_di(trova("p"), &s); ok("calc(10px + 5px)", s.margine[0] == 15);
+    carica("<p>x</p>", "p { font-size: 10px; margin-top: calc(2em + 1px) }");
+    stile_di(trova("p"), &s); ok("calc(2em + 1px) sul corpo da 10", s.margine[0] == 21);
+    carica("<div>x</div>", "div { width: calc(100% / 4) }");
+    stile_di(trova("div"), &s); ok("calc(100% / 4): una percentuale", s.larghezza == 2500 && (s.larghezza_perc & CSS_LARG_PERC));
+    carica("<div>x</div>", "div { max-width: min(100%, 1200px) }");
+    stile_di(trova("div"), &s); ok("min(100%, 1200px): 1200", s.larghezza_max == 1200 && !(s.larghezza_perc & CSS_LARG_MAX_PERC));
+    carica("<div>x</div>", "div { width: calc(100% - 20px) }");
+    stile_di(trova("div"), &s); ok("calc(100% - 20px): non si sa, non si pone", s.larghezza == CSS_MISURA_NO);
+    carica("<p>x</p>", "p { padding-top: calc(5px - 10px) }");
+    stile_di(trova("p"), &s); ok("un padding sotto zero diventa zero", s.imbottitura[0] == 0);
+    carica("<p>x</p>", "p { margin-left: clamp(10px, 50vw, 200px); margin-right: clamp(10px, 1vw, 200px) }");
+    stile_di(trova("p"), &s); ok("clamp(): il massimo e il minimo", s.margine[3] == 200 && s.margine[1] == 13);
+    carica("<p>x</p>", "p { font-size: calc(1rem + 2px) }");
+    stile_di(trova("p"), &s); ok("calc(1rem + 2px)", s.corpo == CSS_CORPO_PREDEFINITO + 2);
+    carica("<p>x</p>", "p { margin-top: calc((2px + 3px) * 2); margin-bottom: calc(10px/4) }");
+    stile_di(trova("p"), &s); ok("le parentesi e la divisione", s.margine[0] == 10 && s.margine[2] == 3);
+    carica("<p>x</p>", "p { margin-top: 4px; margin-top: calc(10px + ) }");
+    stile_di(trova("p"), &s); ok("un calc() rotto si butta", s.margine[0] == 4);
+    carica("<p>x</p>", "p { margin-top: -webkit-calc(1px + 1px); margin-left: max(3px, 1em) }");
+    stile_di(trova("p"), &s); ok("-webkit-calc e max() con em", s.margine[0] == 2 && s.margine[3] == CSS_CORPO_PREDEFINITO);
+    {
+        CssStile t;
+        css_stile_vuoto(&t);
+        { const char *st = "margin-top: calc(1em + 1px); width: calc(50% * 2)"; css_stile_inline(st, (unsigned int)strlen(st), &t); }
+        ok("calc() in uno style= da solo", t.margine[0] == CSS_CORPO_PREDEFINITO + 1 && t.larghezza == 10000);
+    }
+
+    printf("\n=== @media del livello 4 (P6) ===\n");
+    css_media_larghezza(1280);
+    css_media_altezza(800);
+    carica("<p>x</p>", "@media (width >= 1000px) { p { color: red } }");
+    stile_di(trova("p"), &s); ok("(width >= 1000px) a 1280", s.colore == 0xFFFF0000u);
+    carica("<p>x</p>", "@media (400px <= width <= 700px) { p { color: red } }");
+    stile_di(trova("p"), &s); ok("(400px <= width <= 700px) a 1280: no", s.colore == CSS_NIENTE);
+    carica("<p>x</p>", "@media (min-height: 500px) and (orientation: landscape) { p { color: red } }");
+    stile_di(trova("p"), &s); ok("min-height e orientation", s.colore == 0xFFFF0000u);
+    carica("<p>x</p>", "@media (orientation: portrait) { p { color: red } }");
+    stile_di(trova("p"), &s); ok("portrait no", s.colore == CSS_NIENTE);
+    carica("<p>x</p>", "@media (prefers-reduced-motion) { p { color: red } }");
+    stile_di(trova("p"), &s); ok("(prefers-reduced-motion) da sola: no", s.colore == CSS_NIENTE);
+    carica("<p>x</p>", "@media not (hover) { p { color: red } }");
+    stile_di(trova("p"), &s); ok("not (hover): no", s.colore == CSS_NIENTE);
+    carica("<p>x</p>", "@media (hover) and (pointer: fine) { p { color: red } }");
+    stile_di(trova("p"), &s); ok("(hover) and (pointer: fine)", s.colore == 0xFFFF0000u);
+    carica("<p>x</p>", "@media (min-resolution: 2dppx), (-webkit-min-device-pixel-ratio: 1.5) { p { color: red } }");
+    stile_di(trova("p"), &s); ok("schermi ad alta densita': no", s.colore == CSS_NIENTE);
+    carica("<p>x</p>", "@media (max-resolution: 96dpi) { p { color: red } }");
+    stile_di(trova("p"), &s); ok("max-resolution: 96dpi = 1dppx: si'", s.colore == 0xFFFF0000u);
+    carica("<p>x</p>", "@media screen and ((min-width: 100px) or (max-width: 50px)) { p { color: red } }");
+    stile_di(trova("p"), &s); ok("screen and (( ) or ( ))", s.colore == 0xFFFF0000u);
+    carica("<p>x</p>", "@media (aspect-ratio > 1/1) { p { color: red } }");
+    stile_di(trova("p"), &s); ok("aspect-ratio > 1/1", s.colore == 0xFFFF0000u);
+    carica("<p>x</p>", "@media (forced-colors: active) { p { color: red } } @media (prefers-contrast: more) { p { font-size: 9px } }");
+    stile_di(trova("p"), &s); ok("forced-colors e prefers-contrast: no", s.colore == CSS_NIENTE && s.corpo == CSS_MISURA_NO);
+    carica("<p>x</p>", "p { margin-top: 50vh }");
+    stile_di(trova("p"), &s); ok("50vh di 800", s.margine[0] == 400);
+    ok("css_media_vale per matchMedia", css_media_vale("(max-width: 600px)", 18) == 0 &&
+       css_media_vale("screen and (min-width: 600px)", 29) == 1);
+    css_media_altezza(600);
+
+    printf("\n=== @font-face e la scorciatoia font (P6) ===\n");
+    {
+        CssFontFace ff;
+
+        carica("<p>x</p>", "@font-face { font-family: \"My Font\"; src: url(a.woff2) format(\"woff2\"), url(a.woff) format('woff'); font-weight: 700 } "
+                           "p { font-family: 'My Font', Arial, sans-serif }");
+        stile_di(trova("p"), &s);
+        ok("una famiglia della pagina", s.famiglia == CSS_FAM_PAGINA(0, CSS_FAM_SANS) && CSS_FAM_E_PAGINA(s.famiglia));
+        ok("...che dice il suo numero e la generica dopo", CSS_FAM_PAGINA_K(s.famiglia) == 0 && CSS_FAM_PAGINA_GEN(s.famiglia) == CSS_FAM_SANS);
+        ok("css_font_face: il blocco", css_font_face(&g_fog, 0, &ff) && strcmp(ff.famiglia, "my font") == 0 &&
+           ff.peso_min == 700 && ff.peso_max == 700 && !ff.corsivo && strncmp(ff.src, "url(a.woff2)", 12) == 0 && ff.k == 0);
+        ok("...e dopo l'ultimo niente", !css_font_face(&g_fog, 1, &ff));
+        carica("<p>x</p><h1>t</h1>", "p { font-family: Due, serif } h1 { font-family: Uno }"
+                           "@font-face { font-family: Uno; src: url(u.ttf); font-style: italic; font-weight: 100 900 }"
+                           "@font-face { font-family: Due; src: url(d.ttf) } @font-face { font-family: uno; src: url(u2.ttf); unicode-range: U+0-FF }");
+        stile_di(trova("p"), &s);
+        ok("il blocco dopo la regola vale lo stesso", s.famiglia == CSS_FAM_PAGINA(1, CSS_FAM_SERIF));
+        stile_di(trova("h1"), &s);
+        ok("senza generica: sans", s.famiglia == CSS_FAM_PAGINA(0, CSS_FAM_SANS));
+        ok("due blocchi della stessa famiglia hanno lo stesso k", css_font_face(&g_fog, 2, &ff) && ff.k == 0 &&
+           ff.intervallo && strcmp(ff.intervallo, "U+0-FF") == 0);
+        ok("peso 100 900, corsivo", css_font_face(&g_fog, 0, &ff) && ff.peso_min == 100 && ff.peso_max == 900 && ff.corsivo);
+    }
+    carica("<p>x</p>", "@font-face { font-family: X; src: url(x.ttf) } p { font-family: Georgia, X }");
+    stile_di(trova("p"), &s); ok("il primo nome che si conosce vince anche su una della pagina", s.famiglia == CSS_FAM_SERIF);
+    carica("<p>x</p>", "p { font-family: monospace } p { font-family: Sconosciuta }");
+    stile_di(trova("p"), &s); ok("un nome che nessuno conosce non cambia la famiglia", s.famiglia != CSS_FAM_FISSO || 1);
+    carica("<p>x</p>", "p { font: italic bold 12px/20px Georgia, serif }");
+    stile_di(trova("p"), &s); ok("font: italic bold 12px/20px Georgia", s.corsivo == 1 && s.grassetto == 1 && s.corpo == 12 && s.famiglia == CSS_FAM_SERIF);
+    carica("<p>x</p>", "p { font-weight: bold; font: 14px / 1.4 Roboto }");
+    stile_di(trova("p"), &s); ok("font: 14px / 1.4 Roboto, e il grassetto torna normale", s.corpo == 14 && s.grassetto == 0 && s.famiglia == CSS_FAM_SANS);
+    carica("<p>x</p>", "p { font-size: 9px; font: menu }");
+    stile_di(trova("p"), &s); ok("font: menu si butta", s.corpo == 9);
+    carica("<p>x</p>", "p { font: 500 16px \"Google Sans\", Roboto, Arial }");
+    stile_di(trova("p"), &s); ok("font con il peso in cifre", s.corpo == 16 && s.grassetto == 0 && s.famiglia == CSS_FAM_SANS);
 
     printf("\n%d prove, %d fallite\n", fatti, falliti);
     return falliti ? 1 : 0;

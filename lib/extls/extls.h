@@ -216,7 +216,8 @@ typedef struct {
     const unsigned char *fidata;     /* EXTLS_IMPRONTA byte, o 0 */
     const ExTlsSessione *riprendi;   /* un biglietto da offrire, o 0 */
     unsigned int         eta_ms;     /* da quanto c'e' quel biglietto */
-    /* ALPN: 0 = "http/1.1" (il browser), "" = nessuno, o il protocollo.
+    /* ALPN: 0 = "http/1.1" (il browser), "" = nessuno, o il protocollo, o
+     * un elenco in ordine di preferenza ("h2,http/1.1": extls_alpn_scelto).
      * ! vsftpd 3.0.5 RIFIUTA (allarme 120) un ALPN che non sia "ftp": con
      * http/1.1 l'FTPS di casa non si apriva nemmeno. */
     const char          *alpn;
@@ -235,6 +236,12 @@ int extls_biglietto_prendi(void *t, ExTlsSessione *s);
 
 /* 1 se la stretta appena fatta e' una ripresa. */
 int extls_ripresa(void *t);
+
+/* The protocol the server chose with ALPN, after the handshake: "h2",
+ * "http/1.1", "ftp", or "" when it chose none (25 November 2026, BROWSER002
+ * P4). Always one of those offered in ExTlsOpzioni.alpn, which may be a
+ * comma-separated list in order of preference ("h2,http/1.1"). */
+const char *extls_alpn_scelto(const void *t);
 
 /* L'impronta SHA-256 del certificato del sito (il DER intero), dopo una
  * stretta riuscita o rifiutata per il certificato. 1 se c'e'. */

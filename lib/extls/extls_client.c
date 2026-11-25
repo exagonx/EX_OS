@@ -321,6 +321,7 @@ typedef struct {
     /* La ripresa e il certificato gia' visto (vedi extls.h). */
     const ExTlsSessione *offerta;   /* il biglietto offerto in questa stretta */
     const char   *alpn;             /* vedi ExTlsOpzioni */
+    char          alpn_scelto[32];  /* what the server chose, "" if none */
     unsigned int  offerta_eta;      /* la sua eta', in ms */
     int           ripresa;          /* il server ha accettato la PSK */
     unsigned char res_master[EXTLS_IMPRONTA];
@@ -1009,17 +1010,31 @@ static int manda_hello(Tls *t, const char *host, int secondo,
     }
 
     /* ALPN (16): http/1.1 — il browser parla quello, e dirlo evita che un
-     * server moderno risponda in HTTP/2, che qui non si saprebbe leggere. */
+     * server moderno risponda in HTTP/2, che qui non si saprebbe leggere.
+     * ! 25 November 2026 (BROWSER002 P4): `alpn` may be a LIST, "h2,http/1.1",
+     * sent in that order of preference; one word gives the same bytes as
+     * before. Which one the server took: extls_alpn_scelto(). */
     {
         const char  *pr = t->alpn ? t->alpn : "http/1.1";
         unsigned int pl = lung(pr);
 
         if (pl > 0 && pl < 64) {
+            unsigned int inizio = i, k = 0;
+
             metti16(c + i, 16); i += 2;
-            metti16(c + i, pl + 3); i += 2;
-            metti16(c + i, pl + 1); i += 2;
-            c[i++] = (unsigned char)pl;
-            bcopia(c + i, pr, pl); i += pl;
+            i += 4;                             /* the two lengths, below */
+            while (k < pl) {
+                unsigned int a = k;
+
+                while (k < pl && pr[k] != ',') k++;
+                if (k > a) {
+                    c[i++] = (unsigned char)(k - a);
+                    bcopia(c + i, pr + a, k - a); i += k - a;
+                }
+                if (k < pl) k++;                /* the comma */
+            }
+            metti16(c + inizio + 2, i - inizio - 4);
+            metti16(c + inizio + 4, i - inizio - 6);
         }
     }
 
@@ -1089,6 +1104,33 @@ static int manda_hello(Tls *t, const char *host, int secondo,
 /* =============================================================================
  * Il ServerHello
  * ========================================================================== */
+/* ALPN (16) from the server: ONE name, and one we offered (RFC 7301 3.1).
+ * In 1.3 it comes in EncryptedExtensions, in 1.2 in the ServerHello. */
+static int leggi_alpn(Tls *t, const unsigned char *p, unsigned int len)
+{
+    const char  *pr = t->alpn ? t->alpn : "http/1.1";
+    unsigned int nl, pl = lung(pr), k = 0;
+
+    if (len < 3 || be16(p) != len - 2) return EXTLS_ERR_PROTOCOLLO;
+    nl = p[2];
+    if (nl == 0 || nl + 3 != len || nl >= sizeof(t->alpn_scelto)) return EXTLS_ERR_PROTOCOLLO;
+    while (k < pl) {
+        unsigned int a = k, j;
+
+        while (k < pl && pr[k] != ',') k++;
+        if (k - a == nl) {
+            for (j = 0; j < nl && (unsigned char)pr[a + j] == p[3 + j]; j++) { }
+            if (j == nl) {
+                bcopia(t->alpn_scelto, p + 3, nl);
+                t->alpn_scelto[nl] = '\0';
+                return EXTLS_OK;
+            }
+        }
+        if (k < pl) k++;
+    }
+    return EXTLS_ERR_PROTOCOLLO;                /* not one of ours */
+}
+
 static int leggi_hello(Tls *t, const unsigned char *p, unsigned int n,
                        unsigned char altrui[65], unsigned int *altrui_n,
                        int *hrr)
@@ -1139,6 +1181,9 @@ static int leggi_hello(Tls *t, const unsigned char *p, unsigned int n,
             visto_versione = 1;
         } else if (tipo == 23) {                /* extended_master_secret */
             t->ems = 1;
+        } else if (tipo == 16 && !*hrr) {       /* ALPN, in 1.2 */
+            int ra = leggi_alpn(t, p + i, len);
+            if (ra != EXTLS_OK) return ra;
         } else if (tipo == 51 && *hrr) {        /* key_share: the group wanted */
             if (len != 2) return EXTLS_ERR_PROTOCOLLO;
             t->gruppo = be16(p + i);
@@ -1774,7 +1819,24 @@ int extls_stretta_con(void *opaco, const ExTlsSotto *sotto, const char *host,
             r = hs_prossimo(t, &tipo, &corpo, &n, 15000);
             if (r != EXTLS_OK) return r;
 
-            if (tipo == 8) continue;            /* EncryptedExtensions */
+            if (tipo == 8) {                    /* EncryptedExtensions */
+                /* only ALPN is read; the rest is ignored as before */
+                unsigned int en, k = 2;
+
+                if (n < 2 || (en = be16(corpo)) + 2 > n) return EXTLS_ERR_PROTOCOLLO;
+                while (k + 4 <= en + 2) {
+                    unsigned int et = be16(corpo + k), el = be16(corpo + k + 2);
+
+                    k += 4;
+                    if (k + el > en + 2) return EXTLS_ERR_PROTOCOLLO;
+                    if (et == 16) {
+                        r = leggi_alpn(t, corpo + k, el);
+                        if (r != EXTLS_OK) return r;
+                    }
+                    k += el;
+                }
+                continue;
+            }
 
             if (tipo == 13) {
                 /* ! LA RICHIESTA DI CERTIFICATO HA UNA RISPOSTA: un
@@ -2060,6 +2122,12 @@ int extls_biglietto_prendi(void *opaco, ExTlsSessione *s)
     for (k = 1; k < t->bigl_n; k++) t->bigl[k - 1] = t->bigl[k];
     t->bigl_n--;
     return 1;
+}
+
+const char *extls_alpn_scelto(const void *opaco)
+{
+    const Tls *t = (const Tls *)opaco;
+    return t ? t->alpn_scelto : "";
 }
 
 int extls_ripresa(void *opaco)

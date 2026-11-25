@@ -120,14 +120,14 @@ Inside EX-OS the same manuals are in `/doc/manuali` (from the CD:
 
 ## Latest changes
 
+- [File manager: hidden files and extensions on request, a sheet beside the dragged rows](manuali/novita.md#the-file-manager-hides-dot-files-and-extensions-on-request-and-dragged-rows-show-a-sheet-beside-the-pointer-filemgr-0016-exwinso-0027-voce-114--tested-in-qemu) — *tested in QEMU*
+- [Exilla: video and sound again with several processes, YouTube included](manuali/novita.md#exilla-plays-video-and-sound-again-with-several-processes-youtube-included-exos-mediajs--tested-in-qemu) — *tested in QEMU*
+- [ExWin's screen saver: a text or a bouncing circle (pm 0.031)](manuali/novita.md#exwin-has-a-screen-saver-a-text-or-a-circle-after-the-minutes-chosen-the-screen-switched-off-by-dpmsdrv-salvaschermo-0001-pm-0031-voce-116--tested-in-qemu) — *tested in QEMU*
 - [Firefox: half the memory, no longer closes with three tabs (kernel 0.370)](manuali/novita.md#firefox-with-many-processes-takes-half-the-memory-and-no-longer-closes-with-three-tabs-kernel-0368-0370--tested-in-qemu) — *tested in QEMU*
 - [ExWin classic theme: warmer panels, two-ring relief, shaded buttons](manuali/novita.md#exwin-wears-the-classic-theme-warmer-panels-two-ring-relief-shaded-buttons-exwinso-0026-wserver-0019--tested-in-qemu) — *tested in QEMU*
 - [Kernel 0.367: su brake, owners for terminals and shared memory, signed netupdate, sshd/TCP/DNS hardened](manuali/novita.md#kernel-0367-and-the-network-su-terminals-shared-memory-and-the-kernel-log-have-an-owner-signed-updates-sshd-tcp-and-dns-against-blind-attacks--tested-in-qemu) — *tested in QEMU*
 - [exeditor safe save, exide multi-selection, EXBrowser cookies, USB short transfers refused](manuali/novita.md#exeditor-saves-without-destroying-the-file-exide-chooses-more-controls-at-once-exbrowser-cookies-as-todays-browsers-usb-sticks-refuse-short-transfers--tested-in-qemu) — *tested in QEMU*
 - [Firefox's frozen shared memory is read-only for real (kernel 0.366, voce 115)](manuali/novita.md#firefoxs-frozen-shared-memory-is-read-only-for-real-kernel-0366-voce-115--tested-in-qemu) — *tested in QEMU*
-- [How long the file lock waits for the disk (kernel 0.364-0.365, voce 117)](manuali/novita.md#how-long-the-file-lock-waits-for-the-disk-kernel-0364-0365-voce-117--tested-in-qemu-and-on-the-test-pc) — *tested in QEMU and on the test PC*
-- [Mounting over an empty folder (kernel 0.363)](manuali/novita.md#mounting-over-an-empty-folder-kernel-0363--tested-in-qemu-and-on-the-test-pc) — *tested in QEMU and on the test PC*
-- [Disks in PIO no longer stop the system; optical drives on AHCI (kernel 0.362, voce 117)](manuali/novita.md#disks-in-pio-no-longer-stop-the-system-optical-drives-on-ahci-kernel-0362-voce-117--tested-in-qemu-and-on-the-test-pc) — *tested in QEMU and on the test PC*
 
 All the others, newest first: [What's new](manuali/novita.md).
 

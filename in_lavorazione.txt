@@ -226,12 +226,14 @@ GRUPPO  VOCI             COSA
  --     61 76            solo se ricompare (76: orologio in FAULT, 3/11)
  --     77               seguiti del 3-4/11: H.264 Firefox, Firefox 32, repo 64 da
                          pubblicare, ExPackage sul portatile, statici rimasti
- --     116              (23/11) EXWIN SALVASCHERMO: Impostazioni > Scrivania, tempi,
-                         spegnimento schermo; due salvaschermi (scritta, cerchio)
+ --     116              (23/11) EXWIN SALVASCHERMO: Impostazioni > Video, tempi,
+                         spegnimento schermo; due salvaschermi. FATTA 25/11 (pm 0.031),
+                         resta la password al ritorno (decisione dell'utente)
  --     115              (23/11) FIREFOX IN PIU' PROCESSI: AF_UNIX + SCM_RIGHTS veri,
                          shm per descrittore fra processi, processi dei contenuti
  --     114              (23/11) FILE MANAGER: Opzioni > Visualizzazione (nascosti,
-                         estensione), riquadro accanto al puntatore quando si trascina
+                         estensione), riquadro accanto al puntatore quando si trascina.
+                         FATTA 25/11 (filemgr 0.016, exwin.so 0.027)
  --     113              (23/11) FIREFOX SI CHIUDE SU unsplash.com: shm della libc senza
                          lucchetto, CORRETTO in QEMU; da provare sul .253
  --     112              (22/11) DAL SOLO CLONE DI GITHUB A TUTTO: ambiente.sh -fai, i
@@ -10569,6 +10571,31 @@ tools/netinst/velocita tolto da netinst.
       17/11, DOPO IL RIAVVIO NELLA 0.343: il telnetd 0.015 dell'avvio, porta
       23, telnet_piu_prova.py 6 su 6.
 
+  119. EXWIN: LE ETICHETTE COL TESTO PIU' LUNGO DEL LORO SPAZIO (25/11/2026,
+      appunto dell'utente, in coda). L'utente: "nelle label quando il testo e'
+      piu lungo dello spazio usato, le textbox scorrono all'interno ma le label
+      si perdono, in teoria dovrebbero avere l'opzione a capo abilitata per
+      default ma questo non so deciderlo".
+      OGGI: lib/exwin/exwin.c, case CL_ETICHETTA: ex_draw_text del titolo
+      intero, senza guardare o->w: quel che avanza scrive sui controlli
+      accanto o esce dalla finestra.
+      PROPOSTA (da decidere con l'utente):
+      - etichetta alta UNA riga: il testo si taglia alla larghezza con "..."
+        in fondo (come Windows SS_ENDELLIPSIS, GTK ellipsize);
+      - etichetta alta DUE righe o piu': a capo sulle parole, di serie (come
+        lo static SS_LEFT di Windows); l'ultima riga che ci sta finisce con
+        "..." se il testo non e' finito;
+      - EX_NOWRAP per chi vuole il taglio anche su piu' righe.
+      PRO: nessuna finestra di oggi cambia disegno dove il testo ci sta; dove
+      non ci sta smette di sporcare. CONTRO: un'etichetta di una riga col
+      testo lungo mostra "..." invece di andare a capo: per vederla tutta la
+      si deve fare piu' alta (si vede subito dove, la prova lo dice).
+      ALTERNATIVA: a capo sempre, anche sulle etichette di una riga: il testo
+      in piu' cade sotto, fuori dall'etichetta, e copre il controllo di sotto
+      - lo stesso guasto di oggi, spostato in giu'.
+      Con UTF-8 e TrueType (ex_text_width), provato in QEMU a 1366x768 sui
+      pannelli di pm, filemgr, exide.
+
   118. FIREFOX E LE APPLICAZIONI DEL SISTEMA (24/11/2026, appunto
       dell'utente, in coda). L'utente: "firefox non ha applicazioni associate,
       ad esempio al download quando scarica un file questo non riconosce il
@@ -10841,6 +10868,25 @@ tools/netinst/velocita tolto da netinst.
         ricomincia.
       - Si ferma al primo tasto o movimento del mouse.
       - Manuali, help, novita'; provato in QEMU a 1366x768.
+      STATO 25/11/2026: FATTA, provata in QEMU a 32 e 64 bit.
+      - exwin/bin/salvaschermo/salvaschermo.c (0.001): `salvaschermo scritta
+        "TESTO"` e `salvaschermo cerchio`, finestra EX_TOPMOST a schermo intero
+        (sopra la barra: fra le finestre sopra vince l'ultima nata).
+      - Il tempo fermo NON lo conta wserver ma il kernel: attivita_da()
+        (SYS_ATTIVITA, lo stesso orologio di dpms.drv), per tutta la macchina.
+        pm lo guarda a ogni EXM_TIMER della barra (2 s) e lancia il programma.
+        Il salvaschermo si chiude quando attivita_da() torna indietro.
+      - pm 0.031, Impostazioni > Scrivania: Tipo, dopo N minuti, Scritta,
+        Spegni lo schermo (Non cambiare, Mai, dopo 5-60 minuti: dpms.drv
+        -dopo:M e -install M / -remove, solo root), Prova, Applica (pm.cfg).
+      - tools/prova_salvaschermo.sh: lanciato a mano (cerchio, scritta) e da
+        pm dopo un minuto fermo (pm.cfg su un disco suo: il CD e' tutto in
+        sola lettura, anche /tmp); foto: barra coperta, poi la scrivania
+        torna al primo movimento del mouse. Dal CD ExWin arriva a 800x600
+        anche con l'EDID del portatile (come prova_cattura): la prova e' a
+        800x600, il programma prende la misura da ex_screen_size.
+      - manuali/scrivania(.it).md, novita' e README.
+      RESTA (da decidere con l'utente): la password al ritorno.
 
   115. FIREFOX IN PIU' PROCESSI SU EX-OS, COME SU LINUX (proposta 2 del
       23/11/2026 dopo il fault in nsDocShellLoadState::Serialize; l'utente: "si
@@ -10969,7 +11015,18 @@ tools/netinst/velocita tolto da netinst.
       - trascinamento col tasto sinistro tenuto: accanto al puntatore un
         riquadro con delle righe dentro (un foglio); con piu' file o cartelle
         selezionati, tre riquadri sovrapposti.
-      NON INIZIATA. Dopo Firefox (voce 113).
+      STATO 25/11/2026 sera: FATTA, tools/prova_visualizza.sh TUTTO A POSTO
+      a 32 e 64 bit; manuali/scrivania, novita', README.
+      - filemgr 0.016: Opzioni > Visualizzazione (finestra modale, due
+        caselle), filemgr.cfg "nascosti = 0|1", "estensione = 0|1"; di serie
+        accesi (come fino alla 0.015). Cambia solo cosa si vede: copia e
+        cancella prendono anche i nascosti.
+      - exwin.so 0.027: foglio accanto al puntatore quando le righe di una
+        lista escono dalla lista trascinate; tre fogli con piu' voci; i pixel
+        sotto si tengono e si rimettono (niente ridisegno a ogni pixel).
+        ex_list_set_drag_count: filemgr dice i segni della barra spaziatrice.
+      - tools/prova_visualizza.sh (nuova): cfg spento/acceso, la finestra
+        del menu, un foglio, tre fogli, spariti al rilascio.
 
   113. FIREFOX SI CHIUDE SU unsplash.com (l'utente, 22-23/11: "nell'utente
       graziano sulla macchina 253 firefox si e' chiuso due volte sul sito

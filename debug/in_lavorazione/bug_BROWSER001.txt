@@ -222,3 +222,46 @@ NON FATTO, DA DECIDERE:
 
 ESITO (25/11, 06:36): make prova-biscotti 75 su 75. Resta qui per
 SameSite e la lista intera.
+
+-------------------------------------------------------------------------------
+5. STATO (25/11/2026, sera): CHIUSI ANCHE I DUE PUNTI APERTI (BROWSER002 P5)
+-------------------------------------------------------------------------------
+  - LA LISTA INTERA: le ~300 regole scritte a mano (g_psl_corta) sono
+    sostituite dalla Public Suffix List intera (versione
+    2026-11-25_10-02-46_UTC, 10487 regole ICANN e private, piu' le forme
+    punycode dei nomi internazionali: 10946), in
+    exwin/bin/exbrowser/psl_tabella.h generata da tools/psl-tabella.py
+    dall'archivio in ~/ex_os/cross_build/terze-parti/publicsuffix. Cerca
+    binaria; l'algoritmo di publicsuffix.org (vince l'eccezione "!", poi la
+    regola con piu' etichette, "*.x" compreso, altrimenti "*"). bis_sito():
+    il dominio registrabile (eTLD+1). DECISIONE: tabella compilata nel
+    browser (+~200 KB), non psl.dat aggiornata da netupdate: si aggiorna
+    rigenerando la tabella a ogni versione.
+  - (e) SameSite: Strict, Lax, None letti e salvati nel file (bandiere n/l/x,
+    i file vecchi si rileggono come "non detto"); None senza Secure
+    rifiutato; senza attributo = Lax con la grazia di Chrome: per 2 minuti
+    dalla nascita va anche con un POST di primo livello da un altro sito
+    (accessi e pagamenti che tornano con un modulo). Il contesto lo da' il
+    browser (bis_chiedi): la pagina stessa e' una navigazione di primo
+    livello (GET o POST) e il suo "sito per i biscotti" e' quello della
+    pagina che l'ha fatta partire (collegamento, modulo, location); dalla
+    barra, casa, indietro: stesso sito. Ogni altra richiesta e' della pagina
+    mostrata. Stesso sito = stesso dominio registrabile E stesso schema.
+  - TROVATO STRADA FACENDO, ED E' UN DIFETTO VERO: bis_dallo_script
+    rimetteva nella dispensa, dopo ogni script, TUTTE le coppie di
+    document.cookie come scritture da script ("n=v" senza attributi): un
+    biscotto persistente diventava di sessione e spariva alla chiusura del
+    browser, e (col P5) lo Strict tornava Lax. Ora un pezzo gia' presente e
+    uguale si salta (bis_c_e_gia).
+  - Prova: make prova-biscotti 102 su 102 (27 nuove: siti registrabili con
+    "*" e "!", suffissi privati e a tre etichette, SameSite in tutti i
+    contesti, il file). In QEMU 32 e 64 bit, due siti veri
+    (a.10.0.2.2.nip.io e 10.0.2.2.sslip.io, server dell'host sulla 8020):
+       immagine di A da una pagina di B         Cookie: (nessuno)
+       navigazione B -> A (location.href)       Cookie: l=1; d=1
+       immagine di A dalla pagina di A          Cookie: l=1; s=1; d=1
+       "z=1; SameSite=None" senza Secure        rifiutato
+  - NON provato in QEMU: il POST da un altro sito (la grazia dei 2 minuti
+    e' provata sull'host). document.cookie con attributi (max-age, samesite)
+    non passa dal ponte di exdom: limite di exdom, non di questo bug.
+  ESITO: il bug e' chiuso per intero.

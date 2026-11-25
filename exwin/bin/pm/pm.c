@@ -37,10 +37,11 @@
 #include "exinfo.h"
 #include "exsuono.h"
 #include "kbd_proto.h"
+#include "exuser.h"           /* exuser_e_amministratore, for come_root */
 #include "wifid_proto.h"      /* the WiFi icon (@WIFI) */
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.030"
+#define VERSIONE_APP "0.031"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -78,6 +79,12 @@ EX_VERSIONE("pm", VERSIONE_APP);
 #define ID_VEDI_OROLOGIO 117     /* @AVVIO-SCRIVANIA: l'orologio nella barra */
 #define ID_VEDI_VOLUME   118     /* e l'icona del volume */
 #define ID_VEDI_ICONE    119     /* the icons beside the menu's entries (voce 80) */
+/* the screen saver (voce 116) */
+#define ID_SS_TIPO       120
+#define ID_SS_MINUTI     121
+#define ID_SS_SCHERMO    122
+#define ID_SS_PROVA      123
+#define ID_SS_APPLICA    124
 /* @PANNELLO-VIDEO (17 October 2026): the panel's tabs, and the Video tab */
 #define ID_IMP_SCHEDE    130
 #define ID_V_LISTA       131
@@ -1025,6 +1032,33 @@ static void categorie_raccogli(void)
  * with no icon at all - not a blank square where the icon would be. */
 static int g_vedi_icone = 1;
 
+/* =============================================================================
+ * THE SCREEN SAVER (voce 116, the user, 23 November 2026)
+ *
+ * pm is there for the whole session, so pm counts: every 2 s, from the bar's
+ * timer, attivita_da() (the kernel's time since the last key or mouse move,
+ * the clock of dpms.drv too) against the minutes chosen; past them it starts
+ * /exwin/bin/salvaschermo, which ends by itself at the first touch. The
+ * window server is not involved.
+ *
+ * ! THE SCREEN GOES OFF THROUGH dpms.drv, which already does it per card
+ * (nv50, vga): this panel only says after how long (-dopo:M now, -install M
+ * at every boot). Only root may: anybody else is told so. "Non cambiare" is
+ * the default because the panel cannot know what the service was told.
+ * ============================================================================= */
+static const char *const SS_TIPI[] = { "Nessuno", "Scritta", "Cerchio" };
+static const unsigned int SS_MINUTI[] = { 1, 2, 3, 5, 10, 15, 20, 30, 60 };
+static const int SCHERMO_MIN[] = { -1, 0, 5, 10, 15, 30, 60 };  /* -1 non cambiare, 0 mai */
+#define SS_N_MINUTI   (sizeof(SS_MINUTI) / sizeof(SS_MINUTI[0]))
+#define SCHERMO_N     (sizeof(SCHERMO_MIN) / sizeof(SCHERMO_MIN[0]))
+static int          g_ss_tipo = 0;          /* index in SS_TIPI */
+static unsigned int g_ss_minuti = 10;
+static char         g_ss_testo[128] = "EX-OS";
+static int          g_ss_pid = -1;
+static ExWindow     g_ss_c_tipo = 0, g_ss_c_minuti = 0, g_ss_c_testo = 0,
+                    g_ss_c_schermo = 0, g_ss_avviso = 0;
+static void ss_avvia(void);
+
 static ExIcon icona_di(App *a)
 {
     if (a->ic == 0 && a->icona[0]) {
@@ -1311,8 +1345,8 @@ static ExWindow g_barra_f = 0;      /* la barra, per ridisegnarla da qui */
  * draws at 16, 24 and 32 bits only.
  * ============================================================================= */
 #define IMP_W 470
-#define IMP_H 420
-#define SCH_MAX 16
+#define IMP_H 480
+#define SCH_MAX 32
 #define PROVA_F "/boot/svgaprov.cfg"
 #define VISTA_F "/boot/svgavist.cfg"
 
@@ -1325,7 +1359,12 @@ static int      g_v_n = 0, g_v_da_scheda = 0;
 
 static void metti(int scheda, ExWindow c)
 {
-    if (c && g_sch_n[scheda] < SCH_MAX) g_sch[scheda][g_sch_n[scheda]++] = c;
+    /* ! A CONTROL LEFT OUT IS NEVER HIDDEN and sits over every tab: the
+     * screen saver went past 16 in Scrivania and showed everywhere (pm
+     * 0.031, 25 November 2026). Raise SCH_MAX, and say it in the log. */
+    if (!c) return;
+    if (g_sch_n[scheda] < SCH_MAX) g_sch[scheda][g_sch_n[scheda]++] = c;
+    else log_seriale("pm: troppi controlli in una scheda di Impostazioni, alzare SCH_MAX");
 }
 
 static void scheda_mostra(int n)
@@ -1502,13 +1541,65 @@ static int video_lista_fai(void)
 }
 
 /* Runs svga.drv with these arguments and waits: its exit code, or -1. */
-static int svga_lancia(char **av)
-{
-    int pid = spawn_ex(av[0], av, environ, 0, 0), st = 0;
+/* =============================================================================
+ * come_root: a program that writes the system's files (svga.drv into
+ * /boot/stage2.bin and kernel.cfg, dpms.drv), launched as root as sudo does
+ * (25 November 2026, the user: the desktop runs as graziano since kernel
+ * 0.359, and "1280x1024 non e' stato impostato" with "accesso negato").
+ *
+ * ! THE PASSWORD IS YOURS if /boot/amministratori names you, root's
+ * otherwise, and ONLY THE KERNEL decides (diventa_root, the same call as
+ * sudo). pm is root for the length of one spawn: the child inherits it and
+ * pm goes straight back to its user. pm has no threads, so nobody else runs
+ * as root in between; if going back fails pm ends - a desktop left as root
+ * would be worse than no desktop.
+ *
+ * Gives the program's exit code, or COME_ROOT_NO (cancelled, wrong password,
+ * too many tries: already told to the user), or -1 if it does not start.
+ * ============================================================================= */
+#define COME_ROOT_NO  (-2)
 
+static int come_root(char **av, const char *cosa)
+{
+    char         chi[64], pass[128], dom[200];
+    unsigned int io = (unsigned int)getuid();
+    int          pid, st = 0, rc, i;
+
+    if (io == 0) {
+        pid = spawn_ex(av[0], av, environ, 0, 0);
+        if (pid < 0) return -1;
+        waitpid(pid, &st, 0);
+        return st & 0xFF;
+    }
+    if (!nome_utente(io, chi, sizeof(chi)) || !exuser_e_amministratore(0, chi))
+        strcpy(chi, "root");
+    /* the why goes in the title: the question is one line of 396 pixels */
+    snprintf(dom, sizeof(dom), "Serve root. Password di %s:", chi);
+    if (!ex_dlg_password(cosa, dom, "Va bene", pass, sizeof(pass)))
+        return COME_ROOT_NO;
+    rc = diventa_root(chi, pass);
+    for (i = 0; i < (int)sizeof(pass); i++) pass[i] = '\0';
+    if (rc != 0) {
+        /* ! which of the two went wrong is not said, as in sudo */
+        ex_dlg_avviso("Serve root", rc == -EAGAIN
+                      ? "Troppi tentativi sbagliati: riprova fra qualche minuto."
+                      : "Password sbagliata, o non sei fra gli amministratori "
+                        "(/boot/amministratori).");
+        return COME_ROOT_NO;
+    }
+    pid = spawn_ex(av[0], av, environ, 0, 0);
+    if (setuid(io) != 0) {
+        log_seriale("pm: non riesco a tornare all'utente dopo root: esco");
+        exit(1);
+    }
     if (pid < 0) return -1;
     waitpid(pid, &st, 0);
     return st & 0xFF;
+}
+
+static int svga_lancia(char **av)
+{
+    return come_root(av, "Cambiare la risoluzione");
 }
 
 static void video_scegli(int prova)
@@ -1545,6 +1636,7 @@ static void video_scegli(int prova)
     av[n] = 0;
     rc = svga_lancia(av);
 
+    if (rc == COME_ROOT_NO) return;
     /* ! THE REASON IS NOT GUESSED: the commonest is not the card but a
      * system running from CD, where LOADER.BIN cannot be rewritten. */
     if (rc != 0) {
@@ -1645,6 +1737,56 @@ static void video_prova_chiedi(void)
     ex_set_timer(g_pv, 1000);
 }
 
+/* Prova: the saver chosen, now (Nessuno -> Cerchio, to see one). Applica:
+ * saved in pm.cfg, and the screen's minutes to dpms.drv. */
+static void ss_applica(int prova)
+{
+    const char *t;
+    unsigned int k;
+
+    if (!g_impost || !g_ss_c_tipo) return;
+    g_ss_tipo = (int)ex_item_get_selected(g_ss_c_tipo);
+    if (g_ss_tipo < 0 || g_ss_tipo > 2) g_ss_tipo = 0;
+    k = ex_item_get_selected(g_ss_c_minuti);
+    if (k < SS_N_MINUTI) g_ss_minuti = SS_MINUTI[k];
+    t = ex_get_text(g_ss_c_testo);
+    snprintf(g_ss_testo, sizeof(g_ss_testo), "%s", (t && t[0]) ? t : "EX-OS");
+
+    if (prova) {
+        int vero = g_ss_tipo;
+
+        if (g_ss_tipo == 0) g_ss_tipo = 2;
+        ss_avvia();
+        g_ss_tipo = vero;
+        return;
+    }
+    if (!sfondo_salva()) {
+        ex_set_text(g_ss_avviso, "Non riesco a salvare in ~/.exwin/config/pm.cfg.");
+        return;
+    }
+    k = ex_item_get_selected(g_ss_c_schermo);
+    if (k > 0 && k < SCHERMO_N) {
+        char  m[16], a1[24], cmd[96], *av[4];
+        int   st;
+
+        snprintf(m, sizeof(m), "%d", SCHERMO_MIN[k]);
+        snprintf(a1, sizeof(a1), "-dopo:%d", SCHERMO_MIN[k]);
+        /* -dopo now and -install (or -remove for "Mai") for every boot,
+         * in one go as root: the second writes the start-up file */
+        av[0] = (char *)"/bin/sh"; av[1] = (char *)"-c"; av[3] = 0;
+        snprintf(cmd, sizeof(cmd), "/dev/dpms.drv %s && /dev/dpms.drv %s %s", a1,
+                 SCHERMO_MIN[k] ? "-install" : "-remove", SCHERMO_MIN[k] ? m : "");
+        av[2] = cmd;
+        st = come_root(av, "Spegnere lo schermo");
+        if (st == COME_ROOT_NO) { ex_set_text(g_ss_avviso, "Salvato, lo schermo no."); return; }
+        if (st != 0) {
+            ex_set_text(g_ss_avviso, "Salvato. Lo schermo: dpms.drv non risponde.");
+            return;
+        }
+    }
+    ex_set_text(g_ss_avviso, "Salvato.");
+}
+
 static long impost_proc(ExWindow f, unsigned int msg,
                         unsigned int wp, long lp)
 {
@@ -1653,6 +1795,7 @@ static long impost_proc(ExWindow f, unsigned int msg,
         g_impost = g_impost_sfondo = g_impost_suono = g_impost_orologio = g_impost_volume = 0;
         g_impost_icone = 0;
         g_a_gruppo = g_a_lista = g_a_avviso = 0;
+        g_ss_c_tipo = g_ss_c_minuti = g_ss_c_testo = g_ss_c_schermo = g_ss_avviso = 0;
         free(g_tipi); free(g_a_riga); g_tipi = 0; g_a_riga = 0; g_tipi_n = g_a_righe = 0;
         return 0;
     }
@@ -1681,6 +1824,10 @@ static long impost_proc(ExWindow f, unsigned int msg,
         return 0;
     }
 
+    if (msg == EXM_COMMAND && (wp == ID_SS_PROVA || wp == ID_SS_APPLICA)) {
+        ss_applica(wp == ID_SS_PROVA);
+        return 0;
+    }
     if (msg == EXM_COMMAND && wp == ID_SFONDO_SCEGLI) { sfondo_scegli(); return 0; }
     if (msg == EXM_COMMAND && wp == ID_SFONDO_NIENTE) { sfondo_niente(); return 0; }
     if (msg == EXM_COMMAND && wp >= ID_SFONDO_MODO && wp < ID_SFONDO_MODO + 4) {
@@ -1721,8 +1868,9 @@ static void impostazioni_apri(void)
     /* ! THE PANEL HAS TABS (@PANNELLO-VIDEO, 17 October 2026): it had grown to
      * a column of everything. Video, Scrivania, Sistema; each control
      * belongs to one and is shown or hidden with it. */
+    /* ! PLAIN TABS, NOT ex_items_as_tabs: that is for documents, and put a
+     * red X on every tab of a panel nobody closes (the user, 25/11/2026) */
     c = ex_create("tab", "", EX_CHILD, 8, 6, IMP_W - 16, 24, g_impost, ID_IMP_SCHEDE, 0);
-    ex_items_as_tabs(c, 1);
     ex_item_add(c, "Video");
     ex_item_add(c, "Scrivania");
     ex_item_add(c, "Sistema");
@@ -1774,7 +1922,7 @@ static void impostazioni_apri(void)
         metti(0, ex_create("label", "dopo un avvio in grafica):", EX_CHILD,
                            12, 116, IMP_W - 24, 18, g_impost, 0, 0));
     g_v_lista = ex_create("list", "", EX_CHILD, 12, g_v_da_scheda ? 118 : 136, IMP_W - 24,
-                          g_v_da_scheda ? 174 : 156, g_impost, ID_V_LISTA, 0);
+                          g_v_da_scheda ? 100 : 82, g_impost, ID_V_LISTA, 0);
     metti(0, g_v_lista);
     for (i = 0; i < g_v_n; i++) {
         char r[64];
@@ -1789,15 +1937,54 @@ static void impostazioni_apri(void)
          * read «I modi della scheda:» over an empty box (22 October 2026). */
         ex_list_add(g_v_lista, r);
     }
-    metti(0, ex_create("button", "Prova...", EX_CHILD, 12, 302, 150, 28, g_impost, ID_V_PROVA, 0));
-    metti(0, ex_create("button", "Applica", EX_CHILD, IMP_W - 162, 302, 150, 28,
+    metti(0, ex_create("button", "Prova...", EX_CHILD, 12, 224, 150, 26, g_impost, ID_V_PROVA, 0));
+    metti(0, ex_create("button", "Applica", EX_CHILD, IMP_W - 162, 224, 150, 26,
                        g_impost, ID_V_APPLICA, 0));
     metti(0, ex_create("label", "Prova riavvia nel modo scelto e chiede conferma:", EX_CHILD,
-                       12, 340, IMP_W - 24, 16, g_impost, 0, 0));
+                       12, 254, IMP_W - 24, 16, g_impost, 0, 0));
     metti(0, ex_create("label", "senza risposta in 30 s torna quello di prima.", EX_CHILD,
-                       12, 356, IMP_W - 24, 16, g_impost, 0, 0));
+                       12, 270, IMP_W - 24, 16, g_impost, 0, 0));
     metti(0, ex_create("label", "Applica: dal prossimo avvio, senza prova.", EX_CHILD,
-                       12, 376, IMP_W - 24, 16, g_impost, 0, 0));
+                       12, 286, IMP_W - 24, 16, g_impost, 0, 0));
+
+    /* the screen saver and the screen (voce 116): in Video, under a line
+     * (the user, 25 November 2026: modes above, screen saver below) */
+    metti(0, ex_create("separator", "", EX_CHILD, 12, 310, IMP_W - 24, 2, g_impost, 0, 0));
+    metti(0, ex_create("label", "Salvaschermo:", EX_CHILD, 12, 324, 150, 18, g_impost, 0, 0));
+    g_ss_c_tipo = ex_create("combo", "", EX_CHILD, 164, 322, 110, 22, g_impost, ID_SS_TIPO, 0);
+    metti(0, g_ss_c_tipo);
+    for (i = 0; i < 3; i++) ex_item_add(g_ss_c_tipo, SS_TIPI[i]);
+    ex_item_select(g_ss_c_tipo, (unsigned int)g_ss_tipo);
+    metti(0, ex_create("label", "dopo", EX_CHILD, 282, 324, 36, 18, g_impost, 0, 0));
+    g_ss_c_minuti = ex_create("combo", "", EX_CHILD, 322, 322, 64, 22, g_impost, ID_SS_MINUTI, 0);
+    metti(0, g_ss_c_minuti);
+    for (i = 0; i < (int)SS_N_MINUTI; i++) {
+        sprintf(t, "%u", SS_MINUTI[i]);
+        ex_item_add(g_ss_c_minuti, t);
+        if (SS_MINUTI[i] == g_ss_minuti) ex_item_select(g_ss_c_minuti, (unsigned int)i);
+    }
+    metti(0, ex_create("label", "minuti", EX_CHILD, 394, 324, 56, 18, g_impost, 0, 0));
+    metti(0, ex_create("label", "Scritta:", EX_CHILD, 12, 352, 150, 18, g_impost, 0, 0));
+    g_ss_c_testo = ex_create("textbox", g_ss_testo, EX_CHILD, 164, 350, IMP_W - 176, 22,
+                             g_impost, 0, 0);
+    metti(0, g_ss_c_testo);
+    metti(0, ex_create("label", "Spegni lo schermo:", EX_CHILD, 12, 380, 150, 18, g_impost, 0, 0));
+    g_ss_c_schermo = ex_create("combo", "", EX_CHILD, 164, 378, 160, 22, g_impost, ID_SS_SCHERMO, 0);
+    metti(0, g_ss_c_schermo);
+    for (i = 0; i < (int)SCHERMO_N; i++) {
+        if (SCHERMO_MIN[i] < 0) strcpy(t, "Non cambiare");
+        else if (SCHERMO_MIN[i] == 0) strcpy(t, "Mai");
+        else sprintf(t, "dopo %d minuti", SCHERMO_MIN[i]);
+        ex_item_add(g_ss_c_schermo, t);
+    }
+    ex_item_select(g_ss_c_schermo, 0);
+    metti(0, ex_create("button", "Prova", EX_CHILD, 12, 408, 150, 26, g_impost, ID_SS_PROVA, 0));
+    metti(0, ex_create("button", "Applica", EX_CHILD, IMP_W - 162, 408, 150, 26,
+                       g_impost, ID_SS_APPLICA, 0));
+    g_ss_avviso = ex_create("label", "", EX_CHILD, 12, 438, IMP_W - 24, 16, g_impost, 0, 0);
+    metti(0, g_ss_avviso);
+    metti(0, ex_create("label", "Si ferma al primo tasto o movimento del mouse.", EX_CHILD,
+                       12, 456, IMP_W - 24, 16, g_impost, 0, 0));
 
     /* --- Scrivania: the desktop image (@PM-SFONDO) ---------------------------- */
     g_impost_sfondo = ex_create("label", "", EX_CHILD, 12, 44, IMP_W - 24, 18, g_impost, 0, 0);
@@ -2306,6 +2493,33 @@ static void foto_controlla(void)
  * the bar's timer. cattura is the one whose exit code matters: it gets it
  * here. exvolume and exwifi need nothing: once collected, their own
  * waitpid(WNOHANG) says -1, which they already read as "closed". */
+static void ss_avvia(void)
+{
+    char *av[4];
+
+    if (g_ss_pid > 0) return;
+    av[0] = (char *)"/exwin/bin/salvaschermo";
+    av[1] = (char *)(g_ss_tipo == 1 ? "scritta" : "cerchio");
+    av[2] = g_ss_testo;
+    av[3] = 0;
+    g_ss_pid = spawn_ex(av[0], av, environ, 0, 0);
+    if (g_ss_pid < 0) {
+        av[0] = (char *)"/cdrom/exwin/bin/salvaschermo";
+        g_ss_pid = spawn_ex(av[0], av, environ, 0, 0);
+    }
+    if (g_ss_pid < 0) log_seriale("pm: il salvaschermo non parte");
+}
+
+/* every 2 s from the bar: nobody there for long enough -> the saver */
+static void ss_controlla(void)
+{
+    int fermo;
+
+    if (g_ss_tipo == 0 || g_ss_pid > 0) return;
+    fermo = attivita_da();
+    if (fermo >= 0 && (unsigned int)fermo >= g_ss_minuti * 60000u) ss_avvia();
+}
+
 static void raccogli_figli(void)
 {
     int pid, stato;
@@ -2314,6 +2528,7 @@ static void raccogli_figli(void)
         stato = 0;
         pid = waitpid(-1, &stato, WNOHANG);
         if (pid <= 0) break;
+        if (pid == g_ss_pid) g_ss_pid = -1;
         if (pid == g_foto_pid) {
             g_foto_pid = -1;
             if (stato != 0) ex_dlg_avviso("Scrivania", "La schermata non e' stata salvata.");
@@ -2553,7 +2768,10 @@ static long barra_proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         return 0;
     }
 
-    if (msg == EXM_TIMER) { foto_controlla(); raccogli_figli(); wifi_controlla(f); return 0; }
+    if (msg == EXM_TIMER) {
+        foto_controlla(); raccogli_figli(); wifi_controlla(f); ss_controlla();
+        return 0;
+    }
 
     if (msg == EXM_WINDOW_LIST) {
         vb_leggi();
@@ -3397,9 +3615,31 @@ static void profilo_cfg(char *dir, char *cfg, unsigned int max, int crea)
     snprintf(cfg, max, "%s/pm.cfg", dir);
 }
 
+/* The value of `chiave` in a pm.cfg read into buf: only at the start of a
+ * line and followed by spaces or '=', so salvaschermo does not find
+ * salvaschermo_minuti. NULL if missing; the value runs to the end of line. */
+static char *cfg_valore(char *buf, const char *chiave)
+{
+    size_t n = strlen(chiave);
+    char  *p = buf;
+
+    while ((p = strstr(p, chiave)) != 0) {
+        char *q = p + n;
+
+        if ((p == buf || p[-1] == '\n') && (*q == ' ' || *q == '\t' || *q == '=')) {
+            while (*q == ' ' || *q == '\t') q++;
+            if (*q != '=') { p = q; continue; }
+            for (q++; *q == ' ' || *q == '\t'; q++) ;
+            return q;
+        }
+        p = q;
+    }
+    return 0;
+}
+
 static void sfondo_leggi_cfg(void)
 {
-    char buf[256], *p, *e, dir[160], cfg[160];
+    char buf[1024], *p, *e, dir[160], cfg[160];
     int  fd, n;
 
     profilo_cfg(dir, cfg, sizeof(cfg), 0);
@@ -3431,6 +3671,23 @@ static void sfondo_leggi_cfg(void)
         for (p++; *p == ' ' || *p == '\t'; p++) ;
         g_vedi_volume = !(p[0] == 'n' && p[1] == 'o');
     }
+    /* the screen saver (voce 116): missing = none, 10 minutes, "EX-OS" */
+    if ((p = cfg_valore(buf, "salvaschermo")) != 0) {
+        int k;
+        for (k = 0; k < 3; k++)
+            if (!strncmp(p, SS_TIPI[k], strlen(SS_TIPI[k]))) g_ss_tipo = k;
+    }
+    if ((p = cfg_valore(buf, "salvaschermo_minuti")) != 0 && *p >= '1' && *p <= '9')
+        g_ss_minuti = (unsigned int)atoi(p);
+    if ((p = cfg_valore(buf, "salvaschermo_scritta")) != 0) {
+        size_t k = 0;
+        while (p[k] && p[k] != '\n' && p[k] != '\r' && k + 1 < sizeof(g_ss_testo)) {
+            g_ss_testo[k] = p[k];
+            k++;
+        }
+        g_ss_testo[k] = '\0';
+        if (k == 0) strcpy(g_ss_testo, "EX-OS");
+    }
     /* missing (a pm.cfg written before 0.028) = on, as on a fresh install */
     if ((p = strstr(buf, "icone_menu")) && (p = strchr(p, '='))) {
         for (p++; *p == ' ' || *p == '\t'; p++) ;
@@ -3451,7 +3708,7 @@ static void sfondo_leggi_cfg(void)
 
 static int sfondo_salva(void)
 {
-    char t[420], dir[160], cfg[160];
+    char t[720], dir[160], cfg[160];
     int  fd, n;
     struct stat st;
 
@@ -3461,10 +3718,13 @@ static int sfondo_salva(void)
     if (fd < 0) return 0;
     n = snprintf(t, sizeof(t), "# pm: la scrivania. Lo riscrive Impostazioni.\n"
                                "sfondo = %s\ndisposizione = %s\nsuono_avvio = %s\n"
-                               "orologio = %s\nicona_volume = %s\nicone_menu = %s\n",
+                               "orologio = %s\nicona_volume = %s\nicone_menu = %s\n"
+                               "salvaschermo = %s\nsalvaschermo_minuti = %u\n"
+                               "salvaschermo_scritta = %s\n",
                  g_sfondo ? g_sfondo : "", DISPOSIZIONI[g_sfondo_modo],
                  g_suono_avvio ? "si" : "no", g_vedi_orologio ? "si" : "no",
-                 g_vedi_volume ? "si" : "no", g_vedi_icone ? "si" : "no");
+                 g_vedi_volume ? "si" : "no", g_vedi_icone ? "si" : "no",
+                 SS_TIPI[g_ss_tipo], g_ss_minuti, g_ss_testo);
     if (write(fd, t, (unsigned int)n) != n) { close(fd); return 0; }
     close(fd);
     return 1;

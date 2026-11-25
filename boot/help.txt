@@ -742,6 +742,23 @@ la massima e la minima, con i MHz e i registri grezzi, in dmesg:
 Non scrive niente, e `cpufreq.drv` lo dice. Usarle e' il
 passo dopo, quando i numeri sono stati guardati sulla macchina vera.
 
+[risoluzione Impostazioni Video accesso negato stage2.bin password root]
+Impostazioni > Video, un modo della lista e Applica (o Prova...): la
+scrivania chiede una password, come sudo. La TUA se sei in
+/boot/amministratori, altrimenti quella di root. Diventa root solo
+svga.drv, che finisce subito; la scrivania resta del suo utente.
+
+Perche': svga.drv scrive /boot/kernel.cfg (la voce svga) e un byte dentro
+/boot/stage2.bin, che il caricatore legge per scegliere il modo col BIOS
+prima che ci siano kernel e dischi; a ogni avvio il kernel confronta i
+due. Tutti e due sono di root, e dal kernel 0.359 la scrivania gira col
+suo utente: fino a pm 0.031 diceva "non e' stato impostato" e sulla
+console "/boot/stage2.bin: accesso negato".
+
+Lo stesso per "Spegni lo schermo" del salvaschermo (dpms.drv).
+Da terminale, senza scrivania:  sudo /dev/svga.drv 1280x1024
+Dal CD non si puo' comunque: LOADER.BIN e' in sola lettura.
+
 [dpms.drv dpms schermo spento salvaschermo]
 lo schermo si spegne quando nessuno lo usa, e si riaccende al primo tasto
 
@@ -1155,6 +1172,14 @@ FIREFOX SI CHIUDE INTERO CON TRE O QUATTRO SCHEDE, e dmesg dice "fascia
   la RAM e' finita davvero: chiudi delle schede, o attiva lo swap
   (swap = hdXpY in /boot/kernel.cfg). Subito, senza aggiornare:
   EXILLA_UN_PROCESSO=1 fa girare Firefox in un processo solo.
+EXILLA (FIREFOX) NON FA PARTIRE NESSUN VIDEO NE' SUONO, neanche YouTube: la
+  pagina si apre, il video resta fermo; un file locale dice "Failed to open
+  media". Succede da exilla 0.008 (Firefox a piu' processi): il processo
+  della pagina passa i video a un processo a parte (RDD) e l'audio a un
+  altro, e il Gecko per EX-OS li aveva spenti di serie. Aggiorna Exilla con
+  netupdate: il pacchetto del 25/11/2026 ha exos-media.js in
+  /exwin/app/exilla/defaults/pref, che li accende. Subito, senza aggiornare:
+  EXILLA_UN_PROCESSO=1 (un processo solo decodifica da se').
 NETUPDATE DICE "L'AVVIO NON E' STATO AGGIORNATO: NON RIAVVIARE": non spegnere.
   netupdate -avvio riscrive la mappa; con netupdate 0.049 lo fa da solo
   anche il prossimo netupdate -check. Vedi [netupdate frammentato].

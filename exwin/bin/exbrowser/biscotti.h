@@ -65,7 +65,19 @@ typedef struct {
      * Sono due cose diverse e confonderle manda i biscotti di www a un
      * sottodominio che non li ha chiesti. */
     unsigned char con_sottodomini;
+    unsigned char stesso_sito;           /* SameSite, BIS_SS_*          */
+    unsigned int  creato_s;              /* when it was set (the Lax POST grace) */
 } Biscotto;
+
+#define BIS_SS_NON_DETTO 0      /* no SameSite: Lax, with the POST grace */
+#define BIS_SS_NONE      1
+#define BIS_SS_LAX       2
+#define BIS_SS_STRICT    3
+
+/* what kind of request, for SameSite (bis_da_mandare_ss) */
+#define BIS_NAV_NO       0      /* a resource, a fetch, a frame        */
+#define BIS_NAV_GET      1      /* the page itself, safe method        */
+#define BIS_NAV_POST     2      /* the page itself, sent by a form     */
 
 typedef struct {
     Biscotto b[BIS_MAX];
@@ -100,6 +112,19 @@ int bis_da_script(Dispensa *d, const char *host, const char *percorso,
 void bis_da_mandare(const Dispensa *d, const char *host, const char *percorso,
                     int cifrata, int per_script, unsigned int ora_s,
                     char *fuori, unsigned int max);
+
+/* The same, with SameSite (25 November 2026, BROWSER002 P5): `stesso_sito`
+ * 1 if the request is same-site (bis_sito of the two hosts equal, and the
+ * same scheme), `nav` one of BIS_NAV_*. bis_da_mandare is this one with
+ * stesso_sito 1: everything that matches host and path, as before. */
+void bis_da_mandare_ss(const Dispensa *d, const char *host, const char *percorso,
+                       int cifrata, int per_script, unsigned int ora_s,
+                       int stesso_sito, int nav, char *fuori, unsigned int max);
+
+/* The site of a host: its registrable domain, the public suffix (Public
+ * Suffix List) plus one label - "www.bbc.co.uk" -> "bbc.co.uk". An IP
+ * address, or a host that is itself a public suffix, is its own site. */
+void bis_sito(const char *host, char *fuori, unsigned int max);
 
 /* Toglie quelli scaduti. Rende quanti ne ha tolti. */
 int bis_pulisci(Dispensa *d, unsigned int ora_s);

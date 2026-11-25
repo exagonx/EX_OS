@@ -1,0 +1,27 @@
+<html><head><title>var() e calc()</title><style>
+:root { --rosso: #c00000; --spazio: 12px; --doppio: calc(var(--spazio) * 2); --verde: #008000; }
+body { font-family: sans-serif; }
+.a { color: var(--rosso); }
+.b { color: var(--non-c-e, var(--verde)); }
+.box { --bordo: 3px; border: var(--bordo) solid var(--rosso); padding: var(--spazio); margin-top: var(--doppio); }
+.figlio { --rosso: #0000c0; }
+.c { width: calc(100% / 2); background: #dddddd; }
+.d { max-width: min(100%, 300px); background: #ccffcc; }
+.e { font-size: calc(1rem + 6px); }
+.f { margin-left: clamp(10px, 5vw, 40px); }
+.g { --ciclo-a: var(--ciclo-b); --ciclo-b: var(--ciclo-a); color: var(--ciclo-a, #808000); }
+.h { font: bold calc(10px + 8px) / 1.2 var(--famiglia, serif); }
+</style></head><body>
+<h1>var() e calc() (P6)</h1>
+<p class="a">1. rosso, da var(--rosso)</p>
+<p class="b">2. verde, dal ripiego annidato</p>
+<div class="box">3. bordo rosso di 3px, padding 12, 24 sopra</div>
+<div class="figlio"><p class="a">4. blu: --rosso ridefinita qui sopra</p></div>
+<div class="c">5. largo meta' (calc(100% / 2)), grigio</div>
+<div class="d">6. al piu' 300px (min(100%, 300px)), verde chiaro</div>
+<p class="e">7. corpo 21 (calc(1rem + 6px))</p>
+<p class="f">8. rientro clamp(10px, 5vw, 40px) = 40</p>
+<p class="g">9. oliva: un ciclo vale come non detto, e vince il ripiego</p>
+<p style="--locale: #c000c0; color: var(--locale)">10. viola, da una variabile dell'attributo style</p>
+<p class="h">11. grassetto serif da 18, la scorciatoia font con calc() e var()</p>
+</body></html>

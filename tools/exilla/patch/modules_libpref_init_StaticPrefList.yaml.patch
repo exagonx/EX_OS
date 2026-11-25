@@ -9,3 +9,66 @@
    # -1 = disabled (no preblend, original behavior)
    #  0 = sRGB transfer
    # >0 = value/100.0 exponent
+@@ -12700,7 +12700,7 @@
+   value: true
+ #elif defined(XP_MACOSX)
+   value: true
+-#elif defined(XP_LINUX) && !defined(ANDROID)
++#elif defined(XP_LINUX) && !defined(ANDROID) || defined(XP_EXOS)
+   value: true
+ #elif defined(XP_FREEBSD)
+   value: true
+@@ -12744,7 +12744,7 @@
+   value: true
+ #elif defined(XP_MACOSX)
+   value: true
+-#elif defined(XP_LINUX) && !defined(ANDROID)
++#elif defined(XP_LINUX) && !defined(ANDROID) || defined(XP_EXOS)
+   value: true
+ #elif defined(XP_FREEBSD)
+   value: true
+@@ -12777,7 +12777,7 @@
+   value: true
+ #elif defined(XP_MACOSX)
+   value: true
+-#elif defined(XP_LINUX) && !defined(ANDROID)
++#elif defined(XP_LINUX) && !defined(ANDROID) || defined(XP_EXOS)
+   value: true
+ #elif defined(XP_FREEBSD)
+   value: true
+@@ -12796,7 +12796,7 @@
+   value: true
+ #elif defined(XP_MACOSX)
+   value: true
+-#elif defined(XP_LINUX) && !defined(ANDROID)
++#elif defined(XP_LINUX) && !defined(ANDROID) || defined(XP_EXOS)
+   value: true
+ #elif defined(XP_FREEBSD)
+   value: true
+@@ -12815,7 +12815,7 @@
+   value: true
+ #elif defined(XP_MACOSX)
+   value: true
+-#elif defined(XP_LINUX) && !defined(ANDROID)
++#elif defined(XP_LINUX) && !defined(ANDROID) || defined(XP_EXOS)
+   value: true
+ #elif defined(XP_FREEBSD)
+   value: true
+@@ -12834,7 +12834,7 @@
+   value: true
+ #elif defined(XP_MACOSX)
+   value: true
+-#elif defined(XP_LINUX) && !defined(ANDROID)
++#elif defined(XP_LINUX) && !defined(ANDROID) || defined(XP_EXOS)
+   value: true
+ #elif defined(XP_FREEBSD)
+   value: true
+@@ -12862,7 +12862,7 @@
+   value: true
+ #elif defined(XP_MACOSX)
+   value: true
+-#elif defined(XP_LINUX) || defined(ANDROID)
++#elif defined(XP_LINUX) || defined(ANDROID) || defined(XP_EXOS)
+   value: true
+ #elif defined(XP_FREEBSD)
+   value: true

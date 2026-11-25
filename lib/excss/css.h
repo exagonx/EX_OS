@@ -136,6 +136,17 @@ extern "C" {
 #define CSS_FAM_SERIF   1
 #define CSS_FAM_SANS    2
 #define CSS_FAM_FISSO   3   /* monospace */
+/* (P6, 25 novembre 2026) A family of the PAGE, from its @font-face blocks:
+ * k is the family's number (CssFontFace.k), gen one of the three above, the
+ * first generic the list names after it - what to use while the file has
+ * not arrived, or if it never does. From 16 up, so a program of before that
+ * takes it for an unknown family keeps working. At most 60 families. */
+#define CSS_FAM_PAGINA_BASE   16
+#define CSS_FAM_PAGINA_MAX    59
+#define CSS_FAM_PAGINA(k, gen) (CSS_FAM_PAGINA_BASE + (k) * 4 + ((gen) - 1))
+#define CSS_FAM_E_PAGINA(f)   ((f) >= CSS_FAM_PAGINA_BASE)
+#define CSS_FAM_PAGINA_K(f)   (((f) - CSS_FAM_PAGINA_BASE) / 4)
+#define CSS_FAM_PAGINA_GEN(f) (((f) - CSS_FAM_PAGINA_BASE) % 4 + 1)
 
 /* text-align */
 #define CSS_ALL_EREDITA 0
@@ -262,6 +273,29 @@ void css_stile_vuoto(CssStile *s);
  * la finestra cambia misura (e allora i fogli vanno riletti). 800 finche'
  * nessuno la dice. Aggiunta il 28 settembre 2026. */
 void css_media_larghezza(int px);
+
+/* E l'altezza, per min-height, max-height, orientation, aspect-ratio e vh
+ * (P6, 25 novembre 2026). 600 finche' nessuno la dice. */
+void css_media_altezza(int px);
+
+/* Does the media query `q` (n bytes, e.g. «(min-width: 600px) and (hover)»)
+ * hold for this window? The answer the sheets get: for matchMedia (P6). */
+int  css_media_vale(const char *q, unsigned int n);
+
+/* =============================================================================
+ * var() and the custom properties (P6, 25 November 2026)
+ *
+ * `--name: value` is inherited by the children and read by var(): to know it
+ * for an element excss must know it for its parents, and it keeps those sets
+ * in a buffer of the CALLER, as all the rest. css_variabili() gives it, and
+ * ! MUST BE CALLED AGAIN BEFORE EVERY LAYOUT (and whenever the document or
+ * a sheet changes): what is there is valid for the document of the first
+ * css_calcola after it and for no later change of it. css_prepara and
+ * css_analizza forget it too. Without a buffer a var() takes its fallback
+ * and, without one, the declaration is dropped - excss as it was. 256 KB is
+ * plenty for a big site; full, the sets that do not fit are not kept.
+ * ========================================================================== */
+void css_variabili(void *buf, unsigned int n);
 
 /* Il segno d'elenco dell'ULTIMO elemento passato a css_calcola: 0 se le sue
  * regole dicono `list-style: none`, 1 se dicono un segno, 2 se non dicono
@@ -476,6 +510,27 @@ int css_sfondo_url(const CssFoglio *f, const CssStile *s, char *out, unsigned in
 
 void css_calcola(const CssFoglio *f, const HtmlDoc *d, int nodo,
                  const CssStile *ereditato, CssStile *out);
+
+/* =============================================================================
+ * @font-face (P6, 25 November 2026)
+ *
+ * The i-th block of the sheet (0, 1, ...), 0 past the last. The strings
+ * live in the sheet's arena, as long as the sheet does. `k` is the number of
+ * its family: the blocks of one family (its weights, its italic, its
+ * unicode-range pieces) have the same k, and a CssStile.famiglia of
+ * CSS_FAM_PAGINA(k, ...) asks for that family.
+ * ========================================================================== */
+typedef struct {
+    const char    *famiglia;    /* lower case, no quotes                         */
+    const char    *src;         /* as written: url(...) format(...), local(...)  */
+    const char    *intervallo;  /* unicode-range as written, 0 = every character */
+    const char    *base;        /* the address of its sheet, 0 = the page's      */
+    unsigned short peso_min, peso_max;   /* font-weight, 400 when not said        */
+    unsigned char  corsivo;     /* 1 italic or oblique                           */
+    unsigned char  k;
+} CssFontFace;
+
+int css_font_face(const CssFoglio *f, unsigned int i, CssFontFace *out);
 
 #ifdef __cplusplus
 }

@@ -19,6 +19,12 @@
         exhttp_certi_aggiungi;
         exhttp_attesi;
         exhttp_intestazioni;
+        exhttp_srotola;
+        exhttp_parti;
+        exhttp_avanza;
+        exhttp_risposta;
+        exhttp_lascia;
+        exhttp_protocollo;
         exhttp_tls_sopra;
         exhttp_tls_impronta;
         exhttp_tls_fidati;
