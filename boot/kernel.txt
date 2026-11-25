@@ -255,6 +255,20 @@ stessa cosa per una sola accensione: `ip.drv -t N`. `ipcfg -tcp` mostra
 quante sono in uso e il tetto.
 
 -------------------------------------------------------------------------------
+riservakernel = 8         (commentata per default)
+-------------------------------------------------------------------------------
+
+Quanti MB dei primi 64 (la fascia del kernel) i programmi non possono
+prendere (dal kernel 0.368). Li' stanno le tabelle delle pagine e le pile
+del kernel: se un programma si prendeva anche le ultime pagine, il kernel non
+trovava piu' una tabella e moriva un processo a caso (Firefox chiuso intero
+con tre schede, a 1536 MB). Con la riserva, quando la RAM finisce, si ferma
+chi la sta chiedendo ("RAM finita per i programmi" in dmesg, una riga al
+secondo). Senza la voce: un ottavo della fascia, 8 MB (4 su una macchina da
+32 MB). 0 = nessuna riserva, come prima della 0.368. Al massimo meta' fascia.
+Conta solo un NUMERO.
+
+-------------------------------------------------------------------------------
 netrx = 2048              (commentata per default)
 nettx = 512               (commentata per default)
 -------------------------------------------------------------------------------

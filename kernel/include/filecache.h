@@ -24,6 +24,11 @@
  * a private page as before. */
 paddr_t  fc_pagina(int h, uint32_t idx);
 
+/* A page of the file for this caller alone: the bytes the file has at page
+ * `idx` (the last partial page, or any page of a file with no identity),
+ * zeros after them; all zeros past the end. 0 = no RAM, or a read error. */
+paddr_t  fc_pagina_privata(int h, uint32_t idx);
+
 /* Gives back up to `pagine` frames that only the cache holds (nobody maps
  * them now): they can be read again from the file. Returns how many. */
 uint32_t fc_cedi(uint32_t pagine);

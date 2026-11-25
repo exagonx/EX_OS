@@ -31,9 +31,13 @@
  * size and mtime. A netupdate that replaces the file makes a new entry; the
  * old one leaves at once, and its frames live on only in whoever maps them.
  *
- * ! READ AHEAD: on a page that is not there, up to FC_AVANTI pages with ONE
- * vfs_read (the prototype read page by page: Firefox started in 11 s instead
- * of 8). It stops at the first page already in the cache.
+ * ! NO READ AHEAD (FC_AVANTI = 1), MEASURED. 16 pages per vfs_read made
+ * Firefox take 90 MB MORE than one page at a time (tre-schede, 25/11:
+ * 1269/1400 MB against 1203/1341): the pages read ahead and never touched
+ * sat twice in RAM, in this cache and in the disk cache under it. The disk
+ * cache already reads ahead for the disk's sake; this one keeps only what a
+ * program has touched. FC_AVANTI > 1 still works, for whoever measures it
+ * better (a machine without disk cache, cachedisco = 0).
  *
  * ! THE CACHE GIVES BACK. A frame only the cache holds (count 1: nobody maps
  * it) can be read again from the file; fc_cedi frees those when the RAM runs
@@ -56,7 +60,7 @@
 #include "kmalloc.h"
 #include "filecache.h"
 
-#define FC_AVANTI  16u          /* pages read at once: 64 KB */
+#define FC_AVANTI  1u           /* pages read at once: see above */
 
 typedef struct {
     uint32_t  ident, dim;
@@ -192,7 +196,7 @@ static void fc_conta(void)
 {
     if (g_fc_presi + g_fc_letti - g_fc_detti < 4096u) return;
     g_fc_detti = g_fc_presi + g_fc_letti;
-    klog(LOG_WARN, "FC: pagine di file riusate %u (%u MB), lette %u (%u MB), "
+    klog(LOG_INFO, "FC: pagine di file riusate %u (%u MB), lette %u (%u MB), "
          "rese alla RAM %u", g_fc_presi, g_fc_presi / 256u, g_fc_letti,
          g_fc_letti / 256u, g_fc_ceduti);
 }
@@ -215,10 +219,8 @@ paddr_t fc_pagina(int h, uint32_t idx)
     letti = vfs_fstat(h, &st);
     if (letti != 0) { fc_rinuncia(1, "fstat", h, idx, letti); return 0; }
     if (st.ident == 0) { fc_rinuncia(2, "identita' 0", h, idx, 0); return 0; }
-    if (idx >= st.dimensione / PAGE_SIZE) {             /* not a whole page */
-        fc_rinuncia(3, "oltre la fine", h, idx, (int)st.dimensione);
-        return 0;
-    }
+    if (idx >= st.dimensione / PAGE_SIZE) return 0;     /* not a whole page:
+                                                           the normal case */
     v = fc_prendi(&st);
     if (v == NULL) { fc_rinuncia(4, "voce", h, idx, (int)st.dimensione); return 0; }
 
@@ -264,6 +266,42 @@ paddr_t fc_pagina(int h, uint32_t idx)
     fc_lascia(v);
     fc_conta();
     return fr;
+}
+
+paddr_t fc_pagina_privata(int h, uint32_t idx)
+{
+    VfsStat   st;
+    uint8_t  *buf;
+    uint8_t  *dst;
+    paddr_t   p;
+    uint32_t  n = 0, b;
+    uintptr_t fl;
+    int       letti = 0;
+
+    if (h < 0 || vfs_fstat(h, &st) != 0) return 0;
+    if ((uint64_t)idx * PAGE_SIZE < st.dimensione) {
+        n = st.dimensione - idx * PAGE_SIZE;
+        if (n > PAGE_SIZE) n = PAGE_SIZE;
+    }
+    buf = (uint8_t *)kmalloc(PAGE_SIZE);
+    if (buf == NULL) return 0;
+    if (n) {
+        fl = fc_chiudi();
+        __asm__ volatile ("sti");
+        letti = vfs_read(h, buf, n, idx * PAGE_SIZE);
+        if (!(fl & (1u << 9))) __asm__ volatile ("cli");
+        /* ! A SHORT READ IS A FAILURE (pf_carica_da_file, voce 59) */
+        if (letti < 0 || (uint32_t)letti < n) { kfree(buf); return 0; }
+    }
+    p = paging_pagina_utente();
+    if (p != 0) {
+        dst = (uint8_t *)paging_finestra_apri(p);
+        for (b = 0; b < n; b++) dst[b] = buf[b];
+        for (; b < PAGE_SIZE; b++) dst[b] = 0;
+        paging_finestra_chiudi();
+    }
+    kfree(buf);
+    return p;
 }
 
 uint32_t fc_cedi(uint32_t pagine)

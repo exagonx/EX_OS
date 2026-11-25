@@ -6,6 +6,7 @@
 
 **Contents**
 
+- [Firefox with many processes takes half the memory and no longer closes with three tabs (kernel 0.368-0.370) — tested in QEMU](#firefox-with-many-processes-takes-half-the-memory-and-no-longer-closes-with-three-tabs-kernel-0368-0370--tested-in-qemu)
 - [ExWin wears the classic theme: warmer panels, two-ring relief, shaded buttons (exwin.so 0.026, wserver 0.019) — tested in QEMU](#exwin-wears-the-classic-theme-warmer-panels-two-ring-relief-shaded-buttons-exwinso-0026-wserver-0019--tested-in-qemu)
 - [Kernel 0.367 and the network: su, terminals, shared memory and the kernel log have an owner; signed updates; sshd, TCP and DNS against blind attacks — tested in QEMU](#kernel-0367-and-the-network-su-terminals-shared-memory-and-the-kernel-log-have-an-owner-signed-updates-sshd-tcp-and-dns-against-blind-attacks--tested-in-qemu)
 - [exeditor saves without destroying the file, exide chooses more controls at once, EXBrowser cookies as today's browsers, USB sticks refuse short transfers — tested in QEMU](#exeditor-saves-without-destroying-the-file-exide-chooses-more-controls-at-once-exbrowser-cookies-as-todays-browsers-usb-sticks-refuse-short-transfers--tested-in-qemu)
@@ -257,6 +258,23 @@
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### Firefox with many processes takes half the memory and no longer closes with three tabs (kernel 0.368-0.370) — tested in QEMU
+
+- **What was wrong** (`debug/bug_FIREFOX001`): every Firefox process made its own copy of omni.ja
+  (106 MB, the libc copied a file to map it) and of the code of the 277 MB executable. With 8-11
+  processes that is 1.3-1.5 GB; when the RAM ran out, programs also took the pages the kernel
+  needs for its page tables, and the browser closed whole.
+- **0.368**: programs no longer take the last 8 MB of the first 64 (`riservakernel` in
+  /boot/kernel.cfg): when the RAM runs out the program asking stops, the kernel stays sound.
+- **0.369**: the read-only pages of an executable are in one copy for the whole machine
+  (`kernel/mm/filecache.c`); pages nobody maps go back when the RAM is needed.
+- **0.370**: `mmap` of a file without writing is done by the kernel with those same pages, so
+  omni.ja is in RAM once.
+- **Measured** (QEMU, 2 GB): Firefox just started 1312 -> 683 MB, three tabs 1476 -> 716 MB at
+  32 bit; 1399 -> 760 and 1580 -> 804 MB at 64 bit. Three heavy sites with 1536 MB: before, the
+  browser closed; now 11 processes alive, 0 errors. A second process reads almost nothing from
+  the disk.
 
 ### ExWin wears the classic theme: warmer panels, two-ring relief, shaded buttons (exwin.so 0.026, wserver 0.019) — tested in QEMU
 

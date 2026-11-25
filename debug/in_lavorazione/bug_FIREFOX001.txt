@@ -477,3 +477,68 @@ MINORE - getsockopt(SO_SNDBUF) su un capo di socketpair risponde "non e'
   cambiano e il caricatore non trova le librerie: provato), oppure si
   sovrascrive soltanto boot.img al suo settore El Torito (12991 nell'ISO
   di base) per cambiare il solo kernel.
+
+-------------------------------------------------------------------------------
+STATO (25/11/2026, pomeriggio)
+-------------------------------------------------------------------------------
+FATTO 3.4 - kernel 0.368: kernel/mm/pmm.c, i programmi non prendono la fascia
+  fino all'ultima pagina: resta riservakernel MB (kernel.cfg; di serie 1/8
+  della fascia = 8 MB, 0 = come prima, al massimo meta' fascia). "RAM finita
+  per i programmi" e "fascia kernel esaurita" una volta al secondo col conto
+  (prima 766-985 righe uguali).
+  Senza tetto scritto nel codice: il numero e' in kernel.cfg (regola utente).
+  Prova siti.sh a 1536 MB (siti-0368-1536): padre vivo fino alla fine, 0
+  "fascia esaurita", 0 "OOM durante map_page" (base: 766 e 40, padre morto);
+  cade un processo dei contenuti, Firefox lo rifa'.
+  VISTO: "32 pagine contigue non disponibili nella fascia kernel ... stack
+  kernel per PID 7xx": le pile del kernel dei fili (128 KB contigui) finiscono
+  prima della fascia. Firefox ha centinaia di fili. Da guardare a parte
+  (pile piu' piccole o non contigue).
+
+FATTO 3.2 - kernel 0.369: kernel/mm/filecache.c (nuovo) + pf_carica_da_file:
+  le pagine intere di sola lettura dell'eseguibile in una copia per tutta la
+  macchina; lista e vettori senza tetto; chiave identita'+misura+mtime; le
+  pagine tenute solo dalla cache tornano alla RAM (fc_cedi, in pagina_utente
+  dopo blk_cache_cedi). FC: "rinuncio (...)" una riga per motivo.
+  MISURATO (tre-schede-p.sh, 2048 MB, TOTALE di mem):
+      base 0.366     1312 MB avvio   1476 MB tre schede
+      prototipo 3.2  1179            1309
+      0.369          1203            1341   (riusate 156 MB, lette 67 MB)
+  LETTURA ANTICIPATA (3.1 a) del rapporto) PROVATA E TOLTA: 16 pagine per
+  lettura = 1269/1400 MB, cioe' 90 MB IN PIU': le pagine lette e mai toccate
+  stanno due volte in RAM, nella cache dei file e in quella del disco sotto.
+  FC_AVANTI = 1 (commento in filecache.c).
+  siti.sh a 1536 MB con 0.369 (siti-0369d-1536): il padre MUORE (fault su
+  una pagina di codice non ancora caricata, RAM finita: 19221 "RAM esaurita
+  dando la pagina", 3046 "caricando"). Non e' la cache: la RAM finisce in
+  tutti e due i casi; con 0.369 Firefox parte piu' leggero (1309 contro 1485
+  MB), mmap promette di piu' e la RAM manca nei fault invece che nelle
+  richieste, e muore chi tocca per primo una pagina nuova. Il kernel sta
+  bene (0 fascia esaurita, 0 map_page). Lo risolve 3.1 (omni.ja condiviso,
+  -600 MB, come siti-proto3-1536); "chi uccidere" quando la RAM finisce
+  davvero e' LIM001 (oggi muore chi chiede, non chi usa di piu').
+PROVE: prova_finestre 32 e 64 a posto con 0.369.
+
+FATTO 3.1 (prima meta') - kernel 0.370: sys_mmap di un FD_FILE senza
+  PROT_WRITE (e con READ o EXEC): ogni pagina intera da fc_pagina, l'ultima
+  parziale da fc_pagina_privata (zeri in coda), TUTTE MAPPATE ALLA CHIAMATA
+  (come il prototipo): munmap, fork ed exit trattano gia' i frame con piu'
+  proprietari, e non servono le zone. Il primo processo legge tutto il file
+  (come faceva la copia della libc), gli altri niente; sched_yield ogni 16
+  pagine. lib/libc.c mmap: chiede al kernel prima della copia, ENODEV =
+  kernel vecchio o mappatura scrivibile/PROT_NONE -> la copia di prima.
+  MISURATO:
+      tre-schede-p 32 bit   base 1312/1476 MB   0.370  683/716 MB (-48/-51%)
+      tre-schede-64         base 1399/1580 MB   0.370  760/804 MB (-46/-49%)
+      siti a 1536 MB        base CHIUSO         0.370  11 processi vivi,
+                                                1300 MB, 0 errori, le tre
+                                                pagine da 150 MB caricate
+  prova_finestre 32 e 64 a posto.
+DA FARE (3.1 seconda meta'): le pagine al primo accesso (zone del processo,
+  voce 16): oggi un file mappato sta tutto in RAM finche' qualcuno lo mappa,
+  e mappare un file grande (un video da 2 GB) lo legge tutto - come la copia
+  della libc di prima, quindi non peggio, ma non e' Linux. Con le zone si
+  fanno anche 3.3 (mmap riusa i buchi) e MAP_PRIVATE scrivibile in
+  copia-su-scrittura.
+POI: 3.3, 3.5, 3.6; le pile del kernel dei fili (vedi 3.4); LIM001 (chi
+  uccidere quando la RAM finisce davvero).

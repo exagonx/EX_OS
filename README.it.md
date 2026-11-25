@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.369
+**Versione:** 0.370
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -120,6 +120,7 @@ Dentro EX-OS gli stessi manuali sono in `/doc/manuali` (dal CD:
 
 ## Ultime novità
 
+- [Firefox: metà della memoria, non si chiude più con tre schede (kernel 0.370)](manuali/novita.it.md#firefox-a-più-processi-usa-metà-della-memoria-e-non-si-chiude-più-con-tre-schede-kernel-0368-0370--testato-in-qemu) — *testato in QEMU*
 - [Tema classico di ExWin: pannelli più caldi, rilievo a due anelli, pulsanti sfumati](manuali/novita.it.md#exwin-veste-il-tema-classico-pannelli-più-caldi-rilievo-a-due-anelli-pulsanti-sfumati-exwinso-0026-wserver-0019--testato-in-qemu) — *testato in QEMU*
 - [Kernel 0.367: freno di su, terminali e memorie con proprietario, netupdate firmato, sshd/TCP/DNS irrobustiti](manuali/novita.it.md#kernel-0367-e-la-rete-su-terminali-memoria-condivisa-e-registro-del-kernel-hanno-un-proprietario-aggiornamenti-firmati-sshd-tcp-e-dns-contro-gli-attacchi-alla-cieca--testato-in-qemu) — *testato in QEMU*
 - [exeditor salva sicuro, exide sceglie più controlli, biscotti di EXBrowser, USB rifiuta i trasferimenti corti](manuali/novita.it.md#exeditor-salva-senza-distruggere-il-file-exide-sceglie-più-controlli-insieme-i-biscotti-di-exbrowser-come-i-navigatori-di-oggi-le-chiavette-usb-rifiutano-i-trasferimenti-corti--testato-in-qemu) — *testato in QEMU*
@@ -127,7 +128,6 @@ Dentro EX-OS gli stessi manuali sono in `/doc/manuali` (dal CD:
 - [Quanto il lucchetto dei file aspetta il disco (kernel 0.364-0.365, voce 117)](manuali/novita.it.md#quanto-il-lucchetto-dei-file-aspetta-il-disco-kernel-0364-0365-voce-117--testato-in-qemu-e-sul-pc-di-prova) — *testato in QEMU e sul PC di prova*
 - [Montare sopra una cartella vuota (kernel 0.363)](manuali/novita.it.md#montare-sopra-una-cartella-vuota-kernel-0363--testato-in-qemu-e-sul-pc-di-prova) — *testato in QEMU e sul PC di prova*
 - [I dischi in PIO non fermano più il sistema; i lettori ottici sull'AHCI (kernel 0.362, voce 117)](manuali/novita.it.md#i-dischi-in-pio-non-fermano-più-il-sistema-i-lettori-ottici-sullahci-kernel-0362-voce-117--testato-in-qemu-e-sul-pc-di-prova) — *testato in QEMU e sul PC di prova*
-- [Firefox usa i programmi del sistema e il dialogo dei file di ExWin (kernel 0.361, voce 118)](manuali/novita.it.md#firefox-usa-i-programmi-del-sistema-mostra-nella-cartella-il-programma-di-ogni-tipo-di-file-il-dialogo-dei-file-di-exwin-exwin-0024-pm-0030-kernel-0361-voce-118--testato-in-qemu) — *testato in QEMU*
 
 Tutte le altre, dalla più recente: [Novità](manuali/novita.it.md).
 

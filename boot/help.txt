@@ -1146,6 +1146,15 @@ ATA: "timeout BSY sul canale N" IN dmesg E UN VOLUME ext MONTATO IN SOLA
   appena stata scritta sull'host: fai sync prima di avviare QEMU. Sul
   ferro, smonta e rimonta il volume; se "fallito due volte" torna, il
   disco e' da guardare.
+FIREFOX SI CHIUDE INTERO CON TRE O QUATTRO SCHEDE, e dmesg dice "fascia
+  kernel esaurita" e "OOM durante map_page": e' il kernel fino alla 0.367,
+  dove ogni processo di Firefox si copiava omni.ja (106 MB) e il suo codice,
+  e finita la RAM i programmi prendevano anche le pagine del kernel.
+  Aggiorna con netupdate e riavvia: dalla 0.370 Firefox appena avviato usa
+  circa 700 MB invece di 1300. Se dmesg dice "RAM finita per i programmi",
+  la RAM e' finita davvero: chiudi delle schede, o attiva lo swap
+  (swap = hdXpY in /boot/kernel.cfg). Subito, senza aggiornare:
+  EXILLA_UN_PROCESSO=1 fa girare Firefox in un processo solo.
 NETUPDATE DICE "L'AVVIO NON E' STATO AGGIORNATO: NON RIAVVIARE": non spegnere.
   netupdate -avvio riscrive la mappa; con netupdate 0.049 lo fa da solo
   anche il prossimo netupdate -check. Vedi [netupdate frammentato].
@@ -2181,6 +2190,8 @@ abbassano (non si alzano oltre l'hardware) in /boot/kernel.cfg [kernel]:
   cachedisco = N  MB della cache di lettura dei dischi (di serie 1/8 della RAM
                   sotto i 4 GB, 0 la spegne; letto dal kernel 0.344); la
                   memoria torna ai programmi quando serve
+  riservakernel = N  MB dei primi 64 che i programmi non prendono, per le
+                  tabelle e le pile del kernel (di serie 8; dal kernel 0.368)
   netrx = N       descrittori di ricezione, tutte le schede (uno per MB)
   nettx = N       descrittori di invio della scheda (un quarto di netrx)
 

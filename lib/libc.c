@@ -8762,6 +8762,23 @@ void *mmap(void *addr, size_t lung, int prot, int flags, int fd, long off)
         }
     }
 
+    /* ! A FILE MAPPED WITHOUT WRITING THE KERNEL MAPS ITSELF (0.370,
+     * debug/bug_FIREFOX001): the same pages in every process, instead of a
+     * copy of the whole file in each. ENODEV = a kernel before 0.370, or a
+     * mapping it does not do (PROT_NONE): the copy below, as before. */
+    if (fd != -1 && !(flags & MAP_ANONYMOUS) && !(prot & PROT_WRITE)) {
+        p.addr   = (uint32_t)(uintptr_t)addr;
+        p.length = (uint32_t)lung;
+        p.prot   = (uint32_t)prot;
+        p.flags  = (uint32_t)flags;
+        p.fd     = fd;
+        p.offset = (uint32_t)off;
+        r = _syscall1(SYS_MMAP, (uintptr_t)&p);
+        mm_dice("mmap-file", p.addr, p.length, p.prot | (p.flags << 8), r);
+        if (r != 0 && (uint32_t)r < 0xFFFFF001u) return (void *)(uintptr_t)(uint32_t)r;
+        if (r != -ENODEV) { errno = (r != 0) ? -r : ENOMEM; return MAP_FAILED; }
+    }
+
 #ifndef EXOS_LIBC_SO
     /* =====================================================================
      * ! UN FILE SI MAPPA COPIANDOLO (1 ottobre 2026, tappa 6 di Exilla).

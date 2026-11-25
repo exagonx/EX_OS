@@ -1129,12 +1129,18 @@
  * 1536 MB for a child, debug/bug_FIREFOX001 C3). "fascia kernel esaurita"
  * once a second with the count. */
 /* 0.368 -> 0.369: the whole read-only pages of an executable in one copy
- * for the whole machine (kernel/mm/filecache.c): the first fault reads 64 KB
- * at once, every later fault of any process on the same page of the same
+ * for the whole machine (kernel/mm/filecache.c): the first fault reads the
+ * page, every later fault of any process on the same page of the same
  * file (identity, size, mtime) gets the same frame. The frames nobody maps
  * go back when the RAM runs out (fc_cedi). Firefox's 8-11 processes share
  * one copy of their 277 MB executable (debug/bug_FIREFOX001 C2). */
-#define EXOS_VERSION    "0.369"
+/* 0.369 -> 0.370: mmap of a file without PROT_WRITE is done by the kernel
+ * with the pages of filecache.c, one copy for the whole machine (whole
+ * pages shared, the last partial page private), all mapped at the call;
+ * the libc asks it first and copies the file only on ENODEV. Gecko's two
+ * omni.ja (106 MB) no longer cost 106 MB per process (debug/bug_FIREFOX001
+ * C1). */
+#define EXOS_VERSION    "0.370"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

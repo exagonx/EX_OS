@@ -10,6 +10,7 @@
  * ============================================================================= */
 
 #include "kernel.h"
+#include "filecache.h"   /* mmap of a file: fc_pagina (0.370) */
 #include "idt.h"
 #include "syscall.h"
 #include "entropia.h"
@@ -2570,6 +2571,61 @@ int32_t sys_mmap(InterruptFrame *frame)
                         pg_flags | ((FDV(proc, p->fd).flags & 3u) == O_RDONLY
                                     ? PG_CONDIVISA_RO : 0u));
         if (r < 0) return r;
+        if (vaddr + pages * PAGE_SIZE > proc->heap_end)
+            proc->heap_end = vaddr + pages * PAGE_SIZE;
+        return (int32_t)vaddr;
+    }
+    /* =====================================================================
+     * ! A FILE MAPPED WITHOUT WRITING IS THE CACHE'S PAGES (0.370,
+     * debug/bug_FIREFOX001 C1). Until 0.369 the kernel said ENODEV and the
+     * libc made a private copy of the whole file: Gecko maps the two omni.ja
+     * (106 MB) in every process, 0.8-1.1 GB for 8-11 processes. Now each
+     * whole page comes from filecache.c, one frame for the whole machine,
+     * read only (an mprotect for writing makes it copy-on-write: the frame
+     * has more owners, paging_proteggi); the last partial page and the
+     * pages past the end are private, with zeros.
+     *
+     * ! ALL THE PAGES NOW, NOT AT THE FIRST TOUCH. munmap, fork and exit
+     * already handle frames with more owners; pages loaded later would want
+     * a list of the zones of a process (voce 16), which is the next step.
+     * The first process reads the whole file, as the libc copy did; the
+     * others read nothing. Every 16 pages the others go first (the rule of
+     * condivise.c, voce 117).
+     *
+     * Writable mappings stay ENODEV: MAP_SHARED must write back to the file
+     * (the libc does it, mappa_ricorda), MAP_PRIVATE writable would want
+     * copy-on-write from the start - the libc copy, as before.
+     * ===================================================================== */
+    if (!(p->flags & MAP_ANONYMOUS) && p->fd >= 0 && p->fd < FD_N(proc) &&
+        FDV(proc, p->fd).type == FD_FILE && !(p->prot & PROT_WRITE) &&
+        (p->prot & (PROT_READ | PROT_EXEC))) {
+        int h = (int)FDV(proc, p->fd).inode;
+
+        if (p->offset & (PAGE_SIZE - 1)) return ERR(EINVAL);
+        if ((FDV(proc, p->fd).flags & 3u) == O_WRONLY) return ERR(EACCES);
+        for (i = 0; i < pages; i++) {
+            uint32_t idx = p->offset / PAGE_SIZE + i;
+            paddr_t  fr  = fc_pagina(h, idx);
+
+            if (fr == 0) fr = fc_pagina_privata(h, idx);
+            if (fr == 0 ||
+                paging_map_page(proc->page_directory, vaddr + i * PAGE_SIZE, fr,
+                                pg_flags & ~(uint32_t)PG_WRITABLE) != 0) {
+                uint32_t j;
+
+                if (fr) pmm_free_page(fr);
+                for (j = 0; j < i; j++) {
+                    paddr_t pa = paging_get_physical(proc->page_directory, vaddr + j * PAGE_SIZE);
+
+                    paging_unmap_page(proc->page_directory, vaddr + j * PAGE_SIZE);
+                    if (pa) pmm_free_page(pa & ~(paddr_t)(PAGE_SIZE - 1));
+                }
+                klog(LOG_WARN, "SYSCALL mmap: PID %u, file fd %d: pagina %u di %u "
+                     "non data (RAM o lettura)", proc->pid, p->fd, i, pages);
+                return ERR(ENOMEM);
+            }
+            if ((i & 15u) == 15u) sched_yield();
+        }
         if (vaddr + pages * PAGE_SIZE > proc->heap_end)
             proc->heap_end = vaddr + pages * PAGE_SIZE;
         return (int32_t)vaddr;
