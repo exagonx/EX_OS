@@ -30,8 +30,17 @@
 #define BUF_MAX     (256u * 1024u * 1024u)   /* what one stream may keep */
 #define AVIO_BUF    65536
 #define PCM_SECONDI 2
+/* ! A DEMUXER THAT MEETS THE END OF THE BYTES THINKS THE MEDIA IS OVER, and
+ * FFmpeg's (Matroska's first) do not take it back when more come. So it never
+ * meets it before exm_fine: it is opened only with APRI_MIN bytes (or at the
+ * end), and a packet is read only while MARGINE bytes are still unread - more
+ * than any packet. What is appended last is read at the next append. */
+#define APRI_MIN    (512u * 1024u)
+#define MARGINE     (256u * 1024u)
 
 typedef struct { unsigned int *px; double pts; int pieno; } Foto;
+#define CODA_MAX 8192
+typedef struct { AVPacket *p[CODA_MAX]; int testa, n; } Coda;
 
 struct ExMedia {
     unsigned char   *b;
@@ -54,7 +63,35 @@ struct ExMedia {
     int              pcm_cap, pcm_testa, pcm_n;
     double           pcm_pts;                     /* the time of pcm_testa */
     double           fin_qui, scarta_prima;
+    Coda             cv, ca;                      /* packets read, not yet decoded */
+    int              letto_tutto;
 };
+
+static int coda_metti(Coda *q, AVPacket *p)
+{
+    if (q->n >= CODA_MAX) return 0;
+    q->p[(q->testa + q->n) % CODA_MAX] = p;
+    q->n++;
+    return 1;
+}
+
+static AVPacket *coda_prendi(Coda *q)
+{
+    AVPacket *p;
+
+    if (!q->n) return 0;
+    p = q->p[q->testa];
+    q->testa = (q->testa + 1) % CODA_MAX;
+    q->n--;
+    return p;
+}
+
+static void coda_vuota(Coda *q)
+{
+    AVPacket *p;
+
+    while ((p = coda_prendi(q)) != 0) av_packet_free(&p);
+}
 
 /* ------------------------------------------------------------- reading */
 static int leggi(void *o, uint8_t *dst, int max)
@@ -142,7 +179,7 @@ int exm_prepara(ExMedia *m)
 
     if (!m || m->rotto) return -1;
     if (m->pronto) return 1;
-    if (m->n < 4096 && !m->fine) return 0;
+    if (m->n < APRI_MIN && !m->fine) return 0;
     m->pos = 0;
     buf = (unsigned char *)av_malloc(AVIO_BUF);
     if (!buf) return -1;
@@ -151,13 +188,15 @@ int exm_prepara(ExMedia *m)
     if (!m->io || !m->fmt) { chiudi_formato(m); return -1; }
     m->fmt->pb = m->io;
     m->fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
+    /* a small look at the start: the headers say the codecs */
+    m->fmt->probesize = 64 * 1024;
+    m->fmt->max_analyze_duration = AV_TIME_BASE / 2;
     if (avformat_open_input(&m->fmt, 0, 0, 0) < 0) {
         m->fmt = 0;
         chiudi_formato(m);
         if (m->fine) { m->rotto = 1; return -1; }
         return 0;                          /* more bytes, then again */
     }
-    m->fmt->probesize = 1 << 20;
     if (avformat_find_stream_info(m->fmt, 0) < 0 && !m->fine) {
         /* not enough to know the codecs: wait, if what we have says so */
         if (m->fmt->nb_streams == 0) { chiudi_formato(m); return 0; }
@@ -277,15 +316,6 @@ static void suono_metti(ExMedia *m, AVFrame *f, double t)
     }
 }
 
-static int pieno(ExMedia *m)
-{
-    int i, n = 0;
-
-    for (i = 0; i < EXM_FOTO_MAX; i++) n += m->foto[i].pieno;
-    return (m->sv < 0 || m->ow <= 0 || n >= EXM_FOTO_MAX) &&
-           (m->sa < 0 || !m->pcm || m->pcm_n > m->pcm_cap / 2);
-}
-
 /* frames out of a decoder; 0 if a picture had no room (try again later) */
 static int ricevi(ExMedia *m, AVCodecContext *d, int idx)
 {
@@ -304,44 +334,84 @@ static int ricevi(ExMedia *m, AVCodecContext *d, int idx)
     }
 }
 
-int exm_pompa(ExMedia *m)
+int exm_leggi(ExMedia *m)
 {
-    int giri = 0, fatto = 0;
+    int r, giri = 0;
 
-    if (!m || !m->pronto) return m && m->rotto ? -1 : 0;
-    if (m->finito) return -1;
-    while (giri++ < 48 && !pieno(m)) {
-        int r;
+    if (!m) return -1;
+    if (!m->pronto) { r = exm_prepara(m); if (r <= 0) return r; }
+    while (!m->letto_tutto && giri++ < 4096) {
+        AVPacket *p;
+
+        if (!m->fine && m->n - m->pos < MARGINE) break;
 
         /* ! the end of the bytes for now is not the end of the media */
         m->io->eof_reached = 0;
         m->io->error = 0;
         r = av_read_frame(m->fmt, m->pk);
-        if (r == AVERROR(EAGAIN)) return fatto;
-        if (r < 0) {
-            if (!m->fine) return fatto;
-            /* the real end: what the decoders still hold */
-            if (m->dv) { avcodec_send_packet(m->dv, 0); ricevi(m, m->dv, m->sv); }
-            if (m->da) { avcodec_send_packet(m->da, 0); ricevi(m, m->da, m->sa); }
-            m->finito = 1;
-            return -1;
-        }
+        if (r == AVERROR(EAGAIN)) break;
+        if (r < 0) { if (m->fine) m->letto_tutto = 1; break; }
         if (m->pk->pts != AV_NOPTS_VALUE) {
             double e = (m->pk->pts + (m->pk->duration > 0 ? m->pk->duration : 0)) *
                        av_q2d(m->fmt->streams[m->pk->stream_index]->time_base);
 
             if (e > m->fin_qui) m->fin_qui = e;
         }
-        if (m->pk->stream_index == m->sv && m->dv) {
-            if (avcodec_send_packet(m->dv, m->pk) == AVERROR(EAGAIN)) { ricevi(m, m->dv, m->sv); avcodec_send_packet(m->dv, m->pk); }
-            ricevi(m, m->dv, m->sv);
-        } else if (m->pk->stream_index == m->sa && m->da) {
-            avcodec_send_packet(m->da, m->pk);
-            ricevi(m, m->da, m->sa);
+        if ((m->pk->stream_index == m->sv && m->dv) || (m->pk->stream_index == m->sa && m->da)) {
+            p = av_packet_clone(m->pk);
+            if (p && !coda_metti(m->pk->stream_index == m->sv ? &m->cv : &m->ca, p)) { av_packet_free(&p); av_packet_unref(m->pk); break; }
         }
         av_packet_unref(m->pk);
+    }
+    return 1;
+}
+
+/* one packet of a stream into its decoder; 0 if none is queued */
+static int decodifica(ExMedia *m, int video)
+{
+    Coda           *q = video ? &m->cv : &m->ca;
+    AVCodecContext *d = video ? m->dv : m->da;
+    int             idx = video ? m->sv : m->sa;
+    AVPacket       *p;
+
+    if (!d) return 0;
+    /* what the decoder holds first: a picture that had no room */
+    if (!ricevi(m, d, idx)) return 0;
+    p = coda_prendi(q);
+    if (!p) {
+        if (m->letto_tutto && !m->finito) { avcodec_send_packet(d, 0); ricevi(m, d, idx); }
+        return 0;
+    }
+    if (avcodec_send_packet(d, p) == AVERROR(EAGAIN)) { ricevi(m, d, idx); avcodec_send_packet(d, p); }
+    av_packet_free(&p);
+    ricevi(m, d, idx);
+    return 1;
+}
+
+static int foto_piene(ExMedia *m)
+{
+    int i, n = 0;
+
+    for (i = 0; i < EXM_FOTO_MAX; i++) n += m->foto[i].pieno;
+    return n >= EXM_FOTO_MAX;
+}
+
+int exm_pompa(ExMedia *m)
+{
+    int giri = 0, fatto = 0;
+
+    if (!m || !m->pronto) return m && m->rotto ? -1 : 0;
+    if (m->finito) return -1;
+    exm_leggi(m);
+    while (giri++ < 64) {
+        int x = 0;
+
+        if (m->sv >= 0 && m->ow > 0 && !foto_piene(m)) x |= decodifica(m, 1);
+        if (m->sa >= 0 && m->pcm && m->pcm_n < m->pcm_cap / 2) x |= decodifica(m, 0);
+        if (!x) break;
         fatto = 1;
     }
+    if (m->letto_tutto && m->cv.n == 0 && m->ca.n == 0 && !fatto) { m->finito = 1; return -1; }
     return fatto;
 }
 
@@ -397,6 +467,8 @@ int exm_cerca(ExMedia *m, double t)
     m->pcm_testa = m->pcm_n = 0;
     m->ultima_mostrata = -1;
     m->finito = 0;
+    m->letto_tutto = 0;
+    coda_vuota(&m->cv); coda_vuota(&m->ca);
     m->io->eof_reached = 0; m->io->error = 0;
     if (av_seek_frame(m->fmt, -1, (int64_t)(t * AV_TIME_BASE), AVSEEK_FLAG_BACKWARD) < 0) return 0;
     if (m->dv) avcodec_flush_buffers(m->dv);
@@ -417,6 +489,7 @@ void exm_chiudi(ExMedia *m)
     if (m->dv) avcodec_free_context(&m->dv);
     if (m->da) avcodec_free_context(&m->da);
     chiudi_formato(m);
+    coda_vuota(&m->cv); coda_vuota(&m->ca);
     av_frame_free(&m->fr);
     av_packet_free(&m->pk);
     sws_freeContext(m->sws);

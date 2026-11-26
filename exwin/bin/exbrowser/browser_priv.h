@@ -59,7 +59,7 @@
 #include "biscotti.h"
 
 /* ------------------------------------------------------------------ i tetti */
-#define VERSIONE_APP "0.045"
+#define VERSIONE_APP "0.046"
 /* ! GLI INDIRIZZI DI QUEL CHE LA PAGINA CARICA (fogli, script, immagini) si
  * risolvono in buffer da NAV_URL_MAX, non da EXHTTP_URL_MAX (600): il foglio
  * della pagina dei risultati di Wikipedia ne ha 636, e si perdeva. Quel che si
@@ -358,6 +358,11 @@ void   intl_registra(ExJsCtx *js);
 /* browser_wasm.c (P12): WebAssembly over WAMR */
 void   wasm_registra(ExJsCtx *js);
 void   wasm_tutti_via(void);
+/* browser_media.c (P13): <video>, <audio>, MSE over libexmedia */
+void   media_registra(ExJsCtx *js);
+void   media_tutti_via(void);
+int    media_misura(int nodo, int *w, int *h);
+void   media_disegna(int nodo, int x, int y, int w, int h, int cx, int cy, int cw, int ch);
 void   dis_riempi(int x, int y, int w, int h, unsigned int argb);
 void   dis_scatola(const Decoro *d, unsigned int sfondo, int bx, int by, int bw, int bh,
                    int cx, int cy, int cw, int ch);

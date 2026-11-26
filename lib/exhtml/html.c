@@ -358,6 +358,21 @@ int html_crea_elemento(HtmlDoc *d, const char *nome)
     return v;
 }
 
+/* (P9) a comment node with `testo`, not attached: document.createComment */
+int html_crea_commento(HtmlDoc *d, const char *testo)
+{
+    unsigned int off;
+    int          v;
+
+    if (!d) return -1;
+    off = arena_stringa(d, testo ? testo : "", 0);
+    v   = nodo_nuovo(d, HTML_COMMENTO);
+    if (v < 0) return -1;
+    d->nodi[v].testo = off;
+    d->versione++;
+    return v;
+}
+
 int html_crea_testo(HtmlDoc *d, const char *testo)
 {
     unsigned int off;
@@ -669,7 +684,8 @@ int html_attr_togli(HtmlDoc *d, int nodo, const char *nome)
 int html_testo_metti(HtmlDoc *d, int nodo, const char *testo)
 {
     if (!valido(d, nodo)) return 0;
-    if (d->nodi[nodo].tipo != HTML_TESTO) return 0;
+    /* a comment's text too (P9): comment.data = '...' */
+    if (d->nodi[nodo].tipo != HTML_TESTO && d->nodi[nodo].tipo != HTML_COMMENTO) return 0;
     if (c_attivo(d)) cambio(d, HTML_CAMBIO_TESTO, nodo, -1, 0, d->arena + d->nodi[nodo].testo, -1, -1);
 
     d->nodi[nodo].testo = arena_stringa(d, testo ? testo : "", 0);
@@ -746,14 +762,57 @@ static int analizza_dentro(HtmlDoc *d, int padre, const char *t, unsigned int n)
         }
 
         /* --- commenti e dichiarazioni --------------------------------- */
+        /* ! A COMMENT IS A NODE (P9, 26 November 2026): the DOM has them
+         * (nodeType 8), and the web uses them - Lit and other template
+         * libraries mark their places with comments, and the
+         * web-platform-tests count them. Kept as HTML_COMMENTO with its text;
+         * the layout, the CSS and the drawing do not see them. */
         if (i + 3 < n && t[i+1] == '!' && t[i+2] == '-' && t[i+3] == '-') {
+            unsigned int inizio_c, a0;
+            int          v;
+
             i += 4;
+            a0 = i;
+            /* <!--> and <!---> are empty comments, as the HTML spec says */
+            if (i < n && t[i] == '>') { i++; goto commento_vuoto; }
+            if (i + 1 < n && t[i] == '-' && t[i+1] == '>') { i += 2; goto commento_vuoto; }
             while (i + 2 < n && !(t[i] == '-' && t[i+1] == '-' && t[i+2] == '>')) i++;
+            inizio_c = arena_apri(d);
+            {
+                unsigned int k, fine = (i + 2 < n) ? i : n;
+
+                for (k = a0; k < fine; k++) arena_car(d, t[k]);
+            }
+            arena_chiudi(d);
             i = (i + 2 < n) ? i + 3 : n;
+            v = nodo_nuovo(d, HTML_COMMENTO);
+            if (v >= 0) { d->nodi[v].testo = inizio_c; attacca(d, pila[cima], v); }
+            continue;
+        commento_vuoto:
+            v = nodo_nuovo(d, HTML_COMMENTO);
+            if (v >= 0) { d->nodi[v].testo = arena_stringa(d, "", 0); attacca(d, pila[cima], v); }
             continue;
         }
         if (i + 1 < n && (t[i+1] == '!' || t[i+1] == '?')) {
+            /* <!DOCTYPE ...> is not a node here; any other <!...> or <?...>
+             * is a "bogus comment": a comment with what is inside */
+            int dichiara = (t[i+1] == '!' && i + 8 < n &&
+                            (t[i+2] | 32) == 'd' && (t[i+3] | 32) == 'o' && (t[i+4] | 32) == 'c' &&
+                            (t[i+5] | 32) == 't' && (t[i+6] | 32) == 'y' && (t[i+7] | 32) == 'p' &&
+                            (t[i+8] | 32) == 'e');
+            unsigned int a0 = (t[i+1] == '?') ? i + 1 : i + 2, inizio_c = 0;
+
             while (i < n && t[i] != '>') i++;
+            if (!dichiara) {
+                int          v;
+                unsigned int k;
+
+                inizio_c = arena_apri(d);
+                for (k = a0; k < i; k++) arena_car(d, t[k]);
+                arena_chiudi(d);
+                v = nodo_nuovo(d, HTML_COMMENTO);
+                if (v >= 0) { d->nodi[v].testo = inizio_c; attacca(d, pila[cima], v); }
+            }
             if (i < n) i++;
             continue;
         }
@@ -1021,6 +1080,12 @@ static void scrivi_nodo(const HtmlDoc *d, int nodo, Uscita *u, int liv)
         u_sfuggi(u, d->arena + d->nodi[nodo].testo, 0);
         return;
     }
+    if (d->nodi[nodo].tipo == HTML_COMMENTO) {         /* (P9) as written */
+        u_testo(u, "<!--");
+        u_testo(u, d->arena + d->nodi[nodo].testo);
+        u_testo(u, "-->");
+        return;
+    }
 
     nome = d->arena + d->nodi[nodo].nome;
     u_car(u, '<');
@@ -1088,7 +1153,68 @@ int html_analizza(HtmlDoc *d, const char *t, unsigned int n)
     arena_car(d, 'c');
     arena_chiudi(d);
 
-    return analizza_dentro(d, d->radice, t, n);
+    {
+        int r = analizza_dentro(d, d->radice, t, n);
+
+        html_ombre_dichiarate(d, d->radice);
+        return r;
+    }
+}
+
+/* =============================================================================
+ * DECLARATIVE SHADOW DOM (P9, 26 November 2026, web-platform-tests
+ * shadow-dom/declarative/): <template shadowrootmode="open|closed"> written
+ * in the page is the shadow root of its parent, as the HTML parser makes it.
+ * After the parse, not during: the template's children are already there,
+ * and they move into a "#shadow-root" bound to the parent (HTML_LEGAME_OMBRA,
+ * as attachShadow does); the template goes away. Only for a parent that may
+ * have one (the DOM's list, or a name with a '-') and has none yet: otherwise
+ * the template stays as it is, as in a browser. innerHTML does not do it (the
+ * spec says so); setHTMLUnsafe does, calling this.
+ * ========================================================================== */
+static int ombra_ammessa(const char *t)
+{
+    static const char *const L[] = { "article", "aside", "blockquote", "body", "div", "footer",
+        "h1", "h2", "h3", "h4", "h5", "h6", "header", "main", "nav", "p", "section", "span", 0 };
+    int i;
+
+    if (!t || !t[0] || t[0] == '#') return 0;
+    for (i = 0; L[i]; i++) if (uguale_min(L[i], t)) return 1;
+    for (i = 0; t[i]; i++) if (t[i] == '-') return t[0] >= 'a' && t[0] <= 'z';
+    return 0;
+}
+
+void html_ombre_dichiarate(HtmlDoc *d, int nodo)
+{
+    int f, prossimo;
+
+    if (!valido(d, nodo) || d->nodi[nodo].tipo != HTML_ELEMENTO) return;
+    for (f = d->nodi[nodo].primo_figlio; valido(d, f); f = prossimo) {
+        prossimo = d->nodi[f].prossimo;
+        if (d->nodi[f].tipo != HTML_ELEMENTO) continue;
+        html_ombre_dichiarate(d, f);            /* inner ones first: nested hosts */
+        if (!uguale_min(html_nome(d, f), "template")) continue;
+        {
+            const char *m = html_attr(d, f, "shadowrootmode");
+            int         modo, o;
+
+            if (!m) continue;
+            if (uguale_min(m, "open")) modo = 1;
+            else if (uguale_min(m, "closed")) modo = 0;
+            else continue;
+            if (!ombra_ammessa(html_nome(d, nodo))) continue;
+            if (html_legato(d, HTML_LEGAME_OMBRA, nodo, 0) >= 0) continue;
+            o = html_crea_elemento(d, "#shadow-root");
+            if (o < 0) return;
+            while (valido(d, d->nodi[f].primo_figlio)) html_aggiungi(d, o, d->nodi[f].primo_figlio);
+            html_lega(d, HTML_LEGAME_OMBRA, nodo, o, modo);
+            /* marked: attachShadow of the component, when it upgrades, gets
+             * this root back emptied instead of an error (the spec's rule,
+             * and the server-rendered components count on it) */
+            html_attr_metti(d, o, "exos-dichiarata", "");
+            html_togli(d, f);
+        }
+    }
 }
 
 int html_analizza_in(HtmlDoc *d, int padre, const char *t, unsigned int n)

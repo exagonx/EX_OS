@@ -140,6 +140,11 @@ int exhttp_prendi(const char *url, unsigned char *buf, unsigned int max,
 int exhttp_posta(const char *url, const char *corpo,
                  unsigned char *buf, unsigned int max, ExHttpEsito *e);
 
+/* The same with a body of `n` bytes, zeros included (P13): a page's fetch
+ * that sends bytes. */
+int exhttp_posta_n(const char *url, const void *corpo, unsigned int n,
+                   unsigned char *buf, unsigned int max, ExHttpEsito *e);
+
 /* =============================================================================
  * I certificati aggiunti da chi usa il sistema (23 settembre 2026)
  *

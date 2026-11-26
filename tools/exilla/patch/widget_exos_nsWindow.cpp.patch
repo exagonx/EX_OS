@@ -1,6 +1,6 @@
 --- a/widget/exos/nsWindow.cpp
 +++ b/widget/exos/nsWindow.cpp
-@@ -0,0 +1,879 @@
+@@ -0,0 +1,913 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -400,6 +400,31 @@
 +  ApplySizeModeSideEffects();
 +}
 +
++// Full screen is the server's (WIN_MSG_TELAIO, wserver 0.020): no frame,
++// above the taskbar. The new size and place come back as MISURATA and POSTA.
++static void Telaio(uint32_t aId, unsigned int aModo) {
++  if (aId) {
++    WinRegione t = {aId, aModo, 0, 0, 0};
++    exos::Manda(WIN_MSG_TELAIO, &t, sizeof(t));
++  }
++}
++
++nsresult nsWindow::MakeFullScreen(bool aFullScreen) {
++  if (!mId) {
++    return NS_ERROR_NOT_AVAILABLE;
++  }
++  if (aFullScreen) {
++    if (mSizeMode != nsSizeMode_Fullscreen &&
++        mSizeMode != nsSizeMode_Minimized) {
++      mSizeModeBeforeFullscreen = mSizeMode;
++    }
++    SetSizeMode(nsSizeMode_Fullscreen);
++  } else if (mSizeMode == nsSizeMode_Fullscreen) {
++    SetSizeMode(mSizeModeBeforeFullscreen);
++  }
++  return NS_OK;
++}
++
 +void nsWindow::ApplySizeModeSideEffects() {
 +  if (!mVisible || mEffectiveSizeMode == mSizeMode) {
 +    return;
@@ -408,13 +433,20 @@
 +    mRestoreBounds = mBounds;
 +  }
 +
++  bool usciva = mEffectiveSizeMode == nsSizeMode_Fullscreen;
++  if (usciva) {
++    Telaio(mId, WIN_TELAIO_NORMALE);
++  }
++
 +  int32_t sw, sh;
 +  Schermo(&sw, &sh);
 +  switch (mSizeMode) {
 +    case nsSizeMode_Normal:
-+      Move(DesktopPoint(mRestoreBounds.X(), mRestoreBounds.Y()));
-+      Resize(DesktopSize(mRestoreBounds.Width(), mRestoreBounds.Height()),
-+             true);
++      if (!usciva) {
++        Move(DesktopPoint(mRestoreBounds.X(), mRestoreBounds.Y()));
++        Resize(DesktopSize(mRestoreBounds.Width(), mRestoreBounds.Height()),
++               true);
++      }
 +      break;
 +    case nsSizeMode_Minimized:
 +      if (mId) {
@@ -422,8 +454,10 @@
 +        exos::Manda(WIN_MSG_RIDUCI, &r, sizeof(r));
 +      }
 +      break;
-+    case nsSizeMode_Maximized:
 +    case nsSizeMode_Fullscreen:
++      Telaio(mId, WIN_TELAIO_SCHERMO);
++      break;
++    case nsSizeMode_Maximized:
 +      MoveInternal(kBordo, kBarra + kBordo);
 +      if (mId) {
 +        WinRegione s = {mId, (unsigned int)kBordo,

@@ -41,6 +41,11 @@ extern "C" {
 
 #define HTML_ELEMENTO   0
 #define HTML_TESTO      1
+/* (P9, 26 novembre 2026) un commento <!-- ... -->: `testo` e' quel che c'e'
+ * dentro. NON si disegna, non conta per i selettori ne' per textContent:
+ * chi scorre i figli e prende «tutto cio' che non e' un elemento» per testo
+ * deve chiedere HTML_TESTO. */
+#define HTML_COMMENTO   2
 
 /* ! GLI INDICI SONO int E NON PUNTATORI, cosi' l'albero si puo' copiare,
  * salvare e guardare senza rilocare niente. -1 vuol dire «non c'e'». */
@@ -152,6 +157,8 @@ int html_crea_elemento(HtmlDoc *d, const char *nome);
  * `createTextNode('&amp;')` mostra una `&`, cioe' il contrario di quel che ha
  * chiesto chi lo ha scritto. */
 int html_crea_testo(HtmlDoc *d, const char *testo);
+/* (P9) un commento non attaccato, per document.createComment */
+int html_crea_commento(HtmlDoc *d, const char *testo);
 
 /* Attacca `figlio` in fondo ai figli di `padre`. Se il figlio era attaccato
  * altrove, prima lo si stacca — come fa il DOM: un nodo sta in un posto solo,
@@ -207,6 +214,9 @@ void html_su_cambio(HtmlDoc *d, HtmlCambio f, void *dato);
 #define HTML_LEGAME_CONTENUTO 2
 void html_lega(HtmlDoc *d, int tipo, int da, int a, int modo);
 int  html_legato(const HtmlDoc *d, int tipo, int da, int *modo);
+/* (P9) i <template shadowrootmode> sotto `nodo` diventano le radici d'ombra
+ * dei loro padri (lo fa html_analizza da sola; setHTMLUnsafe la chiama) */
+void html_ombre_dichiarate(HtmlDoc *d, int nodo);
 int  html_legato_da(const HtmlDoc *d, int tipo, int a);
 void html_slega_tutti(const HtmlDoc *d);
 

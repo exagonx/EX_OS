@@ -41,11 +41,13 @@
  * cresce li', cresce anche qui. */
 #define OGG        4096                 /* >= JS_OGGETTI  (2000)   */
 #define ARENA      (192 * 1024)         /* >= JS_ARENA    (96 KB)  */
-#define NODI       24000                /* == NODI_MAX             */
-#define ATTR       16000                /* == ATTR_MAX             */
+#define NODI       60000                /* == NODI_MAX_PR (the page) */
+#define ATTR       80000                /* == ATTR_MAX_PR            */
 #define TESTO      (64 * 1024)          /* == JS_TESTO             */
 #define ASCOLTI    256                  /* == JS_ASCOLTI           */
-#define ARENA_DOC  (1024u * 1024u)      /* == ARENA_MAX            */
+/* (P13) the main page's: a big page (YouTube's, 1.4 MB, more with its
+ * scripts written in) was cut here and not in the browser */
+#define ARENA_DOC  (32u * 1024u * 1024u)
 
 static HtmlNodo g_nodi[NODI];
 static HtmlAttr g_attr[ATTR];
@@ -58,7 +60,7 @@ static char          g_ser[2 * 1024 * 1024];
 
 static int fatte = 0, sbagliate = 0;
 
-static char g_console[4096];
+static char g_console[256 * 1024];   /* (P9) a web-platform-tests file prints hundreds of results */
 static unsigned int g_console_n;
 
 static void raccogli(const char *t, unsigned int n, void *dato)
@@ -532,7 +534,7 @@ static char g_url_finto[EXDOM_URL_MAX] = "";
 
 static int pagina(const char *nomefile)
 {
-    static char  testo[2 * 1024 * 1024];
+    static char  testo[32 * 1024 * 1024];     /* (P13) a big page with its scripts */
     FILE        *fp = fopen(nomefile, "rb");
     unsigned int n;
     ExJsCtx     *c;
@@ -612,6 +614,26 @@ static int pagina(const char *nomefile)
     }
 
     printf("script eseguiti: %d\n", fatti);
+    printf("nodi %u/%u, attributi %u/%u, arena %u/%u%s\n", g_doc.nodi_n, g_doc.nodi_max,
+           g_doc.attr_n, g_doc.attr_max, g_doc.arena_n, g_doc.arena_max,
+           g_doc.troncato ? ", TRONCATO" : "");
+
+    /* (P9, web-platform-tests) DOMContentLoaded and load, as the browser
+     * sends them after the scripts: testharness.js ends its tests on load.
+     * Only when asked (DOMPROVA_CARICA=1): the other uses of the bench keep
+     * the output they had. Both on the root: the window's listeners live
+     * there (exdom, m_win_addEventListener). */
+    if (getenv("DOMPROVA_CARICA")) {
+        ExJsErrore err;
+
+        memset(&err, 0, sizeof(err));
+        exdom_evento(D, g_doc.radice, "DOMContentLoaded", &err);
+        if (err.messaggio[0]) printf("!! DOMContentLoaded: %s\n", err.messaggio);
+        exjs_pompa(c, 4000u);
+        memset(&err, 0, sizeof(err));
+        exdom_evento(D, g_doc.radice, "load", &err);
+        if (err.messaggio[0]) printf("!! load: %s\n", err.messaggio);
+    }
 
     /* ! E SI MANDA AVANTI LA CODA DELLE RICHIESTE, come fa il browser dal suo
      * ciclo dei messaggi: da quando `send()` mette in coda e torna, una pagina
@@ -641,10 +663,12 @@ static int pagina(const char *nomefile)
          * microtask belongs to the next turn (P8), and one turn only left
          * the promises that wait on it pending (P12, 26/11/2026) */
         {
-            int giri = 0;
+            int         giri = 0, max_giri = 20;
+            const char *mg = getenv("DOMPROVA_GIRI");   /* (P13) a long page: more */
 
+            if (mg && atoi(mg) > 0) max_giri = atoi(mg);
             do exjs_pompa(c, 5000u + 100u * (unsigned int)giri);
-            while (exjs_lavori_in_attesa(c) && ++giri < 20);
+            while (exjs_lavori_in_attesa(c) && ++giri < max_giri);
         }
         printf("dopo i tempi, versione %u\n", html_versione(&g_doc));
         /* what the timers and the microtasks wrote (P8) */

@@ -34,6 +34,9 @@ double   exm_durata(ExMedia *m);
 int      exm_info(ExMedia *m, int *w, int *h, int *audio, int *video);
 /* the size and format of what comes out: RGBA w x h, PCM hz x canali */
 void     exm_uscita(ExMedia *m, int w, int h, int hz, int canali);
+/* read the packets of what has come (no decoding): the buffered end moves;
+ * 1 ready, 0 not yet, -1 not readable */
+int      exm_leggi(ExMedia *m);
 /* decode ahead; 1 something done, 0 waiting for bytes, -1 the end */
 int      exm_pompa(ExMedia *m);
 /* the picture to show at time t (seconds): copied into rgba (w*h*4), its

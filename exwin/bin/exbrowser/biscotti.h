@@ -44,7 +44,11 @@
 
 #define BIS_MAX         64      /* quanti biscotti in tutto            */
 #define BIS_NOME_MAX    64
-#define BIS_VAL_MAX    256
+/* ! 4096 (P13, 26 November 2026): RFC 6265 6.1 wants at least 4096 bytes a
+ * cookie, and Google's search sets one of ~900 (SG_SS, the answer of its
+ * JavaScript check) and NID often over 256: cut, they were worth nothing,
+ * and the search came back blank. 64 of them are 256 KB of BSS. */
+#define BIS_VAL_MAX   4096
 #define BIS_DOM_MAX     96
 #define BIS_PERC_MAX    96
 

@@ -73,6 +73,10 @@
 #include "quickjs.h"
 #include "exjs.h"
 
+static void promessa_rifiutata(JSContext *ctx, JSValueConst promessa, JSValueConst motivo,
+                               bool gestita, void *dato);
+#define promessa_rifiutata_ponte promessa_rifiutata
+
 /* -----------------------------------------------------------------------------
  * La codifica
  * --------------------------------------------------------------------------- */
@@ -107,6 +111,7 @@ typedef struct {
     ExJsScriviProp scrivi;
     void          *dato;
 } Esotico;
+#define ESO_BLOCCO 4096u
 
 /* Un lavoro in coda: setTimeout e setInterval. */
 typedef struct {
@@ -125,12 +130,21 @@ struct ExJsCtx {
     JSValue      *man;           /* la tabella delle maniglie */
     unsigned int  man_max;
     unsigned int  man_n;         /* quante ne sono state date */
+    int           man_mio;       /* (P13) man is ours, from malloc: it grew */
+    /* (P13) the strings' ring: see man_metti */
+    JSValue      *anello;
+    unsigned int *anello_gen;
+    unsigned int  anello_prossimo, anello_giro;
 
     Nativa       *nat;
     unsigned int  nat_max, nat_n;
 
     Esotico      *eso;
     unsigned int  eso_max, eso_n;
+    /* (P13) past the table: blocks of ESO_BLOCCO from malloc, never moved
+     * (an object holds the address of its entry), freed at exjs_chiudi */
+    void         *eso_blocchi;   /* the last one; each starts with the previous */
+    unsigned int  eso_blocco_n;  /* entries used in the last one */
 
     Lavoro       *lav;
     unsigned int  lav_max;
@@ -200,11 +214,71 @@ double scalbn(double x, int n)
 /* Mette `v` (di cui prende la proprieta') nella tabella e rende l'ExJsVal.
  * Se la tabella e' piena libera `v` e rende indefinito: e' un tetto
  * dichiarato, come tutti quelli di questo sistema. */
+/* =============================================================================
+ * ! A HANDLE WAS NEVER GIVEN BACK (P13, 26 November 2026), and every value that
+ * crossed the bridge took one: a string read from the DOM, a string given to
+ * setAttribute. The table holds JS_OGGETTI (2000 in the browser): with the
+ * prelude in, a loop of tagName/setAttribute/getAttribute stopped working at
+ * the 797th turn, and from there every answer was undefined and every
+ * createElement null. YouTube got there while starting.
+ *
+ * Two remedies, the ABI the same:
+ *   - A STRING HAS NO IDENTITY, and C reads it at once (exjs_a_stringa): it
+ *     goes into a ring of ANELLO slots used again in turn. Its handle carries
+ *     the slot and the turn of the ring (ANELLO_BIT in the payload, the turn
+ *     above the slot): one kept past ANELLO newer strings answers undefined,
+ *     never someone else's string.
+ *   - AN OBJECT KEEPS ITS HANDLE, written on it (see da_js), so the table only
+ *     grows with the objects that crossed: past the caller's memory it moves
+ *     to malloc and doubles. It is reached by index, so moving it is safe.
+ * ========================================================================== */
+#define ANELLO        8192u            /* a power of two */
+#define ANELLO_BIT    0x80000000u
+#define ANELLO_SLOT(i)  ((i) & (ANELLO - 1u))
+#define ANELLO_GIRO(i)  (((i) & ~ANELLO_BIT) / ANELLO)
+
+static ExJsVal anello_metti(ExJsCtx *c, JSValue v)
+{
+    unsigned int k, giro;
+
+    if (!c->anello) {
+        c->anello     = (JSValue *)malloc(sizeof(JSValue) * ANELLO);
+        c->anello_gen = (unsigned int *)malloc(sizeof(unsigned int) * ANELLO);
+        if (!c->anello || !c->anello_gen) {
+            free(c->anello); free(c->anello_gen);
+            c->anello = 0; c->anello_gen = 0;
+            JS_FreeValue(c->ctx, v);
+            return BOX_INDEF;
+        }
+        for (k = 0; k < ANELLO; k++) { c->anello[k] = JS_UNDEFINED; c->anello_gen[k] = 0xFFFFFFFFu; }
+    }
+    k = c->anello_prossimo;
+    JS_FreeValue(c->ctx, c->anello[k]);
+    c->anello[k] = v;
+    giro = c->anello_giro & ((ANELLO_BIT - 1u) / ANELLO);
+    c->anello_gen[k] = giro;
+    if (++c->anello_prossimo == ANELLO) { c->anello_prossimo = 0; c->anello_giro++; }
+    return BOX_MAN | (ExJsVal)(ANELLO_BIT | giro * ANELLO | k);
+}
+
 static ExJsVal man_metti(ExJsCtx *c, JSValue v)
 {
+    if (JS_IsString(v)) return anello_metti(c, v);
+
     if (c->man_n >= c->man_max) {
-        JS_FreeValue(c->ctx, v);
-        return BOX_INDEF;
+        unsigned int nuovo = c->man_max * 2u;
+        JSValue     *m     = (JSValue *)malloc(sizeof(JSValue) * nuovo);
+
+        if (!m || nuovo >= ANELLO_BIT) {
+            free(m);
+            JS_FreeValue(c->ctx, v);
+            return BOX_INDEF;
+        }
+        memcpy(m, c->man, sizeof(JSValue) * c->man_n);
+        if (c->man_mio) free(c->man);
+        c->man     = m;
+        c->man_max = nuovo;
+        c->man_mio = 1;
     }
     c->man[c->man_n] = v;
     return BOX_MAN | (ExJsVal)(c->man_n++);
@@ -218,6 +292,10 @@ static JSValue man_prendi(ExJsCtx *c, ExJsVal v)
 
     if (!E_BOXED(v) || TAG(v) != BOX_MAN) return JS_UNDEFINED;
     i = CARICO(v);
+    if (i & ANELLO_BIT) {
+        if (!c->anello || c->anello_gen[ANELLO_SLOT(i)] != ANELLO_GIRO(i)) return JS_UNDEFINED;
+        return c->anello[ANELLO_SLOT(i)];
+    }
     if (i >= c->man_n) return JS_UNDEFINED;
     return c->man[i];
 }
@@ -602,6 +680,27 @@ static JSValue console_log(JSContext *jc, JSValueConst questo,
         memcpy(riga + uso, s, n);
         uso += n;
         JS_FreeCString(jc, s);
+
+        /* (P13) an Error says where, as a browser's console does: the page
+         * logs what it caught (YouTube: "TypeError: not a function"), and
+         * without the place it told nothing. The stack, its first frames. */
+        if (JS_IsError(argv[i])) {
+            JSValue st = JS_GetPropertyStr(jc, argv[i], "stack");
+            const char *t = JS_IsString(st) ? JS_ToCString(jc, st) : 0;
+
+            if (t) {
+                unsigned int k = 0, righe = 0;
+
+                while (t[k] && righe < 3 && uso + 2 < sizeof(riga)) {
+                    char ch = t[k++];
+
+                    if (ch == '\n') { righe++; ch = ' '; }
+                    riga[uso++] = ch;
+                }
+                JS_FreeCString(jc, t);
+            }
+            JS_FreeValue(jc, st);
+        }
     }
     /* ! LA RIGA FINISCE CON UN A CAPO, come in ExJs: `console.log` e' una
      * RIGA, non un pezzo di testo, e chi raccoglie l'uscita — la barra di
@@ -746,6 +845,7 @@ ExJsCtx *exjs_apri(void *memoria, unsigned int byte,
 
     c->rt = JS_NewRuntime();
     if (!c->rt) return 0;
+    JS_SetHostPromiseRejectionTracker(c->rt, promessa_rifiutata_ponte, c);
 
     c->ctx = JS_NewContext(c->rt);
     if (!c->ctx) { JS_FreeRuntime(c->rt); return 0; }
@@ -773,16 +873,62 @@ void exjs_chiudi(ExJsCtx *c)
      * restituire dopo dei riferimenti a memoria che non c'e' piu'. */
     for (i = 0; i < c->man_n; i++) JS_FreeValue(c->ctx, c->man[i]);
     c->man_n = 0;
+    if (c->anello) {
+        for (i = 0; i < ANELLO; i++) JS_FreeValue(c->ctx, c->anello[i]);
+        free(c->anello); free(c->anello_gen);
+        c->anello = 0; c->anello_gen = 0;
+    }
 
     JS_FreeContext(c->ctx);
     JS_FreeRuntime(c->rt);
     c->ctx = 0;
     c->rt  = 0;
+    if (c->man_mio) { free(c->man); c->man = 0; c->man_mio = 0; }
+
+    /* the exotic entries past the table: after the runtime, which no longer
+     * finalizes anything that points into them */
+    while (c->eso_blocchi) {
+        void *prec = *(void **)c->eso_blocchi;
+
+        free(c->eso_blocchi);
+        c->eso_blocchi = prec;
+    }
+    c->eso_blocco_n = 0;
 }
 
 /* =============================================================================
  * ESEGUIRE
  * ========================================================================== */
+
+/* (P13) A PROMISE REJECTED WITH NOBODY TO HANDLE IT goes to the host's
+ * output, as a browser's console says "Uncaught (in promise)": a page's
+ * error inside a then was silent, and a modern page lives in promises */
+static void promessa_rifiutata(JSContext *ctx, JSValueConst promessa, JSValueConst motivo,
+                               bool gestita, void *dato)
+{
+    ExJsCtx    *c = (ExJsCtx *)dato;
+    char        riga[300];
+    const char *m, *st = 0;
+    JSValue     s = JS_UNDEFINED;
+
+    (void)promessa;
+    if (gestita || !c || !c->uscita) return;
+    m = JS_ToCString(ctx, motivo);
+    if (JS_IsObject(motivo)) {
+        s = JS_GetPropertyStr(ctx, motivo, "stack");
+        if (JS_IsString(s)) st = JS_ToCString(ctx, s);
+    }
+    snprintf(riga, sizeof(riga), "promessa rifiutata: %s%s%.120s", m ? m : "?", st ? " " : "", st ? st : "");
+    {
+        unsigned int k;
+
+        for (k = 0; riga[k]; k++) if (riga[k] == '\n') riga[k] = ' ';
+    }
+    c->uscita(riga, (unsigned int)strlen(riga), c->uscita_dato);
+    if (m) JS_FreeCString(ctx, m);
+    if (st) JS_FreeCString(ctx, st);
+    JS_FreeValue(ctx, s);
+}
 
 /* Riempie `err` partendo dall'eccezione che QuickJS ha lasciato. */
 static void errore_da_eccezione(ExJsCtx *c, ExJsErrore *err)
@@ -811,6 +957,27 @@ static void errore_da_eccezione(ExJsCtx *c, ExJsErrore *err)
     if (!JS_IsUndefined(riga) && JS_ToInt32(c->ctx, &n, riga) == 0)
         err->riga = n;
     JS_FreeValue(c->ctx, riga);
+
+    /* (P13) WHERE: the first frame of QuickJS's stack, "at f (file:line)",
+     * after the message - a page's error said only "not a function" */
+    {
+        JSValue     st = JS_GetPropertyStr(c->ctx, exc, "stack");
+        const char *t = JS_IsString(st) ? JS_ToCString(c->ctx, st) : 0;
+
+        if (t) {
+            const char  *a = strstr(t, "at ");
+            unsigned int l = (unsigned int)strlen(err->messaggio), k = 0;
+
+            if (a && l + 6 < EXJS_ERR_LEN) {
+                err->messaggio[l++] = ' '; err->messaggio[l++] = '[';
+                while (a[k] && a[k] != '\n' && l < EXJS_ERR_LEN - 2) err->messaggio[l++] = a[k++];
+                err->messaggio[l++] = ']';
+                err->messaggio[l] = 0;
+            }
+            JS_FreeCString(c->ctx, t);
+        }
+        JS_FreeValue(c->ctx, st);
+    }
 
     JS_FreeValue(c->ctx, exc);
 }
@@ -890,9 +1057,26 @@ ExJsVal exjs_esotico(ExJsCtx *c, ExJsLeggiProp leggi, ExJsScriviProp scrivi,
     JSValue  o;
     Esotico *e;
 
-    if (!c || c->eso_n >= c->eso_max) return BOX_INDEF;
+    if (!c) return BOX_INDEF;
 
-    e = &c->eso[c->eso_n++];
+    /* ! THE TABLE IS NOT THE LIMIT ANY MORE (P13, 26 November 2026): it held
+     * oggetti/2 + 16 entries, 1016 in the browser, and an entry is never
+     * given back - every node a page touches from a script is one. YouTube
+     * went past it while starting, and from there createElement answered
+     * null: "cannot read property 'style' of null" on a div just made. */
+    if (c->eso_n < c->eso_max) {
+        e = &c->eso[c->eso_n++];
+    } else {
+        if (!c->eso_blocchi || c->eso_blocco_n >= ESO_BLOCCO) {
+            void *b = malloc(sizeof(Esotico) * ESO_BLOCCO + sizeof(Esotico));
+
+            if (!b) return BOX_INDEF;
+            *(void **)b    = c->eso_blocchi;     /* the first entry's room holds the link */
+            c->eso_blocchi = b;
+            c->eso_blocco_n = 0;
+        }
+        e = (Esotico *)c->eso_blocchi + 1 + c->eso_blocco_n++;
+    }
     e->leggi  = leggi;
     e->scrivi = scrivi;
     e->dato   = dato;

@@ -1,6 +1,6 @@
 --- a/widget/exos/nsWindow.h
 +++ b/widget/exos/nsWindow.h
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,162 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -51,6 +51,7 @@
 +  void Resize(const mozilla::DesktopRect&, bool aRepaint) override;
 +  nsSizeMode SizeMode() override { return mSizeMode; }
 +  void SetSizeMode(nsSizeMode aMode) override;
++  nsresult MakeFullScreen(bool aFullScreen) override;
 +  void Enable(bool aState) override { mEnabled = aState; }
 +  bool IsEnabled() const override { return mEnabled; }
 +  void SetFocus(Raise, mozilla::dom::CallerType aCallerType) override;
@@ -129,6 +130,7 @@
 +  CompositorWidgetDelegate* mCompositorWidgetDelegate = nullptr;
 +  nsSizeMode mSizeMode = nsSizeMode_Normal;
 +  nsSizeMode mEffectiveSizeMode = nsSizeMode_Normal;
++  nsSizeMode mSizeModeBeforeFullscreen = nsSizeMode_Normal;
 +  LayoutDeviceIntRect mRestoreBounds;
 +  LayoutDeviceIntRect mBounds;
 +  InputContext mInputContext;

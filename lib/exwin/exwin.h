@@ -302,6 +302,9 @@ int ex_key_info(ExKeyInfo *out);
 /* A "testo" (text box) that shows asterisks instead of what is typed: for
  * passwords (2026-10-14, the WiFi panel). ex_get_text returns the real text. */
 #define EX_PASSWORD  0x0800
+/* A "menuitem" that opens a submenu (exwin.so 0.029, voce 122): a small
+ * triangle pointing right at the end of the row. */
+#define EX_SUBMENU   0x1000
 
 /* --- I colori, in ARGB --------------------------------------------------- */
 #define EX_BLACK         0x00000000
@@ -1589,6 +1592,7 @@ void ex_screen_size(unsigned int *larghezza, unsigned int *altezza);
 #define EX_FIGLIO                EX_CHILD
 #define EX_SPENTO                EX_DISABLED
 #define EX_COMPARSA              EX_POPUP
+#define EX_SOTTOMENU             EX_SUBMENU
 #define EX_NERO                  EX_BLACK
 #define EX_BIANCO                EX_WHITE
 #define EX_GRIGIO                EX_GRAY

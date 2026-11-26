@@ -120,14 +120,14 @@ Dentro EX-OS gli stessi manuali sono in `/doc/manuali` (dal CD:
 
 ## Ultime novità
 
+- [Firefox va a schermo intero, YouTube compreso (wserver 0.020, exwin.so 0.028)](manuali/novita.it.md#firefox-va-a-schermo-intero-youtube-compreso-wserver-toglie-il-telaio-a-una-finestra-aperta-wserver-0020-exwinso-0028-voce-121--testato-in-qemu-e-sul-pc-di-prova) — *testato in QEMU e sul PC di prova*
+- [Firefox parte prima: pagine lette quando servono, simboli con hash, niente blocchi all'avvio (kernel 0.371)](manuali/novita.it.md#firefox-parte-prima-le-librerie-e-omnija-si-leggono-quando-servono-i-simboli-con-le-tabelle-hash-niente-più-blocchi-allavvio-kernel-0371-voce-120--testato-in-qemu-e-sul-pc-di-prova) — *testato in QEMU e sul PC di prova*
 - [File manager: nascosti ed estensioni a richiesta, un foglio accanto alle righe trascinate](manuali/novita.it.md#il-file-manager-nasconde-i-file-col-punto-e-le-estensioni-a-richiesta-e-le-righe-trascinate-mostrano-un-foglio-accanto-al-puntatore-filemgr-0016-exwinso-0027-voce-114--testato-in-qemu) — *testato in QEMU*
 - [Exilla: di nuovo video e suono a più processi, YouTube compreso](manuali/novita.it.md#exilla-fa-di-nuovo-video-e-suono-a-più-processi-youtube-compreso-exos-mediajs--testato-in-qemu) — *testato in QEMU*
 - [Il salvaschermo di ExWin: una scritta o un cerchio che rimbalza (pm 0.031)](manuali/novita.it.md#exwin-ha-il-salvaschermo-una-scritta-o-un-cerchio-dopo-i-minuti-scelti-lo-schermo-spento-da-dpmsdrv-salvaschermo-0001-pm-0031-voce-116--testato-in-qemu) — *testato in QEMU*
 - [Firefox: metà della memoria, non si chiude più con tre schede (kernel 0.370)](manuali/novita.it.md#firefox-a-più-processi-usa-metà-della-memoria-e-non-si-chiude-più-con-tre-schede-kernel-0368-0370--testato-in-qemu) — *testato in QEMU*
 - [Tema classico di ExWin: pannelli più caldi, rilievo a due anelli, pulsanti sfumati](manuali/novita.it.md#exwin-veste-il-tema-classico-pannelli-più-caldi-rilievo-a-due-anelli-pulsanti-sfumati-exwinso-0026-wserver-0019--testato-in-qemu) — *testato in QEMU*
 - [Kernel 0.367: freno di su, terminali e memorie con proprietario, netupdate firmato, sshd/TCP/DNS irrobustiti](manuali/novita.it.md#kernel-0367-e-la-rete-su-terminali-memoria-condivisa-e-registro-del-kernel-hanno-un-proprietario-aggiornamenti-firmati-sshd-tcp-e-dns-contro-gli-attacchi-alla-cieca--testato-in-qemu) — *testato in QEMU*
-- [exeditor salva sicuro, exide sceglie più controlli, biscotti di EXBrowser, USB rifiuta i trasferimenti corti](manuali/novita.it.md#exeditor-salva-senza-distruggere-il-file-exide-sceglie-più-controlli-insieme-i-biscotti-di-exbrowser-come-i-navigatori-di-oggi-le-chiavette-usb-rifiutano-i-trasferimenti-corti--testato-in-qemu) — *testato in QEMU*
-- [La memoria condivisa congelata di Firefox è davvero in sola lettura (kernel 0.366, voce 115)](manuali/novita.it.md#la-memoria-condivisa-congelata-di-firefox-è-davvero-in-sola-lettura-kernel-0366-voce-115--testato-in-qemu) — *testato in QEMU*
 
 Tutte le altre, dalla più recente: [Novità](manuali/novita.it.md).
 

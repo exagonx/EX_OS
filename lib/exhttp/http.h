@@ -63,8 +63,11 @@ extern "C" {
  * ! E IL TETTO SI DICHIARA, come ovunque qui dentro: se ne arrivano di piu' si
  * accende `biscotti_persi`. Sei bastano ai siti che si incontrano; chi ne
  * manda dodici lo fa sapere invece di far sparire i suoi in silenzio. */
-#define HTTP_BISCOTTI_MAX     6
-#define HTTP_BISCOTTO_MAX   256
+/* (P13, 26 novembre 2026) 16 e 4608: un browser deve tenere biscotti di
+ * 4096 byte (RFC 6265, 6.1), e Google ne manda piu' di sei in una risposta,
+ * alcuni oltre i 256 byte: tagliati, non valevano piu' niente */
+#define HTTP_BISCOTTI_MAX    16
+#define HTTP_BISCOTTO_MAX  4608
 
 /* ! UN PEZZO PIU' GRANDE DI QUESTO E' UNA RISPOSTA SBAGLIATA, non una risposta
  * grande: il corpo si consuma a blocchi, quindi la dimensione di un pezzo non

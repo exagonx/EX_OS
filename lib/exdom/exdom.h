@@ -190,7 +190,8 @@ int exdom_evento_tasto(ExDom *D, int nodo, const char *tipo, const char *key,
  * una pagina che la legge non trova un errore, trova una pagina senza
  * indirizzo. E' la stessa scelta di `exdom_avvolgi` con un nodo che non c'e'.
  * ========================================================================== */
-#define EXDOM_URL_MAX  640      /* >= EXHTTP_URL_MAX, che qui non si include */
+#define EXDOM_URL_MAX  4096     /* (P13) >= NAV_URL_MAX: Google sends a search
+                                   back to itself with a token of ~1-2 KB in it */
 
 void exdom_indirizzo(ExDom *D, const char *url);
 
@@ -249,7 +250,7 @@ int exdom_dove_andare(ExDom *D, char *fuori, unsigned int max);
  * dispensa in memoria lo script prosegue e sceglie da se' la strada senza
  * biscotti — che e' quella che questo browser sa percorrere.
  * ========================================================================== */
-#define EXDOM_BISCOTTI_MAX  1024
+#define EXDOM_BISCOTTI_MAX  8192   /* (P13) document.cookie: cookies of 4 KB each */
 
 /* Quel che il browser sa per questa pagina, prima che gli script girino. */
 void exdom_biscotti_metti(ExDom *D, const char *tutti);
@@ -297,6 +298,12 @@ typedef struct {
      * un navigatore nuovo leggerebbe questo campo oltre la fine di una
      * struttura vecchia. */
     const char  *intestazioni;
+
+    /* (P13, 26 novembre 2026) i byte del corpo quando non e' una stringa C
+     * (fetch con un ArrayBuffer o un Uint8Array: YouTube comprime le sue
+     * richieste); 0 = corpo e' una stringa e finisce col suo zero. Chi
+     * risponde usa exhttp_posta_n. Stesso discorso di qui sopra: in fondo. */
+    unsigned int corpo_n;
 } ExDomRichiesta;
 
 /* Rende 1 se la richiesta e' stata fatta (anche con un codice di errore:

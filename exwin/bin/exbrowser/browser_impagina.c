@@ -52,6 +52,13 @@ static int  g_link_ora;
 static int  g_nodo_ora = -1;
 static CssStile g_stile_ora;
 static int g_riga_primo;            /* primo pezzo della riga in corso */
+/* (P9) the backgrounds of the inline-blocks on the line in progress: their
+ * box and borders are backgrounds, and centring the line must move them
+ * with their content. ONLY THEIRS: the background of the block that holds
+ * the line is made on the same line, and must stay. Ranges [da, a). */
+#define RIGA_SF_MAX 64
+static int g_riga_sf[RIGA_SF_MAX][2];
+static int g_riga_sf_n;
 static int g_misura = 0;
 static int g_fisso = 0;
 
@@ -382,6 +389,16 @@ static void allinea_riga(void)
 
     dx = (g_stile_ora.allineamento == CSS_ALL_CENTRO) ? avanzo / 2 : avanzo;
     for (i = g_riga_primo; i < g_pez_n; i++) g_pez[i].x += dx;
+    /* ! AND THE BACKGROUNDS MADE ON THIS LINE (P9, 26 November 2026): an
+     * inline-block's background and borders are laid out in its column,
+     * where the pen was; only its content moved, and Google's buttons had
+     * their grey boxes 89 pixels to the left of the words */
+    {
+        int k;
+
+        for (k = 0; k < g_riga_sf_n; k++)
+            for (i = g_riga_sf[k][0]; i < g_riga_sf[k][1] && i < g_sfondi_n; i++) g_sfondi[i].x += dx;
+    }
 }
 
 static void a_capo(void)
@@ -397,7 +414,7 @@ static void a_capo(void)
     /* ! LA x DOPO LA y: la riga nuova puo' avere un float in meno. */
     g_pen_x  = rx();
     g_riga_h = alt_riga_f(font_di(&g_stile_ora));
-    g_riga_primo = g_pez_n;
+    g_riga_primo = g_pez_n; g_riga_sf_n = 0;
 }
 
 /* Lo spazio sopra e sotto un blocco. ! IL MARGINE DICHIARATO SOSTITUISCE IL
@@ -834,11 +851,13 @@ static int impagina_in_colonna_ex(int nodo, const CssStile *ered,
 
     g_in_colonna++;
     int era_px = g_pen_x, era_py = g_pen_y;
-    int era_rh = g_riga_h, era_rp = g_riga_primo;
+    int era_rh = g_riga_h, era_rp = g_riga_primo, era_rsfn = g_riga_sf_n;
+    int era_rsf[RIGA_SF_MAX][2];
     int primo  = g_pez_n, primo_sf = g_sfondi_n;
     int era_mis = g_misura;
     int larga  = 0, i, f;
 
+    memcpy(era_rsf, g_riga_sf, sizeof(era_rsf));
     g_misura = prova != 0;
 
     g_marg_sx = x - area_x();
@@ -849,7 +868,7 @@ static int impagina_in_colonna_ex(int nodo, const CssStile *ered,
     g_pen_x      = rx();
     g_pen_y      = y;
     g_riga_h     = alt_riga_f(font_di(ered));
-    g_riga_primo = g_pez_n;
+    g_riga_primo = g_pez_n; g_riga_sf_n = 0;
 
     /* I figli della cella, non la cella: `td` non e' un blocco, e trattarlo da
      * tale aggiungerebbe uno stacco dentro ogni casella. */
@@ -885,6 +904,7 @@ static int impagina_in_colonna_ex(int nodo, const CssStile *ered,
     g_marg_sx = era_sx; g_marg_dx = era_dx;
     g_pen_x = era_px;   g_pen_y = era_py;
     g_riga_h = era_rh;  g_riga_primo = era_rp;
+    g_riga_sf_n = era_rsfn; memcpy(g_riga_sf, era_rsf, sizeof(era_rsf));
     return larga;
 }
 
@@ -1137,7 +1157,7 @@ static void impagina_tabella(int v, const CssStile *mio)
     g_pen_y      = y0;
     g_pen_x      = rx();
     g_riga_h     = alt_riga_f(font_di(mio));
-    g_riga_primo = g_pez_n;
+    g_riga_primo = g_pez_n; g_riga_sf_n = 0;
     g_tab_liv--;
 }
 
@@ -1199,7 +1219,7 @@ static void galleggia(int v, const CssStile *mio, const CssStile *ered)
         g_gal_n++;
     }
     g_pen_x = rx();
-    g_riga_primo = g_pez_n;
+    g_riga_primo = g_pez_n; g_riga_sf_n = 0;
 }
 
 static void in_blocco(int v, const CssStile *mio, const CssStile *ered)
@@ -1209,7 +1229,16 @@ static void in_blocco(int v, const CssStile *mio, const CssStile *ered)
     w = larg_elemento(v, mio, ered, rw());
     if (g_pen_x + sx + w > rx() + rw() && g_pen_x > rx()) a_capo();
     g_pen_x += sx;
-    impagina_in_colonna_ex(v, ered, g_pen_x, g_pen_y, w, g_misura ? 2 : 0, &alt, 1);
+    {
+        int s0 = g_sfondi_n;
+
+        impagina_in_colonna_ex(v, ered, g_pen_x, g_pen_y, w, g_misura ? 2 : 0, &alt, 1);
+        if (g_riga_sf_n < RIGA_SF_MAX && g_sfondi_n > s0) {
+            g_riga_sf[g_riga_sf_n][0] = s0;
+            g_riga_sf[g_riga_sf_n][1] = g_sfondi_n;
+            g_riga_sf_n++;
+        }
+    }
     g_pen_x += w + dx;
     if (alt > g_riga_h) g_riga_h = alt;
 }
@@ -1347,7 +1376,7 @@ static void flessibile(int v, const CssStile *mio)
     g_pen_y = y;
     g_pen_x = rx();
     g_riga_h = alt_riga_f(font_di(mio));
-    g_riga_primo = g_pez_n;
+    g_riga_primo = g_pez_n; g_riga_sf_n = 0;
 }
 
 /* =============================================================================
@@ -1917,7 +1946,7 @@ static int tf_disponi(int v, const CssStile *mio, const CssStile *ered)
     g_pen_y = fondo;
     g_pen_x = rx();
     g_riga_h = alt_riga_f(font_di(mio));
-    g_riga_primo = g_pez_n;
+    g_riga_primo = g_pez_n; g_riga_sf_n = 0;
     return 1;
 }
 
@@ -2014,6 +2043,8 @@ static void impagina_nodo_vero(int v, const CssStile *ered)
     int f;
 
     if (v < 0) return;
+    /* (P9) a comment is a node now, and nothing on the page */
+    if (g_doc.nodi[v].tipo == HTML_COMMENTO) return;
 
     /* ! UN NODO DI TESTO NON HA UNO STILE SUO: prende quello del padre, che e'
      * esattamente cio' che `ered` porta. Calcolargliene uno vorrebbe dire far
@@ -2163,7 +2194,12 @@ static void impagina_nodo_vero(int v, const CssStile *ered)
             return;
         }
 
-        if (uguale(nome, "br")) { g_pen_x = rx() + 1; a_capo(); return; }
+        /* ! THE PEN IS PUSHED ONLY ON AN EMPTY LINE (P9, 26 November 2026):
+         * it is how a <br> on its own still makes a line; on a line with
+         * something on it, moving the pen to the left margin told the
+         * centring that the line was empty, and an image followed by <br>
+         * in a <center> (Google's logo) went half a line to the right */
+        if (uguale(nome, "br")) { if (g_pen_x <= rx()) g_pen_x = rx() + 1; a_capo(); return; }
 
         /* ! <hr> E' UNA RIGA, non uno stacco piu' grande: finora era solo un
          * blocco vuoto, cioe' un po' d'aria in mezzo alla pagina — e chi
@@ -2185,7 +2221,7 @@ static void impagina_nodo_vero(int v, const CssStile *ered)
             }
             g_pen_y += 6;
             g_riga_h = alt_riga_f(font_di(&mio));
-            g_riga_primo = g_pez_n;
+            g_riga_primo = g_pez_n; g_riga_sf_n = 0;
             spazio_blocco(2);
             return;
         }
@@ -2346,7 +2382,7 @@ static void impagina_nodo_vero(int v, const CssStile *ered)
             }
 
             g_pen_x = rx();
-            g_riga_primo = g_pez_n;
+            g_riga_primo = g_pez_n; g_riga_sf_n = 0;
 
             alt_cima = g_pen_y;         /* da qui si misura `height` */
 
@@ -2593,7 +2629,7 @@ static void impagina_nodo_vero(int v, const CssStile *ered)
             g_marg_sx = era_sx;
             g_marg_dx = era_dx;
             g_pen_x = rx();
-            g_riga_primo = g_pez_n;
+            g_riga_primo = g_pez_n; g_riga_sf_n = 0;
             spazio_blocco(2);
         }
     }

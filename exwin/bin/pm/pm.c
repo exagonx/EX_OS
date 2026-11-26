@@ -41,7 +41,7 @@
 #include "wifid_proto.h"      /* the WiFi icon (@WIFI) */
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.031"
+#define VERSIONE_APP "0.032"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -1096,10 +1096,12 @@ static ExIcon icona_categoria(unsigned int c)
  * uno per il menu e uno per l'elenco di lato.
  * ============================================================================= */
 
-static ExWindow crea_voce(const char *testo, int x, int y, int w, int h,
-                          ExWindow padre, unsigned int id)
+/* (0.032, voce 122) a "menuitem" of exwin.so: the icon in a square button
+ * on the left, the name beside it, a triangle on the groups (EX_SUBMENU) */
+static ExWindow crea_voce_st(const char *testo, int x, int y, int w, int h,
+                             ExWindow padre, unsigned int id, unsigned int st)
 {
-    ExWindow b = ex_create("button", testo, EX_CHILD, x, y, w, h, padre, id, 0);
+    ExWindow b = ex_create("menuitem", testo, EX_CHILD | st, x, y, w, h, padre, id, 0);
 
     if (b && padre == g_sotto && g_sotto) {
         if (g_sv_n < VOCI_MAX) { g_sv[g_sv_n] = b; g_sv_id[g_sv_n++] = id; }
@@ -1107,6 +1109,12 @@ static ExWindow crea_voce(const char *testo, int x, int y, int w, int h,
         if (g_mv_n < VOCI_MAX) { g_mv[g_mv_n] = b; g_mv_id[g_mv_n++] = id; }
     }
     return b;
+}
+
+static ExWindow crea_voce(const char *testo, int x, int y, int w, int h,
+                          ExWindow padre, unsigned int id)
+{
+    return crea_voce_st(testo, x, y, w, h, padre, id, 0);
 }
 
 static void sotto_chiudi(void)
@@ -1215,13 +1223,11 @@ static void menu_apri(void)
      * seconde avviano un programma: mescolarle vorrebbe dire due gesti diversi
      * a righe alterne. La freccia in fondo al nome dice quali sono quali. */
     for (i = 0; i < g_cat_n; i++) {
-        char        t[40];
         ExWindow  b;
 
-        sprintf(t, "%s...", g_cat[i]);
-        b = crea_voce(t,
+        b = crea_voce_st(g_cat[i],
                     4, 4 + (int)riga * VOCE_H, MENU_W - 8, VOCE_H - 2,
-                    g_menu, ID_CAT + i);
+                    g_menu, ID_CAT + i, EX_SUBMENU);
         if (g_vedi_icone) ex_set_icon(b, icona_categoria(i), ICONA_LATO);
         riga++;
     }

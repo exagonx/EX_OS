@@ -486,7 +486,7 @@ dalla macchina vera, e l'elenco che ne esce sostituisce questa sezione.
       su disco, IndexedDB su SQLite, Worker,        alla risposta del server
       WebSocket.                                    (vedi P0)
   P12 WebAssembly (WAMR interprete).  FATTO il 26/11, 7.12; wpt wasm/jsapi
-  P13 <video>, MSE con FFmpeg.                      YouTube senza account
+  P13 <video>, MSE con FFmpeg.  IN CORSO, 7.13;    YouTube senza account
   Ogni passo: make prova-exdom, prova-exqjs, prova-excss, prova-exhttp a
   zero errori; le sette pagine di riferimento identiche; QEMU 32 e 64 bit.
 
@@ -1053,6 +1053,65 @@ dalla macchina vera, e l'elenco che ne esce sostituisce questa sezione.
   questo: lo si fa quando i commenti diventano nodi, che servono anche a
   Lit); ::slotted(); :host(sel) col suo argomento; adoptedStyleSheets.
 
+7.9b P9, i web-platform-tests (26/11/2026, pomeriggio)
+-----
+  Chiesto dall'utente dopo il P13. Il metro: tools/prove/wpt_host.py, che fa
+  di ogni prova una pagina (preludio, testharness.js e gli script messi in
+  linea, al posto di testharnessreport.js un rapporto che stampa PASS/FAIL)
+  e la fa girare con domprova (DOMPROVA_CARICA=1: DOMContentLoaded e load
+  dopo gli script, come il browser). Sull'host: gli script aggiunti dopo e
+  gli iframe non ci sono, i tempi sono simulati. Le cartelle tentative/ no.
+  Nello sparse di terze_browser/wpt: custom-elements, shadow-dom,
+  html/resources.
+
+  Prove passate (le prime col preludio del mattino; i totali cambiano un po'
+  perche' file che prima si fermavano ora contano le loro prove):
+    custom-elements    213 / 2240  ->   329 / 2200
+    shadow-dom          62 / 1011  ->   912 / 2014
+    dom               1273 / 7683  ->  3114 / 7612
+
+  Cosa e' cambiato:
+   - Le reazioni dei custom elements (connected, disconnected,
+     attributeChanged) girano quando il metodo del DOM ritorna, come
+     [CEReactions], non in un microtask: i metodi che cambiano l'albero sono
+     avvolti nel preludio, e una proprieta' di exdom che ha cambiato
+     l'albero (innerHTML, id, className...) chiama il gancio dato a
+     __exos_osserva. define come la specifica (callback e observedAttributes
+     letti una volta, observedAttributes iterabile, nomi riservati, errori
+     DOMException); attributeChangedCallback con oldValue null e il
+     namespace; le ombre chiuse visitate (__exos_ombra).
+   - Attr: getAttributeNode, setAttributeNode, removeAttributeNode,
+     createAttribute, con identita' e ownerElement.
+   - I satelliti di exdom (style, dataset, classList) uno per elemento,
+     tenuti nel Legame: prima ogni lettura ne faceva uno nuovo, e dopo
+     `el.classList = 'x'` non c'era piu'. classList = 'x' scrive la classe.
+     DOMTokenList come il DOM: insieme ordinato, token controllati,
+     toggle con force, replace che dice se ha fatto, gli iteratori.
+     Element-classlist.html 1420/1420.
+   - I COMMENTI SONO NODI (exhtml HTML_COMMENTO; anche <?..?> e <!..>
+     non doctype): nodeType 8, #comment, createComment, serializzati
+     <!--..-->; l'impaginazione, il CSS e il disegno non li vedono.
+     CharacterData: appendData, insertData, deleteData, replaceData,
+     substringData, splitText, wholeText.
+   - Declarative shadow DOM: <template shadowrootmode> nel documento e in
+     setHTMLUnsafe diventa la radice d'ombra del padre (exhtml
+     html_ombre_dichiarate); attachShadow con i controlli della specifica, e
+     una radice dichiarata resa vuota al componente che si aggiorna sopra.
+   - Namespace: createElementNS valida il nome e ricorda namespace,
+     prefisso e nome locale; namespaceURI, prefix, localName (SVG dentro
+     <svg>, MathML dentro <math>); createElement valida il nome e abbassa
+     solo l'ASCII.
+  Regressioni (QEMU 32 bit, ~/ex_os/prove-wpt/regr): le sette pagine e
+  Google uguali salvo l'orologio; Wikipedia uguale salvo la barra di stato
+  (sette nodi in piu': i commenti della pagina). Host: exhtml, excss 269,
+  exdom 267, exqjs 267.
+  Quel che resta, a grandi gruppi: piu' documenti in un contesto
+  (createHTMLDocument vero, i documenti XML, gli iframe: i test di
+  custom-elements e dom/nodes che girano su document_types()), i registri
+  a portata (scoped registries), i custom elements incorporati (is=), le
+  proprieta' ARIA riflesse, Observable (una proposta), le processing
+  instruction coi loro attributi (WICG).
+
 7.10 P10 FATTO (26/11/2026): angoli, ombre, sfumature, colori con l'alfa,
      SVG, canvas 2D (plutovg 1.3.3, tools/plutovg-exos, dlopen)
 -----
@@ -1214,11 +1273,152 @@ dalla macchina vera, e l'elenco che ne esce sostituisce questa sezione.
   LinkError). Lo stesso modulo con WAMR sull'host e su EX-OS da riga di
   comando. Host: excss 269, exdom 267, exqjs 267, biscotti 102, exhtml e
   exhttp a posto. EXBrowser 0.045.
-  Regressioni: REGR_P12
+  Regressioni (32 bit, contro il P11): le sette pagine, Google e Wikipedia
+  identiche al pixel (anche col fetch a promesse native).
   Non fatto: i64 come BigInt (e' un Number, esatto fino a 2^53); Memory e
   Table creati da JavaScript e importati in un modulo; Table.get/set;
   customSections; i web-platform-tests wasm/jsapi (testharness.js chiede
   piu' DOM, come al P9).
+
+7.13 P13 IN CORSO (26/11/2026): <video>, <audio>, Media Source Extensions
+-----
+  File:
+   - tools/exmedia-exos (exmedia.c, exmedia.h, costruisci.sh): libexmedia.so.1
+     a 32 e 64 bit, una libreria piccola sopra FFmpeg 8 (tools/ffmpeg-exos):
+     i byte entrano a pezzi (un file intero, o i segmenti di MSE), escono
+     fotogrammi BGRA alla misura chiesta (swscale) e PCM a 16 bit
+     (swresample). Il demuxer legge da un buffer nostro (AVIOContext). Le
+     strutture di FFmpeg restano li' dentro: EXBrowser la apre con dlopen.
+     ! UN DEMUXER CHE TOCCA LA FINE DEI BYTE CREDE FINITO IL MEDIA, e quelli
+     di FFmpeg (Matroska per primo) non tornano indietro quando ne arrivano
+     altri: si apre con 512 KB (o alla fine) e si legge un pacchetto solo
+     se restano almeno 256 KB non letti. Pacchetti e decodifica separati:
+     una coda di pacchetti per flusso, cosi' `buffered` si sa subito.
+   - exwin/bin/exbrowser/browser_media.c e browser_media.js: un lettore per
+     elemento; l'orologio e' quello di parete mentre suona; i fotogrammi
+     disegnati nel rettangolo del pezzo (ex_pixmap ed ex_update_rect, senza
+     ridisegnare la pagina); il suono nell'anello del servizio "audio" a
+     44100 Hz stereo, come lib/exsuono. ! UN METRONOMO: le sveglie di ExWin
+     sono a 200 ms; un filo scrive un byte su una pipe ogni 33 ms mentre
+     qualcosa suona, e il ciclo dei messaggi la guarda (ex_watch_fd):
+     30 fotogrammi al secondo senza toccare ExWin. HTMLMediaElement sul
+     prototipo degli elementi (play, pause, load, currentTime, duration,
+     paused, ended, volume, muted, readyState, videoWidth/Height, buffered,
+     seekable, canPlayType, Audio()) e gli eventi da un giro ogni 250 ms;
+     MediaSource, SourceBuffer (appendBuffer, buffered, endOfStream),
+     isTypeSupported, TimeRanges; src cambiato da uno script si ricarica.
+     Il pezzo <video>: width/height, poi la misura del media; <audio> non ha
+     riquadro (i controlli non si disegnano ancora).
+   - Prova: prova.webm (6 s, VP8 e Opus, 320x240, il numero del
+     fotogramma in binario in alto e una sinusoide a 440 Hz), fatto
+     dall'ffmpeg di EX-OS in QEMU da fotogrammi grezzi scritti in Python
+     (sull'host non c'e' ffmpeg, e quello di EX-OS non ha lavfi);
+     video.html e mse.html.
+  Prove in QEMU: video.html a 32 e 64 bit: eventi loadstart, play,
+  loadedmetadata, canplay, playing, ended; 320x240, durata 6; a 64 bit il
+  fotogramma 118 (4,72 s) con currentTime 4,7; il WAV catturato da QEMU (AC97,
+  `audio -i`) e' una sinusoide a 440 Hz. mse.html: sourceopen, due
+  appendBuffer (tagliati all'inizio di un cluster), endOfStream, buffered fino
+  a 6,0, playing, il video si vede. EXBrowser 0.046.
+  PER L'ISO: libexmedia.so.1 e le librerie di FFmpeg (avformat.so.63,
+  avcodec.so.63, avutil.so.61, swscale.so.10, swresample.so.7) con libvpx,
+  libdav1d, libopus, libvorbis, libvorbisenc, libogg.
+  Regressioni (build finale del pomeriggio, ~/ex_os/prove-media/regr3): le
+  sette pagine, Wikipedia (Venezia) e Google uguali al pixel a quelle del
+  P12 salvo l'orologio della barra (righe 582-591); tempi uguali (Wikipedia
+  script 2,3 s, impaginazione 5,2 s; Google script 1,5 s). Sull'host exqjs
+  e exdom 267 prove su 267.
+  YouTube (il criterio), cosa ha fatto venire fuori finora:
+   - Con lo user-agent di EXBrowser YouTube manda la versione ES5 coi
+     polyfill (webcomponents-all-noPatch con ShadyDOM, web-animations,
+     fetch, intersection-observer): siamo trattati da browser vecchio.
+   - Corretti nel preludio: performance era quello di QuickJS-ng (solo
+     now): ora e' completato, con performance.timing e la voce
+     "navigation"; document.createEvent e initEvent/initCustomEvent;
+     createElementNS e gli *NS; XMLHttpRequest.prototype; Node, Element,
+     HTMLElement hanno come prototype quello vero degli elementi (cio' che un
+     polyfill aggiunge a Element.prototype ora arriva agli elementi);
+     UIEvent, MouseEvent, KeyboardEvent e le altre classi di eventi;
+     SVGElement e le altre interfacce, NodeList, HTMLCollection,
+     DOMTokenList; document.implementation.createHTMLDocument; Window ed
+     EventTarget come costruttori (Window.prototype e' il globale stesso,
+     dove ShadyDOM cerca i suoi __shady_native_*).
+   - exqjs: un errore di script dice dove ("[at f (<script>:riga:col)]") e
+     una promessa rifiutata senza gestore si scrive come la console di un
+     browser ("promessa rifiutata: ..."); EXB_CONSOLE=1 manda la console
+     della pagina anche sul seriale.
+   - ! IL BUFFER DEGLI SCRIPT ERA DI 3 MB: l'applicazione di YouTube
+     (ytmainappweb kevlar_base, ES5) supera gli 8, e arrivava troncata a
+     3145727 byte, cioe' non partiva, senza un errore. Ora 24 MB (BSS). E
+     i caratteri 4 MB (YouTube Sans ne pesa piu' di 2).
+   - La prova sull'host (domprova) ha ora i tetti della pagina principale
+     (60000 nodi, 32 MB): con 1 MB tagliava lei gli script grandi. E dice
+     alla fine quanti nodi, attributi e arena ha usato.
+   - ! exqjs NON RESTITUIVA MAI UNA MANIGLIA: ogni valore che passava il
+     ponte fra C e QuickJS (una stringa letta dal DOM, una data a
+     setAttribute) ne prendeva una dalla tabella di JS_OGGETTI caselle
+     (2000 nel browser). Col preludio caricato un giro di
+     tagName/setAttribute/getAttribute smetteva al 797esimo: da li' ogni
+     risposta era undefined e ogni createElement null. YouTube ci arrivava
+     partendo ("cannot read property 'style' of null" su un div appena
+     fatto). Ora: le stringhe in un anello di 8192 caselle riusate a turno
+     (la maniglia porta il giro: una tenuta oltre da' undefined, mai la
+     stringa di un altro); gli oggetti, che la maniglia la tengono scritta
+     addosso, in una tabella che oltre la memoria data cresce con malloc;
+     gli esotici (gli involucri dei nodi, 1016 nel browser) in blocchi da
+     4096. Prova: 20000 giri e 6000 elementi, tutti giusti.
+   - Il preludio ha Range, StaticRange, Selection, document.createRange e
+     getSelection (YouTube nomina Range nei suoi metadati di tipo);
+     customElements.define non cade piu' se querySelectorAll (avvolto da
+     ShadyDOM) non risponde.
+   - Il registro spezza le righe oltre 180 caratteri in pezzi ("+ ..."): il
+     seriale le tagliava, e con loro gli indirizzi degli script; uno script
+     che non si scarica ora lo dice.
+   - Uno script aggiunto dalla pagina mentre la rete era occupata (i
+     caratteri in arrivo) riceveva subito "error": prendi_in_rete rifiuta
+     una seconda richiesta. Quello di BotGuard (www.google.com/js/th) cadeva
+     cosi' cinque volte ("Error: db"). Ora si rimanda e si riprende appena
+     la rete e' libera (g_script_rimandati, in rifai_se_cambiato).
+   - ytd-app arriva dal server con disable-upgrade: la pagina lo toglie
+     (appLoad) quando la applicazione ha mandato a window l'evento
+     script-load-dpj o il segnale "eor". Sono venute fuori quattro cause:
+       . window.dispatchEvent non c'era (ora e' quello del documento: gli
+         ascoltatori della finestra stanno sulla radice);
+       . dispatchEvent di exdom mandava un evento NUOVO dello stesso tipo:
+         il detail di un CustomEvent si perdeva (ora passa quello della
+         pagina; bubbles: false si ferma al bersaglio; stopPropagation del
+         preludio alza cancelBubble, che exdom guarda);
+       . "on..." era sempre un gestore d'evento: onYtAction_, metodo della
+         classe di ytd-app, si leggeva null ("cannot read property 'bind'
+         of null" mentre l'elemento nasceva, inghiottito dal try di
+         YouTube). Ora solo on + lettere minuscole (onclick);
+       . il TreeWalker del preludio non aveva lastChild, previousSibling,
+         previousNode (ShadyDOM cadeva in attachShadow).
+     Con queste, sull'host, appLoad porta ytd-app a ready e crea
+     ytd-page-manager.
+   - Il preludio ha anche: AbortController e AbortSignal, structuredClone,
+     document.visibilityState/hidden/hasFocus, CSS.supports e CSS.escape,
+     DOMParser, XMLSerializer, PerformanceObserver, BroadcastChannel,
+     visualViewport, Request (e fetch lo accetta, con signal).
+   - Il corpo di fetch puo' essere di byte (ArrayBuffer, Uint8Array):
+     YouTube comprime le sue richieste con gzip. exdom lo mette in coda
+     com'e', ExDomRichiesta ha corpo_n in fondo, il browser usa
+     exhttp_posta_n (nuova in exhttp, piano scritto in collaborazione.txt).
+   - DOVE SIAMO (26/11/2026, pomeriggio): in QEMU l'applicazione parte, le
+     sue chiamate a youtubei (log_event, att/log, POST col corpo gzip)
+     rispondono 200, e il lettore chiede il video a googlevideo.com. Ma gli
+     indirizzi che riceve sono finti: rr2---sn-q4fl6n6r.googlevideo.com non
+     si risolve nemmeno dall'host, expire=9592743611 e' nel 2273, ip= non e'
+     il nostro. E' quel che YouTube da' a chi non ha passato BotGuard: la
+     sua attestazione (www.google.com/js/th, ora scaricata ed eseguita)
+     finisce in "Error: gb", cioe' il tempo di 30 s (qgX: 3E4) scaduto.
+     Andare oltre vuol dire capire perche' BotGuard non finisce (lentezza
+     di QuickJS su QEMU, o un'interfaccia che manca): DA DECIDERE con
+     l'utente prima di mettersi a studiare il codice offuscato di Google.
+   - La console stampa anche lo stack di un Error che le si passa; il
+     registro elenca le richieste della pagina ("script GET/POST codice").
+  Da fare: YouTube fino in fondo; i controlli disegnati; le richieste a
+  intervalli (Range) invece del file intero; buffered prima di 512 KB.
 
 
 ===============================================================================

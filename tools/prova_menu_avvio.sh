@@ -2,7 +2,8 @@
 # the build's trees are in <home of the user>/ex_os (tools/fuori.sh)
 [ -n "${EXOS_FUORI:-}" ] || { EXOS_FUORI=$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6); EXOS_FUORI="${EXOS_FUORI:-$HOME}/ex_os"; }; export EXOS_FUORI
 # =============================================================================
-# tools/prova_menu_avvio.sh - the Start menu in groups (voce 80, pm 0.028)
+# tools/prova_menu_avvio.sh - the Start menu in groups (voce 80, pm 0.028;
+# voce 122, pm 0.032: "menuitem" rows of exwin.so 0.029)
 #
 # Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>
 # SPDX-License-Identifier: GPL-2.0-or-later
@@ -22,9 +23,11 @@
 #      del menu..."; the Scrivania tab: the box "Icone accanto alle voci del
 #      menu", ticked;
 #   6  the box unticked, the menu again: entries with no icons.
-# Three verdicts read from the photographs (a point inside the menu: grey
+# Five verdicts read from the photographs (a point inside the menu: grey
 # when open, the desktop's colour when closed; the blue of the icon of
-# «Applicazioni...» with and without the box), the rest is looking at them:
+# «Applicazioni» in its square button on the left, with and without the box;
+# the triangle at the end of the group's row, none on «Esci»), the rest is
+# looking at them:
 # they stay as PNG in cross_build/<machine>/prova-menu-avvio<64>/.
 # Coordinates for 800x600 (the CD) and the menu of exwin/lib/applicazioni.txt
 # (5 groups, no loose entries): the menu starts at y = 600 - 28 - 278 - 2.
@@ -104,13 +107,13 @@ if calc != aperto:
     print("  [OK] scelto Calctor, il menu non c'e' piu' (%s)" % calc); ok += 1
 else:
     print("  [NO] dopo Calctor il menu e' ancora li' (%s)" % calc)
-# the icon of «Applicazioni...» (blue): there with the box ticked, gone
-# without; the entry's text is black, the button grey. Rows 302-312 only:
-# rows 300 and 313 are the blue frame of the entry that has the focus
+# the icon of «Applicazioni» (blue): in the square button on the left of the
+# row (x 8-30, menu at x 4, row at y 296-318), there with the box ticked,
+# gone without; the name is black beside it, outside the button
 def blu(n):
     c = 0
     for y in range(302, 313):
-        for x in range(40, 63):
+        for x in range(10, 29):
             p = px(n, x, y); r, g, b = int(p[0:2], 16), int(p[2:4], 16), int(p[4:6], 16)
             if b > r + 60: c += 1
     return c
@@ -122,7 +125,31 @@ try:
         print("  [NO] le icone del menu: %d pixel con la casella, %d senza" % (con, senza))
 except Exception as e:
     print("  [NO] manca la fotografia senza icone (%s)" % e)
-sys.exit(0 if ok == 3 else 1)
+# the triangle of a group: dark pixels at the end of «Applicazioni»'s row
+# (x 206-214, y 303-311); none at the end of «Esci» (fixed entries start at
+# 292 + 10, Esci is the fourth: y 494-516)
+def scuri(n, y0):
+    c = 0
+    for y in range(y0, y0 + 9):
+        for x in range(204, 216):
+            p = px(n, x, y)
+            if int(p[0:2], 16) + int(p[2:4], 16) + int(p[4:6], 16) < 200: c += 1
+    return c
+try:
+    g, e = scuri("1-menu", 303), scuri("1-menu", 501)
+    if g >= 10 and e == 0:
+        print("  [OK] il triangolino del gruppo (%d pixel), nessuno su Esci" % g); ok += 1
+    else:
+        print("  [NO] triangolino: %d pixel sul gruppo, %d su Esci" % (g, e))
+    t = sum(1 for y in range(300, 315) for x in range(36, 120)
+            if sum(int(px("1-menu", x, y)[k:k + 2], 16) for k in (0, 2, 4)) < 200)
+    if t > 30:
+        print("  [OK] il nome accanto al pulsante (%d pixel scuri dopo x 36)" % t); ok += 1
+    else:
+        print("  [NO] il nome non si vede accanto al pulsante (%d pixel)" % t)
+except Exception as e:
+    print("  [NO] %s" % e)
+sys.exit(0 if ok == 5 else 1)
 PY
 esito=$?
 for p in "$T"/*.ppm; do

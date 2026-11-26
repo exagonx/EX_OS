@@ -127,6 +127,7 @@ EXWIN_CONTROL(TextBox,   "textbox");
 EXWIN_CONTROL(Frame,     "frame");
 EXWIN_CONTROL(Separator, "separator");
 EXWIN_CONTROL(Header,    "header");
+EXWIN_CONTROL(MenuItem,  "menuitem");
 
 #undef EXWIN_CONTROL
 

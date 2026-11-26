@@ -3333,6 +3333,7 @@ BROWSER_IDBJS := exwin/bin/exbrowser/browser_idb.js
 BROWSER_INTL := exwin/bin/exbrowser/browser_intl.c
 BROWSER_INTLJS := exwin/bin/exbrowser/browser_intl.js
 BROWSER_WASM := exwin/bin/exbrowser/browser_wasm.c
+BROWSER_MEDIA := exwin/bin/exbrowser/browser_media.c
 BROWSER_ESTH := exwin/bin/exbrowser/browser_estranei.h
 BROWSER_VISTA := exwin/bin/exbrowser/browser_vista.h
 BROWSER_PRIV := exwin/bin/exbrowser/browser_priv.h
@@ -3367,7 +3368,8 @@ $(PSL_H): $(PSL_DAT) tools/psl-tabella.py
 # ! EXBrowser's JavaScript files as C strings (P11: IndexedDB, Intl), made
 # here next to the PSL table: the 64-bit build (tools/costruisci-utente64.sh)
 # asks for psl-tabella and has build/generati in its include path.
-BROWSER_JS_H := $(PSL_DIR)/browser_idb_js.h $(PSL_DIR)/browser_intl_js.h $(PSL_DIR)/browser_wasm_js.h
+BROWSER_JS_H := $(PSL_DIR)/browser_idb_js.h $(PSL_DIR)/browser_intl_js.h $(PSL_DIR)/browser_wasm_js.h \
+                $(PSL_DIR)/browser_media_js.h
 
 $(PSL_DIR)/browser_idb_js.h: exwin/bin/exbrowser/browser_idb.js tools/js-in-c.py
 	@mkdir -p $(PSL_DIR)
@@ -3381,13 +3383,17 @@ $(PSL_DIR)/browser_wasm_js.h: exwin/bin/exbrowser/browser_wasm.js tools/js-in-c.
 	@mkdir -p $(PSL_DIR)
 	@python3 -I tools/js-in-c.py $< $@ WASM_JS
 
+$(PSL_DIR)/browser_media_js.h: exwin/bin/exbrowser/browser_media.js tools/js-in-c.py
+	@mkdir -p $(PSL_DIR)
+	@python3 -I tools/js-in-c.py $< $@ MEDIA_JS
+
 .PHONY: psl-tabella
 psl-tabella: $(PSL_H) $(BROWSER_JS_H)
 
 $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
              $(BROWSER_IMP) $(BROWSER_PRIV) \
              $(BROWSER_EST) $(BROWSER_ESTH) $(BROWSER_VISTA) $(BROWSER_PRE) \
-             $(BROWSER_CAR) $(BROWSER_DIS) $(BROWSER_CRI) $(BROWSER_WS) $(BROWSER_LAV) $(BROWSER_IDB) $(BROWSER_INTL) $(BROWSER_WASM) $(BROWSER_JS_H) $(BROWSER_BIS) $(BROWSER_BISH) $(EXWIN_SO) \
+             $(BROWSER_CAR) $(BROWSER_DIS) $(BROWSER_CRI) $(BROWSER_WS) $(BROWSER_LAV) $(BROWSER_IDB) $(BROWSER_INTL) $(BROWSER_WASM) $(BROWSER_MEDIA) $(BROWSER_JS_H) $(BROWSER_BIS) $(BROWSER_BISH) $(EXWIN_SO) \
              $(EXIMG_INFLATE) lib/eximg/inflate.h \
              $(EXLIB_HDR) $(EXWIN_HDR) $(WIN_PROTO) $(EXHTTP_SRC) \
              $(EXHTTP_HTTP) $(EXHTTP_HDR) lib/eximg/eximg.h \
@@ -3420,6 +3426,8 @@ $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I $(PSL_DIR) -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_INTL) -o $(BUILD_OBJ)/browser_intl.o
 	@# WebAssembly (P12): WAMR with dlopen
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I $(PSL_DIR) -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_WASM) -o $(BUILD_OBJ)/browser_wasm.o
+	@# <video>, <audio>, MSE (P13): libexmedia (FFmpeg) with dlopen, the audio ring
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I $(PSL_DIR) -I drivers/audio -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_MEDIA) -o $(BUILD_OBJ)/browser_media.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/excrypt -c lib/excrypt/sha1.c -o $(BUILD_OBJ)/browser_sha1.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/excrypt -c lib/excrypt/sha512.c -o $(BUILD_OBJ)/browser_sha512.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I exwin/bin/exbrowser -I $(PSL_DIR) -c $(BROWSER_BIS) -o $(BUILD_OBJ)/browser_bis.o
@@ -3440,7 +3448,7 @@ $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
 	    $(BUILD_OBJ)/browser_est.o $(BUILD_OBJ)/browser_pre.o \
 	    $(BUILD_OBJ)/browser_car.o $(BUILD_OBJ)/browser_dis.o \
 	    $(BUILD_OBJ)/browser_cri.o $(BUILD_OBJ)/browser_sha1.o $(BUILD_OBJ)/browser_sha512.o \
-	    $(BUILD_OBJ)/browser_ws.o $(BUILD_OBJ)/browser_lav.o $(BUILD_OBJ)/browser_idb.o $(BUILD_OBJ)/browser_intl.o $(BUILD_OBJ)/browser_wasm.o \
+	    $(BUILD_OBJ)/browser_ws.o $(BUILD_OBJ)/browser_lav.o $(BUILD_OBJ)/browser_idb.o $(BUILD_OBJ)/browser_intl.o $(BUILD_OBJ)/browser_wasm.o $(BUILD_OBJ)/browser_media.o \
 	    $(BUILD_OBJ)/browser_bis.o $(BUILD_OBJ)/browser_inflate.o \
 	    $(EXWIN_SO) $(EXHTTP_SO) \
 	    $(EXHTML_SO) $(BUILD_OBJ)/browser_css.o \

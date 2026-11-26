@@ -6,6 +6,8 @@
 
 **Indice**
 
+- [Firefox va a schermo intero, YouTube compreso: wserver toglie il telaio a una finestra aperta (wserver 0.020, exwin.so 0.028, voce 121) — testato in QEMU e sul PC di prova](#firefox-va-a-schermo-intero-youtube-compreso-wserver-toglie-il-telaio-a-una-finestra-aperta-wserver-0020-exwinso-0028-voce-121--testato-in-qemu-e-sul-pc-di-prova)
+- [Firefox parte prima: le librerie e omni.ja si leggono quando servono, i simboli con le tabelle hash, niente più blocchi all'avvio (kernel 0.371, voce 120) — testato in QEMU e sul PC di prova](#firefox-parte-prima-le-librerie-e-omnija-si-leggono-quando-servono-i-simboli-con-le-tabelle-hash-niente-più-blocchi-allavvio-kernel-0371-voce-120--testato-in-qemu-e-sul-pc-di-prova)
 - [Il file manager nasconde i file col punto e le estensioni a richiesta, e le righe trascinate mostrano un foglio accanto al puntatore (filemgr 0.016, exwin.so 0.027, voce 114) — testato in QEMU](#il-file-manager-nasconde-i-file-col-punto-e-le-estensioni-a-richiesta-e-le-righe-trascinate-mostrano-un-foglio-accanto-al-puntatore-filemgr-0016-exwinso-0027-voce-114--testato-in-qemu)
 - [Exilla fa di nuovo video e suono a più processi, YouTube compreso (exos-media.js) — testato in QEMU](#exilla-fa-di-nuovo-video-e-suono-a-più-processi-youtube-compreso-exos-mediajs--testato-in-qemu)
 - [ExWin ha il salvaschermo: una scritta o un cerchio dopo i minuti scelti, lo schermo spento da dpms.drv (salvaschermo 0.001, pm 0.031, voce 116) — testato in QEMU](#exwin-ha-il-salvaschermo-una-scritta-o-un-cerchio-dopo-i-minuti-scelti-lo-schermo-spento-da-dpmsdrv-salvaschermo-0001-pm-0031-voce-116--testato-in-qemu)
@@ -261,6 +263,42 @@
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### Firefox va a schermo intero, YouTube compreso: wserver toglie il telaio a una finestra aperta (wserver 0.020, exwin.so 0.028, voce 121) — testato in QEMU e sul PC di prova
+
+- **Cosa non andava**: il pulsante dello schermo intero di YouTube lasciava il video nella finestra,
+  col telaio e il titolo, sotto la barra: wserver non sapeva togliere il telaio a una finestra già
+  aperta, e il widget di Firefox trattava lo schermo intero come ingrandita.
+- **Adesso**: wserver 0.020 ha `WIN_MSG_TELAIO`: schermo intero (senza telaio, tutto lo schermo, sopra
+  la barra), di nuovo com'era, o senza telaio dove sta. Una finestra a schermo intero resta sopra
+  finché il fuoco è suo, del suo programma o di una finestra aperta dopo; cambiando programma la
+  barra torna. exwin.so 0.028 lo dà a ogni programma come `ex_window_frame(f, modo)`, e il widget di
+  Firefox lo usa per lo schermo intero delle pagine (YouTube), F11 ed Esc.
+- **Provato** con `tools/prova_telaio.sh` a 32 e 64 bit (cinque passi, fotografie e colori) e
+  `tools/exilla/prova-schermo-intero.sh`: un clic chiede `requestFullscreen` come il pulsante di
+  YouTube, la pagina ha 800x600 senza telaio né barra, Esc e F11 vanno avanti e indietro. Sul PC di prova i video di YouTube vanno a schermo intero.
+
+### Firefox parte prima: le librerie e omni.ja si leggono quando servono, i simboli con le tabelle hash, niente più blocchi all'avvio (kernel 0.371, voce 120) — testato in QEMU e sul PC di prova
+
+- **Cosa era lento**: alla prima mappa di una libreria EX-OS leggeva l'oggetto intero (libxul, 310 MB
+  col codice di Firefox) e omni.ja (50 MB) prima che partisse una riga di Firefox, e il caricatore
+  cercava ogni simbolo scorrendo tutta la tabella di ogni modulo. Linux e Windows li mappano e leggono
+  solo le pagine che il codice tocca.
+- **Adesso** (kernel 0.371, `/lib/ld-exos.so`): i simboli si trovano con `DT_GNU_HASH` (un filtro
+  bloom e pochi confronti) o `DT_HASH`; un file mappato senza scrittura e le pagine intere di sola
+  lettura di una libreria vengono dalla cache dei file alla prima pagina toccata
+  (`kernel/mm/zone.c`), con 128 KB intorno alla pagina mancante in una richiesta sola e le vicine
+  già nella cache mappate insieme, come fa Linux. Una pagina che la cache ha già non prende il
+  lucchetto dei file.
+- **Un blocco trovato misurando**: con due processori Firefox poteva fermare tutto il sistema mentre
+  partiva (3 avvii su 8 in QEMU): due fili che aspettavano lo stesso file si cedevano il posto
+  tenendo il lucchetto del kernel, e il processore 0 (orologio e disco) non entrava più. Ora chi
+  cede lascia sempre passare gli altri processori: 0 blocchi su 10 avvii.
+- **Misurato** in QEMU con `tools/exilla/prova-avvio.sh` (ogni giro da un disco nuovo): primo avvio
+  90-159 s (prima: 104-304 s), secondo avvio 24-74 s (prima: 36-95 s); tre schede 774 MB (prima:
+  784). Il primo avvio aspetta ancora il disco mentre Firefox scrive il profilo: ogni scrittura su
+  ext4 va subito al disco. Sul PC di prova (.253, 26/11) l'utente: Exilla veloce quanto Linux e Windows sulla stessa macchina.
+  `tools/prova-dl` a 32 e 64 bit a posto.
 
 ### Il file manager nasconde i file col punto e le estensioni a richiesta, e le righe trascinate mostrano un foglio accanto al puntatore (filemgr 0.016, exwin.so 0.027, voce 114) — testato in QEMU
 

@@ -167,3 +167,14 @@ tempi. E' 672 KB di testo altrui sotto CC BY-SA: si riscarica in un secondo con
   strumenti di WebAssembly: somma, un'importazione che il modulo chiama,
   memoria esportata e memory.grow, unreachable, fib ricorsivo, un globale.
 
+
+## Le pagine del P13 (26 novembre 2026)
+
+- `video.html` e `prova.webm`: `<video>` con suono (VP8 e Opus, 6 s, un
+  quadrato che si muove e un la a 440 Hz). Servono libexmedia.so.1 e le
+  librerie di FFmpeg in /lib (tools/exmedia-exos) e il servizio audio
+  acceso. prova.webm e' fatto da ffmpeg di EX-OS su fotogrammi scritti da
+  uno script Python (~/ex_os/prove-media).
+- `mse.html`: lo stesso file dato a pezzi a Media Source Extensions
+  (MediaSource, SourceBuffer.appendBuffer, endOfStream), tagliato a un
+  confine di cluster.

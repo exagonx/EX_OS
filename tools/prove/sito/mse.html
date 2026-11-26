@@ -1,0 +1,31 @@
+<html><head><title>MSE</title></head><body style="font-family: sans-serif; font-size: 13px">
+<h1>Media Source Extensions (P13)</h1>
+<video id="v" width="320" height="240"></video>
+<div id="r">in corso...</div>
+<script>
+var v = document.getElementById('v'), ev = [];
+function s(t) { ev.push(t); document.getElementById('r').innerHTML = ev.join('<br>'); }
+s('isTypeSupported: ' + MediaSource.isTypeSupported('video/webm; codecs="vp8, opus"'));
+var ms = new MediaSource();
+v.src = URL.createObjectURL(ms);
+ms.addEventListener('sourceopen', function () {
+  s('sourceopen, readyState ' + ms.readyState);
+  var sb = ms.addSourceBuffer('video/webm; codecs="vp8, opus"');
+  fetch('prova.webm').then(function (r) { return r.arrayBuffer(); }).then(function (b) {
+    /* ! cut where a WebM cluster begins (1F 43 B6 75), past the middle: a
+       player appends whole segments, never half a cluster */
+    var a = new Uint8Array(b), meta = Math.floor(a.length / 2), k;
+    for (k = meta; k + 4 < a.length; k++) if (a[k] === 0x1f && a[k + 1] === 0x43 && a[k + 2] === 0xb6 && a[k + 3] === 0x75) break;
+    meta = k;
+    sb.addEventListener('updateend', function f() {
+      sb.removeEventListener('updateend', f);
+      s('primo pezzo, buffered fino a ' + (sb.buffered.length ? sb.buffered.end(0).toFixed(1) : 0));
+      sb.addEventListener('updateend', function () { ms.endOfStream(); s('secondo pezzo ed endOfStream, buffered fino a ' + (sb.buffered.length ? sb.buffered.end(0).toFixed(1) : 0)); v.play(); });
+      sb.appendBuffer(a.subarray(meta));
+    });
+    sb.appendBuffer(a.subarray(0, meta));
+  });
+});
+v.addEventListener('playing', function () { s('playing'); });
+v.addEventListener('ended', function () { s('ended a t=' + v.currentTime.toFixed(1)); });
+</script></body></html>

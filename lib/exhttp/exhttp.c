@@ -1279,6 +1279,10 @@ static int tls_sopra(ExHttpTrasporto *t, const ExHttpTrasporto *tcp,
  * mezzo appena fatto — un POST non si ripete alla redirezione successiva, e
  * questa e' anche la regola dell'HTTP. */
 static const char *g_corpo = 0;
+/* (P13) the body's length when it is not a C string (exhttp_posta_n): 0 =
+ * up to its zero, as always. It stays while the request runs, redirections
+ * included: they drop g_corpo, and the length is then not read. */
+static unsigned int g_corpo_n = 0;
 
 /* =============================================================================
  * I BISCOTTI — exhttp non li tiene, li chiede e li consegna
@@ -1812,7 +1816,7 @@ static int scambio(ExHttpTrasporto *t, const HttpUrl *u,
         /* ! SI CHIEDONO A OGNI SALTO, non una volta per chiamata: dopo una
          * redirezione l'host puo' essere un altro, e i biscotti sono di chi
          * li ha messi. */
-        static char bis[1024];
+        static char bis[8192];   /* (P13) the Cookie header: RFC 6265 wants 4096 a cookie */
 
         bis[0] = '\0';
         if (g_bis_chiedi)
@@ -1828,7 +1832,8 @@ static int scambio(ExHttpTrasporto *t, const HttpUrl *u,
          * in una seconda scrittura: la sua dimensione non c'entra piu' niente
          * con questo buffer. */
         corpo_len = 0;
-        if (g_corpo) while (g_corpo[corpo_len]) corpo_len++;
+        if (g_corpo && g_corpo_n) corpo_len = g_corpo_n;
+        else if (g_corpo) while (g_corpo[corpo_len]) corpo_len++;
         n = http_richiesta_testa_da(req, sizeof(req), u, g_agente,
                                     g_corpo ? (long)corpo_len : -1L, 1, bis,
                                     g_da_attivo);
@@ -2254,6 +2259,23 @@ int exhttp_posta(const char *url, const char *corpo,
     return r;
 }
 
+/* (P13, 26 November 2026) The same with a body of n bytes, zeros included:
+ * a page's fetch can send bytes (YouTube compresses its requests with gzip).
+ * The Content-Type is the page's (exhttp_intestazioni), as for exhttp_posta. */
+int exhttp_posta_n(const char *url, const void *corpo, unsigned int n,
+                   unsigned char *buf, unsigned int max, ExHttpEsito *e)
+{
+    int r;
+
+    if (!corpo || n == 0) return exhttp_posta(url, "", buf, max, e);
+    g_corpo   = (const char *)corpo;
+    g_corpo_n = n;
+    r = exhttp_prendi(url, buf, max, e);
+    g_corpo   = 0;
+    g_corpo_n = 0;
+    return r;
+}
+
 /* ! L'INDIRIZZO CHE SI CHIEDE PUO' ESSERE PIU' LUNGO DI QUELLO CHE SI RENDE
  * (28 settembre 2026). EXHTTP_URL_MAX (600) e' la misura di ExHttpEsito.finale,
  * che attraversa il confine della libreria e non si tocca; ma qui dentro
@@ -2291,7 +2313,9 @@ int exhttp_prendi(const char *url, unsigned char *buf, unsigned int max,
 
     for (salto = 0; salto <= EXHTTP_SALTI_MAX; salto++) {
         HttpUrl         u;
-        HttpRisposta    r;
+        /* (P13) static: with cookies of 4 KB it is ~70 KB, not for the stack;
+         * exhttp works in one thread, and a second request waits (g_in_rete) */
+        static HttpRisposta r;
         ExHttpTrasporto t;
         int             ok, riusata = 0;
         const char     *corpo_di_prima;
@@ -2628,7 +2652,7 @@ tcp_no:
 static int par_manda(ExHttpRichiesta *R)
 {
     static char req[12 * 1024];
-    static char bis[1024];
+    static char bis[8192];   /* (P13) as above */
     int         n;
 
     bis[0] = '\0';
@@ -2938,7 +2962,7 @@ int exhttp_avanza(ExHttpRichiesta *R)
         strcpy(R->proto, R->c->h2 ? "h2" : "http/1.1");
         if (R->c->h2) {
             /* ! HTTP/2: the same request as par_manda, as header fields */
-            static char        bis[1024], aut[HTTP_HOST_MAX + 8];
+            static char        bis[8192], aut[HTTP_HOST_MAX + 8];   /* (P13) bis: the Cookie header */
             const char        *nomi[4], *valori[4];
             int                k = 0, id;
 

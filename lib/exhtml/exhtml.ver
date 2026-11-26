@@ -11,6 +11,8 @@
         html_attr;
         html_crea_elemento;
         html_crea_testo;
+        html_crea_commento;
+        html_ombre_dichiarate;
         html_aggiungi;
         html_inserisci_prima;
         html_togli;

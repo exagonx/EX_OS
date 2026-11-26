@@ -384,6 +384,7 @@ declare sub ex_screen_size cdecl alias "ex_screen_size" (byval larghezza as ulon
 #define EX_FIGLIO                EX_CHILD
 #define EX_SPENTO                EX_DISABLED
 #define EX_COMPARSA              EX_POPUP
+#define EX_SOTTOMENU             EX_SUBMENU
 #define EX_NERO                  EX_BLACK
 #define EX_BIANCO                EX_WHITE
 #define EX_GRIGIO                EX_GRAY

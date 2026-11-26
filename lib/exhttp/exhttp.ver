@@ -9,6 +9,7 @@
         exhttp_scambio;
         http_url;
         exhttp_posta;
+        exhttp_posta_n;
         exhttp_biscotti;
         exhttp_biscotti_schema;
         exhttp_attesa;

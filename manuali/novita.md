@@ -6,6 +6,8 @@
 
 **Contents**
 
+- [Firefox goes full screen, YouTube included: wserver takes the frame off an open window (wserver 0.020, exwin.so 0.028, voce 121) — tested in QEMU and on the test PC](#firefox-goes-full-screen-youtube-included-wserver-takes-the-frame-off-an-open-window-wserver-0020-exwinso-0028-voce-121--tested-in-qemu-and-on-the-test-pc)
+- [Firefox starts sooner: libraries and omni.ja are read when needed, symbols through hash tables, no more freezes at start (kernel 0.371, voce 120) — tested in QEMU and on the test PC](#firefox-starts-sooner-libraries-and-omnija-are-read-when-needed-symbols-through-hash-tables-no-more-freezes-at-start-kernel-0371-voce-120--tested-in-qemu-and-on-the-test-pc)
 - [The file manager hides dot files and extensions on request, and dragged rows show a sheet beside the pointer (filemgr 0.016, exwin.so 0.027, voce 114) — tested in QEMU](#the-file-manager-hides-dot-files-and-extensions-on-request-and-dragged-rows-show-a-sheet-beside-the-pointer-filemgr-0016-exwinso-0027-voce-114--tested-in-qemu)
 - [Exilla plays video and sound again with several processes, YouTube included (exos-media.js) — tested in QEMU](#exilla-plays-video-and-sound-again-with-several-processes-youtube-included-exos-mediajs--tested-in-qemu)
 - [ExWin has a screen saver: a text or a circle after the minutes chosen, the screen switched off by dpms.drv (salvaschermo 0.001, pm 0.031, voce 116) — tested in QEMU](#exwin-has-a-screen-saver-a-text-or-a-circle-after-the-minutes-chosen-the-screen-switched-off-by-dpmsdrv-salvaschermo-0001-pm-0031-voce-116--tested-in-qemu)
@@ -261,6 +263,41 @@
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### Firefox goes full screen, YouTube included: wserver takes the frame off an open window (wserver 0.020, exwin.so 0.028, voce 121) — tested in QEMU and on the test PC
+
+- **What was wrong**: YouTube's full screen button left the video in the window, with frame and
+  title, under the taskbar: wserver could not take the frame off a window that was already open, and
+  Firefox's widget treated full screen as maximized.
+- **Now**: wserver 0.020 has `WIN_MSG_TELAIO`: full screen (no frame, the whole screen, above the
+  taskbar), back as before, or no frame where it stands. A full-screen window stays on top while the
+  focus is its own, of its program or of a window opened after it; switching program brings the
+  taskbar back. exwin.so 0.028 offers it to every program as `ex_window_frame(f, modo)`, and
+  Firefox's widget uses it for the DOM full screen (YouTube), F11 and Esc.
+- **Tested** with `tools/prova_telaio.sh` at 32 and 64 bit (five steps, photographs and colours) and
+  `tools/exilla/prova-schermo-intero.sh`: a click asks `requestFullscreen` as YouTube's button does,
+  the page gets 800x600 with no frame or taskbar, Esc and F11 go back and forth. On the test PC YouTube's videos go full screen.
+
+### Firefox starts sooner: libraries and omni.ja are read when needed, symbols through hash tables, no more freezes at start (kernel 0.371, voce 120) — tested in QEMU and on the test PC
+
+- **What was slow**: at the first map of a library EX-OS read the whole object (libxul, 310 MB with
+  Firefox's code) and omni.ja (50 MB) before a line of Firefox ran, and the loader looked up every
+  symbol by walking the whole table of every module. Linux and Windows map them and read only the
+  pages the code touches.
+- **Now** (kernel 0.371, `/lib/ld-exos.so`): symbols are found through `DT_GNU_HASH` (a bloom filter
+  and a few comparisons) or `DT_HASH`; a file mapped without writing and the whole read-only pages of
+  a library come from the file cache at the first touch (`kernel/mm/zone.c`), with 128 KB read around
+  the missing page in one request and the neighbours already in the cache mapped with it, as Linux
+  does. A page the cache already has costs no file lock.
+- **A freeze found while measuring**: with two processors Firefox could stop the whole system at
+  start (3 starts out of 8 in QEMU): two threads waiting for the same file yielded to each other
+  while holding the kernel's lock, and processor 0 (clock and disk) never got in. Now yielding always
+  lets the other processors through: 0 freezes in 10 starts.
+- **Measured** in QEMU with `tools/exilla/prova-avvio.sh` (each round from a fresh disk): first start
+  90-159 s (before: 104-304 s), second start 24-74 s (before: 36-95 s); three tabs take 774 MB
+  (before: 784). The first start still waits on the disk while Firefox writes its profile: every
+  write on ext4 goes to the disk at once. On the test PC (.253, 26/11) the user: Exilla as fast as
+  Linux and Windows on the same machine. `tools/prova-dl` at 32 and 64 bit all right.
 
 ### The file manager hides dot files and extensions on request, and dragged rows show a sheet beside the pointer (filemgr 0.016, exwin.so 0.027, voce 114) — tested in QEMU
 

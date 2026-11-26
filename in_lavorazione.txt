@@ -226,6 +226,8 @@ GRUPPO  VOCI             COSA
  --     61 76            solo se ricompare (76: orologio in FAULT, 3/11)
  --     77               seguiti del 3-4/11: H.264 Firefox, Firefox 32, repo 64 da
                          pubblicare, ExPackage sul portatile, statici rimasti
+ --     122              (26/11) PM: NEL MENU L'ICONA E' IL PULSANTE, IL NOME A
+                         DESTRA FUORI; I GRUPPI CON UN TRIANGOLINO A DESTRA
  --     121              (25/11) EXILLA: YOUTUBE NON VA A SCHERMO INTERO (il widget lo
                          tratta come ingrandito; wserver senza messaggio per il telaio)
  --     120              (25/11) EXILLA 90 s CONTRO 14: libxul letta intera, simboli
@@ -10575,6 +10577,38 @@ tools/netinst/velocita tolto da netinst.
       17/11, DOPO IL RIAVVIO NELLA 0.343: il telnetd 0.015 dell'avvio, porta
       23, telnet_piu_prova.py 6 su 6.
 
+  122. PM: L'ASPETTO DELL'ELENCO DEI PROGRAMMI (26/11/2026, appunto
+      dell'utente, in coda). L'utente: "su program manager l'elenco dei
+      programmi applicazioni gruppi sono pulsanti, sarebbe opportuno
+      cambiare la grafica estetica dove il pulsante con l'icona e cliccabile
+      lato sinistro mentre il testo con la descrizione a destra fuori dal
+      pulsante, i gruppi devono avere una forma di triangolino a destra per
+      indicare che sono espandibili".
+      OGGI (letto in exwin/bin/pm/pm.c 0.031): menu_apri e sotto_apri fanno
+      ogni voce con crea_voce = ex_create("button", nome, ...) largo tutto il
+      menu (MENU_W - 8, VOCE_H - 2), l'icona dentro (ex_set_icon); i gruppi
+      sono "Nome..." e il loro elenco si apre accanto al clic.
+      PROPOSTA (da decidere con l'utente):
+      - ogni riga: a sinistra un pulsante quadrato (VOCE_H - 2) con solo
+        l'icona, che si preme; a destra, fuori dal pulsante, il nome come
+        etichetta; anche il clic sul nome avvia (una riga intera da colpire
+        e' piu' comoda, come nei menu di ogni scrivania);
+      - i gruppi senza "...": un triangolino pieno che punta a destra in
+        fondo alla riga (come la freccia dei sottomenu di Windows e GTK),
+        disegnato da exwin.so e non con un carattere del font;
+      - la voce scelta con la tastiera (g_mv_sel, g_sv_sel) evidenziata su
+        tutta la riga, non solo sul pulsante;
+      - con le icone spente (g_vedi_icone = 0) il pulsante non c'e' e resta
+        il nome.
+      DA DECIDERE: un controllo nuovo in exwin.so (una "voce di menu" con
+      icona, testo e triangolino, utile anche ad altri programmi) oppure
+      pulsante + etichetta + triangolino solo dentro pm. Consiglio il
+      controllo in exwin.so: un oggetto per riga invece di due o tre, la
+      tastiera e l'evidenziazione in un posto solo, e i menu degli altri
+      programmi lo possono usare.
+      Prova: tools/prova_menu (fotografie e colori) a 32 e 64 bit, menu e
+      sottomenu, con e senza icone, a 1366x768.
+
   121. EXILLA: IL VIDEO DI YOUTUBE NON VA A SCHERMO INTERO (25/11/2026, appunto
       dell'utente, in coda). "i video di youtube non vengono portati a
       fullscreen facendo click sull'ingrandimento".
@@ -10591,6 +10625,26 @@ tools/netinst/velocita tolto da netinst.
       espone; il widget di Gecko lo usa per nsSizeMode_Fullscreen e Esc
       torna indietro. Prima: DIARIO di nsWindow sul .253 per vedere cosa
       arriva al clic (SetSizeMode 3?).
+      STATO 26/11 NOTTE, PROVATO IN QEMU (non ancora sul .253):
+      - wserver 0.020: WIN_MSG_TELAIO (win_proto.h) con WIN_TELAIO_SCHERMO
+        (senza telaio, 0,0, tutto lo schermo, sopra la barra), _NORMALE
+        (torna dov'era, col telaio) e _NUDO (senza telaio dove sta). La
+        finestra intera sta sopra a tutto finche' il fuoco e' suo, di una
+        finestra aperta dopo o del suo stesso programma (intera_in_cima):
+        un EX_TOPMOST aperto dopo le va sopra, cambiando programma la barra
+        torna;
+      - exwin.so 0.028: ex_window_frame(f, modo) (ex_telaio);
+      - widget di Gecko (firefox-main/widget/exos/nsWindow.cpp):
+        MakeFullScreen e nsSizeMode_Fullscreen mandano TELAIO_SCHERMO,
+        l'uscita TELAIO_NORMALE; SizeModeChanged arriva a Gecko, che
+        finisce il cambio (FinishFullscreenChange), Esc e F11 compresi.
+      PROVE: tools/prova_telaio.sh 32 e 64 a posto (cinque passi,
+      fotografie e colori); tools/exilla/prova-schermo-intero.sh a 64 bit
+      a posto: requestFullscreen al clic come il pulsante di YouTube "FS 1
+      800x600", nessun telaio ne' barra negli angoli; Esc "FS 0" e il
+      telaio torna; F11 avanti e indietro. Anche a 32 bit (Gecko 32
+      ricostruito), tutto a posto. SUL .253 (26/11, 0.371) l'utente: "adesso
+      i video si ingrandiscono a schermo intero perfetto". FATTA.
 
   120. EXILLA PARTE IN 90 s E PIU', SU WINDOWS E LINUX LA STESSA VERSIONE IN 14
       (25/11/2026, appunto dell'utente, in coda). L'utente: "cosa rende firefox
@@ -10650,6 +10704,8 @@ tools/netinst/velocita tolto da netinst.
       a cache fredda): partenza 0ccef66d 104-304 s e 36-95 s; 0.371
       90-159 s e 24-74 s. Memoria con tre schede 774 MB (0.370: 784).
       La varianza in QEMU e' grande: il numero vero va preso sul .253.
+      SUL .253 (26/11, netupdate a 0.371, riavvio, verifica a posto),
+      l'utente: "Exilla e' veloce quanto linux e windows perfetto". FATTA.
       RESTA (misurato, non di questa voce): ogni scrittura su ext4 tiene il
       lucchetto dei file 0,5-4 s, tutto tempo del disco: 20-280 comandi
       uno dopo l'altro, ~45 ms l'uno (scrittura sincrona, nessuna cache

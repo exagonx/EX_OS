@@ -655,7 +655,13 @@ static unsigned char g_imm_buf[IMM_BYTE_MAX];
  * cut short is a syntax error at its last line. One byte is always kept free
  * for the zero QuickJS wants (see un_script). BSS: untouched, it costs
  * nothing. */
-static unsigned char g_js_buf[PAGINA_MAX_PR];
+/* ! 8 MB, NOT A PAGE (P13, 26 November 2026): YouTube's application
+ * (ytmainappweb kevlar_base, its ES5 build over 8 MB) and its sheet are over
+ * 3 MB, and came in cut at
+ * 3145727 bytes - a script cut short does not run, and the page stayed a
+ * skeleton without a word */
+#define JS_BUF_MAX (24u * 1024u * 1024u)
+static unsigned char g_js_buf[JS_BUF_MAX];
 
 static int  (*g_img_carica)(const unsigned char *, unsigned int, EximgBitmap *);
 static void (*g_img_libera)(EximgBitmap *);
@@ -1327,13 +1333,29 @@ static void dico(const char *s);
  * log arrivano lo stesso alla seriale, dove le prove le leggono, e a `dmesg`. */
 static void diario(const char *fmt, ...)
 {
-    char riga[200];
+    /* (P13) 1 KB: the addresses of modern scripts are longer than 200 */
+    char riga[1024];
     __builtin_va_list ap;
 
     __builtin_va_start(ap, fmt);
     vsnprintf(riga, sizeof(riga), fmt, ap);
     __builtin_va_end(ap);
-    log_seriale(riga);
+    /* ! the serial line is cut near 200 characters: a long one goes in
+     * pieces, each one continued with "+ " */
+    if (strlen(riga) <= 180) { log_seriale(riga); return; }
+    {
+        char         pezzo[200];
+        unsigned int n = (unsigned int)strlen(riga), k = 0;
+
+        while (k < n) {
+            unsigned int l = n - k > 170 ? 170 : n - k;
+
+            snprintf(pezzo, sizeof(pezzo), "%s%.*s%s", k ? "+ " : "", (int)l, riga + k,
+                     (k + l < n && riga[k + l - 1] != '\n') ? "\n" : "");
+            log_seriale(pezzo);
+            k += l;
+        }
+    }
 }
 
 static void selezione_copia(void)
@@ -2170,7 +2192,7 @@ static int imp_scrivi(void)
  * file a ogni giro vorrebbe dire venti scritture su un CD che non si scrive, e
  * venti messaggi d'errore.
  * ========================================================================== */
-#define BIS_TESTO_MAX  (16u * 1024u)
+#define BIS_TESTO_MAX  (300u * 1024u)   /* (P13) 64 cookies of 4 KB, as BIS_VAL_MAX */
 
 static Dispensa g_bis;
 static char     g_bis_perc[IMP_PERC_MAX] = "";
@@ -2469,7 +2491,7 @@ static void bis_dallo_script(void)
     const char  *s;
     HttpUrl      u;
     char         pezzo[BIS_NOME_MAX + BIS_VAL_MAX + 4];
-    static char  gia[4096];
+    static char  gia[EXDOM_BISCOTTI_MAX];
     unsigned int i = 0, k;
 
     { ExDom *D = bis_ponte();
@@ -3208,7 +3230,7 @@ static void immagini_vicine(void)
  * changes the page, and only the files not yet asked for are asked.
  * ========================================================================== */
 #define CAR_FILE_MAX   24
-#define CAR_FILE_BYTE  (2u * 1024u * 1024u)
+#define CAR_FILE_BYTE  (4u * 1024u * 1024u)    /* (P13) YouTube Sans, variable, is over 2 MB */
 
 static void caratteri_della_pagina(void)
 {
@@ -3526,6 +3548,9 @@ static void js_uscita(const char *t, unsigned int n, void *dato)
     }
     riga[k] = '\0';
     if (k) dico(riga);
+    /* (P13) EXB_CONSOLE=1: the page's console in the log too, whole - to
+     * see why a page does not start */
+    if (getenv("EXB_CONSOLE")) printf("exbrowser: console: %.*s\n", (int)n, t);
 }
 
 
@@ -3684,11 +3709,18 @@ static int rete_per_script(void *dato, ExDomRichiesta *r)
     if (r->intestazioni && r->intestazioni[0]) exhttp_intestazioni(r->intestazioni);
     g_in_rete = 1;
     {
-        int ok = post ? exhttp_posta(url, r->corpo ? r->corpo : "",
-                                     g_xhr_buf, XHR_MAX, &e)
-                      : exhttp_prendi(url, g_xhr_buf, XHR_MAX, &e);
+        /* (P13) a body of bytes (r->corpo_n): exhttp_posta_n */
+        int ok = (post && r->corpo && r->corpo_n)
+                 ? exhttp_posta_n(url, r->corpo, r->corpo_n, g_xhr_buf, XHR_MAX, &e)
+                 : post ? exhttp_posta(url, r->corpo ? r->corpo : "",
+                                       g_xhr_buf, XHR_MAX, &e)
+                        : exhttp_prendi(url, g_xhr_buf, XHR_MAX, &e);
 
         g_in_rete = 0;
+        /* (P13) the page's own requests in the log, as the sheets and
+         * scripts are: without them YouTube's calls were invisible */
+        diario("exbrowser: script %s %d, %u byte%s: %s\n", r->metodo ? r->metodo : "GET",
+               ok ? e.codice : 0, ok ? e.byte : 0u, r->corpo_n ? " (corpo di byte)" : "", url);
         if (!ok) {
             /* ! «NON E' PARTITA» E «IL SERVER HA DETTO DI NO» SONO DUE COSE, e
              * la differenza esce da qui: rendendo 0, fetch rifiuta la promessa
@@ -3723,6 +3755,7 @@ static void motore_chiudi(void)
     lav_tutti_via();
     idb_via();
     wasm_tutti_via();
+    media_tutti_via();
 
     if (g_js_mem)  { free(g_js_mem);  g_js_mem = 0; }
     if (g_dom_mem) { free(g_dom_mem); g_dom_mem = 0; }
@@ -3800,7 +3833,7 @@ static int motore_apri(void)
      * ponte ne tiene una copia e ci lascia scrivere sopra; a raccogliere quel
      * che gli script hanno scritto ci pensa bis_dallo_script(). */
     {
-        static char miei[BIS_TESTO_MAX / 8];
+        static char miei[EXDOM_BISCOTTI_MAX];   /* (P13) what document.cookie can hold */
 
         bis_per_script(miei, sizeof(miei));
         exdom_biscotti_metti(g_dom, miei);
@@ -3962,6 +3995,8 @@ static int ha_gestori_attributo(void)
 
 /* Runs script node i if it should run. Returns 1 if it was handled (run, or
  * given up for good), 0 if it must be looked at again later. */
+static int g_script_rimandati = 0;   /* (P13) one waits for the network: see un_script */
+
 static int un_script(int i, int dinamico)
 {
     const char *src;
@@ -3984,7 +4019,23 @@ static int un_script(int i, int dinamico)
         char         url[NAV_URL_MAX];
         unsigned int n = 0;
 
-        if (!risolvi(src, url, sizeof(url))) { script_evento(i, "error"); return 1; }
+        if (!risolvi(src, url, sizeof(url))) {
+            diario("exbrowser: script, indirizzo che non si risolve: %s\n", src);
+            script_evento(i, "error");
+            return 1;
+        }
+
+        /* ! THE NETWORK BUSY IS NOT AN ERROR (P13, 26 November 2026): a
+         * page's timers run while another fetch waits (the fonts, a sheet),
+         * and a script they add found prendi_in_rete refusing at once - code
+         * 0, "error" on the element. YouTube's loader rejected its promise
+         * ("Error: db") and tried again, five times, never with the network
+         * free. It is left for the next look (esegui_script_nuovi). */
+        if (g_in_rete && !e_locale(url) && !gia_in_casa(url)) {
+            g_script_fatto[i] = 0;
+            g_script_rimandati = 1;
+            return 0;
+        }
 
         /* A script cut short is never run: its end would be a syntax
          * error, and half of a library is worse than none. */
@@ -3999,9 +4050,14 @@ static int un_script(int i, int dinamico)
         } else if (!cache_leggi(url, g_js_buf, sizeof(g_js_buf) - 1, &n)) {
             ExHttpEsito e;
 
+            memset(&e, 0, sizeof(e));
+
             dico("script...");
             if (!prendi_in_rete(url, g_js_buf, sizeof(g_js_buf) - 1, &e) ||
                 e.codice != 200 || e.byte == 0 || e.troncata) {
+                /* (P13) said: a page waits on the error, and it was silent */
+                diario("exbrowser: script non preso (%d, %u byte%s): %s\n", e.codice,
+                       e.byte, e.troncata ? ", troncato" : "", url);
                 script_evento(i, "error");
                 return 1;
             }
@@ -4096,6 +4152,7 @@ static void esegui_script_nuovi(void)
     int i;
 
     if (!g_js_acceso || !g_js) return;
+    g_script_rimandati = 0;
     for (i = 0; i < (int)g_doc.nodi_n && i < (int)g_nodi_max; i++)
         if (!g_script_fatto[i]) un_script(i, 1);
 }
@@ -4433,9 +4490,48 @@ unsigned int lav_arena(void)
     return js_arena();
 }
 
+/* =============================================================================
+ * WHAT A MEDIA ELEMENT NEEDS FROM THE BROWSER (browser_media.c, P13)
+ * ========================================================================== */
+#define MEDIA_MAX (48u * 1024u * 1024u)
+
+/* the whole file of a <video>/<audio>, malloc'd: from the cache or the
+ * network, as an image; ! 48 MB at most, a whole file before playing */
+int media_scarica(const char *url, unsigned char **dati, unsigned int *n)
+{
+    char           ass[NAV_URL_MAX];
+    unsigned char *b;
+    ExHttpEsito    e;
+
+    *dati = 0; *n = 0;
+    if (!risolvi(url, ass, sizeof(ass))) return 0;
+    b = (unsigned char *)malloc(MEDIA_MAX);
+    if (!b) return 0;
+    if (cache_leggi(ass, b, MEDIA_MAX, n)) { *dati = b; return 1; }
+    if (!prendi_in_rete(ass, b, MEDIA_MAX, &e) || e.codice != 200 || e.troncata) { free(b); return 0; }
+    *n = e.byte;
+    *dati = b;
+    return 1;
+}
+
+/* a video knows its size: the page is laid out again */
+void media_ridisegna(void)
+{
+    if (!g_dom) return;
+    impagina();
+    disegna();
+}
+
+int media_nodo(ExJsVal v)
+{
+    return g_dom ? exdom_nodo(g_dom, v) : -1;
+}
+
 static void rifai_se_cambiato(void)
 {
     if (!g_dom) return;
+    /* (P13) a script left for a free network: now, if it is free */
+    if (g_script_rimandati && !g_in_rete) esegui_script_nuovi();
     if (html_versione(&g_doc) == g_vista) {
         /* a script drew on a <canvas> (P10): the page as it is, again */
         if (dis_tela_sporca()) disegna();
@@ -4664,7 +4760,9 @@ static void finestre_da_script(void);
 
 static int segui_location(void)
 {
-    char dove[EXHTTP_URL_MAX], assoluto[EXHTTP_URL_MAX];
+    /* (P13) NAV_URL_MAX, not EXHTTP_URL_MAX (600): Google sends its search
+     * back to itself with the token of its check, 962 characters */
+    static char dove[NAV_URL_MAX], assoluto[NAV_URL_MAX];
 
     finestre_da_script();
     if (!g_dom) return 0;

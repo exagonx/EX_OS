@@ -134,6 +134,7 @@ typedef struct {
 #define CL_MDI         17
 #define CL_MDIFIGLIO   18
 #define CL_IMMAGINE    19
+#define CL_VOCEMENU    20   /* 0.029, voce 122: icon button, name beside it, triangle */
 
 /* =============================================================================
  * ! AGGIUNGERE UN CONTROLLO: I SETTE POSTI, E SONO SEMPRE QUESTI
@@ -989,6 +990,13 @@ static ExWindow radice_h(ExWindow f)
     return o ? f : 0;
 }
 
+/* A menu item behaves as a button everywhere (press, release, Space, the
+ * lit face under the pointer, no focus on click): only its look differs. */
+static int come_pulsante(const Oggetto *o)
+{
+    return o->classe == CL_PULSANTE || o->classe == CL_VOCEMENU;
+}
+
 static unsigned int classe_da_nome(const char *c)
 {
     /* I nomi inglesi (3 ottobre 2026), poi quelli italiani di prima: un
@@ -1008,6 +1016,8 @@ static unsigned int classe_da_nome(const char *c)
     if (strcmp(c, "scrollbar")    == 0) return CL_SCORRI;
     if (strcmp(c, "mdichild")     == 0) return CL_MDIFIGLIO;
     if (strcmp(c, "image")        == 0) return CL_IMMAGINE;
+    if (strcmp(c, "menuitem")     == 0) return CL_VOCEMENU;
+    if (strcmp(c, "vocemenu")     == 0) return CL_VOCEMENU;
     if (strcmp(c, "finestra")     == 0) return CL_FINESTRA;
     if (strcmp(c, "pulsante")     == 0) return CL_PULSANTE;
     if (strcmp(c, "etichetta")    == 0) return CL_ETICHETTA;
@@ -1134,7 +1144,7 @@ static int accetta_fuoco(const Oggetto *o)
         Voci *V = voci_di(o);
         if (V && V->schede) return 0;
     }
-    return o->classe == CL_TESTO || o->classe == CL_PULSANTE ||
+    return o->classe == CL_TESTO || come_pulsante(o) ||
            o->classe == CL_TERMINALE || o->classe == CL_LISTA ||
            o->classe == CL_AREA || o->classe == CL_SPUNTA ||
            o->classe == CL_RADIO || o->classe == CL_SCORRI ||
@@ -4798,6 +4808,58 @@ static void disegna_oggetto_nudo(Oggetto *o)
      * deformarla, e un'icona deformata si nota subito. Si prende il lato piu'
      * corto e la si mette in mezzo.
      * ================================================================= */
+    /* =====================================================================
+     * THE MENU ITEM (0.029, voce 122, the user: "il pulsante con l'icona
+     * cliccabile lato sinistro mentre il testo con la descrizione a destra
+     * fuori dal pulsante, i gruppi ... un triangolino a destra").
+     * A square button with the icon on the left, the name beside it on the
+     * row's own background, a triangle at the end with EX_SUBMENU. The whole
+     * row is the target and lights up as a menu does (under the pointer,
+     * pressed, or chosen with the keys = focus): one look in every theme.
+     * Without an icon there is no square, only the name.
+     * ===================================================================== */
+    case CL_VOCEMENU: {
+        Oggetto     *rd  = radice(o->padre);
+        int          spazio = 0;    /* an icon somewhere in this menu: names line up */
+        int          fuoco = rd && rd->fuoco == (ExWindow)(o->maniglia);
+        int          luce = !(o->stile & EX_DISABLED) && (o->premuto || o->sopra || fuoco);
+        unsigned int ct   = luce ? TC.menu_sopra_testo : TC.testo;
+        int          tx   = x + 6;
+
+        ex_fill_rect(o->padre, x, y, o->w, o->h, luce ? TC.menu_sopra : TC.fondo);
+        if (!o->icona) {
+            unsigned int k;
+
+            for (k = 0; k < g_ogg_posti && !spazio; k++)
+                if ((*OGG(k)).usato && (*OGG(k)).classe == CL_VOCEMENU &&
+                    (*OGG(k)).padre == o->padre && (*OGG(k)).icona) spazio = 1;
+            if (spazio) tx = x + (int)o->h + 8;
+        }
+        if (o->icona) {
+            int          q    = (int)o->h;
+            int          lato = (int)o->icona_lato;
+            int          dx   = o->premuto ? 1 : 0;
+            unsigned int st   = 0, sotto;
+            ExTela       t;
+
+            if (o->premuto)              st |= EXT_PREMUTO;
+            if (o->sopra)                st |= EXT_SOPRA;
+            if (o->stile & EX_DISABLED)  st |= EXT_SPENTO;
+            if (tela_di(o->padre, &t)) (void)ext_pulsante_fondo(&t, g_tema, x, y, q, q, st);
+            sotto = o->premuto ? ext_mescola(TC.puls_giu_a, TC.puls_giu_b, 128)
+                               : ext_mescola(TC.puls_a, TC.puls_b, 128);
+            if (lato > q - 6) lato = q - 6;
+            if (lato > 0)
+                ex_icon_draw(o->padre, (ExIcon)o->icona, x + dx + (q - lato) / 2,
+                             y + dx + (q - lato) / 2, (unsigned int)lato, sotto);
+            tx = x + q + 8;
+        }
+        ex_draw_text(o->padre, tx, y + ((int)o->h - 16) / 2, o->titolo, ct);
+        if (o->stile & EX_SUBMENU)
+            triangolino(o->padre, x + (int)o->w - 14, y + ((int)o->h - 8) / 2, 8, 3, ct);
+        break;
+    }
+
     case CL_IMMAGINE: {
         /* ! QUI IL LATO E' QUELLO DEL RIQUADRO, NON QUELLO DI ex_set_icon.
          * Su un pulsante l'icona sta ACCANTO alla scritta e la sua misura e'
@@ -5917,10 +5979,23 @@ ExWindow ex_create(const char *classe, const char *titolo, unsigned int stile,
      * prende nessuno: una finestra appena aperta ignorerebbe la tastiera
      * finche' non ci si clicca dentro. Chi apre una finestra con una casella
      * si aspetta di poterci scrivere subito. */
-    if (cl != CL_FINESTRA && padre) {
+    /* (0.029) not a menu item: a menu lights a row under the pointer or
+     * after an arrow key, never the first one by itself */
+    if (cl != CL_FINESTRA && cl != CL_VOCEMENU && padre) {
         Oggetto *r = radice(padre);
         if (r && r->fuoco == 0 && accetta_fuoco(o))
             r->fuoco = (ExWindow)(i + 1);
+    }
+    /* (0.029) a menu lights the row under the pointer: its window asks for
+     * the pointer passing with no button, once */
+    if (cl == CL_VOCEMENU && padre) {
+        static unsigned int chiesto;
+        Oggetto *r = radice(padre);
+
+        if (r && r->win_id && r->win_id != chiesto) {
+            chiesto = r->win_id;
+            ex_track_mouse_hover(padre, 1);
+        }
     }
 
     /* ! UNA FINESTRA FIGLIA NASCE DAVANTI, che e' quello che si aspetta
@@ -7660,7 +7735,7 @@ static int tasto_al_fuoco(ExWindow f, unsigned int k)
      * in nessun programma. Trovato provando il lettore audio senza mouse.
      * Solo lo spazio, come per la spunta qui sotto: Invio resta al programma,
      * che di solito ne fa «il pulsante predefinito» della finestra. */
-    if (o->classe == CL_PULSANTE) {
+    if (come_pulsante(o)) {
         if (c != ' ' || (o->stile & EX_DISABLED)) return 0;
         manda_comando((ExWindow)(o->maniglia), o->id, 0);
         return 1;
@@ -7947,7 +8022,7 @@ static void sopra_ridisegna(ExWindow c, unsigned int acceso)
     Oggetto *o = c ? ogg(c) : 0;
     int ox, oy;
 
-    if (!o || !o->usato || o->classe != CL_PULSANTE || o->sopra == acceso) return;
+    if (!o || !o->usato || !come_pulsante(o) || o->sopra == acceso) return;
     o->sopra = acceso;
     if (!o->padre || !(o->stile & EX_VISIBLE)) return;
     disegna_oggetto(o);
@@ -8715,7 +8790,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 Oggetto *pr = ogg(g_premuto);
 
                 if (pr && pr->usato &&
-                    (pr->classe == CL_PULSANTE || pr->classe == CL_SPUNTA ||
+                    (come_pulsante(pr) || pr->classe == CL_SPUNTA ||
                      pr->classe == CL_RADIO)) {
                     unsigned int giu =
                         (controllo_in(f, (int)e.x, (int)e.y) == g_premuto);
@@ -8813,14 +8888,14 @@ static int prendi_msg(ExMsg *m, int bloccante)
                 int j, cambiato = 0;
 
                 if (pr && pr->usato &&
-                    (pr->classe == CL_PULSANTE || pr->classe == CL_SPUNTA ||
+                    (come_pulsante(pr) || pr->classe == CL_SPUNTA ||
                      pr->classe == CL_RADIO) &&
                     controllo_in(f, (int)e.x, (int)e.y) == g_premuto) {
                     cmd_id = pr->id;
                     cmd_h  = g_premuto;
                     /* ! E' QUI CHE LA SPUNTA CAMBIA, non alla pressione: fino
                      * a questo istante il dito poteva ancora scivolare via. */
-                    if (pr->classe != CL_PULSANTE) {
+                    if (!come_pulsante(pr)) {
                         spunta_scatta(pr);
                         cmd_lp = (long)pr->valore;
                     }
@@ -8976,7 +9051,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
              * un'area, un terminale. Un pulsante lo si raggiunge con Tab, che
              * e' il modo in cui lo si chiede apposta invece di ottenerlo per
              * caso premendolo. */
-            if (co && co->classe != CL_PULSANTE) fuoco_metti(f, c);
+            if (co && !come_pulsante(co)) fuoco_metti(f, c);
             if (co && co->classe == CL_TESTO) {
                 int ox, oy;
 
@@ -9000,7 +9075,7 @@ static int prendi_msg(ExMsg *m, int bloccante)
              * disegno lo mostra sprofondato, e il comando parte da
              * WIN_EV_MOUSE_SU se il puntatore e' ancora sopra.
              * ============================================================= */
-            if (co && co->classe == CL_PULSANTE) {
+            if (co && come_pulsante(co)) {
                 co->premuto = 1;
                 g_premuto   = c;
                 ridisegna_finestra(f);
@@ -9703,7 +9778,7 @@ void ex_item_rename(ExWindow c, unsigned int i, const char *testo)
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
  * 0.002 = ex_enable() ed EX_DISABLED; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.028"   /* 0.028: ex_window_frame, schermo intero e senza telaio (voce 121); 0.027: il foglio accanto al puntatore quando si trascinano righe di una lista, tre fogli per piu' righe (voce 114); 0.026: i temi (extema.c, debug/implementazione_TEMA001), il classico rifinito, ex_tema_colore e ex_tema_nome; 0.025: ex_update_rect (debug/bug_EXIDE001), gli appunti di misura sbagliata rifiutati (debug/bug_SHM001); 0.024: ex_open_file apre le cartelle col programma del tipo "/" (il file manager); 0.023: i programmi per tipo scelti in Impostazioni (ex_types, ex_type_set, ex_type_program, /boot/tipi.cfg); 0.022: tabulazioni nelle aree (ex_textarea_set_tab, ex_textarea_get_column), voci di menu spente (ex_menu_enable) */
+#define EXWIN_VERSIONE "0.029"   /* 0.029: il controllo "menuitem" (icona in un pulsante quadrato, nome accanto, triangolino con EX_SUBMENU; voce 122); 0.028: ex_window_frame, schermo intero e senza telaio (voce 121); 0.027: il foglio accanto al puntatore quando si trascinano righe di una lista, tre fogli per piu' righe (voce 114); 0.026: i temi (extema.c, debug/implementazione_TEMA001), il classico rifinito, ex_tema_colore e ex_tema_nome; 0.025: ex_update_rect (debug/bug_EXIDE001), gli appunti di misura sbagliata rifiutati (debug/bug_SHM001); 0.024: ex_open_file apre le cartelle col programma del tipo "/" (il file manager); 0.023: i programmi per tipo scelti in Impostazioni (ex_types, ex_type_set, ex_type_program, /boot/tipi.cfg); 0.022: tabulazioni nelle aree (ex_textarea_set_tab, ex_textarea_get_column), voci di menu spente (ex_menu_enable) */
 
 const char *ex_version(void) { return EXWIN_VERSIONE; }
 

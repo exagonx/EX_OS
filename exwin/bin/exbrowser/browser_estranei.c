@@ -321,6 +321,31 @@ static int est_misura(int v, VistaPezzo *p)
         if (w <= 0 || h <= 0 || g_ve->svg_n >= SVG_MAX) return VISTA_SALTA;
         p->w = w; p->h = h;
         g_ve->svg[g_ve->svg_n] = -(v + 2);
+        g_ve->svg_col[g_ve->svg_n] = 0;          /* a canvas */
+        p->rif = EST_SVG(g_ve->svg_n);
+        g_ve->svg_n++;
+        p->nel_flusso = 1;
+        return VISTA_PEZZO;
+    }
+
+    /* <video> (P13): its width/height attributes, or the media's own size
+     * once known (media_misura), or 300 x 150; drawn by browser_media.c.
+     * <audio> has no box (its controls are not drawn yet). */
+    if (uguale(nome, "audio")) return VISTA_SALTA;
+    if (uguale(nome, "video")) {
+        const char *aw = html_attr(&g_doc, v, "width"), *ah = html_attr(&g_doc, v, "height");
+        int         iw = 0, ih = 0, w, h;
+
+        media_misura(v, &iw, &ih);
+        w = (aw && numero(aw) > 0) ? (int)numero(aw) : (p->larg_css > 0 ? p->larg_css : (iw > 0 ? iw : 300));
+        if (ah && numero(ah) > 0) h = (int)numero(ah);
+        else if (p->alt_css > 0) h = p->alt_css;
+        else h = (iw > 0 && ih > 0) ? w * ih / iw : 150;
+        if (w > riga_w()) { h = h * riga_w() / w; w = riga_w(); }
+        if (w <= 0 || h <= 0 || g_ve->svg_n >= SVG_MAX) return VISTA_SALTA;
+        p->w = w; p->h = h;
+        g_ve->svg[g_ve->svg_n] = -(v + 2);
+        g_ve->svg_col[g_ve->svg_n] = 1;          /* 1: a video, 0: a canvas */
         p->rif = EST_SVG(g_ve->svg_n);
         g_ve->svg_n++;
         p->nel_flusso = 1;
@@ -810,7 +835,9 @@ static void est_disegna(int rif, int x, int y, int w, int h)
     if (EST_E_SVG(rif)) {
         int k = EST_CHI(rif);
 
-        if (k < g_ve->svg_n && g_ve->svg[k] <= -2)
+        if (k < g_ve->svg_n && g_ve->svg[k] <= -2 && g_ve->svg_col[k] == 1)
+            media_disegna(-g_ve->svg[k] - 2, x, y, w, h, area_x(), area_y(), area_w(), area_h());
+        else if (k < g_ve->svg_n && g_ve->svg[k] <= -2)
             dis_tela_disegna(-g_ve->svg[k] - 2, x, y, w, h, area_x(), area_y(), area_w(), area_h());
         else if (k < g_ve->svg_n)
             dis_svg(g_ve->svg[k], g_ve->svg_col[k], x, y, w, h, area_x(), area_y(), area_w(), area_h());

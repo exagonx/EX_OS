@@ -49,7 +49,16 @@ typedef struct {
     ExDom  *D;
     int     nodo;
     ExJsVal val;                    /* l'involucro, se e' gia' stato fatto */
+    /* (P9, web-platform-tests) style, dataset, classList: made once and kept
+     * HERE. They were kept as own properties of the wrapper, but the read
+     * hook comes first, so every read made a new one (an exotic entry each,
+     * and el.classList !== el.classList); after `el.classList = 'x'` the
+     * object was lost for good. */
+    ExJsVal sat[3];
 } Legame;
+#define SAT_STILE  0
+#define SAT_DATI   1
+#define SAT_CLASSI 2
 
 /* =============================================================================
  * GLI ASCOLTATORI
@@ -143,6 +152,10 @@ struct ExDom {
     void          *geom_dato;
     ExJsVal        muta;
     int            muta_su;
+    /* (P9, wpt) the custom elements' reactions after a property changed the
+     * tree (innerHTML, id, className...): see scrivi_prop */
+    ExJsVal        svuota;
+    unsigned int   cambi;
 };
 
 /* -----------------------------------------------------------------------------
@@ -411,6 +424,21 @@ static ExJsVal stringa_c(ExJsCtx *c, const char *s)
     return exjs_stringa(c, s ? s : "", -1);
 }
 
+/* the length of a UTF-8 string in UTF-16 units: what `.length` says in JS */
+static unsigned int lung_utf16(const char *s)
+{
+    unsigned int n = 0;
+    const unsigned char *p = (const unsigned char *)s;
+
+    /* one unit per character (every byte that is not a continuation), two
+     * for one outside the BMP; never past the zero, even on a broken string */
+    for (; *p; p++) {
+        if ((*p & 0xC0) == 0x80) continue;
+        n += (*p >= 0xF0) ? 2u : 1u;
+    }
+    return n;
+}
+
 static ExJsVal nome_del_nodo(ExDom *D, int n)
 {
     char         b[64];
@@ -418,6 +446,7 @@ static ExJsVal nome_del_nodo(ExDom *D, int n)
     const char  *s;
 
     if (D->doc->nodi[n].tipo == HTML_TESTO) return stringa_c(D->js, "#text");
+    if (D->doc->nodi[n].tipo == HTML_COMMENTO) return stringa_c(D->js, "#comment");
 
     /* ! IL NOME DEL TAG ESCE IN MAIUSCOLO, e dentro l'albero sta in minuscolo.
      * Non e' un'incoerenza: e' quello che il DOM promette — `nodeName` di un
@@ -466,6 +495,22 @@ static ExJsVal figli_vettore(ExDom *D, int n, int solo_elementi)
     return v;
 }
 
+
+/* ! AN EVENT HANDLER PROPERTY IS on + LOWERCASE LETTERS (P13, 26 November
+ * 2026): onclick, onanimationend. Any "on..." was taken, and a method of a
+ * custom element's class named onYtAction_ read as null instead of coming
+ * from its prototype: YouTube's application threw while being created
+ * ("cannot read property 'bind' of null"), and stayed a skeleton. */
+static int nome_gestore(const char *nome)
+{
+    const char *p;
+
+    if (nome[0] != 'o' || nome[1] != 'n' || !nome[2]) return 0;
+    for (p = nome + 2; *p; p++)
+        if (*p < 'a' || *p > 'z') return 0;
+    return 1;
+}
+
 static int leggi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori)
 {
     Legame   *L = (Legame *)dato;
@@ -481,7 +526,8 @@ static int leggi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori)
     if (ugu(nome, "nodeType")) {
         /* 1 = elemento, 3 = testo: sono i numeri del DOM, non i nostri. Il
          * codice delle pagine li scrive a mano. */
-        *fuori = exjs_numero(c, e_frammento(d, n) ? 11.0 : elemento ? 1.0 : 3.0);
+        *fuori = exjs_numero(c, e_frammento(d, n) ? 11.0 : elemento ? 1.0 :
+                                d->nodi[n].tipo == HTML_COMMENTO ? 8.0 : 3.0);
         return 1;
     }
     if (ugu(nome, "nodeName"))  {
@@ -494,6 +540,15 @@ static int leggi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori)
         int modo = 0, o = html_legato(d, HTML_LEGAME_OMBRA, n, &modo);
 
         *fuori = (o >= 0 && modo == 1) ? exdom_avvolgi(D, o) : exjs_nullo();
+        return 1;
+    }
+    /* (P9, wpt) the shadow root even when closed, for the prelude only: the
+     * custom elements inside a closed shadow tree are connected with their
+     * host, and the prelude walks there to call connectedCallback */
+    if (elemento && ugu(nome, "__exos_ombra")) {
+        int modo = 0, o = html_legato(d, HTML_LEGAME_OMBRA, n, &modo);
+
+        *fuori = (o >= 0) ? exdom_avvolgi(D, o) : exjs_nullo();
         return 1;
     }
     if (e_ombra(d, n) && ugu(nome, "host")) {
@@ -608,19 +663,28 @@ static int leggi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori)
         }
     }
     if (ugu(nome, "outerHTML"))  { *fuori = marcatore(D, n, 1); return 1; }
+    if (d->nodi[n].tipo == HTML_COMMENTO && ugu(nome, "textContent")) {
+        *fuori = stringa_c(c, d->arena + d->nodi[n].testo);
+        return 1;
+    }
     if (ugu(nome, "textContent") || ugu(nome, "innerText")) {
         *fuori = contenuto_testo(D, n);
         return 1;
     }
 
-    /* --- solo i nodi di testo ----------------------------------------- */
+    /* --- solo i nodi di testo (e i commenti, P9) ----------------------- */
     if (!elemento) {
+        const char *tt = (d->nodi[n].tipo == HTML_COMMENTO) ? d->arena + d->nodi[n].testo
+                                                             : html_testo(d, n);
+
         if (ugu(nome, "nodeValue") || ugu(nome, "data")) {
-            *fuori = stringa_c(c, html_testo(d, n));
+            *fuori = stringa_c(c, tt);
             return 1;
         }
         if (ugu(nome, "length")) {
-            *fuori = exjs_numero(c, (double)lung(html_testo(d, n)));
+            /* in UTF-16 units, as the DOM counts: the prelude's CharacterData
+             * methods count the same way */
+            *fuori = exjs_numero(c, (double)lung_utf16(tt));
             return 1;
         }
         return 0;
@@ -697,7 +761,7 @@ static int leggi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori)
      * pagine ci contano per due cose: sapere se ce n'e' gia' uno, e
      * richiamarlo a mano. Rendere `undefined` avrebbe fatto passare il primo
      * controllo e fallire il secondo. */
-    if (nome[0] == 'o' && nome[1] == 'n' && nome[2]) {
+    if (nome_gestore(nome)) {
         int i = asc_trova(D, n, nome + 2, exjs_indefinito(), 0, 1);
 
         *fuori = (i >= 0) ? D->asc[i].f : exjs_nullo();
@@ -745,7 +809,26 @@ static int leggi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori)
 /* =============================================================================
  * LE PROPRIETA' CHE SI SCRIVONO
  * ========================================================================== */
+static int scrivi_prop_vero(ExJsCtx *c, void *dato, const char *nome, ExJsVal v);
+
+/* ! A PROPERTY THAT CHANGED THE TREE ENDS LIKE A DOM METHOD (P9, 26 November
+ * 2026, web-platform-tests custom-elements/): the custom elements' reactions
+ * run before the assignment returns, as [CEReactions] wants. The prelude
+ * wraps the methods; a property is ours, and the hook it gave (the second
+ * argument of __exos_osserva) is called here, outside su_cambio. */
 static int scrivi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal v)
+{
+    Legame      *L = (Legame *)dato;
+    ExDom       *D = L->D;
+    unsigned int prima = D->cambi;
+    int          r = scrivi_prop_vero(c, dato, nome, v);
+
+    if (D->cambi != prima && D->muta_su == 1 && exjs_tipo(c, D->svuota) == EXJS_FUNZIONE)
+        exjs_invoca(c, D->svuota, exjs_indefinito(), 0, 0, 0);
+    return r;
+}
+
+static int scrivi_prop_vero(ExJsCtx *c, void *dato, const char *nome, ExJsVal v)
 {
     Legame  *L = (Legame *)dato;
     ExDom   *D = L->D;
@@ -816,8 +899,13 @@ static int scrivi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal v)
      * OGGETTO pero' si lascia passare, ed e' la memoria del satellite che si
      * scrive da se' (vedi satellite()): prendersela vorrebbe dire non
      * ricordarsi piu' niente e rifare l'oggetto a ogni lettura. */
-    if (ugu(nome, "dataset") || ugu(nome, "classList"))
-        return exjs_tipo(c, v) != EXJS_OGGETTO;
+    /* (P9, wpt) classList has [PutForwards=value]: `el.classList = 'a b'`
+     * writes the class. dataset is read-only: a write is dropped. */
+    if (ugu(nome, "classList")) {
+        if (elemento) html_attr_metti(d, n, "class", exjs_a_stringa(c, v));
+        return 1;
+    }
+    if (ugu(nome, "dataset")) return 1;
 
     if (n != d->radice && riflesso_scrivi(c, d, n, nome, v)) return 1;
 
@@ -825,7 +913,7 @@ static int scrivi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal v)
      * ogni nome che comincia per "on". Uno script che scrive `el.onda = 3` sta
      * usando l'elemento come un cassetto, come ha diritto di fare; prendersi
      * quel nome vorrebbe dire fargli sparire un dato senza spiegazioni. */
-    if (nome[0] == 'o' && nome[1] == 'n' && nome[2]) {
+    if (nome_gestore(nome)) {
         int tipo_ok = exjs_tipo(c, v);
 
         if (tipo_ok == EXJS_FUNZIONE) {
@@ -1083,6 +1171,16 @@ static ExJsVal m_createElement(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
     if (n_arg < 1) return exjs_nullo();
     n = html_crea_elemento(D->doc, exjs_a_stringa(c, a[0]));
     return exdom_avvolgi(D, n);
+}
+
+/* (P9) document.createComment: a comment node, not attached */
+static ExJsVal m_createComment(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                               int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+
+    (void)questo;
+    return exdom_avvolgi(D, html_crea_commento(D->doc, n_arg >= 1 ? exjs_a_stringa(c, a[0]) : "undefined"));
 }
 
 static ExJsVal m_createTextNode(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
@@ -1486,27 +1584,25 @@ static ExJsVal m_item(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
  * viene nemmeno chiamato, e un nodo che non chiede mai `style` non paga
  * niente.
  * Il perche' per esteso sta in cima a questo blocco. */
-static ExJsVal satellite(ExDom *D, Legame *L, const char *nome,
+static ExJsVal satellite(ExDom *D, Legame *L, int quale,
                          ExJsLeggiProp leggi, ExJsScriviProp scrivi,
                          ExJsVal proto)
 {
-    ExJsVal s = exjs_esotico(D->js, leggi, scrivi, L);
+    ExJsVal s;
 
+    if (exjs_tipo(D->js, L->sat[quale]) == EXJS_OGGETTO) return L->sat[quale];
+    s = exjs_esotico(D->js, leggi, scrivi, L);
     if (exjs_tipo(D->js, s) != EXJS_OGGETTO) return exjs_indefinito();
     if (exjs_tipo(D->js, proto) == EXJS_OGGETTO)
         exjs_proto_metti(D->js, s, proto);
-
-    /* ! LA SCRITTURA PASSA DAL GANCIO scrivi_prop, che per un OGGETTO si tira
-     * indietro apposta (vedi li'): prendendola, questa riga finirebbe dentro
-     * l'attributo invece che nella cache. */
-    exjs_metti(D->js, L->val, nome, s);
+    L->sat[quale] = s;
     return s;
 }
 
 /* L'oggetto `style` di un elemento, costruito la prima volta che lo si chiede. */
 static ExJsVal stile_oggetto(ExDom *D, Legame *L)
 {
-    return satellite(D, L, "style", stile_leggi, stile_scrivi, D->proto_stile);
+    return satellite(D, L, SAT_STILE, stile_leggi, stile_scrivi, D->proto_stile);
 }
 
 /* =============================================================================
@@ -2092,16 +2188,39 @@ static int classe_e_metodo(const char *nome)
            ugu(nome, "replace");
 }
 
+/* (P9, web-platform-tests) THE TOKENS ARE AN ORDERED SET: "a a b" has two,
+ * a and b, and classList[1] is b. A token is skipped when the same one came
+ * earlier. Quadratic, on a class attribute: nothing. */
+static int classe_gia(const char *el, unsigned int fino, unsigned int ini, unsigned int lun)
+{
+    unsigned int i = 0;
+
+    while (i < fino) {
+        unsigned int a, l;
+
+        while (i < fino && bianco(el[i])) i++;
+        if (i >= fino) break;
+        a = i;
+        while (el[i] && !bianco(el[i])) i++;
+        l = i - a;
+        if (l == lun && uguali_n(el + a, el + ini, lun)) return 1;
+    }
+    return 0;
+}
+
 static unsigned int classi_conta(const char *el)
 {
     unsigned int i = 0, n = 0;
 
     if (!el) return 0;
     while (el[i]) {
+        unsigned int a;
+
         while (el[i] && bianco(el[i])) i++;
         if (!el[i]) break;
-        n++;
+        a = i;
         while (el[i] && !bianco(el[i])) i++;
+        if (!classe_gia(el, a, a, i - a)) n++;
     }
     return n;
 }
@@ -2113,16 +2232,19 @@ static int classe_k(const char *el, unsigned int k, char *fuori, unsigned int ma
     fuori[0] = '\0';
     if (!el) return 0;
     while (el[i]) {
+        unsigned int a;
+
         while (el[i] && bianco(el[i])) i++;
         if (!el[i]) break;
+        a = i;
+        while (el[i] && !bianco(el[i])) i++;
+        if (classe_gia(el, a, a, i - a)) continue;
         if (n == k) {
-            for (j = 0; el[i + j] && !bianco(el[i + j]) && j + 1 < max; j++)
-                fuori[j] = el[i + j];
+            for (j = 0; a + j < i && j + 1 < max; j++) fuori[j] = el[a + j];
             fuori[j] = '\0';
             return 1;
         }
         n++;
-        while (el[i] && !bianco(el[i])) i++;
     }
     return 0;
 }
@@ -2174,6 +2296,8 @@ static int classi_leggi(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori
     char        b[128];
 
     if (classe_e_metodo(nome)) return 0;
+    /* (P9) its element, for the prelude's DOMTokenList methods */
+    if (ugu(nome, "__exos_el")) { *fuori = exdom_avvolgi(L->D, L->nodo); return 1; }
     el = html_attr(L->D->doc, L->nodo, "class");
 
     if (ugu(nome, "length")) {
@@ -2303,13 +2427,13 @@ static ExJsVal m_cl_replace(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
 
 static ExJsVal dati_oggetto(ExDom *D, Legame *L)
 {
-    return satellite(D, L, "dataset", dati_leggi, dati_scrivi,
+    return satellite(D, L, SAT_DATI, dati_leggi, dati_scrivi,
                      exjs_indefinito());
 }
 
 static ExJsVal classi_oggetto(ExDom *D, Legame *L)
 {
-    return satellite(D, L, "classList", classi_leggi, classi_scrivi,
+    return satellite(D, L, SAT_CLASSI, classi_leggi, classi_scrivi,
                      D->proto_classi);
 }
 
@@ -2728,6 +2852,12 @@ static int evento_manda(ExDom *D, int nodo, const char *tipo, ExJsVal ev, ExJsEr
     if (!ascolti_di(D, nodo, tipo, 0, ev, err, &avuto)) goto finito;
 
     /* --- risalita ------------------------------------------------------- */
+    /* (P13) only for an event that bubbles: one made with bubbles: false
+     * (Polymer's "-changed" notifications) stops at its target. The
+     * browser's own events do not say, and bubble as before. */
+    if (exjs_tipo(D->js, exjs_prendi(D->js, ev, "bubbles")) == EXJS_BOOLEANO &&
+        !exjs_a_booleano(D->js, exjs_prendi(D->js, ev, "bubbles")))
+        goto finito;
     for (i = 0; i < n_strada; i++)
         if (!ascolti_di(D, strada[i], tipo, 0, ev, err, &avuto)) goto finito;
 
@@ -2790,9 +2920,29 @@ static ExJsVal m_dispatchEvent(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
      * costruttore Event qui non c'e' ancora. Accettare la stringa da alle
      * pagine di prova un modo di far partire un evento senza aspettare quel
      * pezzo, e non toglie niente a chi passa l'oggetto giusto. */
-    if (exjs_tipo(c, a[0]) == EXJS_OGGETTO)
-        tipo_copia(tipo, exjs_a_stringa(c, exjs_prendi(c, a[0], "type")));
-    else if (!tipo_copia(tipo, exjs_a_stringa(c, a[0])))
+    if (exjs_tipo(c, a[0]) == EXJS_OGGETTO) {
+        ExJsVal ev = a[0];
+
+        if (!tipo_copia(tipo, exjs_a_stringa(c, exjs_prendi(c, ev, "type"))))
+            return exjs_booleano(1);
+        /* ! THE PAGE'S OWN EVENT, NOT A COPY (P13, 26 November 2026): a
+         * CustomEvent carries its data in `detail`, and Polymer and YouTube
+         * talk to each other that way; a new event of the same type reached
+         * the listeners empty. The few fields the walk needs are written on
+         * it, and an object without preventDefault gets ours. */
+        exjs_metti(c, ev, "target", exdom_avvolgi(D, n));
+        exjs_metti(c, ev, "currentTarget", exjs_nullo());
+        if (exjs_tipo(c, exjs_prendi(c, ev, "cancelBubble")) != EXJS_BOOLEANO)
+            exjs_metti(c, ev, "cancelBubble", exjs_booleano(0));
+        if (exjs_tipo(c, exjs_prendi(c, ev, "defaultPrevented")) != EXJS_BOOLEANO)
+            exjs_metti(c, ev, "defaultPrevented", exjs_booleano(0));
+        if (exjs_tipo(c, exjs_prendi(c, ev, "preventDefault")) != EXJS_FUNZIONE)
+            exjs_metti(c, ev, "preventDefault", exjs_nativa(c, m_preventDefault, D, "preventDefault"));
+        if (exjs_tipo(c, exjs_prendi(c, ev, "stopPropagation")) != EXJS_FUNZIONE)
+            exjs_metti(c, ev, "stopPropagation", exjs_nativa(c, m_stopPropagation, D, "stopPropagation"));
+        return exjs_booleano(evento_manda(D, n, tipo, ev, 0));
+    }
+    if (!tipo_copia(tipo, exjs_a_stringa(c, a[0])))
         return exjs_booleano(1);
 
     return exjs_booleano(exdom_evento(D, n, tipo, 0));
@@ -3647,10 +3797,12 @@ static ExJsVal m_fetch(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
     ExDom          *D = (ExDom *)dato;
     ExDomRichiesta  r;
     const char     *url;
+    ExJsVal         byte_corpo = exjs_indefinito();
 
     (void)questo;
     if (n_arg < 1) return promessa_nuova(D, motivo(D, "fetch senza indirizzo"), 0);
 
+    __builtin_memset(&r, 0, sizeof(r));
     url = exjs_a_stringa(c, a[0]);
     r.metodo     = "GET";
     r.url        = url;
@@ -3664,6 +3816,12 @@ static ExJsVal m_fetch(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
 
         if (exjs_tipo(c, m) == EXJS_STRINGA) r.metodo = exjs_a_stringa(c, m);
         if (exjs_tipo(c, b) == EXJS_STRINGA) r.corpo  = exjs_a_stringa(c, b);
+        else if (exjs_tipo(c, b) == EXJS_OGGETTO) {
+            unsigned int nb = 0;
+
+            /* (P13) bytes: they go in the queue as they are (see coda_metti) */
+            if (exjs_buffer_dati(c, b, &nb) && nb > 0) byte_corpo = b;
+        }
     }
 
     /* ! fetch E' SEMPRE ASINCRONA, e non ha una forma sincrona da nessuna
@@ -3679,7 +3837,7 @@ static ExJsVal m_fetch(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
          * l'interfaccia dei motori non lo sa fare, un for..in si'. */
         if (coda_metti(D, 1, p, r.metodo, a[0],
                        r.corpo ? exjs_stringa(c, r.corpo, -1)
-                               : exjs_indefinito(),
+                               : byte_corpo,
                        (n_arg >= 2 && exjs_tipo(c, a[1]) == EXJS_OGGETTO)
                        ? exjs_prendi(c, a[1], "__intest") : exjs_indefinito()))
             return p;
@@ -4037,7 +4195,10 @@ static int coda_metti(ExDom *D, int e_fetch, ExJsVal chi,
     D->coda[i].metodo = exjs_stringa(c, metodo ? metodo : "GET", -1);
     D->coda[i].url    = (exjs_tipo(c, url) == EXJS_STRINGA)
                         ? url : exjs_stringa(c, exjs_a_stringa(c, url), -1);
-    D->coda[i].corpo  = (exjs_tipo(c, corpo) == EXJS_STRINGA)
+    /* a string, or (P13) bytes: an ArrayBuffer or a view, kept as the object */
+    D->coda[i].corpo  = (exjs_tipo(c, corpo) == EXJS_STRINGA ||
+                         (exjs_tipo(c, corpo) == EXJS_OGGETTO &&
+                          exjs_buffer_dati(c, corpo, 0)))
                         ? corpo : exjs_indefinito();
     D->coda[i].intest = (exjs_tipo(c, intest) == EXJS_STRINGA)
                         ? intest : exjs_indefinito();
@@ -4076,8 +4237,17 @@ int exdom_rete_pompa(ExDom *D)
 
     r.metodo     = exjs_a_stringa(c, lavoro.metodo);
     r.url        = exjs_a_stringa(c, lavoro.url);
+    __builtin_memset(&r, 0, sizeof(r));
+    r.metodo     = exjs_a_stringa(c, lavoro.metodo);
+    r.url        = exjs_a_stringa(c, lavoro.url);
     r.corpo      = (exjs_tipo(c, lavoro.corpo) == EXJS_STRINGA)
                    ? exjs_a_stringa(c, lavoro.corpo) : 0;
+    if (!r.corpo && exjs_tipo(c, lavoro.corpo) == EXJS_OGGETTO) {
+        unsigned int nb = 0;
+        void        *p  = exjs_buffer_dati(c, lavoro.corpo, &nb);
+
+        if (p && nb) { r.corpo = (const char *)p; r.corpo_n = nb; }
+    }
     r.tipo_corpo = 0;
     r.intestazioni = (exjs_tipo(c, lavoro.intest) == EXJS_STRINGA)
                      ? exjs_a_stringa(c, lavoro.intest) : 0;
@@ -4195,6 +4365,7 @@ static void su_cambio(void *dato, int tipo, int bersaglio, int nodo, const char 
     ExJsCtx *c = D->js;
     ExJsVal a[7];
 
+    D->cambi++;
     if (!D->muta_su || D->muta_su > 1) return;      /* not inside its own call */
     D->muta_su = 2;
     a[0] = exjs_numero(c, (double)tipo);
@@ -4215,6 +4386,7 @@ static ExJsVal m_osserva(ExJsCtx *c, ExJsVal questo, const ExJsVal *a, int n_arg
     (void)c; (void)questo;
     if (n_arg < 1) return exjs_indefinito();
     D->muta = a[0];
+    if (n_arg >= 2) D->svuota = a[1];
     D->muta_su = 1;
     html_su_cambio(D->doc, su_cambio, D);
     return exjs_indefinito();
@@ -4243,6 +4415,23 @@ static ExJsVal m_attachShadow(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
     return exdom_avvolgi(D, o);
 }
 
+/* (P9) element.setHTMLUnsafe(html): innerHTML that also makes the shadow
+ * roots written as <template shadowrootmode> (declarative shadow DOM) */
+static ExJsVal m_setHTMLUnsafe(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                               int n_arg, void *dato)
+{
+    ExDom      *D = (ExDom *)dato;
+    int         n = nodo_di(D, questo);
+    const char *s;
+
+    if (n < 0 || D->doc->nodi[n].tipo != HTML_ELEMENTO) return exjs_indefinito();
+    s = n_arg >= 1 ? exjs_a_stringa(c, a[0]) : "undefined";
+    html_svuota(D->doc, n);
+    html_analizza_in(D->doc, n, s, lung(s));
+    html_ombre_dichiarate(D->doc, n);
+    return exjs_indefinito();
+}
+
 static ExJsVal m_getRootNode(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
                              int n_arg, void *dato)
 {
@@ -4260,6 +4449,7 @@ static int copia_nodo(HtmlDoc *d, int n, int profondo)
     int nuovo, at, f;
 
     if (d->nodi[n].tipo == HTML_TESTO) return html_crea_testo(d, html_testo(d, n));
+    if (d->nodi[n].tipo == HTML_COMMENTO) return html_crea_commento(d, d->arena + d->nodi[n].testo);
     nuovo = html_crea_elemento(d, html_nome(d, n));
     if (nuovo < 0) return -1;
     /* the attributes in their order: the list is kept newest first */
@@ -4426,6 +4616,7 @@ ExDom *exdom_apri(void *memoria, unsigned int byte,
     D->geom_dato = 0;
     D->muta_su   = 0;
     D->muta      = exjs_indefinito();
+    D->svuota    = exjs_indefinito();
     html_su_cambio(doc, 0, 0);      /* a hook left by a page of before */
     D->url[0]      = '\0';
     D->vai[0]      = '\0';
@@ -4441,6 +4632,7 @@ ExDom *exdom_apri(void *memoria, unsigned int byte,
         D->leg[i].D    = D;
         D->leg[i].nodo = (int)i;
         D->leg[i].val  = exjs_numero(js, 0.0);   /* «non ancora avvolto» */
+        D->leg[i].sat[0] = D->leg[i].sat[1] = D->leg[i].sat[2] = exjs_numero(js, 0.0);
     }
 
     /* ! IL PROTOTIPO SI COSTRUISCE PRIMA DI QUALUNQUE INVOLUCRO, perche'
@@ -4473,6 +4665,7 @@ ExDom *exdom_apri(void *memoria, unsigned int byte,
     metti_metodo(D, D->proto, "getBoundingClientRect",  m_getBoundingClientRect);
     metti_metodo(D, D->proto, "getClientRects",         m_getClientRects);
     metti_metodo(D, D->proto, "attachShadow",           m_attachShadow);
+    metti_metodo(D, D->proto, "setHTMLUnsafe",  m_setHTMLUnsafe);
     metti_metodo(D, D->proto, "getRootNode",            m_getRootNode);
     metti_metodo(D, D->proto, "cloneNode",              m_cloneNode);
     metti_metodo(D, D->proto, "getAttributeNames",      m_getAttributeNames);
@@ -4503,6 +4696,7 @@ ExDom *exdom_apri(void *memoria, unsigned int byte,
     metti_metodo(D, D->documento, "getElementById",  m_getElementById);
     metti_metodo(D, D->documento, "createElement",   m_createElement);
     metti_metodo(D, D->documento, "createTextNode",  m_createTextNode);
+    metti_metodo(D, D->documento, "createComment",   m_createComment);
     metti_metodo(D, D->documento, "createDocumentFragment", m_createDocumentFragment);
     metti_metodo(D, D->documento, "importNode",      m_importNode);
 
