@@ -162,6 +162,9 @@ typedef struct {
     void    *mod_vol;               /* the module's Ext4Vol */
     void    *mod_gio;               /* the module's Giornale, NULL = none */
     uint8_t  mod_super_sporco;      /* the module owes a superblock write */
+    uint32_t riservati;             /* s_r_blocks_count: root's only (voce 131,
+                                       statfs); at the end, the module's
+                                       offsets above stay as they were */
 } Ext2Mount;
 
 /* The kernel's working buffers - one per kind of block, see "I BUFFER DI

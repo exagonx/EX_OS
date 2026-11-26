@@ -718,6 +718,7 @@ static int disco_leggi(int disco, uint64_t abs, uint32_t n, void *buf)
 static int disco_scrivi(int disco, uint64_t abs, uint32_t n, const void *buf)
 {
     uint64_t da = tsc_leggi();
+
     int      r  = ata_write(disco, abs, n, buf);
 
     conta_lavoro(da, n, 1);

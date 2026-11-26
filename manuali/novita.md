@@ -6,6 +6,10 @@
 
 **Contents**
 
+- [Logging into the Firefox account works: localStorage and indexedDB have their space (kernel 0.372, voce 131) — tested in QEMU](#logging-into-the-firefox-account-works-localstorage-and-indexeddb-have-their-space-kernel-0372-voce-131--tested-in-qemu)
+- [Names resolve at the first try: a lost DNS answer is asked again (libc, voce 132) — tested in QEMU](#names-resolve-at-the-first-try-a-lost-dns-answer-is-asked-again-libc-voce-132--tested-in-qemu)
+- [Programs keep their folders in the user's profile, not in / (sh 0.018, exilla 0.009, voce 132) — tested in QEMU](#programs-keep-their-folders-in-the-users-profile-not-in--sh-0018-exilla-0009-voce-132--tested-in-qemu)
+- [Writing on a fragmented ext2/3/4 disk costs fewer disk commands (kernel 0.372, ext4.mod 0.009, voce 123) — tested in QEMU](#writing-on-a-fragmented-ext234-disk-costs-fewer-disk-commands-kernel-0372-ext4mod-0009-voce-123--tested-in-qemu)
 - [Every program starts in the user's folder (exwin, pm 0.033, filemgr 0.017, voce 124) — tested in QEMU](#every-program-starts-in-the-users-folder-exwin-pm-0033-filemgr-0017-voce-124--tested-in-qemu)
 - [The shell has history and line editing in the Terminal and over telnet too (sh 0.017, exwin.so 0.029, voce 125) — tested in QEMU](#the-shell-has-history-and-line-editing-in-the-terminal-and-over-telnet-too-sh-0017-exwinso-0029-voce-125--tested-in-qemu)
 - [The file manager opens a shell in the folder shown (filemgr 0.017, voce 126) — tested in QEMU](#the-file-manager-opens-a-shell-in-the-folder-shown-filemgr-0017-voce-126--tested-in-qemu)
@@ -267,6 +271,51 @@
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### Logging into the Firefox account works: localStorage and indexedDB have their space (kernel 0.372, voce 131) — tested in QEMU
+
+- **Before**: the Firefox account page said "Local storage and cookies are required". localStorage
+  and indexedDB failed with QuotaExceededError: `statvfs` answered zero free space, and Firefox gives
+  every site a share of the free space of the profile's disk, so the share was 0.
+- **Now**: the new kernel call `SYS_STATFS` gives the true size, free and available blocks and inodes
+  of ext2/3/4 (minus the blocks reserved for root) and of FAT; `statvfs` and `fstatvfs` use it. And
+  `mkdir` of a folder that already exists answers EEXIST first, as on Linux (it was EBUSY on the root
+  of a mounted disk, and Firefox stopped making `storage/` there).
+- **Tested** with `tools/exilla/prova-memoria-locale.sh` at 32 and 64 bit: cookie, localStorage,
+  sessionStorage, indexedDB, and after a reload the values are still there.
+
+### Names resolve at the first try: a lost DNS answer is asked again (libc, voce 132) — tested in QEMU
+
+- **Before**: in Exilla a site often needed two or three tries. The resolver of the libc (the one of
+  `getaddrinfo`, used by Firefox) gave up at the first timeout: one lost answer, or one slower than
+  2 seconds, and the name "did not exist".
+- **Now**: three attempts, waiting 2, 3 and 5 seconds; a name that really does not exist (NXDOMAIN)
+  is not asked again. The question has a random identifier, and only an answer from the server
+  asked, from port 53, to the same question counts: someone else's datagram does not use up an
+  attempt.
+- **Tested** with `tools/prova_dns.sh` at 32 and 64 bit: a DNS of the test loses the first question,
+  or answers after 2.5 seconds, and the name resolves all the same.
+
+### Programs keep their folders in the user's profile, not in / (sh 0.018, exilla 0.009, voce 132) — tested in QEMU
+
+- **Before**: root on the console and over telnet had `HOME=/` (from `/boot/kernel.cfg`), and the
+  programs made their folders in the root of the disk: `/.local`, `/.config`, `/security_state`.
+- **Now**: the shell turns `HOME=/` into `/root` for root when `/root` exists (on the CD it does not,
+  and it stays `/`); `cd` with no argument goes to `$HOME`; `getpwuid` no longer takes `/` as a
+  home; Exilla without `HOME` uses the user's own folder.
+- **Old folders** left in `/` by earlier versions are not deleted: remove them by hand if you like
+  (`rm -r /.local /.config /security_state`).
+
+### Writing on a fragmented ext2/3/4 disk costs fewer disk commands (kernel 0.372, ext4.mod 0.009, voce 123) — tested in QEMU
+
+- **Before**: on a disk full of one-block holes every new block of a file wrote the bitmap and the
+  group descriptor again; files over 4 MB rewrote their second-level pointer block at every block.
+  The file lock stayed taken for seconds, and the whole system waited (Firefox's first start).
+- **Now**: the reservation is a list (the first free run long enough, or else the free blocks where
+  they are), written once; the upper pointer level is remembered. A long hold of the lock is
+  followed in the log by its split: reads, writes, file data, flushes.
+- **Tested** with `tools/prova_frammenti.sh` (four fragmented volumes, e2fsck clean, the copy
+  identical) and the ext2/3/4 tests at 32 and 64 bit.
 
 ### Every program starts in the user's folder (exwin, pm 0.033, filemgr 0.017, voce 124) — tested in QEMU
 

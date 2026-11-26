@@ -55,10 +55,11 @@
  * ============================================================================= */
 
 #include "libc.h"
+#include <pwd.h>
 #include "exwin.h"
 #include "exdlg.h"
 
-#define VERSIONE_APP "0.008"
+#define VERSIONE_APP "0.009"   /* 0.009: no HOME = the user's home from getpwuid, not "/" */
 EX_VERSIONE("exilla", VERSIONE_APP);
 
 #define PERC_MAX    512
@@ -179,8 +180,15 @@ static int avvia(int argc, char **argv)
         }
     }
 
+    /* ! A USER WITHOUT HOME GOT "/" (voce 132): the profile and everything
+     * Firefox makes beside it (~/.cache, ~/.local) in the root of the disk.
+     * Now the user's own home, from /boot/utenti (getpwuid: root /root, the
+     * others /home/<name>). */
     if (!casa || !casa[0] || strcmp(casa, "/") == 0) {
-        casa = (getuid() == 0) ? "/root" : "/";
+        struct passwd *pw = getpwuid(getuid());
+
+        casa = (pw && pw->pw_dir && pw->pw_dir[0] && strcmp(pw->pw_dir, "/") != 0)
+             ? pw->pw_dir : (getuid() == 0 ? "/root" : "/tmp");
         setenv("HOME", casa, 1);
     }
     mkdir(casa, 0700);

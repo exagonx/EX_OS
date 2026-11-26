@@ -6,6 +6,10 @@
 
 **Indice**
 
+- [Il login nell'account di Firefox funziona: localStorage e indexedDB hanno il loro spazio (kernel 0.372, voce 131) — testato in QEMU](#il-login-nellaccount-di-firefox-funziona-localstorage-e-indexeddb-hanno-il-loro-spazio-kernel-0372-voce-131--testato-in-qemu)
+- [I nomi si risolvono al primo colpo: una risposta del DNS persa si richiede (libc, voce 132) — testato in QEMU](#i-nomi-si-risolvono-al-primo-colpo-una-risposta-del-dns-persa-si-richiede-libc-voce-132--testato-in-qemu)
+- [I programmi tengono le loro cartelle nel profilo dell'utente, non in / (sh 0.018, exilla 0.009, voce 132) — testato in QEMU](#i-programmi-tengono-le-loro-cartelle-nel-profilo-dellutente-non-in--sh-0018-exilla-0009-voce-132--testato-in-qemu)
+- [Scrivere su un disco ext2/3/4 frammentato costa meno comandi al disco (kernel 0.372, ext4.mod 0.009, voce 123) — testato in QEMU](#scrivere-su-un-disco-ext234-frammentato-costa-meno-comandi-al-disco-kernel-0372-ext4mod-0009-voce-123--testato-in-qemu)
 - [Ogni programma parte nella cartella dell'utente (exwin, pm 0.033, filemgr 0.017, voce 124) — testato in QEMU](#ogni-programma-parte-nella-cartella-dellutente-exwin-pm-0033-filemgr-0017-voce-124--testato-in-qemu)
 - [La shell ha cronologia e modifica della riga anche nel Terminale e in telnet (sh 0.017, exwin.so 0.029, voce 125) — testato in QEMU](#la-shell-ha-cronologia-e-modifica-della-riga-anche-nel-terminale-e-in-telnet-sh-0017-exwinso-0029-voce-125--testato-in-qemu)
 - [Il file manager apre una shell nella cartella mostrata (filemgr 0.017, voce 126) — testato in QEMU](#il-file-manager-apre-una-shell-nella-cartella-mostrata-filemgr-0017-voce-126--testato-in-qemu)
@@ -267,6 +271,51 @@
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### Il login nell'account di Firefox funziona: localStorage e indexedDB hanno il loro spazio (kernel 0.372, voce 131) — testato in QEMU
+
+- **Prima**: la pagina dell'account Firefox diceva "Local storage and cookies are required".
+  localStorage e indexedDB fallivano con QuotaExceededError: `statvfs` rispondeva zero spazio libero,
+  e Firefox da' a ogni sito una parte dello spazio libero del disco del profilo, quindi 0.
+- **Ora**: la nuova chiamata del kernel `SYS_STATFS` da' dimensione, blocchi liberi e disponibili e
+  inode veri di ext2/3/4 (meno i blocchi riservati a root) e di FAT; `statvfs` e `fstatvfs` la usano.
+  E `mkdir` di una cartella che c'e' gia' risponde EEXIST per primo, come Linux (sulla radice di un
+  disco montato dava EBUSY, e Firefox si fermava li' a fare `storage/`).
+- **Testato** con `tools/exilla/prova-memoria-locale.sh` a 32 e 64 bit: cookie, localStorage,
+  sessionStorage, indexedDB, e dopo il ricaricamento i valori ci sono ancora.
+
+### I nomi si risolvono al primo colpo: una risposta del DNS persa si richiede (libc, voce 132) — testato in QEMU
+
+- **Prima**: in Exilla un sito voleva spesso due o tre tentativi. Il risolutore della libc (quello di
+  `getaddrinfo`, che usa Firefox) si arrendeva alla prima scadenza: una risposta persa, o piu' lenta
+  di 2 secondi, e il nome "non esisteva".
+- **Ora**: tre tentativi, con attese di 2, 3 e 5 secondi; un nome che davvero non esiste (NXDOMAIN)
+  non si richiede. La domanda ha un identificativo casuale, e conta solo la risposta del server
+  chiesto, dalla porta 53, alla stessa domanda: il datagramma di un altro non consuma un tentativo.
+- **Testato** con `tools/prova_dns.sh` a 32 e 64 bit: un DNS della prova perde la prima domanda, o
+  risponde dopo 2,5 secondi, e il nome si risolve lo stesso.
+
+### I programmi tengono le loro cartelle nel profilo dell'utente, non in / (sh 0.018, exilla 0.009, voce 132) — testato in QEMU
+
+- **Prima**: root sulla console e in telnet aveva `HOME=/` (da `/boot/kernel.cfg`), e i programmi
+  facevano le loro cartelle nella radice del disco: `/.local`, `/.config`, `/security_state`.
+- **Ora**: la shell trasforma `HOME=/` in `/root` per root quando `/root` c'e' (sul CD non c'e', e
+  resta `/`); `cd` senza argomenti va in `$HOME`; `getpwuid` non prende piu' `/` per una casa;
+  Exilla senza `HOME` usa la cartella dell'utente.
+- **Le cartelle vecchie** lasciate in `/` dalle versioni prima non si cancellano: si tolgono a mano
+  se si vuole (`rm -r /.local /.config /security_state`).
+
+### Scrivere su un disco ext2/3/4 frammentato costa meno comandi al disco (kernel 0.372, ext4.mod 0.009, voce 123) — testato in QEMU
+
+- **Prima**: su un disco pieno di buchi da un blocco ogni blocco nuovo di un file riscriveva la bitmap
+  e il descrittore del gruppo; i file oltre 4 MB riscrivevano il blocco dei puntatori di secondo
+  livello a ogni blocco. Il lucchetto dei file restava preso per secondi, e tutto il sistema
+  aspettava (il primo avvio di Firefox).
+- **Ora**: la prenotazione e' una lista (la prima corsa libera abbastanza lunga, se no i blocchi
+  liberi dove sono), scritta una volta; il livello di sopra dei puntatori si ricorda. Un lucchetto
+  tenuto a lungo e' seguito nel registro dalla sua divisione: letture, scritture, dati, flush.
+- **Testato** con `tools/prova_frammenti.sh` (quattro volumi frammentati, e2fsck pulito, la copia
+  identica) e le prove di ext2/3/4 a 32 e 64 bit.
 
 ### Ogni programma parte nella cartella dell'utente (exwin, pm 0.033, filemgr 0.017, voce 124) — testato in QEMU
 

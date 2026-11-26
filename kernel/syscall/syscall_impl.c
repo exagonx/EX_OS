@@ -1588,6 +1588,33 @@ int32_t sys_fd_limite(InterruptFrame *frame)
 /* =============================================================================
  * SYS_FSYNC (258) - see syscall.h (0.284)
  * ============================================================================= */
+/* SYS_STATFS (284, voce 131): see syscall.h. A path is resolved like any
+ * other (relative to the cwd); with ebx NULL, ecx is an open file. */
+int32_t sys_statfs(InterruptFrame *frame)
+{
+    const char *path = (const char *)FR_A1(frame);
+    int32_t     fd   = (int32_t)FR_A2(frame);
+    VfsSpazio  *u    = (VfsSpazio *)FR_A3(frame);
+    Process    *proc = proc_get_current();
+    VfsSpazio   s;
+    char        abs[PERCORSO_MAX];
+    int         r;
+
+    if (!syscall_verify_ptr(u, sizeof(VfsSpazio))) return ERR(EFAULT);
+    if (path != NULL) {
+        if (!syscall_verify_str(path, PERCORSO_MAX)) return ERR(EFAULT);
+        if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
+        r = vfs_statfs(abs, &s);
+    } else {
+        if (fd < 0 || fd >= FD_N(proc) || FDV(proc, fd).type == FD_UNUSED) return ERR(EBADF);
+        if (FDV(proc, fd).type != FD_FILE) return ERR(ENOSYS);   /* pipes, ptys: no volume */
+        r = vfs_fstatfs((int)FDV(proc, fd).inode, &s);
+    }
+    if (r != 0) return r;
+    *u = s;
+    return 0;
+}
+
 int32_t sys_fsync(InterruptFrame *frame)
 {
     Process *proc = proc_get_current();

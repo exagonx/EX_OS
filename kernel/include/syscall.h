@@ -271,7 +271,7 @@ typedef struct {
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   284     /* la piu' alta e' SYS_FCHMOD = 283 */
+#define SYSCALL_COUNT   285     /* la piu' alta e' SYS_STATFS = 284 */
 
 /* =============================================================================
  * Codici errno
@@ -468,6 +468,9 @@ typedef struct {
  * pty (login gives the terminal to the user); -EOPNOTSUPP on anything else. */
 #define SYS_FCHOWN         282
 #define SYS_FCHMOD         283
+/* (0.372, voce 131) statfs: ebx = path (NULL: use ecx = fd), edx = VfsSpazio*
+ * (kernel/include/vfs.h). The room of the volume, for statvfs/fstatvfs. */
+#define SYS_STATFS         284
 #define CONSOLE_NESSUNO    0xFFFFFFFFu
 #define STAT_ATTR_SHM      0x80
 typedef struct {
@@ -2094,6 +2097,7 @@ int32_t sys_console_grafica(InterruptFrame *f);
 int32_t sys_fd_riserva(InterruptFrame *f);
 int32_t sys_fd_limite(InterruptFrame *f);
 int32_t sys_fsync(InterruptFrame *f);
+int32_t sys_statfs(InterruptFrame *f);     /* voce 131 */
 int32_t sys_console_ctrlc(InterruptFrame *f);
 int32_t sys_ipc_register(InterruptFrame *f);
 int32_t sys_ipc_lookup(InterruptFrame *f);

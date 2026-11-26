@@ -35,6 +35,7 @@
 #define EXT2_H
 
 #include "kernel.h"
+#include "vfs.h"        /* VfsSpazio: statfs (voce 131) */
 
 #define EXT2_NOME_MAX       256     /* 255 caratteri + NUL: il massimo di ext2 */
 #define EXT2_PERCORSO_MAX   320
@@ -92,6 +93,7 @@ uint32_t    ext2_blocchi_liberi(int mnt);
 uint32_t    ext2_dim_blocco(int mnt);
 uint32_t    ext2_generazione(int mnt);      /* 2, 3 or 4 */
 const char *ext2_etichetta(int mnt);
+int ext2_spazio(int mnt, VfsSpazio *s);         /* statfs (voce 131) */
 
 /* `percorso` e' interno al volume ("/" oppure "/bin/sh"). A differenza di
  * fat12.c i percorsi possono avere piu' livelli. */

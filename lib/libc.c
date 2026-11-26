@@ -15917,14 +15917,17 @@ static void voce_utente(struct passwd *pw, char *nome, char *casa, const VoceUte
 
     if (v) {
         strcpy(nome, v->nome);
-        if (v->uid == (unsigned int)getuid() && h && *h) { strncpy(casa, h, 255); casa[255] = 0; }
+        /* ! HOME = / IS NOT A HOME (voce 132): kernel.cfg gives it to root
+         * without login, and the programs put their folders in the root */
+        if (v->uid == (unsigned int)getuid() && h && *h && strcmp(h, "/") != 0) { strncpy(casa, h, 255); casa[255] = 0; }
         else if (v->uid == 0) strcpy(casa, "/root");
         else snprintf(casa, 256, "/home/%s", v->nome);
         pw->pw_uid = (uid_t)v->uid;
         pw->pw_gid = (gid_t)v->gid;
     } else {
         strncpy(nome, u && *u ? u : "utente", 63); nome[63] = 0;
-        strncpy(casa, h && *h ? h : "/", 255);     casa[255] = 0;
+        strncpy(casa, h && *h && strcmp(h, "/") != 0 ? h : getuid() == 0 ? "/root" : "/", 255);
+        casa[255] = 0;
         pw->pw_uid = (uid_t)getuid();
         pw->pw_gid = (gid_t)getgid();
     }
@@ -18113,15 +18116,25 @@ int gethostname(char *nome, size_t n)
 
 /* --- il risolutore ---------------------------------------------------------------------
  * Una domanda A al DNS che il DHCP ha dato allo stack (IpConfig.dns), sopra un
- * socket UDP di questa sezione. Tre tentativi da due secondi. */
+ * socket UDP di questa sezione. Three attempts, waiting 2, 3 and 5 seconds.
+ * ! A TIMEOUT ENDED THE SEARCH (voce 132, the user 26/11/2026: in Exilla a
+ * site needs several tries). The loop went on only while esito was -2, and
+ * a recvfrom that timed out set -3: one lost or slow answer and the name
+ * "did not exist" - the next try found it in the router's cache. Now a
+ * timeout sends the question again, and only the last one says EAI_AGAIN.
+ * ! THE IDENTIFIER WAS THE CLOCK, and any datagram with it was believed
+ * (what debug/bug_DNS001 fixed in lib/dns.c): now 16 random bits, and the
+ * answer must come from the server asked, from port 53, to our question.
+ * Somebody else's datagram does not cost an attempt: it is waited out. */
 static int dns_chiedi(const char *nome, unsigned char ip[4])
 {
-    unsigned char      buf[IPC_MSG_MAX_DATA], q[300];
+    static const unsigned int attesa[3] = { 2000, 3000, 5000 };
+    unsigned char      buf[IPC_MSG_MAX_DATA], q[300], rnd[2];
     PIpConfig          cfg;
-    struct sockaddr_in srv;
+    struct sockaddr_in srv, da;
     struct timeval     tv;
-    unsigned int       t = 0, o, id;
-    int                n, fd, giro, esito = -2;       /* EAI_NONAME */
+    unsigned int       t = 0, o, id, dl;
+    int                n, fd, giro, esito = -3;       /* EAI_AGAIN until an answer */
     const char        *s;
 
     n = ip_chiedi(P_IP_MSG_STATO, NULL, 0, P_IP_MSG_STATO_R, buf, sizeof(buf), &t);
@@ -18130,7 +18143,9 @@ static int dns_chiedi(const char *nome, unsigned char ip[4])
     if (!cfg.dns[0] && !cfg.dns[1] && !cfg.dns[2] && !cfg.dns[3]) return -4;   /* EAI_FAIL */
 
     /* La domanda: intestazione, nome a etichette, tipo A, classe IN. */
-    id = (uptime_ms() * 2654435761u) >> 16;
+    for (giro = 0; giro < 5 && getentropy(rnd, 2) != 0; giro++) dormi_ms(20);
+    id = giro < 5 ? ((unsigned int)rnd[0] << 8 | rnd[1])
+                  : ((uptime_ms() * 2654435761u) >> 16) ^ ((unsigned int)getpid() << 5);
     memset(q, 0, 12);
     q[0] = (unsigned char)(id >> 8); q[1] = (unsigned char)id;
     q[2] = 0x01;                                /* ricorsione desiderata */
@@ -18152,45 +18167,61 @@ static int dns_chiedi(const char *nome, unsigned char ip[4])
 
     fd = socket(S_AF_INET, S_SOCK_DGRAM, 0);
     if (fd < 0) return -11;
-    tv.tv_sec = 2; tv.tv_usec = 0;
-    setsockopt(fd, S_SOL_SOCKET, 20, &tv, sizeof(tv));
     memset(&srv, 0, sizeof(srv));
     srv.sin_family = S_AF_INET;
     srv.sin_port   = htons(53);
     memcpy(&srv.sin_addr.s_addr, cfg.dns, 4);
 
-    for (giro = 0; giro < 3 && esito == -2; giro++) {
-        unsigned int k, dom, ris, p;
+    for (giro = 0; giro < 3 && esito == -3; giro++) {
+        unsigned int k, dom, ris, p, fine;
 
-        if (sendto(fd, q, o, 0, (struct sockaddr *)&srv, sizeof(srv)) < 0) { esito = -3; continue; }
-        n = (int)recvfrom(fd, buf, sizeof(buf), 0, NULL, NULL);
-        if (n < 12) { esito = -2; if (n < 0) esito = -3; continue; }   /* EAI_AGAIN */
-        if (((unsigned int)buf[0] << 8 | buf[1]) != (id & 0xFFFFu)) continue;   /* non e' la nostra */
-        if ((buf[3] & 0x0F) == 3) { esito = -2; break; }                 /* NXDOMAIN */
-        if ((buf[3] & 0x0F) != 0) { esito = -4; break; }
-        dom = (unsigned int)buf[4] << 8 | buf[5];
-        ris = (unsigned int)buf[6] << 8 | buf[7];
-        p = 12;
-        for (k = 0; k < dom && p < (unsigned int)n; k++) {        /* salta le domande */
-            while (p < (unsigned int)n && buf[p] && (buf[p] & 0xC0) != 0xC0) p += buf[p] + 1u;
-            p += (p < (unsigned int)n && (buf[p] & 0xC0) == 0xC0) ? 2u : 1u;
-            p += 4;
+        if (sendto(fd, q, o, 0, (struct sockaddr *)&srv, sizeof(srv)) < 0) {
+            dormi_ms(attesa[giro] / 4);         /* no route yet (ARP): try again */
+            continue;
         }
-        for (k = 0; k < ris && p + 10 < (unsigned int)n; k++) {    /* le risposte */
-            unsigned int tipo, lung;
+        fine = uptime_ms() + attesa[giro];
+        for (;;) {
+            int resta = (int)(fine - uptime_ms());
 
-            while (p < (unsigned int)n && buf[p] && (buf[p] & 0xC0) != 0xC0) p += buf[p] + 1u;
-            p += (p < (unsigned int)n && (buf[p] & 0xC0) == 0xC0) ? 2u : 1u;
-            if (p + 10 > (unsigned int)n) break;
-            tipo = (unsigned int)buf[p] << 8 | buf[p + 1];
-            lung = (unsigned int)buf[p + 8] << 8 | buf[p + 9];
-            p += 10;
-            if (tipo == 1 && lung == 4 && p + 4 <= (unsigned int)n) {
-                memcpy(ip, buf + p, 4);
-                esito = 0;
-                break;
+            if (resta <= 0) break;              /* this attempt is over */
+            tv.tv_sec = resta / 1000; tv.tv_usec = (resta % 1000) * 1000;
+            setsockopt(fd, S_SOL_SOCKET, 20, &tv, sizeof(tv));
+            dl = sizeof(da);
+            n = (int)recvfrom(fd, buf, sizeof(buf), 0, (struct sockaddr *)&da, &dl);
+            if (n < 0) break;                   /* timed out: ask again */
+            /* not the server asked, not port 53, not our question: wait on */
+            if (n < 12 || memcmp(&da.sin_addr.s_addr, cfg.dns, 4) != 0 || da.sin_port != htons(53))
+                continue;
+            if (((unsigned int)buf[0] << 8 | buf[1]) != (id & 0xFFFFu) || !(buf[2] & 0x80)) continue;
+            if ((unsigned int)n < o || memcmp(buf + 12, q + 12, o - 12) != 0) continue;
+            if ((buf[3] & 0x0F) == 3) { esito = -2; break; }             /* NXDOMAIN */
+            if ((buf[3] & 0x0F) != 0) { esito = -4; break; }
+            esito = -2;                         /* an answer: from now on no address = no name */
+            dom = (unsigned int)buf[4] << 8 | buf[5];
+            ris = (unsigned int)buf[6] << 8 | buf[7];
+            p = 12;
+            for (k = 0; k < dom && p < (unsigned int)n; k++) {        /* salta le domande */
+                while (p < (unsigned int)n && buf[p] && (buf[p] & 0xC0) != 0xC0) p += buf[p] + 1u;
+                p += (p < (unsigned int)n && (buf[p] & 0xC0) == 0xC0) ? 2u : 1u;
+                p += 4;
             }
-            p += lung;                          /* un CNAME: si va avanti */
+            for (k = 0; k < ris && p + 10 < (unsigned int)n; k++) {    /* le risposte */
+                unsigned int tipo, lung;
+
+                while (p < (unsigned int)n && buf[p] && (buf[p] & 0xC0) != 0xC0) p += buf[p] + 1u;
+                p += (p < (unsigned int)n && (buf[p] & 0xC0) == 0xC0) ? 2u : 1u;
+                if (p + 10 > (unsigned int)n) break;
+                tipo = (unsigned int)buf[p] << 8 | buf[p + 1];
+                lung = (unsigned int)buf[p + 8] << 8 | buf[p + 9];
+                p += 10;
+                if (tipo == 1 && lung == 4 && p + 4 <= (unsigned int)n) {
+                    memcpy(ip, buf + p, 4);
+                    esito = 0;
+                    break;
+                }
+                p += lung;                      /* un CNAME: si va avanti */
+            }
+            break;
         }
     }
     close(fd);
@@ -18526,30 +18557,60 @@ int pause(void)
     return sigsuspend(&ora);
 }
 
-static int statvfs_riempi(struct statvfs *v)
+/* =============================================================================
+ * statvfs, fstatvfs: the room of the volume (voce 131, 26/11/2026)
+ * ! UNTIL HERE EVERY COUNT WAS ZERO: the struct had only the block size.
+ * Firefox's QuotaManager reads the free space and gives each site a share of
+ * it: zero, and localStorage and indexedDB said QuotaExceededError - the
+ * Firefox account's login said "local storage or cookies are still
+ * disabled". SYS_STATFS (kernel 0.372) gives the volume's real counts.
+ * ============================================================================= */
+#define SYS_STATFS 284
+typedef struct {                        /* VfsSpazio, kernel/include/vfs.h */
+    uint32_t dim_blocco, blocchi, liberi, disponibili, inode, inode_liberi,
+             sola_lettura, nome_max;
+} StatfsK;
+
+static int statvfs_da(const char *percorso, int fd, struct statvfs *v)
 {
+    StatfsK k;
+    int32_t r = _syscall3(SYS_STATFS, (uintptr_t)percorso, (uint32_t)fd, (uintptr_t)&k);
+
+    if (r == -ENOSYS) {
+        /* a kernel before 0.372 (netupdate puts the libc in at once, the
+         * kernel at the reboot): what this said before, no new failure */
+        struct stat st;
+
+        if ((percorso ? stat(percorso, &st) : fstat(fd, &st)) < 0) return -1;
+        memset(v, 0, sizeof(*v));
+        v->f_bsize = v->f_frsize = 4096; v->f_flag = 0x1000u; v->f_namemax = 255;
+        return 0;
+    }
+    if (r < 0) { errno = -r; return -1; }
     memset(v, 0, sizeof(*v));
-    v->f_bsize   = 4096;
-    v->f_frsize  = 4096;
-    v->f_flag    = 0x1000;              /* MNT_LOCAL: no network volumes */
-    v->f_namemax = 255;            /* NAME_MAX, ext2 */
+    v->f_bsize   = k.dim_blocco;
+    v->f_frsize  = k.dim_blocco;
+    v->f_blocks  = k.blocchi;
+    v->f_bfree   = k.liberi;
+    v->f_bavail  = k.disponibili;
+    v->f_files   = k.inode;
+    v->f_ffree   = k.inode_liberi;
+    v->f_favail  = k.inode_liberi;
+    v->f_flag    = 0x1000u | (k.sola_lettura ? 1u : 0u);   /* MNT_LOCAL, ST_RDONLY */
+    v->f_namemax = k.nome_max;
     return 0;
 }
 
 int statvfs(const char *percorso, struct statvfs *v)
 {
-    struct stat st;
-
-    if (stat(percorso, &st) < 0) return -1;
-    return statvfs_riempi(v);
+    if (!percorso || !v) { errno = EFAULT; return -1; }
+    return statvfs_da(percorso, -1, v);
 }
 
 int fstatvfs(int fd, struct statvfs *v)
 {
-    struct stat st;
-
-    if (fstat(fd, &st) < 0) return -1;
-    return statvfs_riempi(v);
+    if (!v) { errno = EFAULT; return -1; }
+    return statvfs_da(NULL, fd, v);
 }
 
 /* -----------------------------------------------------------------------------

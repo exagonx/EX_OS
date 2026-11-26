@@ -836,6 +836,32 @@ int fat_tipo(int mnt)
     return (int)(*g_mnt[mnt]).tipo;
 }
 
+/* The volume's room, for statfs (voce 131). FAT keeps no count of its free
+ * clusters (FSInfo's is a hint, often wrong after another system): the table
+ * is read whole, through the sector cache - a FAT32 of 32 GB is 4 MB of it,
+ * read again at every statfs. */
+int fat_spazio(int mnt, VfsSpazio *s)
+{
+    FatMount *m;
+    uint32_t  c, v, liberi = 0;
+
+    if (mnt < 0 || mnt >= g_mnt_n || !(*g_mnt[mnt]).usato) return -1;
+    m = g_mnt[mnt];
+    for (c = 2; c < m->n_cluster + 2u; c++) {
+        v = fat_voce(m, c);
+        if (v == FAT_ERR) return -1;
+        if (v == 0) liberi++;
+    }
+    s->dim_blocco   = m->byts_per_sec * m->sec_per_clus;
+    s->blocchi      = m->n_cluster;
+    s->liberi       = liberi;
+    s->disponibili  = liberi;
+    s->inode = s->inode_liberi = 0;     /* FAT has no inodes */
+    s->sola_lettura = 0;
+    s->nome_max     = 255;              /* long names */
+    return 0;
+}
+
 uint32_t fat_n_cluster(int mnt)
 {
     if (mnt < 0 || mnt >= g_mnt_n || !(*g_mnt[mnt]).usato) return 0;

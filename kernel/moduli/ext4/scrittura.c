@@ -104,8 +104,12 @@ static uint32_t dtime_di(uint32_t n_inode)
  *      aggiunto: resta in b_ind «sporco» e va sul disco quando se ne carica
  *      un altro, e comunque prima che ext2_write torni.
  * ============================================================================= */
-static uint32_t g_pre_primo = 0;        /* i blocchi prenotati: il prossimo... */
-static uint32_t g_pre_n     = 0;        /* ...e quanti ne restano */
+/* The reserved blocks (0.009): a list, not a run - see «TWO WRITES PER
+ * BLOCK» at prenota. g_pre_blk[g_pre_da ...] are left, g_pre_n of them, all
+ * in one group, in ascending order. */
+static uint32_t g_pre_blk[CORSA_MAX];
+static uint32_t g_pre_da    = 0;        /* the next one to hand out */
+static uint32_t g_pre_n     = 0;        /* how many are left */
 static int      g_zero      = 1;        /* 0: il blocco nuovo non si azzera (dati) */
 static int      g_ind_diff  = 0;        /* 1: dentro ext2_write, b_ind si scrive dopo */
 
@@ -393,17 +397,30 @@ static uint32_t primo_libero(uint32_t limite, const uint8_t *tr)
  * Il blocco torna GIA' marcato occupato sulla bitmap: chi lo riceve non
  * deve ricordarsi di farlo, e non esiste un istante in cui il blocco e'
  * stato consegnato ma risulta ancora libero a un'altra allocazione. */
-/* Prende fino a `quanti` blocchi liberi CONSECUTIVI, in una scrittura della
- * bitmap e un aggiornamento del descrittore. Restano in g_pre_primo/g_pre_n:
- * li consegna alloca_blocco. Puo' prenderne meno, o nessuno: allora si
- * prosegue un blocco per volta, come sempre. */
+/* Prende fino a `quanti` blocchi liberi, in una scrittura della bitmap e un
+ * aggiornamento del descrittore. Restano in g_pre_blk: li consegna
+ * alloca_blocco. Puo' prenderne meno, o nessuno: allora si prosegue un blocco
+ * per volta, come sempre.
+ *
+ * ! TWO WRITES PER BLOCK ON A FRAGMENTED GROUP (0.009, voce 123, measured).
+ * Until 0.008 this took only the run of free blocks starting at the FIRST
+ * free bit. On a group full of one-block holes (Firefox's profile: files
+ * made, renamed and deleted by the hundred) that run was one block long,
+ * nothing was reserved, and every block of a write cost its own bitmap and
+ * descriptor write: a 113 KB write was 6 commands of data and 56 of
+ * metadata, 0.7 s holding the file lock with 4-11 processes waiting.
+ * Now: the first free run long enough for all of it (the file stays in one
+ * piece); without one, the free blocks of the group in order, wherever they
+ * are - one bitmap write all the same. */
 static void prenota(Ext2Mount *m, uint32_t pref, uint32_t quanti)
 {
     uint32_t giro, g, off, dblk, bmp, lim, i, k;
     const uint8_t *tr;
 
     g_pre_n = 0;
+    g_pre_da = 0;
     if (quanti < 2u) return;
+    if (quanti > CORSA_MAX) quanti = CORSA_MAX;
     if (pref >= m->n_gruppi) pref = 0;
 
     for (giro = 0; giro < m->n_gruppi; giro++) {
@@ -418,22 +435,48 @@ static void prenota(Ext2Mount *m, uint32_t pref, uint32_t quanti)
         i   = primo_libero(lim, tr);
         if (i >= lim) continue;
 
-        for (k = 0; k < quanti && i + k < lim && LIBERO(i + k, tr); k++)
-            b_bmp[(i + k) / 8u] |= (uint8_t)(1u << ((i + k) % 8u));
+        {
+            uint32_t base = m->primo_dato + g * m->blocchi_per_gruppo;
+            uint32_t j, run = 0, da = lim;
+
+            /* 1. the first free run of `quanti` */
+            for (j = i; j < lim; j++) {
+                if ((j % 8u) == 0 && run == 0 && j + 8u <= lim &&
+                    (b_bmp[j / 8u] | (tr ? tr[j / 8u] : 0u)) == 0xFF) { j += 7u; continue; }
+                if (!LIBERO(j, tr)) { run = 0; continue; }
+                if (++run == quanti) { da = j + 1u - quanti; break; }
+            }
+            k = 0;
+            if (da < lim) {
+                for (j = da; j < da + quanti; j++) g_pre_blk[k++] = base + j;
+            } else {
+                /* 2. none: the free ones in order, from the first */
+                for (j = i; j < lim && k < quanti; j++) {
+                    if ((j % 8u) == 0 && j + 8u <= lim &&
+                        (b_bmp[j / 8u] | (tr ? tr[j / 8u] : 0u)) == 0xFF) { j += 7u; continue; }
+                    if (LIBERO(j, tr)) g_pre_blk[k++] = base + j;
+                }
+            }
+            for (j = 0; j < k; j++) {
+                uint32_t b = g_pre_blk[j] - base;
+
+                b_bmp[b / 8u] |= (uint8_t)(1u << (b % 8u));
+            }
+        }
 
         if (scrivi_blocco(m, bmp, b_bmp) != 0) return;
         if (desc_aggiorna(m, g, -(int)k, 0, 0, b_bmp, NULL, 0) != 0) return;
         m->blocchi_liberi -= k;
 
-        g_pre_primo = m->primo_dato + g * m->blocchi_per_gruppo + i;
-        g_pre_n     = k;
+        g_pre_da = 0;
+        g_pre_n  = k;
         return;
     }
 }
 
 
-/* I prenotati che nessuno ha usato tornano liberi. Sono consecutivi e in un
- * gruppo solo (prenota non esce dal gruppo): una lettura e una scrittura
+/* I prenotati che nessuno ha usato tornano liberi. Sono in un gruppo solo
+ * (prenota non esce dal gruppo), anche se non piu' consecutivi (0.009): una lettura e una scrittura
  * della bitmap, un aggiornamento del descrittore. Se qualcosa non va restano
  * occupati e di nessuno - spazio perso fino a e2fsck, non un errore nei
  * dati - e il superblocco si riscrive comunque con quel che si sa. */
@@ -441,17 +484,18 @@ static void prenotati_rilascia(Ext2Mount *m)
 {
     uint32_t g, i, k, bmp, liberati = 0;
 
-    if (g_pre_n > 0 && g_pre_primo >= m->primo_dato) {
-        g = (g_pre_primo - m->primo_dato) / m->blocchi_per_gruppo;
-        i = (g_pre_primo - m->primo_dato) % m->blocchi_per_gruppo;
+    if (g_pre_n > 0 && g_pre_blk[g_pre_da] >= m->primo_dato) {
+        g = (g_pre_blk[g_pre_da] - m->primo_dato) / m->blocchi_per_gruppo;
 
-        if (i + g_pre_n <= m->blocchi_per_gruppo) {
+        {
             if (bitmap_blocchi(m, g, b_bmp, &bmp) == 0) {
-                for (k = i; k < i + g_pre_n; k++)
-                    if (b_bmp[k / 8u] & (1u << (k % 8u))) {
-                        b_bmp[k / 8u] &= (uint8_t)~(1u << (k % 8u));
+                for (k = g_pre_da; k < g_pre_da + g_pre_n; k++) {
+                    i = (g_pre_blk[k] - m->primo_dato) % m->blocchi_per_gruppo;
+                    if (b_bmp[i / 8u] & (1u << (i % 8u))) {
+                        b_bmp[i / 8u] &= (uint8_t)~(1u << (i % 8u));
                         liberati++;
                     }
+                }
                 if (liberati > 0 && scrivi_blocco(m, bmp, b_bmp) == 0 &&
                     desc_aggiorna(m, g, (int)liberati, 0, 0, b_bmp, NULL, 0) == 0)
                     m->blocchi_liberi += liberati;
@@ -490,7 +534,7 @@ static uint32_t alloca_blocco(Ext2Mount *m, uint32_t pref)
 
     /* Uno dei prenotati: e' gia' segnato nella bitmap e contato. */
     if (g_pre_n > 0) {
-        n = g_pre_primo++;
+        n = g_pre_blk[g_pre_da++];
         g_pre_n--;
         if (g_zero) {
             uint32_t k;
@@ -824,6 +868,46 @@ uint32_t alloca_blocco_per(Ext2Mount *m, uint32_t pref, int dato)
     return r;
 }
 
+/* =============================================================================
+ * ! THE UPPER LEVEL IS NOT LOADED AGAIN FOR EVERY BLOCK (0.009, voce 123,
+ * measured). b_ind holds ONE pointer block. Past block 12 + ppb a file goes
+ * through the double indirect: for every block the double indirect was
+ * loaded into b_ind to find the second-level block - and loading it put the
+ * second-level block, dirty with the pointer just added, on the disk. One
+ * write per 4 KB on every file above 4 MB (Firefox's scriptCache-new.bin,
+ * 8.5 MB: block 188059 written 25 times in one write() of 108 KB).
+ * Here the last step through an upper level is remembered: which block,
+ * which slot, the block it points to. Only a pointer already there (or just
+ * set by this very code) is remembered, and the memory is forgotten at the
+ * start and at the end of every ext2_write - nobody else changes those
+ * blocks in between: the file lock is held.
+ * ============================================================================= */
+static int      g_su_mnt = -1;
+static uint32_t g_su_blk[2], g_su_idx[2], g_su_val[2];
+
+static void su_dimentica(void)
+{
+    g_su_mnt = -1;
+    g_su_blk[0] = g_su_blk[1] = 0;
+}
+
+/* punt_o_alloca for an upper level (`liv` 0 or 1), through the memory */
+static uint32_t su_o_alloca(Ext2Mount *m, int mnt, int liv, uint32_t blk,
+                            uint32_t idx, uint32_t pref, uint32_t *charge)
+{
+    uint32_t r;
+
+    if (!g_ind_diff) return punt_o_alloca(m, mnt, blk, idx, pref, charge);  /* only inside ext2_write */
+    if (g_su_mnt == mnt && g_su_blk[liv] == blk && g_su_idx[liv] == idx && g_su_val[liv])
+        return g_su_val[liv];
+    r = punt_o_alloca(m, mnt, blk, idx, pref, charge);
+    if (r) {
+        if (g_su_mnt != mnt) { su_dimentica(); g_su_mnt = mnt; }
+        g_su_blk[liv] = blk; g_su_idx[liv] = idx; g_su_val[liv] = r;
+    }
+    return r;
+}
+
 static uint32_t mappa_o_alloca(Ext2Mount *m, int mnt, uint32_t num, uint8_t *inode,
                                uint32_t n, uint32_t pref, uint32_t *charge)
 {
@@ -852,7 +936,7 @@ static uint32_t mappa_o_alloca(Ext2Mount *m, int mnt, uint32_t num, uint8_t *ino
     if (n < ppb * ppb) {
         l1 = inode_punt_o_alloca(m, inode, 13u, pref, charge);
         if (l1 == 0) return 0;
-        l2 = punt_o_alloca(m, mnt, l1, n / ppb, pref, charge);
+        l2 = su_o_alloca(m, mnt, 0, l1, n / ppb, pref, charge);
         if (l2 == 0) return 0;
         return DATO(punt_o_alloca(m, mnt, l2, n % ppb, pref, charge));
     }
@@ -860,9 +944,9 @@ static uint32_t mappa_o_alloca(Ext2Mount *m, int mnt, uint32_t num, uint8_t *ino
 
     l1 = inode_punt_o_alloca(m, inode, 14u, pref, charge);
     if (l1 == 0) return 0;
-    l2 = punt_o_alloca(m, mnt, l1, n / (ppb * ppb), pref, charge);
+    l2 = su_o_alloca(m, mnt, 0, l1, n / (ppb * ppb), pref, charge);
     if (l2 == 0) return 0;
-    l2 = punt_o_alloca(m, mnt, l2, (n / ppb) % ppb, pref, charge);
+    l2 = su_o_alloca(m, mnt, 1, l2, (n / ppb) % ppb, pref, charge);
     if (l2 == 0) return 0;
     return DATO(punt_o_alloca(m, mnt, l2, n % ppb, pref, charge));
 #undef DATO
@@ -2027,6 +2111,7 @@ int ext2_write(int mnt, const char *percorso, const void *buf, uint32_t size,
     }
     g_dati_zero = 0;
     g_ind_diff  = 1;
+    su_dimentica();
 
     while (scritti < size) {
         uint32_t log = (offset + scritti) / m->dim_blocco;
@@ -2036,6 +2121,19 @@ int ext2_write(int mnt, const char *percorso, const void *buf, uint32_t size,
         int      nuovo;
 
         if (q > size - scritti) q = size - scritti;
+
+        /* (0.009, voce 123) the reservation ran out in the middle of a long
+         * write (it holds CORSA_MAX blocks): a new one for what is left,
+         * instead of a bitmap and a descriptor write for every block. Only
+         * past the end of the file, where every block is a new one. */
+        if (g_pre_n == 0 && (uint64_t)log * m->dim_blocco >= dim) {
+            uint32_t resto = (offset + size - 1u) / m->dim_blocco - log + 1u;
+
+            if (resto >= 2u) {
+                prenota(m, gruppo, resto);
+                if (g_pre_n > 0) { g_pre_mnt = mnt; g_pre_ino = num; }
+            }
+        }
 
         blk = mappa_o_alloca(m, mnt, num, inode, log, gruppo, &charge);
         if (blk == 0) break;                    /* volume pieno */
@@ -2085,6 +2183,7 @@ int ext2_write(int mnt, const char *percorso, const void *buf, uint32_t size,
      * tornano liberi, e chi alloca dopo di noi ritrova i blocchi azzerati. */
     g_dati_zero = 1;
     g_ind_diff  = 0;
+    su_dimentica();
     if (ind_riversa(m) != 0) esito_ind = -1;
     /* In coda e andata bene: i prenotati restano per la write() dopo. */
     if (!in_coda || scritti < size || esito_ind != 0) prenotati_rilascia(m);

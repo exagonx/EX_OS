@@ -226,6 +226,22 @@ GRUPPO  VOCI             COSA
  --     61 76            solo se ricompare (76: orologio in FAULT, 3/11)
  --     77               seguiti del 3-4/11: H.264 Firefox, Firefox 32, repo 64 da
                          pubblicare, ExPackage sul portatile, statici rimasti
+ --     133              (26/11) RETE: ogni datagramma arriva tardi - in QEMU (ne2k)
+                         500 ms dopo il quarto, sul .253 (nforce) 60-100 ms
+                         contro 1 ms di Linux; da misurare nei driver, in coda
+ --     132              (26/11) DNS: Exilla vuole piu' tentativi (la libc non
+                         ritentava dopo una scadenza) e i programmi fanno le
+                         loro cartelle in / (HOME = / per root) - FATTA
+ --     131              (26/11) EXILLA: IL LOGIN DELL'ACCOUNT FIREFOX dice "local
+                         storage or cookies are still disabled": statvfs a zero
+                         (quota 0) e mkdir che non diceva EEXIST - FATTA
+ --     130              (26/11) FILE MANAGER: "Esegui" e "Esegui in shell" nel
+                         tasto destro su uno script .sh o un eseguibile
+ --     128 129          (26/11) FILE MANAGER: barra di strumenti a icone (taglia,
+                         copia, incolla, elimina, nuovo file, nuova cartella,
+                         cerca); selezione col rettangolo del mouse
+ --     127              (26/11) TRASCINANDO, LA CARTELLA SOTTO IL PUNTATORE
+                         SI ACCENDE di un colore piu' chiaro della selezione
  --     124 125 126      (26/11) FATTE: i programmi partono nel profilo
                          dell'utente; sh 0.017 cronologia e modifica anche nel
                          Terminale e in telnet; File manager "Apri una shell qui"
@@ -10584,6 +10600,164 @@ tools/netinst/velocita tolto da netinst.
       17/11, DOPO IL RIAVVIO NELLA 0.343: il telnetd 0.015 dell'avvio, porta
       23, telnet_piu_prova.py 6 su 6.
 
+  133. RETE: OGNI DATAGRAMMA ARRIVA TARDI (26/11/2026, trovato misurando la
+      voce 132, in coda). tools/prove/risolvi -fasi (socket, sendto,
+      recvfrom, close cronometrati): in QEMU con ne2k le prime tre risposte
+      in 10-30 ms, dalla quarta recvfrom aspetta sempre 500 ms, anche un
+      filo solo e col DNS che risponde subito; sul .253 (nforce) un nome
+      gia' in cache del router costa 60-100 ms, Linux sulla stessa rete 1 ms.
+      SOSPETTO (da misurare, non certo): un'interruzione di ricezione persa
+      e il pacchetto che va avanti solo col battito del driver (ne2k:
+      PERIODO_MS 250; ip.drv GIRO_MS 50). Contatori da guardare:
+      notifiche_irq e battiti del driver prima e dopo un risolvi -fasi.
+      Pesa su tutto: DNS, TCP, Exilla.
+      STATO: in coda.
+
+  132. DNS: EXILLA VUOLE PIU' TENTATIVI; LE CARTELLE DEI PROGRAMMI IN /
+      (26/11/2026). L'utente: "urgente la rete sembra che abbia problemi a
+      risolvere i DNS, sono necessari piu tentativi per aprire un sito web
+      da exilla(firefox), le applicazioni installate come firefox che
+      necessitano di directory queste devono essere create nella directory
+      del profilo utente che esegue l'applicazione".
+      MISURATO sul .253 (tools/prove/risolvi, getaddrinfo come Firefox,
+      anche 40 fili insieme): 288 nomi su 288 risolti - su quella rete in
+      quel momento non si perdeva niente.
+      PERCHE' (lib/libc.c, dns_chiedi, quella di getaddrinfo e quindi di
+      Firefox): il ciclo dei tre tentativi andava avanti solo con esito
+      -2, e una recvfrom scaduta metteva -3: UNA risposta persa o piu'
+      lenta di 2 s e il nome "non esisteva"; il tentativo dopo di Firefox
+      lo trovava nella cache del router. In piu' l'identificativo era
+      l'orologio e si credeva a qualunque datagramma con quel numero (cio'
+      che bug_DNS001 aveva tolto da lib/dns.c ma non dalla libc).
+      FATTO: tre tentativi da 2, 3 e 5 s, una scadenza rimanda la domanda;
+      16 bit casuali (getentropy); la risposta conta solo se viene dal
+      server chiesto, dalla porta 53, alla nostra domanda, e il datagramma
+      di un altro non consuma il tentativo. NXDOMAIN non si ritenta.
+      PROVA: tools/prova_dns.sh (un DNS finto sull'ospite, in un namespace
+      con unshare -rn per la porta 53: perde la prima domanda di perso*,
+      risponde dopo 2,5 s a lento*, NXDOMAIN a nx*) - a posto a 32 e 64
+      bit: perso in 2010 ms, lento in 2500, nx subito, identificativi
+      tutti diversi.
+      LE CARTELLE: il profilo di Exilla era gia' in $HOME/.exilla, ma sul
+      .253 c'erano /.local/share/vlc, /.config/vlc, /security_state: HOME
+      era "/" per root (kernel.cfg, [env] HOME = /, data a chi non passa
+      da login - la console e telnet), e getpwuid rendeva la stessa cosa.
+      FATTO: sh 0.018 - HOME = / diventa /root per root quando /root c'e'
+      (sul CD non c'e' e resta /), e cd senza argomenti va in HOME;
+      getpwuid non prende HOME = / per buono; il lanciatore exilla 0.009
+      senza HOME usa la casa dell'utente da getpwuid e non "/".
+      PROVATO: in QEMU a 32 e 64 bit con un disco montato su /root,
+      sh -c 'echo $HOME' = /root; prova_partenza_shell 6/6 a 32 e 64 bit.
+      Le cartelle vecchie in / sul .253 restano: le toglie l'utente se
+      vuole (rm -r /.local /.config /security_state).
+      STATO: fatta; sul .253 con il prossimo netupdate.
+
+  131. EXILLA: IL LOGIN DELL'ACCOUNT FIREFOX NON VA (26/11/2026). L'utente:
+      "ho cercato di fare il login nell'account di firefox ma appare una
+      finestra con la dicitura Local storage and cookies are required local
+      storage or cookies are still disabled procedi, quando passa aggiorna
+      il 253".
+      RIPRODOTTO (tools/exilla/prova-memoria-locale.sh, 64 bit, kernel
+      0.372 prima della correzione): una pagina servita in http dall'ospite;
+      cookie e sessionStorage a posto, localStorage e indexedDB
+      QuotaExceededError; nel profilo la cartella storage/ non c'era;
+      sulla seriale "Could not create directory `/disk'".
+      PERCHE' (kernel/fs/vfs.c, modifica): mkdir di un percorso che c'e'
+      gia' passava prima dai controlli (radice di un montaggio -> EBUSY,
+      volume in sola lettura -> EROFS, padre non scrivibile -> EACCES) e
+      solo dopo arrivava a EEXIST. Linux risponde EEXIST per primo, e chi
+      crea una cartella coi genitori (QuotaManager di Firefox per
+      <profilo>/storage, create_dir_all di Rust, mkdir -p) va avanti solo
+      su EEXIST: si fermava su /disk, lo storage non nasceva e Firefox lo
+      dice come quota superata.
+      FATTO: kernel 0.372, mkdir di cio' che c'e' gia' e' EEXIST prima di
+      ogni altro controllo.
+      NON BASTAVA: con la cartella storage/ creata, localStorage e
+      indexedDB davano ancora QuotaExceededError. LA CAUSA VERA: statvfs
+      della libc rendeva una struttura a zero (nessun blocco libero), e il
+      QuotaManager di Firefox calcola il limite di ogni sito dallo spazio
+      libero del disco del profilo: quota 0.
+      FATTO 26/11: SYS_STATFS (284) nel kernel 0.372 - ext2_spazio (blocchi,
+      liberi, liberi meno i riservati del superblocco, inode, sola lettura)
+      e fat_spazio (i cluster liberi contati nella FAT), vfs_statfs e
+      vfs_fstatfs; statvfs/fstatvfs della libc la usano (con un kernel
+      vecchio, -ENOSYS, resta la risposta di prima).
+      PROVATO: tools/exilla/prova-memoria-locale.sh a 64 e 32 bit tutto a
+      posto - cookie, localStorage, sessionStorage, indexedDB, e al
+      ricaricamento della pagina localStorage e cookie ci sono ancora.
+      STATO: fatta; sul .253 con il prossimo netupdate.
+
+  130. FILE MANAGER: "ESEGUI" E "ESEGUI IN SHELL" NEL TASTO DESTRO (26/11/2026,
+      appunto dell'utente mentre si lavorava alla voce 123, in coda).
+      L'utente: "con il tasto destro su un file oltre ad apri e altre
+      opzioni ci dovrebbero essere altre due voci, esegui in shell e esegui
+      cosi che se si tratta di script .sh o un file eseguibile programma
+      posso aprirli direttamente dal file manager".
+      DA GUARDARE: le due voci dopo "Apri" in menu_destro (filemgr.c), solo
+      su un file che si puo' eseguire (bit x, oppure .sh, oppure un ELF);
+      altrimenti spente o assenti.
+      - "Esegui": il programma parte da solo nella sua cartella (chdir come
+        comando_shell, ex_spawn_program); uno script con /bin/sh; un
+        programma per ExWin apre le sue finestre, uno di testo senza
+        terminale non si vedrebbe: da decidere se allora fare come "Esegui
+        in shell".
+      - "Esegui in shell": un Terminale (/exwin/bin/term) nella cartella del
+        file che lancia il file e resta aperto alla fine, per leggerne
+        l'uscita. term prende come argomento il programma da avviare
+        (g_prog): serve "/bin/sh -c '<file>; exec sh'" o un'opzione di term
+        per lasciare la shell dopo il comando.
+      STATO: in coda, non cominciata.
+
+  129. FILE MANAGER: SELEZIONE COL RETTANGOLO DEL MOUSE (26/11/2026, appunto
+      dell'utente mentre si lavorava alla voce 123, in coda). L'utente: "va
+      implementata la selezione con il mouse dove crea un quadrato che
+      allargandosi seleziona tutti file e cartelle che tocca il quadrato".
+      DA GUARDARE: premuto il tasto sinistro sul vuoto dell'elenco (non su
+      una riga: li' parte il trascinamento delle righe), muovendo si
+      disegna un rettangolo tratteggiato e ogni riga che il rettangolo tocca
+      diventa scelta (come con Ctrl+clic); con Ctrl tenuto si aggiunge a
+      cio' che c'era. Il posto giusto e' la lista di exwin.so (la scelta di
+      piu' righe c'e' gia', ex_list_set_drag_count), cosi' vale per ogni
+      programma; nell'elenco a righe del file manager lo spazio vuoto e'
+      sotto l'ultima riga e a destra delle colonne: forse partire anche da
+      una riga tenendo premuto Shift, o col tasto premuto fuori dal nome.
+      Da decidere con l'utente dove si comincia il rettangolo.
+      STATO: in coda, non cominciata.
+
+  128. FILE MANAGER: BARRA DI STRUMENTI A ICONE (26/11/2026, appunto
+      dell'utente mentre si lavorava alla voce 123, in coda). L'utente:
+      "potresti implementare un pannello strumenti a icone per il taglia,
+      copia, incolla, elimina, nuovo file, nuova directory, cerca dove
+      agiscono su uno o piu file e directory selezionate".
+      DA GUARDARE: una fila di pulsanti con icona sotto il menu, con un
+      suggerimento al passaggio del puntatore; ciascuno chiama il comando
+      che c'e' gia' (appunti_prendi(1) taglia, appunti_prendi(0) copia,
+      appunti_incolla, comando_cancella, comando_nuovo_file,
+      comando_nuova_dir, ID_CERCA), che gia' agiscono sulle righe scelte;
+      spenti quando non c'e' niente da fare (incolla con gli appunti vuoti,
+      taglia/copia/elimina senza righe scelte). Icone da disegnare (16 o 24
+      pixel) in /exwin/icon/baseapp; se exwin.so non ha un controllo
+      "barra di strumenti" conviene farlo li', per gli altri programmi.
+      STATO: in coda, non cominciata.
+
+  127. TRASCINANDO, LA CARTELLA SOTTO IL PUNTATORE SI ACCENDE (26/11/2026,
+      appunto dell'utente mentre si lavorava alla voce 123, in coda).
+      L'utente: "quando fa il trascina sarebbe comodo che quando il
+      puntatore si sposta su una directory questa venisse selezionata con un
+      colore piu chiaro della selezione normale cosi da capire su quale
+      percorso sta agendo".
+      DOVE: il trascinamento delle righe e' in exwin.so (le liste, il foglio
+      accanto al puntatore della voce 114, ex_list_set_drag_count) e il
+      file manager riceve la riga lasciata (filemgr.c, lasciato:
+      ex_list_row_at sull'albero). Da guardare: mentre si trascina, la riga
+      sotto il puntatore in una lista che accetta (l'albero, e nell'elenco
+      una riga che e' una cartella) disegnata con un colore piu' chiaro di
+      quello della selezione (un colore del tema nuovo, come TC.menu_sopra);
+      la selezione vera non cambia; si spegne uscendo o lasciando. Probabile
+      un controllo in exwin.so (la lista sa chi accetta) piu' una chiamata
+      del file manager per dire quali righe sono cartelle.
+      STATO: in coda, non cominciata.
+
   126. FILE MANAGER: "APRI UNA SHELL QUI" (26/11/2026). L'utente: "sul
       file manager bisogna implementare sul tasto destro e aggiungere una
       nuova voce su menu file quello di eseguire una shell nella directory
@@ -10684,6 +10858,25 @@ tools/netinst/velocita tolto da netinst.
       tempo del disco nel registro), piu' la prova della spina staccata
       (QEMU ucciso a meta' scrittura: fsync protegge i dati, fsck trova
       il volume pulito), a 32 e 64 bit, poi sul .253.
+      FATTO 26/11, A E UNA PARTE DI C (kernel 0.372, ext4.mod 0.009):
+      - A: la riga dell'avviso di un lucchetto lungo e' seguita dalla sua
+        divisione (letture, scritture e di queste i dati, flush: comandi e
+        ms). MISURATO: su un gruppo pieno di buchi da un blocco la
+        prenotazione non prendeva niente, e ogni blocco scriveva bitmap e
+        descrittore; i file oltre 4 MB riscrivevano il blocco indiretto di
+        secondo livello a ogni blocco (scriptCache-new.bin);
+      - la prenotazione e' una lista: la prima corsa libera abbastanza
+        lunga, se no i blocchi liberi sparsi; una scrittura della bitmap e
+        una del descrittore per prenotazione, rinnovata dentro la write();
+      - il livello di sopra degli indiretti doppi e tripli si ricorda
+        (su_o_alloca): non si ricarica a ogni blocco.
+      Firefox, primo giro: da 10 lucchetti lunghi (6,8 s) a 1 (0,5 s);
+      secondo giro da 34 (35 s) a 25 (18 s) prima delle ultime due
+      correzioni. PROVE: tools/prova_frammenti.sh (quattro volumi
+      frammentati, e2fsck pulito, copia identica, i buchi usati) a 32 e
+      64 bit; prova_ext4 49, prova_ext3 27, prova_extfs 29 a posto.
+      RESTA: la misura finale con prova-avvio.sh; B (cache in scrittura)
+      solo col consenso dell'utente.
 
   122. PM: L'ASPETTO DELL'ELENCO DEI PROGRAMMI (26/11/2026, appunto
       dell'utente, in coda). L'utente: "su program manager l'elenco dei

@@ -120,14 +120,14 @@ Dentro EX-OS gli stessi manuali sono in `/doc/manuali` (dal CD:
 
 ## Ultime novità
 
+- [Login nell'account di Firefox: localStorage e indexedDB hanno il loro spazio (kernel 0.372)](manuali/novita.it.md#il-login-nellaccount-di-firefox-funziona-localstorage-e-indexeddb-hanno-il-loro-spazio-kernel-0372-voce-131--testato-in-qemu) — *testato in QEMU*
+- [I nomi si risolvono al primo colpo: una risposta del DNS persa si richiede (libc)](manuali/novita.it.md#i-nomi-si-risolvono-al-primo-colpo-una-risposta-del-dns-persa-si-richiede-libc-voce-132--testato-in-qemu) — *testato in QEMU*
+- [I programmi tengono le loro cartelle nel profilo dell'utente, non in / (sh 0.018)](manuali/novita.it.md#i-programmi-tengono-le-loro-cartelle-nel-profilo-dellutente-non-in--sh-0018-exilla-0009-voce-132--testato-in-qemu) — *testato in QEMU*
+- [Scrivere su un disco ext2/3/4 frammentato costa meno comandi al disco (ext4.mod 0.009)](manuali/novita.it.md#scrivere-su-un-disco-ext234-frammentato-costa-meno-comandi-al-disco-kernel-0372-ext4mod-0009-voce-123--testato-in-qemu) — *testato in QEMU*
 - [Ogni programma parte nella cartella dell'utente (exwin, pm 0.033, filemgr 0.017)](manuali/novita.it.md#ogni-programma-parte-nella-cartella-dellutente-exwin-pm-0033-filemgr-0017-voce-124--testato-in-qemu) — *testato in QEMU*
 - [La shell ha cronologia e modifica della riga anche nel Terminale e in telnet (sh 0.017)](manuali/novita.it.md#la-shell-ha-cronologia-e-modifica-della-riga-anche-nel-terminale-e-in-telnet-sh-0017-exwinso-0029-voce-125--testato-in-qemu) — *testato in QEMU*
 - [Il file manager apre una shell nella cartella mostrata (filemgr 0.017)](manuali/novita.it.md#il-file-manager-apre-una-shell-nella-cartella-mostrata-filemgr-0017-voce-126--testato-in-qemu) — *testato in QEMU*
 - [Menu Avvio: icona in un piccolo pulsante, nome accanto, triangolino sui gruppi (exwin.so 0.029)](manuali/novita.it.md#il-menu-avvio-ha-righe-con-licona-in-un-piccolo-pulsante-e-il-nome-accanto-e-un-triangolino-sui-gruppi-exwinso-0029-menuitem-pm-0032-voce-122--testato-in-qemu) — *testato in QEMU*
-- [Firefox va a schermo intero, YouTube compreso (wserver 0.020, exwin.so 0.028)](manuali/novita.it.md#firefox-va-a-schermo-intero-youtube-compreso-wserver-toglie-il-telaio-a-una-finestra-aperta-wserver-0020-exwinso-0028-voce-121--testato-in-qemu-e-sul-pc-di-prova) — *testato in QEMU e sul PC di prova*
-- [Firefox parte prima: pagine lette quando servono, simboli con hash, niente blocchi all'avvio (kernel 0.371)](manuali/novita.it.md#firefox-parte-prima-le-librerie-e-omnija-si-leggono-quando-servono-i-simboli-con-le-tabelle-hash-niente-più-blocchi-allavvio-kernel-0371-voce-120--testato-in-qemu-e-sul-pc-di-prova) — *testato in QEMU e sul PC di prova*
-- [File manager: nascosti ed estensioni a richiesta, un foglio accanto alle righe trascinate](manuali/novita.it.md#il-file-manager-nasconde-i-file-col-punto-e-le-estensioni-a-richiesta-e-le-righe-trascinate-mostrano-un-foglio-accanto-al-puntatore-filemgr-0016-exwinso-0027-voce-114--testato-in-qemu) — *testato in QEMU*
-- [Exilla: di nuovo video e suono a più processi, YouTube compreso](manuali/novita.it.md#exilla-fa-di-nuovo-video-e-suono-a-più-processi-youtube-compreso-exos-mediajs--testato-in-qemu) — *testato in QEMU*
 
 Tutte le altre, dalla più recente: [Novità](manuali/novita.it.md).
 

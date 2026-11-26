@@ -86,6 +86,7 @@ typedef __INTPTR_TYPE__  intptr_t;
 #define SYS_WAITPID     7
 #define SYS_UPTIME     186
 #define SYS_GETPID      20
+#define SYS_GETUID      24
 #define SYS_EXEC        11
 #define SYS_SCHED_YIELD 158
 #define SYS_SLEEP       162
@@ -994,6 +995,22 @@ static void env_init(void)
     percorsi_aggiungi();
 }
 
+/* ! HOME = / IS NOBODY'S HOME (voce 132, the user 26/11/2026). kernel.cfg
+ * says HOME = / for whoever has no login - root on the console and over
+ * telnet - and every program took "/" as the profile: VLC made /.local and
+ * /.config, Firefox /security_state, and getpwuid said the same. root's
+ * profile is /root: when it exists, HOME goes there. A user that logged in
+ * already has his own from login. */
+static void casa_giusta(void)
+{
+    const char *h = env_get("HOME");
+
+    if (h && h[0] && !(h[0] == '/' && h[1] == '\0')) return;
+    if (syscall4(SYS_GETUID, 0, 0, 0, 0) != 0) return;
+    if (sh_opendir("/root") == 0) return;       /* live CD without /root: leave it */
+    env_set("HOME", "/root");
+}
+
 /* =============================================================================
  * env_eredita — l'ambiente che arriva dal padre vince su kernel.cfg
  *
@@ -1133,7 +1150,7 @@ static void verbose_init(void)
  * supera i 256. Un nome che si puo' creare ed elencare ma non digitare e'
  * un nome irraggiungibile per meta'. */
 /* +0.001 a ogni modifica: `sh -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define SH_VERSIONE  "0.017"   /* 0.017: history and editing on a pty too (ExWin terminal, telnet) */
+#define SH_VERSIONE  "0.018"   /* 0.018: HOME = / becomes /root for root, bare cd goes to HOME (voce 132); 0.017: history and editing on a pty */
 
 
 /* ! LA RIGA DI `sh -c` NON E' UNA RIGA DIGITATA, e non puo' avere lo
@@ -1563,7 +1580,9 @@ static void cmd_pwd(void)
 
 static void cmd_cd(int argc, char *argv[])
 {
-    const char *path = (argc >= 2) ? argv[1] : "/";
+    /* bare cd: the profile, as POSIX says (voce 132; it went to /) */
+    const char *casa = env_get("HOME");
+    const char *path = (argc >= 2) ? argv[1] : (casa && casa[0] ? casa : "/");
     int ret = sh_chdir(path);
     if (ret < 0) {
         print("cd: ");
@@ -4625,6 +4644,7 @@ int shell_main(int argc, char **argv, char **envp)
      * sopra quelli che il padre ci ha passato. Vedi env_eredita. */
     env_init();
     env_eredita(envp);
+    casa_giusta();
 
     /* =====================================================================
      * ! `sh -f <file>` ESEGUE UNO SCRIPT E BASTA, e serve a chi deve far
@@ -4639,6 +4659,7 @@ int shell_main(int argc, char **argv, char **envp)
     if (argc >= 3 && sh_strcmp(argv[1], "-f") == 0) {
         env_init();
         env_eredita(envp);
+        casa_giusta();
         esegui_script(argv[2], "avvio", 1);
         sh_exit(0);
     }

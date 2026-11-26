@@ -18,6 +18,7 @@
 #define FAT_H
 
 #include "kernel.h"
+#include "vfs.h"        /* VfsSpazio: statfs (voce 131) */
 
 /* FAT_MAX_MOUNT (4) gone in 0.343: the mounts grow (posti.h, voce 50). */
 /* ! 256 E NON 13, da agosto 2026. Valeva "NOME8.EXT" + NUL perche' il
@@ -66,6 +67,7 @@ int  fat_umount(int mnt);
 /* Tipo (12/16/32) e numero di cluster del volume montato, per diagnostica. */
 int  fat_tipo(int mnt);
 uint32_t fat_n_cluster(int mnt);
+int      fat_spazio(int mnt, VfsSpazio *s);     /* statfs (voce 131) */
 const char *fat_etichetta(int mnt);
 
 /* Elenca una directory. `percorso` e' interno al volume ("/" oppure

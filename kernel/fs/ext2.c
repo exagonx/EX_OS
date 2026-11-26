@@ -168,6 +168,25 @@ static Ext2Mount *prendi(int mnt)
     return g_mnt[mnt];
 }
 
+/* The volume's room, for statfs (voce 131): the counters the write module
+ * keeps up to date (blocks reserved for a file being appended to count as
+ * used, as they are on the disk). */
+int ext2_spazio(int mnt, VfsSpazio *s)
+{
+    Ext2Mount *m = prendi(mnt);
+
+    if (m == NULL) return -1;
+    s->dim_blocco   = m->dim_blocco;
+    s->blocchi      = m->n_blocchi;
+    s->liberi       = m->blocchi_liberi;
+    s->disponibili  = m->blocchi_liberi > m->riservati ? m->blocchi_liberi - m->riservati : 0;
+    s->inode        = m->n_inode;
+    s->inode_liberi = m->inode_liberi;
+    s->sola_lettura = m->sola_lettura != 0;
+    s->nome_max     = 255;
+    return 0;
+}
+
 /* The mount, for an operation that WRITES: NULL also when the volume is
  * read-only. The VFS already refuses with EROFS; this is the second lock,
  * for any path that reaches the driver directly - and it is in the kernel,
@@ -825,6 +844,7 @@ int ext2_mount_come(int blkdev, int ro_chiesto)
     m->n_inode            = le32(sb + 0);
     m->n_blocchi          = le32(sb + 4);
     m->blocchi_liberi     = le32(sb + 12);
+    m->riservati          = le32(sb + 8);
     m->inode_liberi       = le32(sb + 16);
     m->primo_dato         = le32(sb + 20);
 

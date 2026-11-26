@@ -1055,6 +1055,22 @@ sistema: `system -unload`, `chkdsk -r`, `system -load` - oppure
 l'avvio, prima di montarla.
 
 [problemi guasti]
+IN EXILLA UN SITO SI APRE SOLO AL SECONDO O TERZO TENTATIVO ("Hmm. We're
+  having trouble finding that site"): fino alla libc del 26/11/2026 il
+  risolutore di getaddrinfo non rimandava la domanda al DNS dopo una
+  scadenza - una risposta persa o lenta e il nome "non esisteva". Si
+  ripara con  netupdate -check -yes  (la libc e' /lib/ld-exos.so) e si
+  riapre Exilla. Si prova con  host <nome>  e, da tools/prove/risolvi.c,
+  risolvi 3 <nomi>.
+IL LOGIN DELL'ACCOUNT FIREFOX DICE "Local storage and cookies are
+  required": statvfs rendeva zero spazio libero e Firefox dava a ogni sito
+  una quota di 0 (localStorage e indexedDB: QuotaExceededError). Dal kernel
+  0.372 (SYS_STATFS): netupdate -check -yes e riavvia.
+CARTELLE COME /.local, /.config, /security_state NELLA RADICE DEL DISCO:
+  root sulla console e in telnet aveva HOME=/ (da /boot/kernel.cfg) e i
+  programmi ci mettevano le loro cartelle. Da sh 0.018 HOME diventa /root.
+  Le cartelle vecchie si tolgono a mano:  rm -r /.local /.config
+  /security_state  (prima guardare che dentro non ci sia niente che serve).
 FIREFOX (EXILLA) RESTA FERMO MENTRE PARTE, E CON LUI TUTTO IL SISTEMA:
   mouse, tastiera e console non rispondono piu', anche dopo minuti. E' il
   kernel fino alla 0.370 con due o piu' processori: due fili che aspettano

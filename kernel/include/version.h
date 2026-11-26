@@ -1156,7 +1156,15 @@
 /* 0.371 -> 0.372 (voce 123, step A): the line of a long hold of the file
  * lock (over 500 ms) is followed by its split: device reads, writes (of
  * which file data, counted in ext2.c scrivi_corsa), flushes - commands and
- * ms each (blk.c counts them by kind). */
+ * ms each (blk.c counts them by kind).
+ * And (voce 131): mkdir of a path already there is EEXIST before any other
+ * check (vfs.c, modifica) - it was EBUSY on a mount's root, and Firefox's
+ * QuotaManager, making <profile>/storage with its parents, stopped at /disk:
+ * localStorage and indexedDB gave QuotaExceededError. The real cause was
+ * statvfs: the libc filled it with zeros, and with no free space the
+ * QuotaManager gave every site a quota of 0. Now SYS_STATFS (284): size,
+ * free and available blocks, inodes, read-only, from ext2/3/4 (the reserved
+ * blocks of the superblock) and FAT (the free clusters). */
 #define EXOS_VERSION    "0.372"
 
 /* Autore e contatto */

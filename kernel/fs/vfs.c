@@ -2454,6 +2454,21 @@ static int modifica(const char *abs, int quale)
 
     if (abs == NULL) return ERR(EINVAL);
 
+    /* ! mkdir OF WHAT IS ALREADY THERE IS EEXIST, BEFORE ANYTHING ELSE (voce
+     * 131, 26/11/2026). It was EBUSY on the root of a mount, EROFS on a
+     * read-only volume, EACCES with a parent one cannot write - the order of
+     * the checks below. Linux answers EEXIST first (filename_create), and
+     * every "create a folder with its parents" relies on it: it walks from
+     * the top and goes on past EEXIST. Firefox's QuotaManager made
+     * <profile>/storage that way, met EBUSY on /disk, gave up, and
+     * localStorage and indexedDB said QuotaExceededError - "local storage
+     * or cookies are still disabled" on the Firefox account's login. */
+    if (quale == 0) {
+        VfsStat st;
+
+        if (vfs_stat_nl(abs, &st) == 0) return ERR(EEXIST);
+    }
+
     im = instrada(abs, interno, sizeof(interno));
     if (im < 0) return ERR(ENOENT);
     if (g_posto[im]->m.sola_lettura) return ERR(EROFS);
@@ -3269,6 +3284,54 @@ int vfs_puo(const char *abs, uint32_t voluto)
 
     fs_prendi_n("puo");
     r = permesso_su(abs, voluto) ? 0 : ERR(EACCES);
+    fs_rilascia();
+    return r;
+}
+
+/* statfs (voce 131): see VfsSpazio in vfs.h */
+static int spazio_di(int im, VfsSpazio *s)
+{
+    VfsMount *m = &g_posto[im]->m;
+    int r = 0;
+
+    s->dim_blocco = 512; s->blocchi = s->liberi = s->disponibili = 0;
+    s->inode = s->inode_liberi = 0; s->nome_max = 255;
+    s->sola_lettura = m->sola_lettura ? 1u : 0u;
+    switch (m->tipo) {
+    case VFS_FS_EXT2: r = ext2_spazio(m->mnt, s); break;
+    case VFS_FS_FAT:  r = fat_spazio(m->mnt, s);  break;
+    case VFS_FS_ISO:
+    case VFS_FS_PROC: s->sola_lettura = 1; break;     /* nothing to write on */
+    default: break;                                   /* the boot floppy: unknown */
+    }
+    if (m->sola_lettura) { s->sola_lettura = 1; s->disponibili = 0; }
+    return r != 0 ? ERR(EIO) : 0;
+}
+
+int vfs_statfs(const char *abs, VfsSpazio *s)
+{
+    char interno[VFS_PATH_MAX];
+    VfsStat st;
+    int  im, r;
+
+    if (abs == NULL || s == NULL) return ERR(EINVAL);
+    fs_prendi_n("statfs");
+    r = vfs_stat_nl(abs, &st);
+    if (r == 0) {
+        im = instrada(abs, interno, sizeof(interno));
+        r = (im < 0) ? ERR(ENOENT) : spazio_di(im, s);
+    }
+    fs_rilascia();
+    return r;
+}
+
+int vfs_fstatfs(int h, VfsSpazio *s)
+{
+    int r;
+
+    if (s == NULL) return ERR(EINVAL);
+    fs_prendi_n("fstatfs");
+    r = (!VFS_H_VALIDO(h) || !g_file_(h).usato) ? ERR(EBADF) : spazio_di(g_file_(h).im, s);
     fs_rilascia();
     return r;
 }

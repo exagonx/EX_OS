@@ -136,6 +136,23 @@ typedef struct {
     int64_t  ctime;
 } VfsStat;
 
+/* =============================================================================
+ * statfs (voce 131, 26/11/2026): the room of the volume a path or an open
+ * file is on, in blocks of dim_blocco. Until then no program could know it:
+ * the libc's statvfs said zero blocks free, and Firefox's QuotaManager gave
+ * every site a quota of zero (localStorage, indexedDB: QuotaExceededError).
+ * ============================================================================= */
+typedef struct {
+    uint32_t dim_blocco;
+    uint32_t blocchi, liberi, disponibili;     /* disponibili: without root's */
+    uint32_t inode, inode_liberi;
+    uint32_t sola_lettura;
+    uint32_t nome_max;
+} VfsSpazio;
+
+int vfs_statfs(const char *abs, VfsSpazio *s);
+int vfs_fstatfs(int h, VfsSpazio *s);
+
 /* stat for a program: -EACCES when a folder of the path has no x for it */
 int vfs_stat_utente(const char *abs, VfsStat *st);
 /* 0 if the current process may do voluto (4 r, 2 w, 1 x) on abs, path

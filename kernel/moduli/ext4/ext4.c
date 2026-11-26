@@ -13,6 +13,14 @@
  * the kernel is the one it was built for, and what it can write.
  *
  *     EXT4MOD_VERSIONE 0.004 (+0.001 a ogni modifica)
+ *     0.009: the blocks reserved for a write are the first free run long
+ *            enough, or else the group's free blocks wherever they are:
+ *            on a fragmented group every block cost its own bitmap and
+ *            descriptor write (scrittura.c, prenota; voce 123). A long
+ *            write renews the reservation when it runs out, and the step
+ *            through the double/triple indirect is remembered inside a
+ *            write: loading the upper level wrote the second-level block
+ *            once per 4 KB on every file above 4 MB.
  *     0.008: a truncate frees its blocks in one batch of the bitmap, as a
  *            whole file does (scrittura.c, pota_inode; voce 120).
  *     0.006: unlink, rmdir and truncate no longer commit the journal: the
@@ -32,7 +40,7 @@
 
 #include "ext4.h"
 
-#define EXT4MOD_VERSIONE "0.008"
+#define EXT4MOD_VERSIONE "0.009"
 
 const ModuloKernel    *MK = NULL;
 const Ext2Interfaccia *K  = NULL;
