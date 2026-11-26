@@ -259,6 +259,8 @@ static int scrivi_blocco(Ext2Mount *m, uint32_t n, const void *src)
 /* `quanti` consecutive blocks from `src` in one command (a file's data, see
  * leggi_corsa). The pointer cache is dropped if its block is among them,
  * for the same reason as in scrivi_blocco. */
+volatile uint32_t g_ext2_dati_cmd, g_ext2_dati_sett;
+
 static int scrivi_corsa(Ext2Mount *m, uint32_t n, uint32_t quanti, const void *src)
 {
     if (n == 0 || quanti == 0 || quanti > CORSA_MAX || n + quanti > m->n_blocchi) {
@@ -275,6 +277,8 @@ static int scrivi_corsa(Ext2Mount *m, uint32_t n, uint32_t quanti, const void *s
     }
     if (g_ops != NULL && g_ops->giornale_dati != NULL &&
         g_ops->giornale_dati(m, n, quanti) != 0) return -1;
+    g_ext2_dati_cmd++;
+    g_ext2_dati_sett += quanti * m->sett_per_blocco;
     return blk_write(m->blkdev, (uint64_t)n * m->sett_per_blocco,
                      quanti * m->sett_per_blocco, src);
 }

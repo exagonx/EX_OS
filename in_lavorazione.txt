@@ -226,8 +226,15 @@ GRUPPO  VOCI             COSA
  --     61 76            solo se ricompare (76: orologio in FAULT, 3/11)
  --     77               seguiti del 3-4/11: H.264 Firefox, Firefox 32, repo 64 da
                          pubblicare, ExPackage sul portatile, statici rimasti
+ --     124 125 126      (26/11) FATTE: i programmi partono nel profilo
+                         dell'utente; sh 0.017 cronologia e modifica anche nel
+                         Terminale e in telnet; File manager "Apri una shell qui"
+ --     123              (26/11) EXT4: OGNI write() TIENE IL LUCCHETTO DEI FILE
+                         0,5-4 s (tutto disco); A misura, B cache in scrittura,
+                         C metadati in memoria, D lucchetto per file
  --     122              (26/11) PM: NEL MENU L'ICONA E' IL PULSANTE, IL NOME A
                          DESTRA FUORI; I GRUPPI CON UN TRIANGOLINO A DESTRA
+                         FATTA 26/11 (exwin.so 0.029 "menuitem", pm 0.032)
  --     121              (25/11) EXILLA: YOUTUBE NON VA A SCHERMO INTERO (il widget lo
                          tratta come ingrandito; wserver senza messaggio per il telaio)
  --     120              (25/11) EXILLA 90 s CONTRO 14: libxul letta intera, simboli
@@ -10577,6 +10584,107 @@ tools/netinst/velocita tolto da netinst.
       17/11, DOPO IL RIAVVIO NELLA 0.343: il telnetd 0.015 dell'avvio, porta
       23, telnet_piu_prova.py 6 su 6.
 
+  126. FILE MANAGER: "APRI UNA SHELL QUI" (26/11/2026). L'utente: "sul
+      file manager bisogna implementare sul tasto destro e aggiungere una
+      nuova voce su menu file quello di eseguire una shell nella directory
+      in focus".
+      FATTO (filemgr 0.017): comando_shell entra in g_dir, avvia
+      /exwin/bin/term (la sua shell eredita la cartella) con
+      ex_spawn_program e torna dove era. Voce "Apri una shell qui" in fondo
+      al tasto destro dell'elenco e dell'albero (nell'albero vale la
+      cartella cliccata) e nel menu File sotto Aggiorna.
+      STATO: FATTA, provata in QEMU a 32 e 64 bit
+      (tools/prova_partenza_shell.sh: la voce nel tasto destro, File >
+      Apri una shell qui in /disk/casa/sotto da' una shell che risponde
+      /disk/casa/sotto a pwd).
+
+  125. SH: CRONOLOGIA E MODIFICA DELLA RIGA NEL TERMINALE E IN TELNET
+      (26/11/2026). L'utente: "la shell manca la possibilita' di scorrere la
+      cronologia dei comandi e di editarli sulla riga di comando".
+      PERCHE' MANCAVA: l'editor di riga di sh (frecce, cronologia, Home,
+      Fine, Canc) prendeva i tasti solo dal servizio kbd, cioe' solo sulla
+      console; su uno pseudo-terminale (Terminale di ExWin, telnet)
+      riga_modifica_raw rendeva -1 e si leggevano righe intere. E il
+      Terminale di exwin.so non mandava le frecce (term_tasto: "frecce e
+      compagnia: non ancora").
+      FATTO: sh 0.017 - su un pty la riga si scrive in raw (niente ICANON,
+      ECHO, ISIG; i modi tornano prima che parta il comando), i byte
+      diventano gli stessi KBD_K_* della console (ESC [ A/B/C/D, H, F,
+      1~ 4~ 3~, ESC O ...; Ctrl+A e Ctrl+E come in bash, Ctrl+C lascia la
+      riga, Ctrl+D su riga vuota chiude come prima): un ciclo solo per
+      console e pty. exwin.so 0.029: il Terminale manda le frecce, Home,
+      Fine, Canc, PagSu/PagGiu' come un xterm, e il backspace sposta il
+      cursore senza cancellare (come VT100 e xterm: il pty cancella con
+      "\b \b", l'editor sposta con "\b").
+      LIMITE: su un pty i caratteri sono byte; una lettera UTF-8 in mezzo
+      alla riga si sposta un byte per volta.
+      STATO: FATTA, provata in QEMU a 32 e 64 bit
+      (tools/prova_partenza_shell.sh: "cho ok", Home, "e", Invio; freccia
+      su, Invio; freccia su, dieci volte sinistra, "2", Invio -> ok, ok,
+      ok2); tools/prova_telnet.sh e prova_telnet_fine.sh a posto;
+      tools/telnet-comandi.py contro il telnetd di QEMU come prima.
+
+  124. I PROGRAMMI PARTONO NELLA CARTELLA DELL'UTENTE (26/11/2026). L'utente:
+      "le applicazioni quando vengono eseguite per default la directory di
+      partenza deve essere quella del profilo utente attualmente attivo...
+      se l'utente pinco esegue file manager in automatico deve mostrare il
+      focus su /home/pinco lo stesso su tutte le altre applicazioni".
+      FATTO: exwin (bin/exwin) e pm 0.033 entrano in $HOME (/root se vuota
+      o "/") prima di avviare il resto, e lo sfondo dato con un percorso
+      relativo si fa assoluto prima: tutto cio' che pm avvia eredita la
+      cartella. Se non si puo' entrare lo dicono nel registro e restano
+      dove sono. filemgr 0.017 senza argomenti apre $HOME; exdlg (Apri,
+      Salva) parte dalla cartella del programma invece che da "/";
+      archivi 0.009 lo stesso nei suoi dialoghi.
+      STATO: FATTA, provata in QEMU a 32 e 64 bit
+      (tools/prova_partenza_shell.sh con HOME=/disk/casa: il Terminale del
+      menu Avvio scrive pwd in /disk/casa, il file manager mostra
+      /disk/casa). Dal CD /tmp e' in sola lettura: la prova usa un disco
+      ext2.
+      SUL .253 (26/11, voci 124-126 insieme): netupdate -check -yes, tutte
+      le verifiche a posto; kernel sempre 0.371, una sessione telnet nuova
+      ha sh 0.017; filemgr, exwin.so e sh del 26/11. Da provare a mano
+      dall'utente dopo aver riavviato ExWin (o la macchina).
+
+  123. EXT4: OGNI write() TIENE IL LUCCHETTO DEI FILE PER TUTTO IL TEMPO
+      DEL DISCO (26/11/2026, trovato misurando la voce 120; l'utente: "metti
+      la voce 123 in coda").
+      MISURATO (QEMU 64 bit, primo avvio di Firefox che scrive il profilo,
+      disco cache=none sul disco meccanico dell'host): una write() di 286 KB
+      ha tenuto il lucchetto 4,1 s, 217 comandi uno dopo l'altro, 1132 KB
+      di traffico (quattro volte i dati); 20-56 s di lucchetto in tutto il
+      primo avvio; ~45 ms a comando (in QEMU una ricerca a comando; sul .253
+      in AHCI molto meno, e Exilla e' gia' veloce quanto Linux).
+      PERCHE' (kernel/moduli/ext4/scrittura.c, ext2_write): i dati vanno al
+      disco subito (scrivi_corsa, le corse contigue gia' in un comando);
+      per i blocchi nuovi anche bitmap (prenota), descrittore, indiretti
+      (ind_riversa) e inode a ogni write(); su ext3/ext4 i metadati passano
+      prima dal giornale. Il lucchetto (fs_prendi_n) e' uno per tutto il
+      sistema: l'attesa del disco diventa quella di tutti. Che il traffico
+      sia quattro volte i dati e' una deduzione dai totali, da misurare.
+      COME FA LINUX: write-back (pagine sporche, un filo le scrive dopo,
+      in richieste grandi; aspettano solo fsync, sync, smontaggio);
+      allocazione ritardata (delalloc); un lucchetto per file (i_rwsem).
+      RIMEDI, NELL'ORDINE CONSIGLIATO:
+      A. misurare: per una write() quanti comandi di dati, di metadati,
+         di letture (poche ore; dice quanto vale B, C, D);
+      B. cache in scrittura per i dati: write() in filecache.c marcata
+         sporca, un filo del kernel scrive a corse; fsync/sync/smontaggio/
+         spegnimento aspettano. Il guadagno piu' grande (lucchetto per i
+         millisecondi della copia). Delicato: un blackout perde gli ultimi
+         secondi (come Linux), fsync va onorato davvero (SQLite, MariaDB),
+         un tetto alla memoria sporca;
+      C. metadati in memoria (bitmap, descrittori, indiretti) scritti una
+         volta, al commit o coi dati: meno comandi anche senza B; conta
+         soprattutto su ext2 (senza giornale);
+      D. un lucchetto per file, quello globale solo per i nomi: altri
+         leggono mentre uno scrive; tocca tutto il VFS, il piu' rischioso,
+         e dopo B forse non serve.
+      PROVA: prima e dopo con tools/exilla/prova-avvio.sh (lucchetto e
+      tempo del disco nel registro), piu' la prova della spina staccata
+      (QEMU ucciso a meta' scrittura: fsync protegge i dati, fsck trova
+      il volume pulito), a 32 e 64 bit, poi sul .253.
+
   122. PM: L'ASPETTO DELL'ELENCO DEI PROGRAMMI (26/11/2026, appunto
       dell'utente, in coda). L'utente: "su program manager l'elenco dei
       programmi applicazioni gruppi sono pulsanti, sarebbe opportuno
@@ -10608,6 +10716,21 @@ tools/netinst/velocita tolto da netinst.
       programmi lo possono usare.
       Prova: tools/prova_menu (fotografie e colori) a 32 e 64 bit, menu e
       sottomenu, con e senza icone, a 1366x768.
+      L'UTENTE (26/11): "controllo in exwin.so, procedi".
+      FATTO 26/11 (exwin.so 0.029, pm 0.032), PROVATO IN QEMU:
+      - exwin.so: classe "menuitem" ("vocemenu"), CL_VOCEMENU: pulsante
+        quadrato con l'icona a sinistra, il nome accanto fuori dal
+        pulsante, triangolino a destra con EX_SUBMENU (EX_SOTTOMENU); si
+        comporta come un pulsante (premi e rilascia, spazio, niente fuoco al
+        clic); la riga intera si accende col colore dei menu sotto il
+        puntatore, premuta o scelta coi tasti; i nomi di un menu restano in
+        colonna anche se una voce non ha icona; la finestra chiede da sola il
+        passaggio del puntatore (ex_track_mouse_hover); la prima voce NON
+        prende il fuoco da sola (un menu non accende una riga da se');
+      - pm: crea_voce fa "menuitem", i gruppi con EX_SUBMENU senza "...".
+      PROVE: tools/prova_menu_avvio.sh aggiornata (l'icona nel quadrato a
+      sinistra, il triangolino del gruppo e nessuno su Esci, il nome accanto
+      al pulsante): 5 su 5 a 32 bit.
 
   121. EXILLA: IL VIDEO DI YOUTUBE NON VA A SCHERMO INTERO (25/11/2026, appunto
       dell'utente, in coda). "i video di youtube non vengono portati a

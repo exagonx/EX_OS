@@ -140,7 +140,8 @@ typedef struct {
     int  w, h;                  /* its rectangle                            */
     int  lx;                    /* the x it was laid out at                 */
     int  stato;                 /* 0 to load, 1 loaded, 2 given up         */
-    char src[EXHTTP_URL_MAX];   /* as written in the attribute              */
+    char src[NAV_URL_MAX];      /* as written in the attribute (P14: 2048,
+                                   reCAPTCHA's anchor carries a long `s`) */
 } Cornice;
 
 /* In exbrowser.c: draw iframe k of the current (parent) view in its rectangle. */

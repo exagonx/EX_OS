@@ -152,7 +152,9 @@ int  blk_conti(int disco, BlkConti *c);
  * microseconds at the device, commands, sectors. 32 bits that wrap: only the
  * difference of two readings means something. The VFS lock reads it when
  * taken and let go, to say how much of a long hold was the device. */
-typedef struct { uint32_t us, comandi, settori; } BlkLavoro;
+/* cmd[], us[]: the same by kind - 0 read, 1 write, 2 flush (voce 123: what
+ * a write() holding the file lock spends its time on) */
+typedef struct { uint32_t us, comandi, settori; uint32_t cmd[3], tus[3]; } BlkLavoro;
 void blk_lavoro(BlkLavoro *l);
 /* One device command that began at TSC `da`, of `sett` sectors: for the
  * drivers that talk to a device outside blk_read/blk_write (ATAPI's

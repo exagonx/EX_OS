@@ -658,29 +658,36 @@ int blk_conti(int disco, BlkConti *c)
 }
 
 static volatile uint32_t g_lav_us, g_lav_cmd, g_lav_sett;
+static volatile uint32_t g_lav_tcmd[3], g_lav_tus[3];   /* read, write, flush */
 
-static void conta_lavoro(uint64_t da, uint32_t sett);
+static void conta_lavoro(uint64_t da, uint32_t sett, int tipo);
 
-void blk_conta_lavoro(uint64_t da, uint32_t sett) { conta_lavoro(da, sett); }
+void blk_conta_lavoro(uint64_t da, uint32_t sett) { conta_lavoro(da, sett, 0); }
 
 void blk_lavoro(BlkLavoro *l)
 {
+    int k;
+
     l->us = g_lav_us; l->comandi = g_lav_cmd; l->settori = g_lav_sett;
+    for (k = 0; k < 3; k++) { l->cmd[k] = g_lav_tcmd[k]; l->tus[k] = g_lav_tus[k]; }
 }
 
 /* atomic: two processors can be at two disks at once */
-static void conta_lavoro(uint64_t da, uint32_t sett)
+static void conta_lavoro(uint64_t da, uint32_t sett, int tipo)
 {
     uint64_t c;
-    uint32_t ms;
+    uint32_t ms, us;
 
     if (!tsc_c_e() || da == 0) return;
     c  = tsc_leggi() - da;
     ms = tsc_ms(c);
     /* tsc_us dies at 2^32 cycles, ~1.4 s: the CD of the .253 takes 1.9 s
      * for one command and the 0.364 said "4294967 ms". Long = in ms. */
-    __sync_fetch_and_add(&g_lav_us, ms >= 1000u ? ms * 1000u : tsc_us(c));
+    us = ms >= 1000u ? ms * 1000u : tsc_us(c);
+    __sync_fetch_and_add(&g_lav_us, us);
     __sync_fetch_and_add(&g_lav_cmd, 1u);
+    __sync_fetch_and_add(&g_lav_tcmd[tipo], 1u);
+    __sync_fetch_and_add(&g_lav_tus[tipo], us);
     __sync_fetch_and_add(&g_lav_sett, sett);
 }
 
@@ -697,7 +704,7 @@ static int disco_leggi(int disco, uint64_t abs, uint32_t n, void *buf)
     uint64_t da = tsc_leggi();
     int      r  = ata_read(disco, abs, n, buf);
 
-    conta_lavoro(da, n);
+    conta_lavoro(da, n, 0);
     if (disco >= 0 && disco < ATA_MAX_DEVICES) {
         BlkConti *c = &g_conti[disco];
 
@@ -713,7 +720,7 @@ static int disco_scrivi(int disco, uint64_t abs, uint32_t n, const void *buf)
     uint64_t da = tsc_leggi();
     int      r  = ata_write(disco, abs, n, buf);
 
-    conta_lavoro(da, n);
+    conta_lavoro(da, n, 1);
     if (disco >= 0 && disco < ATA_MAX_DEVICES) {
         BlkConti *c = &g_conti[disco];
 
@@ -1632,7 +1639,7 @@ int blk_flush(int i)
         uint64_t da = tsc_leggi();
         int      r  = ata_flush(b->disco);
 
-        conta_lavoro(da, 0);     /* FLUSH CACHE: sync waited on it (0.365) */
+        conta_lavoro(da, 0, 2);  /* FLUSH CACHE: sync waited on it (0.365) */
 
         if (b->disco >= 0 && b->disco < ATA_MAX_DEVICES) {
             BlkConti *c = &g_conti[b->disco];

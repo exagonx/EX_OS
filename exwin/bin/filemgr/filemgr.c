@@ -80,7 +80,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `filemgr -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.016"
+#define VERSIONE_APP "0.017"
 EX_VERSIONE("filemgr", VERSIONE_APP);
 
 #define VOCI_INIZIO 512     /* rows of a folder: the first, then doubling (0.014) */
@@ -175,6 +175,7 @@ static int g_albero_w = ALBERO_W0;
 #define ID_SU        11
 #define ID_AGGIORNA  12
 #define ID_ESCI      13
+#define ID_SHELL     14   /* 0.017: a shell in the folder shown */
 
 /* ! «Copia» E «Copia directory» ERANO DUE VOCI E ADESSO SONO UNA. Con i segni
  * un gruppo puo' contenere file E cartelle insieme: due comandi che si
@@ -2271,25 +2272,59 @@ static void comando_nuovo_file(void)
     leggi(g_dir);
 }
 
+/* =============================================================================
+ * A SHELL IN THE FOLDER SHOWN (0.017; the user, 26/11/2026: "eseguire una
+ * shell nella directory in focus", from the right button and from File)
+ *
+ * The terminal (/exwin/bin/term, its shell /bin/sh) inherits the folder of
+ * whoever starts it: the file manager goes there for the instant of the
+ * spawn and comes back, so its own folder does not drift.
+ * ============================================================================= */
+static void comando_shell(void)
+{
+    static const char *const dove[2] = { "/exwin/bin/term", "/cdrom/exwin/bin/term" };
+    char  prima[PERC_MAX];
+    char *av[2];
+    int   i, pid = -1;
+
+    if (!getcwd(prima, sizeof(prima))) strcpy(prima, "/");
+    if (chdir(g_dir) != 0) {
+        snprintf(g_avviso, sizeof(g_avviso), "non entro in %s: %s", g_dir, strerror(errno));
+        return;
+    }
+    for (i = 0; i < 2 && pid < 0; i++) {
+        if (access(dove[i], F_OK) != 0) continue;
+        av[0] = (char *)dove[i];
+        av[1] = 0;
+        pid = ex_spawn_program(av[0], av, "Terminale");
+    }
+    if (chdir(prima) != 0) { /* the next spawn chdirs again anyway */ }
+    if (pid < 0) strcpy(g_avviso, "non trovo /exwin/bin/term");
+    else         snprintf(g_avviso, sizeof(g_avviso), "una shell in %s", g_dir);
+}
+
 static void menu_destro(ExWindow c, int x, int y)
 {
     static const char *const V[] = {
         "Apri", "-", "Nuova cartella", "Nuovo file", "-",
-        "Rinomina", "Copia", "Taglia", "Incolla", "-", "Cancella"
+        "Rinomina", "Copia", "Taglia", "Incolla", "-", "Cancella",
+        "-", "Apri una shell qui"
     };
-    static const char *const VA[] = { "Nuova cartella", "Nuovo file", "Incolla" };
+    static const char *const VA[] = { "Nuova cartella", "Nuovo file", "Incolla",
+                                      "-", "Apri una shell qui" };
     int k;
 
     /* nell'albero: si va nella cartella cliccata, e li' si crea o si incolla */
     if (c == g_albero) {
         scegli_albero(0, -1);
-        k = ex_popup_menu(g_f, x, y, VA, 3);
+        k = ex_popup_menu(g_f, x, y, VA, 5);
         if (k == 0) comando_nuova_dir();
         else if (k == 1) comando_nuovo_file();
         else if (k == 2) appunti_incolla();
+        else if (k == 4) comando_shell();
         return;
     }
-    k = ex_popup_menu(g_f, x, y, V, 11);
+    k = ex_popup_menu(g_f, x, y, V, 13);
     switch (k) {
     case 0:  scegli_elenco(1); break;
     case 2:  comando_nuova_dir(); break;
@@ -2299,6 +2334,7 @@ static void menu_destro(ExWindow c, int x, int y)
     case 7:  appunti_prendi(1); break;
     case 8:  appunti_incolla(); break;
     case 10: comando_cancella(); break;
+    case 12: comando_shell(); break;
     default: break;
     }
 }
@@ -2367,6 +2403,7 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
 
         if (wp == ID_APRI)     { scegli_elenco(1); break; }
         if (wp == ID_AGGIORNA) { leggi(g_dir);     break; }
+        if (wp == ID_SHELL)    { comando_shell(); stato_aggiorna(); break; }
         if (wp == ID_ESCI)     { ex_quit(0); return 0; }
         if (wp == ID_SU) {
             char su[PERC_MAX];
@@ -2491,6 +2528,14 @@ int main(int argc, char **argv)
     if (argc >= 2) {
         strncpy(g_dir, argv[1], PERC_MAX - 1);
         g_dir[PERC_MAX - 1] = '\0';
+    } else {
+        /* (0.017) with no folder asked, the user's profile: pinco sees
+         * /home/pinco, not / (the user, 26/11/2026) */
+        const char *casa = getenv("HOME");
+
+        if (!casa || !casa[0] || strcmp(casa, "/") == 0) casa = "/root";
+        strncpy(g_dir, casa, PERC_MAX - 1);
+        g_dir[PERC_MAX - 1] = '\0';
     }
 
     separatore_leggi();
@@ -2508,6 +2553,7 @@ int main(int argc, char **argv)
     ex_menu_add_item(g_menu, "File", "Apri\tInvio",   ID_APRI);
     ex_menu_add_item(g_menu, "File", "Su",            ID_SU);
     ex_menu_add_item(g_menu, "File", "Aggiorna",      ID_AGGIORNA);
+    ex_menu_add_item(g_menu, "File", "Apri una shell qui", ID_SHELL);
     ex_menu_add_item(g_menu, "File", "-",             0);
     ex_menu_add_item(g_menu, "File", "Esci\tCtrl+Q",  ID_ESCI);
 

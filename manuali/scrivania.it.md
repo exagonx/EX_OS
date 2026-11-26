@@ -64,6 +64,12 @@ programma o si fa clic sulla scrivania; le icone accanto alle voci si possono
 spegnere (Impostazioni, scheda Scrivania, «Icone accanto alle voci del menu»,
 accesa per difetto).
 
+Da pm 0.032 (exwin.so 0.029, voce 122) ogni riga ha l'icona in un piccolo
+pulsante quadrato a sinistra e il nome accanto, fuori dal pulsante; un gruppo ha
+un triangolino a destra. La riga si accende sotto il puntatore o scelta con le
+frecce; Invio o la freccia a destra aprono il gruppo, Esc o la freccia a
+sinistra tornano indietro.
+
 Il pulsante **Applicazioni del menu...** nella scheda Sistema di Impostazioni
 (fino a pm 0.027 la voce «Applicazioni...» del menu) aggiunge e toglie righe da quel
 file (e rimette al loro posto categoria e icona di ciò che non mostra), e la
@@ -115,8 +121,11 @@ Immagini, gli archivi con Archivi, le pagine con EXBrowser, il resto con
 l'editor), cercandolo in `/exwin/bin` e poi in `/cdrom/exwin/bin`. Il programma
 di ogni tipo si sceglie in [Impostazioni > Applicazioni](#con-che-programma-si-apre-un-file-impostazioni--applicazioni-pm-0029).
 
+Il file manager si apre nella cartella dell'utente (`$HOME`); come ogni
+programma avviato dal menu Avvio parte da lì (filemgr 0.017, pm 0.033).
 Il **tasto destro** apre un menu: Apri, Nuova cartella, Nuovo file,
-Rinomina, Copia, Taglia, Incolla, Cancella. Si scelgono **più righe** con
+Rinomina, Copia, Taglia, Incolla, Cancella, **Apri una shell qui** (anche nel
+menu File: un Terminale con la shell nella cartella mostrata). Si scelgono **più righe** con
 Ctrl+clic e Shift+clic, o segnandole con la barra spaziatrice; trascinate su
 una cartella dell'albero a sinistra, una finestra chiede se copiarle,
 spostarle o lasciar perdere. Mentre si trascina, accanto al puntatore c'è un

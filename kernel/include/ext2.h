@@ -188,4 +188,8 @@ void ext2_ogni_secondo(int mnt);
 int  ext2_estensioni(int mnt, const char *percorso, uint32_t *lba,
                      uint32_t *cnt, uint32_t max, uint32_t *n_out);
 
+/* Commands and sectors of file DATA written by ext2/ext3/ext4 (scrivi_corsa):
+ * the VFS's long-hold line tells them from metadata and journal (voce 123). */
+extern volatile uint32_t g_ext2_dati_cmd, g_ext2_dati_sett;
+
 #endif /* EXT2_H */

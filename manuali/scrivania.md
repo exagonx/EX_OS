@@ -64,6 +64,12 @@ or the desktop is clicked; the icons beside its entries can be turned off
 (Impostazioni, Scrivania tab, "Icone accanto alle voci del menu", on by
 default).
 
+From pm 0.032 (exwin.so 0.029, voce 122) every row has the icon in a small
+square button on the left and the name beside it, outside the button; a group
+has a small triangle on the right. The row lights up under the pointer or when
+chosen with the arrows; Enter or the right arrow open the group, Esc or the left
+arrow go back.
+
 The button **Applicazioni del menu...** in the Sistema tab of Impostazioni (until
 pm 0.027 the item "Applicazioni..." of the menu) adds and removes lines from that
 file (putting back the category and icon of what it does not show), and the
@@ -114,8 +120,11 @@ archives with Archivi, pages with EXBrowser, everything else with the editor),
 looked for in `/exwin/bin` and then in `/cdrom/exwin/bin`. The program of each
 type is chosen in [Impostazioni > Applicazioni](#which-program-opens-which-file-impostazioni--applicazioni-pm-0029).
 
+The file manager opens in the user's folder (`$HOME`); like every program
+started from the Start menu it starts there (filemgr 0.017, pm 0.033).
 The **right button** opens a menu: Open, New folder, New file, Rename, Copy,
-Cut, Paste, Delete. **Several rows** are chosen with Ctrl+click and
+Cut, Paste, Delete, **Apri una shell qui** (open a shell here; in the File
+menu too: a Terminal with the shell in the folder shown). **Several rows** are chosen with Ctrl+click and
 Shift+click, or marked with the space bar; dragged onto a folder of the tree on
 the left, a window asks whether to copy them, move them or leave them.
 While rows are dragged a **sheet** follows the pointer, **three sheets**

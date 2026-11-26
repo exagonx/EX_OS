@@ -378,6 +378,14 @@ lines**: you lose the history, not the shell. And the driver returns to
 cooked by itself every time a program reads from stdin, so the mode is
 reasserted at every prompt — which also makes it self-repairing.
 
+! **In ExWin's Terminal and over telnet too** (sh 0.017): there the input is a
+pseudo-terminal; the shell puts it in raw mode while the line is typed and
+puts it back as it was before running the command. The arrows come as an xterm
+sends them (`ESC [ A` and friends); `Ctrl+A` and `Ctrl+E` work too (start and
+end of the line, as in bash), and `Ctrl+D` on an empty line closes the session
+as before. There characters are bytes: an accented letter in the middle of the
+line moves one byte at a time.
+
 ! **Only the foreground console** gets the keys. Without that check all four
 shells fought over the keyboard, and the invisible ones put it back into
 cooked mode, taking it away from whoever was typing.

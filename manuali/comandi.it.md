@@ -374,6 +374,14 @@ si perde la cronologia, non la shell. E il driver torna in cooked da solo
 ogni volta che un programma legge da stdin, quindi la modalità si
 riafferma a ogni prompt — il che la rende anche autoriparante.
 
+! **Anche nel Terminale di ExWin e in telnet** (sh 0.017): lì l'ingresso è uno
+pseudo-terminale, la shell lo mette in raw mentre si scrive la riga e lo
+rimette com'era prima di lanciare il comando. Le frecce arrivano come le manda
+un xterm (`ESC [ A` e compagnia); valgono anche `Ctrl+A` e `Ctrl+E` (inizio e
+fine riga, come in bash), e `Ctrl+D` su una riga vuota chiude la sessione come
+prima. Lì i caratteri sono byte: una lettera accentata in mezzo alla riga si
+sposta un byte per volta.
+
 ! **Solo la console in primo piano** prende i tasti. Senza quel
 controllo tutte e quattro le shell si contendevano la tastiera, e quelle
 non visibili la riportavano in cooked togliendola a chi stava scrivendo.

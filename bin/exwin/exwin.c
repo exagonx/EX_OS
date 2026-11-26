@@ -78,9 +78,32 @@ static int attendi_e_torna(int partenza)
     return 0;
 }
 
+
+/* The folder of the user's profile: $HOME, root's when it says nothing.
+ * Programs start there (26/11/2026, the user: "per default la directory di
+ * partenza deve essere quella del profilo utente"). */
+static const char *casa_utente(void)
+{
+    const char *c = getenv("HOME");
+
+    return (c && c[0] && strcmp(c, "/") != 0) ? c : "/root";
+}
+
+/* A relative path given on the command line, made absolute before the chdir. */
+static const char *assoluto(const char *p, char *buf, size_t max)
+{
+    size_t l;
+
+    if (!p || p[0] == '/' || !getcwd(buf, max)) return p;
+    l = strlen(buf);
+    snprintf(buf + l, max - l, "%s%s", (l && buf[l - 1] == '/') ? "" : "/", p);
+    return buf;
+}
+
 int main(int argc, char **argv)
 {
     const char *server, *pm, *sfondo = 0;
+    char        sfondo_ass[512];
     ConsoleInfo ci;
     VideoInfo   v;
     char        c_arg[8];
@@ -196,6 +219,12 @@ int main(int argc, char **argv)
 
     n = 0;
     pv[n++] = (char *)pm;
+    /* ! THE DESKTOP STARTS IN THE USER'S PROFILE, as a session does on
+     * Linux: pm and everything it starts inherit it (a file manager or an
+     * editor opened from the menu showed "/"). The image first, if relative. */
+    sfondo = assoluto(sfondo, sfondo_ass, sizeof(sfondo_ass));
+    if (chdir(casa_utente()) != 0)
+        printf("exwin: non entro in %s: i programmi partono da qui\n", casa_utente());
     if (sfondo) { pv[n++] = "-s"; pv[n++] = (char *)sfondo; }
     pv[n] = 0;
 

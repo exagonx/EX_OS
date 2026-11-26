@@ -3707,7 +3707,10 @@ static void term_carattere(Terminale *t, char c)
 
     if (c == '\n') { t->cx = 0; t->cy++; }
     else if (c == '\r') { t->cx = 0; }
-    else if (c == '\b') { if (t->cx > 0) t->cx--; t->griglia[t->cy * t->cols + t->cx] = ' '; }
+    /* (0.029) a backspace moves, it does not erase: as on a VT100 and an
+     * xterm. The pty erases with "\b \b" (ECHOE); the shell's editor moves
+     * the cursor with it, and an erasing one ate the letters it passed. */
+    else if (c == '\b') { if (t->cx > 0) t->cx--; }
     else if (c == '\t') { t->cx = (t->cx + 8) & ~7u; }
     else if ((unsigned char)c >= 0x20) {
         t->griglia[t->cy * t->cols + t->cx] = c;
@@ -3806,7 +3809,27 @@ static int term_tasto(Terminale *t, unsigned int c)
 {
     unsigned char b;
 
-    if (c > 0xFF) return 0;         /* frecce e compagnia: non ancora */
+    /* (0.029) the arrows and their friends as an xterm sends them: the
+     * shell's line editor (sh, history and editing on a pty) reads them,
+     * as does any program that reads a terminal in raw mode */
+    if (c > 0xFF) {
+        const char *seq = 0;
+
+        switch (c) {
+        case KBD_K_UP:    seq = "\033[A";  break;
+        case KBD_K_DOWN:  seq = "\033[B";  break;
+        case KBD_K_RIGHT: seq = "\033[C";  break;
+        case KBD_K_LEFT:  seq = "\033[D";  break;
+        case KBD_K_HOME:  seq = "\033[H";  break;
+        case KBD_K_END:   seq = "\033[F";  break;
+        case KBD_K_DEL:   seq = "\033[3~"; break;
+        case KBD_K_PGUP:  seq = "\033[5~"; break;
+        case KBD_K_PGDN:  seq = "\033[6~"; break;
+        default: return 0;
+        }
+        write(t->fd_in, seq, strlen(seq));
+        return 1;
+    }
 
     b = (unsigned char)(c == '\r' ? '\n' : c);
     write(t->fd_in, &b, 1);

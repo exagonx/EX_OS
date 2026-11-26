@@ -413,7 +413,10 @@ static int dialogo(char *percorso, unsigned int max, int salva,
         if (i == 0) i = 1;
         g_dir[i] = '\0';
     } else {
-        strcpy(g_dir, "/");
+        /* nothing proposed: the program's folder, which for whatever the
+         * desktop starts is the user's profile (26/11/2026), not "/" */
+        if (!getcwd(g_dir, PERC_MAX - 1) || !g_dir[0]) strcpy(g_dir, "/");
+        g_dir[PERC_MAX - 1] = '\0';
         g_nome[0] = '\0';
     }
 

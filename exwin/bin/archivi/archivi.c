@@ -55,7 +55,7 @@
 #include "kbd_proto.h"
 
 /* +0.001 a ogni modifica: `archivi -version` la stampa. Vedi EX_VERSIONE. */
-#define VERSIONE_APP "0.008"
+#define VERSIONE_APP "0.009"
 EX_VERSIONE("archivi", VERSIONE_APP);
 
 #define FIN_W       680
@@ -752,11 +752,23 @@ static int apri_(const char *perc, int ricarica)
 
 static void apri(const char *perc) { apri_(perc, 0); }
 
+/* The dialogs start in the program's folder (the user's profile when the
+ * desktop started it, 26/11/2026), ending in "/": a directory, not a name. */
+static void cartella_di_partenza(char *p, size_t max)
+{
+    size_t l;
+
+    if (!getcwd(p, max - 1) || !p[0]) strcpy(p, "/");
+    l = strlen(p);
+    if (p[l - 1] != '/' && l + 1 < max) { p[l] = '/'; p[l + 1] = '\0'; }
+}
+
 static void apri_con_dialogo(void)
 {
     char p[PERC_MAX];
 
-    strncpy(p, g_perc[0] ? g_perc : "/", PERC_MAX - 1);
+    if (g_perc[0]) strncpy(p, g_perc, PERC_MAX - 1);
+    else           cartella_di_partenza(p, PERC_MAX);
     p[PERC_MAX - 1] = '\0';
     if (!ex_dlg_apri(p, sizeof(p))) return;
     apri(p);
@@ -777,7 +789,7 @@ static void nuovo(void)
     /* ! THE DIALOG STARTS FROM THE DIRECTORY, NOT FROM A NAME: what is typed
      * is added after what is proposed, and «/nuovo.zip» plus «/disk/c» would
      * be a path nobody meant. The extension is added below instead. */
-    strcpy(p, "/");
+    cartella_di_partenza(p, sizeof(p));
     if (!ex_dlg_percorso("Archivio nuovo", "Archivio:", "Crea", p, sizeof(p)))
         return;
 
@@ -850,7 +862,7 @@ static void aggiungi(void)
     Arch *z;
     int    ok;
 
-    strcpy(p, "/");
+    cartella_di_partenza(p, sizeof(p));
     if (!g_z) { riapri_per_aggiungere(); return; }
     if (!ex_dlg_apri(p, sizeof(p))) return;
     if (!(z = riapri_per_aggiungere())) return;
@@ -864,12 +876,13 @@ static void aggiungi(void)
 
 static void aggiungi_cartella(void)
 {
-    static char p[PERC_MAX] = "/";
+    static char p[PERC_MAX];        /* remembered between calls */
     char        nome[PERC_MAX];
     int         n, saltati = 0;
     unsigned int l;
     ExZip      *z;
 
+    if (!p[0]) cartella_di_partenza(p, sizeof(p));
     if (!g_z) { riapri_per_aggiungere(); return; }
     if (!ex_dlg_percorso("Aggiungi una cartella", "Cartella:", "Aggiungi", p, sizeof(p)))
         return;
@@ -927,7 +940,8 @@ static int chiedi_dove(void)
     char p[PERC_MAX];
     unsigned int l;
 
-    strncpy(p, g_dove[0] ? g_dove : "/", PERC_MAX - 1);
+    if (g_dove[0]) strncpy(p, g_dove, PERC_MAX - 1);
+    else           cartella_di_partenza(p, PERC_MAX);
     p[PERC_MAX - 1] = '\0';
 
     l = (unsigned int)strlen(p);

@@ -41,7 +41,7 @@
 #include "wifid_proto.h"      /* the WiFi icon (@WIFI) */
 
 /* +0.001 a ogni modifica: `pm -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define VERSIONE_APP "0.032"
+#define VERSIONE_APP "0.033"
 EX_VERSIONE("pm", VERSIONE_APP);
 
 #define BARRA_H     28
@@ -3807,14 +3807,43 @@ static void sfondo_modo(int modo)
                       "scrive (sistema in sola lettura?).");
 }
 
+
+/* The folder of the user's profile: $HOME, root's when it says nothing.
+ * Programs start there (26/11/2026, the user: "per default la directory di
+ * partenza deve essere quella del profilo utente"). */
+static const char *casa_utente(void)
+{
+    const char *c = getenv("HOME");
+
+    return (c && c[0] && strcmp(c, "/") != 0) ? c : "/root";
+}
+
+/* A relative path given on the command line, made absolute before the chdir. */
+static const char *assoluto(const char *p, char *buf, size_t max)
+{
+    size_t l;
+
+    if (!p || p[0] == '/' || !getcwd(buf, max)) return p;
+    l = strlen(buf);
+    snprintf(buf + l, max - l, "%s%s", (l && buf[l - 1] == '/') ? "" : "/", p);
+    return buf;
+}
+
 int main(int argc, char **argv)
 {
     ExMsg m;
     const char *sfondo = 0;
+    char        sfondo_ass[512];
     int i;
 
     for (i = 1; i < argc; i++)
         if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) sfondo = argv[++i];
+
+    /* (0.033) every program of the menu, of the desktop and of the file
+     * types starts in the user's profile: pm's folder is theirs, also when
+     * pm is started by hand from somewhere else */
+    sfondo = assoluto(sfondo, sfondo_ass, sizeof(sfondo_ass));
+    if (chdir(casa_utente()) != 0) log_seriale("pm: non entro nella cartella dell'utente");
 
     ex_screen_size(&g_sw, &g_sh);
     if (g_sw == 0) {

@@ -1133,7 +1133,7 @@ static void verbose_init(void)
  * supera i 256. Un nome che si puo' creare ed elencare ma non digitare e'
  * un nome irraggiungibile per meta'. */
 /* +0.001 a ogni modifica: `sh -version` la stampa. Vedi EX_VERSIONE in libc.h. */
-#define SH_VERSIONE  "0.016"
+#define SH_VERSIONE  "0.017"   /* 0.017: history and editing on a pty too (ExWin terminal, telnet) */
 
 
 /* ! LA RIGA DI `sh -c` NON E' UNA RIGA DIGITATA, e non puo' avere lo
@@ -3942,6 +3942,88 @@ static unsigned int kbd_tasto(void)
     }
 }
 
+/* =============================================================================
+ * THE SAME EDITOR ON A PSEUDO-TERMINAL (26/11/2026, the user: "la shell manca
+ * la possibilita' di scorrere la cronologia dei comandi e di editarli")
+ *
+ * In ExWin's terminal and in a telnet session stdin is a pty, not the
+ * console: the keys come as bytes, the arrows as the sequences an xterm
+ * sends (ESC [ A ...). While the line is typed the pty goes to raw (no
+ * ICANON, no ECHO, no ISIG: Ctrl+C drops the line, as on the console), and
+ * the bytes become the same KBD_K_* the console's driver gives - so the
+ * loop below is one for both. The modes come back before the command runs.
+ * ! Characters are bytes here: a UTF-8 letter in the middle of a line moves
+ * and erases one byte at a time. Commands are ASCII almost always.
+ * ============================================================================= */
+static int       g_pty_crudo = 0;
+static ShTermios g_pty_prima;
+
+static int pty_crudo(void)
+{
+    ShTermios t;
+
+    if (syscall3(SYS_IOCTL, (uint32_t)STDIN, 0x5401 /* TCGETS */, (uintptr_t)&t) != 0) return 0;
+    g_pty_prima = t;
+    t.c_lflag &= ~(uint32_t)(0x0001 | 0x0002 | 0x0008 | 0x0010 | 0x0020);  /* ISIG ICANON ECHO ECHOE ECHOK */
+    t.c_iflag |= 0x0100;                                                   /* ICRNL: Enter is \n */
+    t.c_cc[6] = 1; t.c_cc[5] = 0;                                          /* VMIN 1, VTIME 0 */
+    if (syscall3(SYS_IOCTL, (uint32_t)STDIN, 0x5402 /* TCSETS */, (uintptr_t)&t) != 0) return 0;
+    g_pty_crudo = 1;
+    return 1;
+}
+
+static void pty_cotto(void)
+{
+    if (!g_pty_crudo) return;
+    syscall3(SYS_IOCTL, (uint32_t)STDIN, 0x5402 /* TCSETS */, (uintptr_t)&g_pty_prima);
+    g_pty_crudo = 0;
+}
+
+static int pty_byte(void)
+{
+    char c;
+
+    return sh_read(STDIN, &c, 1) == 1 ? (unsigned char)c : -1;
+}
+
+/* The next key from the pty as a KBD code, 0 at the end of the input. */
+static unsigned int pty_tasto(void)
+{
+    for (;;) {
+        int c = pty_byte(), d, e;
+
+        if (c < 0) return 0;
+        if (c == 3) return KBD_MOD_CTRL | 'c';
+        if (c == 1) return KBD_K_HOME;              /* Ctrl+A, Ctrl+E as in bash */
+        if (c == 5) return KBD_K_END;
+        if (c == 0) continue;                       /* telnet's CR NUL */
+        if (c != 0x1B) return (unsigned int)c;
+        if ((d = pty_byte()) < 0) return 0;
+        if (d != '[' && d != 'O') continue;         /* ESC alone, or Alt+key: dropped */
+        if ((e = pty_byte()) < 0) return 0;
+        switch (e) {
+        case 'A': return KBD_K_UP;
+        case 'B': return KBD_K_DOWN;
+        case 'C': return KBD_K_RIGHT;
+        case 'D': return KBD_K_LEFT;
+        case 'H': return KBD_K_HOME;
+        case 'F': return KBD_K_END;
+        default: break;
+        }
+        if (e >= '0' && e <= '9') {                 /* ESC [ n ~ */
+            int n = e - '0', f;
+
+            while ((f = pty_byte()) >= '0' && f <= '9') n = n * 10 + (f - '0');
+            if (f < 0) return 0;
+            if (f != '~') continue;
+            if (n == 1 || n == 7) return KBD_K_HOME;
+            if (n == 4 || n == 8) return KBD_K_END;
+            if (n == 3)           return KBD_K_DEL;
+        }
+        /* anything else (F keys, PgUp, PgDn): not for a line, dropped */
+    }
+}
+
 /* Ridisegna la riga: torna all'inizio con dei backspace, riscrive, e
  * cancella la coda di quella vecchia se si e' accorciata. */
 static void riga_ridisegna(const char *buf, int len, int cur,
@@ -3998,7 +4080,12 @@ static int riga_modifica_raw(char *buf, int max)
      * Rendendo -1 si ripiega su sh_read(STDIN), qui sotto: si perdono
      * cronologia e frecce — che dietro una pipe non esistono comunque — e non
      * si perde la shell. */
-    if (!stdin_e_console()) return -1;
+    if (!stdin_e_console()) {
+        /* a pty (ExWin's terminal, telnet): the same editor, keys from stdin;
+         * a pipe or a file says no to TCGETS and gets plain lines */
+        if (!pty_crudo()) return -1;
+        goto modifica;
+    }
 
     /* ! SOLO LA CONSOLE IN PRIMO PIANO PRENDE I TASTI. Senza questo
      * controllo tutte e quattro le shell chiedevano la modalita' raw e si
@@ -4019,12 +4106,17 @@ static int riga_modifica_raw(char *buf, int max)
     if (g_kbd_pid <= 0) return -1;
     g_console_raw = 1;
 
+modifica:
     for (;;) {
-        unsigned int ev = kbd_tasto();
+        unsigned int ev = g_pty_crudo ? pty_tasto() : kbd_tasto();
         unsigned int k  = ev & KBD_KEY_MASK;
         int vl = len, vc = cur;
 
         if (ev == 0) return -1;         /* il driver non risponde: si ripiega */
+
+        /* Ctrl+D on an empty line of a pty is the end, as it was in cooked
+         * mode: the shell of a telnet session leaves (-2, see the caller) */
+        if (g_pty_crudo && k == 4u && len == 0) { sh_write(STDOUT, "\n", 1); return -2; }
 
         if (k == '\n' || k == '\r') {
             sh_write(STDOUT, "\n", 1);
@@ -4155,6 +4247,7 @@ static int riga_modifica(char *buf, int max)
 {
     int n = riga_modifica_raw(buf, max);
 
+    pty_cotto();                    /* the pty's modes back before the command */
     if (g_console_raw) {
         kbd_modo(KBD_MODE_COOKED);
         g_console_raw = 0;
@@ -4642,6 +4735,7 @@ int shell_main(int argc, char **argv, char **envp)
          * legge come si e' sempre fatto: si perde la cronologia, non la
          * shell. */
         n = riga_modifica(line, MAX_LINE);
+        if (n == -2) break;             /* Ctrl+D on an empty line of a pty */
         if (n < 0) {
             n = leggi_riga(line, MAX_LINE - 1);
             /* ! ZERO E' LA FINE DEI DATI, NON UNA RIGA VUOTA (8 ottobre 2026):

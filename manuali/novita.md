@@ -6,6 +6,10 @@
 
 **Contents**
 
+- [Every program starts in the user's folder (exwin, pm 0.033, filemgr 0.017, voce 124) — tested in QEMU](#every-program-starts-in-the-users-folder-exwin-pm-0033-filemgr-0017-voce-124--tested-in-qemu)
+- [The shell has history and line editing in the Terminal and over telnet too (sh 0.017, exwin.so 0.029, voce 125) — tested in QEMU](#the-shell-has-history-and-line-editing-in-the-terminal-and-over-telnet-too-sh-0017-exwinso-0029-voce-125--tested-in-qemu)
+- [The file manager opens a shell in the folder shown (filemgr 0.017, voce 126) — tested in QEMU](#the-file-manager-opens-a-shell-in-the-folder-shown-filemgr-0017-voce-126--tested-in-qemu)
+- [The Start menu has rows with the icon in a small button and the name beside it, and a triangle on the groups (exwin.so 0.029 menuitem, pm 0.032, voce 122) — tested in QEMU](#the-start-menu-has-rows-with-the-icon-in-a-small-button-and-the-name-beside-it-and-a-triangle-on-the-groups-exwinso-0029-menuitem-pm-0032-voce-122--tested-in-qemu)
 - [Firefox goes full screen, YouTube included: wserver takes the frame off an open window (wserver 0.020, exwin.so 0.028, voce 121) — tested in QEMU and on the test PC](#firefox-goes-full-screen-youtube-included-wserver-takes-the-frame-off-an-open-window-wserver-0020-exwinso-0028-voce-121--tested-in-qemu-and-on-the-test-pc)
 - [Firefox starts sooner: libraries and omni.ja are read when needed, symbols through hash tables, no more freezes at start (kernel 0.371, voce 120) — tested in QEMU and on the test PC](#firefox-starts-sooner-libraries-and-omnija-are-read-when-needed-symbols-through-hash-tables-no-more-freezes-at-start-kernel-0371-voce-120--tested-in-qemu-and-on-the-test-pc)
 - [The file manager hides dot files and extensions on request, and dragged rows show a sheet beside the pointer (filemgr 0.016, exwin.so 0.027, voce 114) — tested in QEMU](#the-file-manager-hides-dot-files-and-extensions-on-request-and-dragged-rows-show-a-sheet-beside-the-pointer-filemgr-0016-exwinso-0027-voce-114--tested-in-qemu)
@@ -263,6 +267,50 @@
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### Every program starts in the user's folder (exwin, pm 0.033, filemgr 0.017, voce 124) — tested in QEMU
+
+- **Before**: the programs started from the Start menu began in `/`, the folder ExWin started
+  from; the file manager opened on `/`, and so did the Open and Save dialogs.
+- **Now**: ExWin and the Program Manager go into the user's folder (`$HOME`, `/root` for root)
+  before starting the rest, so every program starts there: if the user pinco opens the file manager
+  they see `/home/pinco`. The file manager with no argument opens `$HOME`; the Open and Save dialogs
+  and those of Archivi start from the program's folder instead of `/`.
+- **If the folder is missing** ExWin and pm say so in the log and stay where they are.
+- **Tested** with `tools/prova_partenza_shell.sh` at 32 and 64 bit.
+
+### The shell has history and line editing in the Terminal and over telnet too (sh 0.017, exwin.so 0.029, voce 125) — tested in QEMU
+
+- **Before**: arrows, history and line editing were there on the console only; in ExWin's Terminal
+  and in a telnet session you typed a line and that was it.
+- **Now**: there too Up and Down scroll the commands already given, Left and Right move the cursor
+  in the line, Home and End (or Ctrl+A and Ctrl+E) go to the start and the end, Del and Backspace
+  erase, Ctrl+C drops the line, Ctrl+D on an empty line closes as before.
+- **The Terminal** of exwin.so sends the arrows, Home, End and Del as an xterm does.
+- **Limit**: in the Terminal and over telnet an accented letter in the middle of the line moves one
+  byte at a time.
+- **Tested** with `tools/prova_partenza_shell.sh`, `tools/prova_telnet.sh` and
+  `tools/prova_telnet_fine.sh` at 32 and 64 bit.
+
+### The file manager opens a shell in the folder shown (filemgr 0.017, voce 126) — tested in QEMU
+
+- **Now**: "Apri una shell qui" (open a shell here) at the bottom of the right-button menu (in the
+  list and in the tree) and in the File menu opens a Terminal with the shell already in the folder
+  shown.
+- **Tested** with `tools/prova_partenza_shell.sh` at 32 and 64 bit.
+
+### The Start menu has rows with the icon in a small button and the name beside it, and a triangle on the groups (exwin.so 0.029 menuitem, pm 0.032, voce 122) — tested in QEMU
+
+- **Before**: every entry of the Start menu was a button as wide as the menu, the icon and the
+  name inside it, and the groups ended in "...".
+- **Now**: the icon sits in a small square button on the left, the name beside it on the menu's
+  background, and a group has a small triangle pointing right at the end of its row. The whole row
+  lights up under the pointer, when pressed or when chosen with the arrows; the names stay in a
+  column even when an entry has no icon. With the icons turned off only the names are left.
+- **For every program**: it is a new control of exwin.so, `"menuitem"`, with `EX_SUBMENU` for the
+  triangle. It behaves as a button (press and release, Space).
+- **Tested** with `tools/prova_menu_avvio.sh` at 32 and 64 bit: the icon in its square, the
+  triangle on the group and none on «Esci», the name beside the button, with and without icons.
 
 ### Firefox goes full screen, YouTube included: wserver takes the frame off an open window (wserver 0.020, exwin.so 0.028, voce 121) — tested in QEMU and on the test PC
 

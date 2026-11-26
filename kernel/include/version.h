@@ -1153,7 +1153,11 @@
  * 1 kept the kernel's lock for ever, processor 0 (clock, disk interrupt)
  * stood in bkl_entra: Firefox froze 3 starts out of 8 in QEMU, 0 out of 10
  * after. */
-#define EXOS_VERSION    "0.371"
+/* 0.371 -> 0.372 (voce 123, step A): the line of a long hold of the file
+ * lock (over 500 ms) is followed by its split: device reads, writes (of
+ * which file data, counted in ext2.c scrivi_corsa), flushes - commands and
+ * ms each (blk.c counts them by kind). */
+#define EXOS_VERSION    "0.372"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

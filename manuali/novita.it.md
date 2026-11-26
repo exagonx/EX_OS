@@ -6,6 +6,10 @@
 
 **Indice**
 
+- [Ogni programma parte nella cartella dell'utente (exwin, pm 0.033, filemgr 0.017, voce 124) — testato in QEMU](#ogni-programma-parte-nella-cartella-dellutente-exwin-pm-0033-filemgr-0017-voce-124--testato-in-qemu)
+- [La shell ha cronologia e modifica della riga anche nel Terminale e in telnet (sh 0.017, exwin.so 0.029, voce 125) — testato in QEMU](#la-shell-ha-cronologia-e-modifica-della-riga-anche-nel-terminale-e-in-telnet-sh-0017-exwinso-0029-voce-125--testato-in-qemu)
+- [Il file manager apre una shell nella cartella mostrata (filemgr 0.017, voce 126) — testato in QEMU](#il-file-manager-apre-una-shell-nella-cartella-mostrata-filemgr-0017-voce-126--testato-in-qemu)
+- [Il menu Avvio ha righe con l'icona in un piccolo pulsante e il nome accanto, e un triangolino sui gruppi (exwin.so 0.029 menuitem, pm 0.032, voce 122) — testato in QEMU](#il-menu-avvio-ha-righe-con-licona-in-un-piccolo-pulsante-e-il-nome-accanto-e-un-triangolino-sui-gruppi-exwinso-0029-menuitem-pm-0032-voce-122--testato-in-qemu)
 - [Firefox va a schermo intero, YouTube compreso: wserver toglie il telaio a una finestra aperta (wserver 0.020, exwin.so 0.028, voce 121) — testato in QEMU e sul PC di prova](#firefox-va-a-schermo-intero-youtube-compreso-wserver-toglie-il-telaio-a-una-finestra-aperta-wserver-0020-exwinso-0028-voce-121--testato-in-qemu-e-sul-pc-di-prova)
 - [Firefox parte prima: le librerie e omni.ja si leggono quando servono, i simboli con le tabelle hash, niente più blocchi all'avvio (kernel 0.371, voce 120) — testato in QEMU e sul PC di prova](#firefox-parte-prima-le-librerie-e-omnija-si-leggono-quando-servono-i-simboli-con-le-tabelle-hash-niente-più-blocchi-allavvio-kernel-0371-voce-120--testato-in-qemu-e-sul-pc-di-prova)
 - [Il file manager nasconde i file col punto e le estensioni a richiesta, e le righe trascinate mostrano un foglio accanto al puntatore (filemgr 0.016, exwin.so 0.027, voce 114) — testato in QEMU](#il-file-manager-nasconde-i-file-col-punto-e-le-estensioni-a-richiesta-e-le-righe-trascinate-mostrano-un-foglio-accanto-al-puntatore-filemgr-0016-exwinso-0027-voce-114--testato-in-qemu)
@@ -263,6 +267,49 @@
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### Ogni programma parte nella cartella dell'utente (exwin, pm 0.033, filemgr 0.017, voce 124) — testato in QEMU
+
+- **Prima**: i programmi avviati dal menu Avvio partivano da `/`, la cartella da cui era partito
+  ExWin; il file manager si apriva su `/` e i dialoghi Apri e Salva pure.
+- **Adesso**: ExWin e il Program Manager entrano nella cartella dell'utente (`$HOME`, per root
+  `/root`) prima di avviare il resto, quindi ogni programma parte lì: se l'utente pinco apre il file
+  manager, vede `/home/pinco`. Il file manager senza argomenti apre `$HOME`; i dialoghi Apri e Salva
+  e quelli di Archivi partono dalla cartella del programma invece che da `/`.
+- **Se la cartella non c'è** ExWin e pm lo scrivono nel registro e restano dove sono.
+- **Provato** con `tools/prova_partenza_shell.sh` a 32 e 64 bit.
+
+### La shell ha cronologia e modifica della riga anche nel Terminale e in telnet (sh 0.017, exwin.so 0.029, voce 125) — testato in QEMU
+
+- **Prima**: le frecce, la cronologia e la modifica della riga c'erano solo sulla console; nel
+  Terminale di ExWin e in una sessione telnet si scriveva una riga e basta.
+- **Adesso**: anche lì freccia su e giù scorrono i comandi già dati, sinistra e destra muovono il
+  cursore nella riga, Home e Fine (o Ctrl+A e Ctrl+E) vanno all'inizio e alla fine, Canc e Backspace
+  cancellano, Ctrl+C lascia la riga, Ctrl+D su una riga vuota chiude come prima.
+- **Il Terminale** di exwin.so manda le frecce, Home, Fine e Canc come un xterm.
+- **Limite**: nel Terminale e in telnet una lettera accentata in mezzo alla riga si sposta un byte
+  per volta.
+- **Provato** con `tools/prova_partenza_shell.sh`, `tools/prova_telnet.sh` e
+  `tools/prova_telnet_fine.sh` a 32 e 64 bit.
+
+### Il file manager apre una shell nella cartella mostrata (filemgr 0.017, voce 126) — testato in QEMU
+
+- **Adesso**: "Apri una shell qui" in fondo al menu del tasto destro (nell'elenco e nell'albero) e
+  nel menu File apre un Terminale con la shell già nella cartella mostrata.
+- **Provato** con `tools/prova_partenza_shell.sh` a 32 e 64 bit.
+
+### Il menu Avvio ha righe con l'icona in un piccolo pulsante e il nome accanto, e un triangolino sui gruppi (exwin.so 0.029 menuitem, pm 0.032, voce 122) — testato in QEMU
+
+- **Prima**: ogni voce del menu Avvio era un pulsante largo quanto il menu, con l'icona e il nome
+  dentro, e i gruppi finivano con "...".
+- **Adesso**: l'icona sta in un piccolo pulsante quadrato a sinistra, il nome accanto sul fondo del
+  menu, e un gruppo ha un triangolino che punta a destra in fondo alla riga. La riga intera si
+  accende sotto il puntatore, premuta o scelta con le frecce; i nomi restano in colonna anche se una
+  voce non ha icona. Con le icone spente restano solo i nomi.
+- **Per ogni programma**: è un controllo nuovo di exwin.so, `"menuitem"`, con `EX_SUBMENU` per il
+  triangolino. Si comporta come un pulsante (premi e rilascia, barra spaziatrice).
+- **Provato** con `tools/prova_menu_avvio.sh` a 32 e 64 bit: l'icona nel suo quadrato, il
+  triangolino sul gruppo e nessuno su «Esci», il nome accanto al pulsante, con e senza icone.
 
 ### Firefox va a schermo intero, YouTube compreso: wserver toglie il telaio a una finestra aperta (wserver 0.020, exwin.so 0.028, voce 121) — testato in QEMU e sul PC di prova
 

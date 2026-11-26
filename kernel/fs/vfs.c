@@ -446,6 +446,7 @@ uint32_t vfs_stato_lucchetto(void) { return g_fs_detentore; }
 #define FS_SEC_DIRE_MS 100u
 static uint64_t    g_fs_tsc;              /* TSC when taken; 0 = no TSC */
 static BlkLavoro   g_fs_lav;              /* device work when taken */
+static uint32_t    g_fs_dati_cmd, g_fs_dati_sett;   /* ext2 data when taken (voce 123) */
 static uint32_t    g_fss_n, g_fss_tot, g_fss_max, g_fss_pid, g_fss_tick;
 static uint32_t    g_fss_dev, g_fss_cmd, g_fss_kb;
 static const char *g_fss_chi = "?";
@@ -454,6 +455,8 @@ static void fs_preso(void)
 {
     g_fs_tsc = tsc_c_e() ? tsc_leggi() : 0;
     blk_lavoro(&g_fs_lav);
+    g_fs_dati_cmd  = g_ext2_dati_cmd;
+    g_fs_dati_sett = g_ext2_dati_sett;
 }
 
 /* called by the holder, before letting go */
@@ -595,6 +598,14 @@ static void fs_rilascia(void)
              tenuto * 10u, chi_era, cosa, g_fs_byte, g_fs_n_attesa,
              (l.us - g_fs_lav.us) / 1000u, l.comandi - g_fs_lav.comandi,
              (l.settori - g_fs_lav.settori) / 2u);
+        /* (voce 123) the same split: reads, writes (of which file data),
+         * flushes - four flushes are one journal commit */
+        klog(LOG_WARN, "VFS:   letture %u cmd %u ms; scritture %u cmd %u ms, dati %u cmd %u KB; "
+             "flush %u, %u ms",
+             l.cmd[0] - g_fs_lav.cmd[0], (l.tus[0] - g_fs_lav.tus[0]) / 1000u,
+             l.cmd[1] - g_fs_lav.cmd[1], (l.tus[1] - g_fs_lav.tus[1]) / 1000u,
+             g_ext2_dati_cmd - g_fs_dati_cmd, (g_ext2_dati_sett - g_fs_dati_sett) / 2u,
+             l.cmd[2] - g_fs_lav.cmd[2], (l.tus[2] - g_fs_lav.tus[2]) / 1000u);
     }
     g_fs_byte = 0;
     fs_misura(chi_era, cosa);

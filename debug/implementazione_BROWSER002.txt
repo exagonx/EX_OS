@@ -1112,6 +1112,63 @@ dalla macchina vera, e l'elenco che ne esce sostituisce questa sezione.
   proprieta' ARIA riflesse, Observable (una proposta), le processing
   instruction coi loro attributi (WICG).
 
+7.13b La ricerca di Google e la home (26/11/2026, sera)
+-----
+  Segnalato dall'utente: la ricerca da' "[vuota: la disegna JavaScript]" e
+  la home e' disallineata.
+  HOME (difetti nostri, corretti, browser_impagina.c):
+   - centrando una riga si spostavano i pezzi ma non gli sfondi e i bordi
+     degli inline-block: i riquadri dei pulsanti 89 px a sinistra delle
+     scritte. Ora si spostano gli sfondi fatti da in_blocco sulla riga
+     (g_riga_sf), non quello del blocco che contiene la riga.
+   - <br> portava la penna al margine anche su una riga piena: il
+     centraggio la credeva vuota e spingeva di mezza riga (logo, casella).
+   Regressioni: uguali salvo Google (ora giusta).
+  RICERCA: con il consenso dato, Google manda una verifica in JavaScript
+  (SearchGuard: una macchina virtuale offuscata). La verifica scrive il
+  cookie SG_SS (976 byte) e ricarica la ricerca, o mette lo stesso gettone
+  nell'indirizzo (962 caratteri). Lungo la strada TUTTO tagliava:
+   - exdom EXDOM_URL_MAX 640 -> 4096; segui_location coi buffer di
+     NAV_URL_MAX (erano EXHTTP_URL_MAX, 600);
+   - biscotti BIS_VAL_MAX 256 -> 4096 (RFC 6265: 4096 per biscotto; NID e
+     __Secure-ENID di Google passano i 256); EXDOM_BISCOTTI_MAX 1024 ->
+     8192; il file dei biscotti 16 -> 300 KB;
+   - exhttp: l'intestazione Cookie 1024 -> 8192 (tre posti), i Set-Cookie
+     6 da 256 -> 16 da 4608, la HttpRisposta di exhttp_prendi static.
+  Con questi, in QEMU: il gettone parte (biscotti a www.google.com/search:
+  SOCS AEC __Secure-ENID SG_SS(976)) e Google risponde 429 rimandando a
+  /sorry con un reCAPTCHA: la verifica gira fino in fondo, il VERDETTO e'
+  "bot". Non e' piu' l'offuscamento: e' il giudizio di Google sull'ambiente.
+  Con EXB_CONSOLE=1 il registro dice quali biscotti vanno dove (nomi e
+  lunghezze, mai i valori). Prova: HOME su un disco ext4 col consenso
+  (~/ex_os/prove-google/albero, hd.img), perche' il CD non e' scrivibile e
+  il browser non legge biscotti senza la sua cartella.
+
+7.14 P14 IN CORSO (26/11/2026, sera): il reCAPTCHA nel browser
+-----
+  Deciso dall'utente: la ricerca di Google rimanda alla pagina /sorry con
+  un reCAPTCHA Enterprise, e la strada giusta e' che la persona davanti al
+  browser lo risolva (non far cambiare idea al classificatore).
+  La pagina /sorry (salvata da dentro QEMU con Ctrl+S su un disco ext4):
+  recaptcha/enterprise.js, un div.g-recaptcha col data-sitekey e un
+  data-callback che spedisce il modulo. reCAPTCHA crea l'iframe "anchor"
+  (la casella "Non sono un robot") e, per la sfida delle immagini, il
+  "bframe"; pagina e iframe si parlano con postMessage; l'anchor usa un
+  Worker (webworker.js, che fa importScripts di gstatic).
+  Ogni iframe ha gia' la sua vista: documento, impaginazione e MOTORE
+  JavaScript suoi. Mancano i ponti, in quest'ordine:
+   1. le finestre degli altri: parent, top, frames, contentWindow come
+      rappresentanti (sempre lo stesso oggetto per la stessa finestra:
+      reCAPTCHA confronta e.source con iframe.contentWindow) e postMessage
+      fra le viste, coi dati serializzati, origin e source veri; i tetti
+      dell'indirizzo di un iframe (600 -> 2048: l'anchor porta il parametro s);
+   2. importScripts da un'altra origine nei Worker (lo standard lo permette;
+      la pagina del Worker resta della stessa origine);
+   3. le immagini dentro un iframe (le nove della sfida), i clic e il
+      modulo dentro un iframe;
+   4. la prova in QEMU, la sfida risolta a mano dalla persona.
+  Criterio: la ricerca di Google, risolto il reCAPTCHA, mostra i risultati.
+
 7.10 P10 FATTO (26/11/2026): angoli, ombre, sfumature, colori con l'alfa,
      SVG, canvas 2D (plutovg 1.3.3, tools/plutovg-exos, dlopen)
 -----

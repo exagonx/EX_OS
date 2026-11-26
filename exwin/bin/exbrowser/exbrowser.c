@@ -169,6 +169,8 @@ static void vista_usa(Vista *v)
 }
 
 static int cornici_da_caricare(void);     /* the iframes: see cornice_carica */
+static void finestre_registra(void);        /* P14: see fin_consegna */
+static int  fin_consegna(void);
 
 /* +0.001 a ogni modifica: `browser -version` la stampa. Vedi EX_VERSIONE in libc.h. */
 EX_VERSIONE("exbrowser", VERSIONE_APP);
@@ -2431,6 +2433,26 @@ static void bis_chiedi(void *dato, const char *host, const char *percorso,
     }
     bis_da_mandare_ss(&g_bis, host, percorso, cifrata, 0, ora_epoca(),
                       stesso, nav, fuori, max);
+    /* (P13) with EXB_CONSOLE=1, which cookies go where: the NAMES and the
+     * lengths, never the values (they are the user's sessions) */
+    if (getenv("EXB_CONSOLE")) {
+        char         r[400];
+        unsigned int u = 0, i = 0;
+
+        while (fuori[i] && u + 40 < sizeof(r)) {
+            unsigned int a = i, l;
+
+            while (fuori[i] && fuori[i] != '=' && fuori[i] != ';') i++;
+            l = i - a; if (l > 24) l = 24;
+            memcpy(r + u, fuori + a, l); u += l;
+            a = i;
+            while (fuori[i] && fuori[i] != ';') i++;
+            u += (unsigned int)snprintf(r + u, sizeof(r) - u, "(%u) ", i - a);
+            while (fuori[i] == ';' || fuori[i] == ' ') i++;
+        }
+        r[u] = '\0';
+        diario("exbrowser: biscotti a %s%s: %s\n", host, percorso, u ? r : "nessuno");
+    }
 }
 
 static void bis_arrivo(void *dato, const char *host, const char *riga, int cifrata)
@@ -3078,11 +3100,32 @@ static int imm_y(int k)
 
 /* Those the layout found and that are near what is shown, one at a time.
  * Returns how many are still waiting because they are further down. */
+/* (P14) redraw after an image arrived: the page draws itself; an iframe is
+ * drawn by its page, inside its rectangle */
+void disegna_tutto(void);
+static void ridisegna_vista(void)
+{
+    if (g_v == &g_principale) disegna();
+    else disegna_tutto();
+}
+
+/* some image of the current view still to fetch */
+static int imm_in_attesa(void)
+{
+    int k;
+
+    if (!g_img_accese) return 0;
+    for (k = 0; k < g_imm_n; k++) if (g_imm[k].stato == 0) return 1;
+    return 0;
+}
+
 static int immagini_prendi(void)
 {
     char msg[160];
     int  k, lontane = 0;
-    int  fino = g_scorri + 3 * area_h();
+    /* (P14) in an iframe, all of them: it is small, and its scrolling is
+     * the page's (g_scorri there is where the rectangle is on screen) */
+    int  fino = (g_v == &g_principale) ? g_scorri + 3 * area_h() : 0x7fffffff;
 
     /* ! SPENTE NON VUOL DIRE «RIQUADRO VUOTO»: i pezzi non sono nemmeno
      * stati creati, e al loro posto si legge l'`alt`, che e' cio' che il
@@ -3100,7 +3143,7 @@ static int immagini_prendi(void)
             int y = imm_y(k);
 
             if (g_imm[k].stato != 0) continue;
-            if (y >= 0 && (y > fino || y + (int)g_imm[k].ris_h < g_scorri - area_h())) continue;
+            if (g_v == &g_principale && y >= 0 && (y > fino || y + (int)g_imm[k].ris_h < g_scorri - area_h())) continue;
             if (!imm_ci_sta(k)) continue;
             if (!risolvi(g_imm[k].src, g_ant_url[na], NAV_URL_MAX)) continue;
             if (e_locale(g_ant_url[na]) || gia_in_casa(g_ant_url[na])) continue;
@@ -3122,7 +3165,7 @@ static int immagini_prendi(void)
              * height= has no piece until it arrives, because its size is not
              * known — and it would never arrive (prova_gif_anima caught it).
              * Only an image that HAS a place, and a far one, waits. */
-            if (y >= 0 &&
+            if (g_v == &g_principale && y >= 0 &&
                 (y > fino || y + (int)g_imm[k].ris_h < g_scorri - area_h())) {
                 lontane++;
                 continue;
@@ -3135,7 +3178,7 @@ static int immagini_prendi(void)
             if (g_imm[k].ris_w) {
                 g_imm[k].ris_w = g_imm[k].ris_h = 0;
                 impagina();
-                disegna();
+                ridisegna_vista();
             }
             continue;
         }
@@ -3154,7 +3197,7 @@ static int immagini_prendi(void)
             if (g_imm[k].ris_w) {
                 g_imm[k].ris_w = g_imm[k].ris_h = 0;
                 impagina();
-                disegna();
+                ridisegna_vista();
             }
             continue;
         }
@@ -3177,10 +3220,10 @@ static int immagini_prendi(void)
          * di difetto che sembra un problema di disegno e non lo e'.
          * ===================================================================== */
         if (g_imm[k].ris_w == g_imm[k].w && g_imm[k].ris_h == g_imm[k].h) {
-            disegna();
+            ridisegna_vista();
         } else {
             impagina();
-            disegna();
+            ridisegna_vista();
         }
     }
     return lontane;
@@ -3868,6 +3911,7 @@ static int motore_apri(void)
      * postMessage, crypto... — see browser_preludio.c. Last, because it
      * reads location. */
     preludio_esegui(g_js, area_w(), area_h());
+    finestre_registra();        /* parent, frames, postMessage between views (P14) */
     return 1;
 }
 
@@ -4455,7 +4499,8 @@ static void origine_di(const char *u, char *o, unsigned int max)
 
 /* ! A WORKER'S SCRIPT OF THE PAGE'S ORIGIN ONLY, as the standard says:
  * resolved, compared, then from the cache or the network */
-int lav_scarica(const char *url, char *buf, unsigned int max, unsigned int *n, char *finale, unsigned int fmax)
+int lav_scarica(const char *url, char *buf, unsigned int max, unsigned int *n, char *finale, unsigned int fmax,
+                int da_dove_vuole)
 {
     char        ass[NAV_URL_MAX], o1[300], o2[300];
     ExHttpEsito e;
@@ -4463,7 +4508,11 @@ int lav_scarica(const char *url, char *buf, unsigned int max, unsigned int *n, c
     if (!risolvi(url, ass, sizeof(ass))) return 0;
     origine_di(ass, o1, sizeof(o1));
     origine_di(g_qui, o2, sizeof(o2));
-    if (!o1[0] || strcmp(o1, o2) != 0) { diario("exbrowser: worker di un'altra origine rifiutato: %s\n", ass); return 0; }
+    /* ! (P14) importScripts of a classic worker may load from any origin, as
+     * a <script> may (reCAPTCHA's webworker.js, on www.google.com, imports
+     * its code from www.gstatic.com); the worker's own script stays of the
+     * page's origin */
+    if (!da_dove_vuole && (!o1[0] || strcmp(o1, o2) != 0)) { diario("exbrowser: worker di un'altra origine rifiutato: %s\n", ass); return 0; }
     snprintf(finale, fmax, "%s", ass);
     if (cache_leggi(ass, (unsigned char *)buf, max, n)) return 1;
     if (!prendi_in_rete(ass, (unsigned char *)buf, max, &e) || e.codice != 200 || e.troncata) return 0;
@@ -5561,7 +5610,7 @@ static void cornice_carica(int k)
 {
     Vista       *p = g_v, *f;
     Cornice     *c = &g_ve->corn[k];
-    char         url[EXHTTP_URL_MAX];
+    static char  url[NAV_URL_MAX];      /* (P14) as Cornice.src */
     ExHttpEsito  e;
     unsigned int n = 0;
     c->stato = 2;                           /* until it has worked */
@@ -5595,6 +5644,8 @@ static void cornice_carica(int k)
 
     documento_nuovo(e.byte);
     c->stato = 1;
+    /* (P14) its images: reCAPTCHA's challenge is nine of them */
+    immagini_prendi();
 fine:
     g_da_postare = 0;           /* see vai(): a form in an iframe is not sent */
     vista_usa(p);
@@ -5702,8 +5753,8 @@ static void cornice_vai(const char *url)
     for (k = 0; k < CORNICI_MAX; k++) if (g_corn_v[k] == f) break;
     if (k == CORNICI_MAX) return;
     vista_usa(&g_principale);
-    strncpy(g_ve->corn[k].src, url, EXHTTP_URL_MAX - 1);
-    g_ve->corn[k].src[EXHTTP_URL_MAX - 1] = '\0';
+    strncpy(g_ve->corn[k].src, url, sizeof(g_ve->corn[k].src) - 1);
+    g_ve->corn[k].src[sizeof(g_ve->corn[k].src) - 1] = '\0';
     cornice_carica(k);
     disegna();
     vista_usa(f);
@@ -5734,9 +5785,324 @@ static int cornici_pompa(void)
             if (g_js && (exjs_lavori_in_attesa(g_js) || exdom_rete_in_attesa(g_dom)))
                 aspetta = 1;
         }
+        /* (P14) the images its scripts added (a new challenge) */
+        if (!g_in_rete && imm_in_attesa()) immagini_prendi();
         vista_usa(p);
     }
     return aspetta;
+}
+
+
+/* =============================================================================
+ * THE OTHER WINDOWS (P14, 26 November 2026): parent, top, frames,
+ * contentWindow, postMessage between the page and its iframes.
+ *
+ * Each view has its own engine, and an object of one engine cannot cross to
+ * another: a window of the others is a STAND-IN made in the prelude (one per
+ * window, always the same object - reCAPTCHA compares e.source with
+ * iframe.contentWindow), whose postMessage comes here. A message is
+ * serialized (__exos_ser, the Workers' structured clone), queued, and
+ * delivered at the next turn in the receiving view, with its origin and its
+ * source, as postMessage is: never at once.
+ * Ids: 0 the page, k + 1 iframe k.
+ * ============================================================================= */
+#define POSTA_MAX 64
+typedef struct {
+    int   da, a;
+    int   porta;                /* 0: to the window; > 0: to that MessagePort */
+    char  origine[160];         /* the sender's */
+    char  bersaglio[160];       /* targetOrigin: "*" or an origin */
+    char *testo;                /* malloc'd, the serialized data */
+} Posta;
+static Posta g_posta[POSTA_MAX];
+static int   g_posta_n;
+
+static Vista *fin_vista(int id)
+{
+    if (id == 0) return &g_principale;
+    if (id >= 1 && id <= CORNICI_MAX) return g_corn_v[id - 1];
+    return 0;
+}
+
+static int fin_id(const Vista *v)
+{
+    int k;
+
+    if (v == &g_principale) return 0;
+    for (k = 0; k < CORNICI_MAX; k++) if (g_corn_v[k] == v) return k + 1;
+    return -1;
+}
+
+/* the iframe is there and its document loaded */
+static int fin_viva(int id)
+{
+    if (id == 0) return 1;
+    return id >= 1 && id <= CORNICI_MAX && g_corn_v[id - 1] &&
+           id - 1 < g_principale.est.corn_n && g_principale.est.corn[id - 1].stato == 1;
+}
+
+static ExJsVal nat_fin_io(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    (void)q; (void)a; (void)n; (void)d;
+    return exjs_numero(c, (double)fin_id(g_v));
+}
+
+static ExJsVal nat_fin_figli(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    ExJsVal v = exjs_vettore(c);
+    int     k;
+    unsigned int i = 0;
+
+    (void)q; (void)a; (void)n; (void)d;
+    if (g_v == &g_principale)
+        for (k = 0; k < g_principale.est.corn_n && k < CORNICI_MAX; k++)
+            if (fin_viva(k + 1)) exjs_indice_metti(c, v, i++, exjs_numero(c, (double)(k + 1)));
+    return v;
+}
+
+/* the view of an <iframe> element of this document, or -1 */
+static ExJsVal nat_fin_di(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    int nodo, k;
+
+    (void)q; (void)d;
+    if (n < 1 || g_v != &g_principale || !g_dom) return exjs_numero(c, -1);
+    nodo = exdom_nodo(g_dom, a[0]);
+    for (k = 0; k < g_ve->corn_n && k < CORNICI_MAX; k++)
+        if (g_ve->corn[k].nodo == nodo && fin_viva(k + 1)) return exjs_numero(c, (double)(k + 1));
+    return exjs_numero(c, -1);
+}
+
+/* a number no other port of any view has: the two ends of a channel that
+ * crosses views are known by these */
+static ExJsVal nat_fin_nuovo_id(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    static int prossimo = 1;
+
+    (void)q; (void)a; (void)n; (void)d;
+    return exjs_numero(c, (double)prossimo++);
+}
+
+static ExJsVal nat_fin_posta(ExJsCtx *c, ExJsVal q, const ExJsVal *a, int n, void *d)
+{
+    Posta       *p;
+    const char  *t;
+    unsigned int l;
+
+    (void)q; (void)d;
+    if (n < 3 || g_posta_n >= POSTA_MAX) return exjs_indefinito();
+    p = &g_posta[g_posta_n];
+    p->a  = (int)exjs_a_numero(c, a[0]);
+    p->da = fin_id(g_v);
+    p->porta = (n >= 4) ? (int)exjs_a_numero(c, a[3]) : 0;
+    if (!fin_viva(p->a) || p->da < 0) return exjs_indefinito();
+    origine_di(g_qui, p->origine, sizeof(p->origine));
+    strncpy(p->bersaglio, exjs_a_stringa(c, a[2]), sizeof(p->bersaglio) - 1);
+    p->bersaglio[sizeof(p->bersaglio) - 1] = '\0';
+    t = exjs_a_stringa(c, a[1]);
+    l = (unsigned int)strlen(t);
+    p->testo = (char *)malloc(l + 1);
+    if (!p->testo) return exjs_indefinito();
+    memcpy(p->testo, t, l + 1);
+    g_posta_n++;
+    return exjs_indefinito();
+}
+
+/* The page's view current: hands every queued message to its window. A
+ * message sent while delivering waits for the next turn. Returns 1 if it
+ * delivered something. */
+static int fin_consegna(void)
+{
+    Vista *p = g_v;
+    Posta  l[POSTA_MAX];
+    int    n = g_posta_n, i;
+
+    if (!n) return 0;
+    memcpy(l, g_posta, sizeof(Posta) * (unsigned int)n);
+    g_posta_n = 0;
+    for (i = 0; i < n; i++) {
+        Vista *v = fin_vista(l[i].a);
+
+        if (v && fin_viva(l[i].a)) {
+            char orig_a[160];
+
+            vista_usa(v);
+            origine_di(g_qui, orig_a, sizeof(orig_a));
+            /* targetOrigin: the message goes only where the sender said */
+            /* a port's message has no targetOrigin: the channel was given */
+            if (g_js && (l[i].porta || !strcmp(l[i].bersaglio, "*") || !strcmp(l[i].bersaglio, orig_a))) {
+                ExJsVal f = exjs_prendi(g_js, exjs_globale(g_js),
+                                        l[i].porta ? "__exos_fin_porta_arriva" : "__exos_fin_arriva");
+
+                if (exjs_tipo(g_js, f) == EXJS_FUNZIONE) {
+                    ExJsVal arg[4];
+                    ExJsErrore err;
+
+                    memset(&err, 0, sizeof(err));
+                    arg[0] = exjs_numero(g_js, (double)l[i].da);
+                    arg[1] = exjs_stringa(g_js, l[i].origine, -1);
+                    arg[2] = exjs_stringa(g_js, l[i].testo, -1);
+                    arg[3] = exjs_numero(g_js, (double)l[i].porta);
+                    exjs_invoca(g_js, f, exjs_indefinito(), arg, 4, &err);
+                    js_grida(&err);
+                    rifai_se_cambiato();
+                    dopo_gli_script();
+                }
+            }
+            vista_usa(p);
+        }
+        free(l[i].testo);
+    }
+    return 1;
+}
+
+static const char FINESTRE_JS[] =
+"(function (G) {\n"
+"  if (typeof G.__exos_fin_io !== 'function' || typeof G.__exos_ser !== 'function') return;\n"
+"  var IO = __exos_fin_io(), cache = {}, ORIG = location.origin || (location.protocol + '//' + location.host);\n"
+"  var serializza = function (m) { try { return __exos_ser(m); } catch (e) { throw new DOMException('An object could not be cloned.', 'DataCloneError'); } };\n"
+"  /* MessagePorts that cross views (P14): a port given away in `transfer`\n"
+"     gets a number; its partner, left here, sends to that number in that\n"
+"     view, and the new port there sends back to the partner's number here.\n"
+"     The envelope: {d: the data, p: [{id, v, peer}]}. */\n"
+"  var PORTE = {};\n"
+"  var PP = G.MessagePort && G.MessagePort.prototype;\n"
+"  var porte_via = function (lista, dest) {\n"
+"    var out = [], i;\n"
+"    for (i = 0; lista && i < lista.length; i++) {\n"
+"      var p = lista[i];\n"
+"      if (!p || !PP || !(p instanceof G.MessagePort)) continue;\n"
+"      var lui = __exos_fin_nuovo_id(), io = __exos_fin_nuovo_id(), altra = p._altra;\n"
+"      if (p._remoto) { out.push({ id: lui, v: p._remoto.v, peer: p._remoto.id, inoltra: true }); continue; }\n"
+"      /* the partner stays here and now talks to the other view */\n"
+"      if (altra) { altra._remoto = { v: dest, id: lui }; altra._altra = null; PORTE[io] = altra; }\n"
+"      p._altra = null; p._via = true;\n"
+"      out.push({ id: lui, v: IO, peer: io });\n"
+"    }\n"
+"    return out;\n"
+"  };\n"
+"  var porte_qui = function (desc) {\n"
+"    var out = [], i;\n"
+"    for (i = 0; desc && i < desc.length; i++) {\n"
+"      var q = new G.MessagePort();\n"
+"      q._remoto = { v: desc[i].v, id: desc[i].peer };\n"
+"      PORTE[desc[i].id] = q;\n"
+"      out.push(q);\n"
+"    }\n"
+"    return out;\n"
+"  };\n"
+"  var busta = function (m, transfer, dest) { return JSON.stringify({ d: serializza(m), p: porte_via(transfer, dest) }); };\n"
+"  var manda = function (id, m, o, t) {\n"
+"    var to = typeof o === 'string' ? o : (o && o.targetOrigin) || '/';\n"
+"    var transfer = Array.isArray(o) ? o : (o && typeof o === 'object' && o.transfer) || t || [];\n"
+"    if (Array.isArray(o)) to = '/';\n"
+"    if (to === '/') to = ORIG;\n"
+"    if (to !== '*' && !/^[a-z][a-z0-9+.-]*:/i.test(to)) throw new DOMException(\"Invalid target origin '\" + to + \"'\", 'SyntaxError');\n"
+"    if (to !== '*') { try { to = new URL(to).origin; } catch (e) {} }\n"
+"    __exos_fin_posta(id, busta(m, transfer, id), to);\n"
+"  };\n"
+"  var consegna_porta = function (p, ev) {\n"
+"    if (!p._avviata && typeof p.onmessage !== 'function') { (p._coda = p._coda || []).push(ev); return; }\n"
+"    var c = p._coda || [], i; p._coda = [];\n"
+"    c.push(ev);\n"
+"    for (i = 0; i < c.length; i++) {\n"
+"      if (typeof p.onmessage === 'function') try { p.onmessage(c[i]); } catch (e) { if (G.console) console.error(e); }\n"
+"      var l = (p._asc || []).slice(0), k;\n"
+"      for (k = 0; k < l.length; k++) try { l[k].call(p, c[i]); } catch (e) { if (G.console) console.error(e); }\n"
+"    }\n"
+"  };\n"
+"  if (PP) {\n"
+"    var pm0 = PP.postMessage, st0 = PP.start;\n"
+"    PP.postMessage = function (m, t) {\n"
+"      var transfer = Array.isArray(t) ? t : (t && t.transfer) || [];\n"
+"      if (this._remoto) { __exos_fin_posta(this._remoto.v, busta(m, transfer, this._remoto.v), '*', this._remoto.id); return; }\n"
+"      var altra = this._altra;\n"
+"      if (!altra) return;\n"
+"      var ev = { type: 'message', data: m, origin: '', source: null, ports: transfer.filter(function (x) { return x instanceof G.MessagePort; }), target: altra };\n"
+"      setTimeout(function () { consegna_porta(altra, ev); }, 0);\n"
+"    };\n"
+"    PP.start = function () { this._avviata = true; if (this._coda && this._coda.length) { var c = this._coda; this._coda = []; var self = this; c.forEach(function (e) { consegna_porta(self, e); }); } if (st0) try { st0.call(this); } catch (e) {} };\n"
+"    var ael0 = PP.addEventListener;\n"
+"    PP.addEventListener = function (t, f, o) { if (t === 'message' && typeof f === 'function') { (this._asc = this._asc || []).push(f); return; } if (ael0) return ael0.call(this, t, f, o); };\n"
+"  }\n"
+"  G.__exos_fin_porta_arriva = function (da, origine, testo, id) {\n"
+"    var p = PORTE[id]; if (!p) return;\n"
+"    var b = JSON.parse(testo);\n"
+"    var ev = { type: 'message', data: __exos_deser(b.d), origin: '', source: null, ports: porte_qui(b.p), target: p, currentTarget: p };\n"
+"    if (typeof G.MessageEvent === 'function') try { Object.setPrototypeOf(ev, G.MessageEvent.prototype); } catch (e) {}\n"
+"    consegna_porta(p, ev);\n"
+"  };\n"
+"  var figli = function () { return id_ok(IO) === 0 ? __exos_fin_figli() : []; };\n"
+"  var id_ok = function (x) { return x; };\n"
+"  var FinP = {};\n"
+"  function Fin(id) {\n"
+"    if (id === IO) return G;\n"
+"    if (cache[id]) return cache[id];\n"
+"    var f = Object.create(FinP);\n"
+"    Object.defineProperty(f, '_id', { value: id });\n"
+"    var k;\n"
+"    for (k = 0; k < 3; k++) (function (k) { Object.defineProperty(f, k, { get: function () { var l = id === 0 ? __exos_fin_figli() : []; return k < l.length ? Fin(l[k]) : undefined; } }); })(k);\n"
+"    return (cache[id] = f);\n"
+"  }\n"
+"  FinP.postMessage = function (m, o) { manda(this._id, m, o); };\n"
+"  Object.defineProperty(FinP, 'parent', { get: function () { return this._id === 0 ? this : Fin(0); } });\n"
+"  Object.defineProperty(FinP, 'top', { get: function () { return Fin(0); } });\n"
+"  Object.defineProperty(FinP, 'window', { get: function () { return this; } });\n"
+"  Object.defineProperty(FinP, 'self', { get: function () { return this; } });\n"
+"  Object.defineProperty(FinP, 'frames', { get: function () { return this; } });\n"
+"  Object.defineProperty(FinP, 'length', { get: function () { return this._id === 0 ? __exos_fin_figli().length : 0; } });\n"
+"  Object.defineProperty(FinP, 'opener', { get: function () { return null; } });\n"
+"  Object.defineProperty(FinP, 'closed', { get: function () { return false; } });\n"
+"  FinP.focus = function () {}; FinP.blur = function () {}; FinP.close = function () {};\n"
+"  /* another window's location: only writing it is allowed across origins;\n"
+"     here neither (it would navigate a view from another one) */\n"
+"  Object.defineProperty(FinP, 'location', { get: function () { throw new DOMException('Blocked a frame from accessing a cross-origin frame.', 'SecurityError'); } });\n"
+"  Object.defineProperty(FinP, 'document', { get: function () { throw new DOMException('Blocked a frame from accessing a cross-origin frame.', 'SecurityError'); } });\n"
+"  G.__exos_finestra = Fin;\n"
+"  /* contentWindow (exdom asks): the iframe's window if it has a view, the\n"
+"     page's own global otherwise (an iframe not loaded, about:blank) */\n"
+"  G.__exos_finestra_di = function (el) { var id = __exos_fin_di(el); return id > 0 ? Fin(id) : G; };\n"
+"  if (IO > 0) {\n"
+"    try { Object.defineProperty(G, 'parent', { configurable: true, get: function () { return Fin(0); } }); } catch (e) { G.parent = Fin(0); }\n"
+"    try { Object.defineProperty(G, 'top', { configurable: true, get: function () { return Fin(0); } }); } catch (e) { G.top = Fin(0); }\n"
+"  } else {\n"
+"    var k;\n"
+"    for (k = 0; k < 3; k++) (function (k) { try { Object.defineProperty(G, k, { configurable: true, get: function () { var l = __exos_fin_figli(); return k < l.length ? Fin(l[k]) : undefined; } }); } catch (e) {} })(k);\n"
+"  }\n"
+"  /* window.length: how many iframes (frames.length) */\n"
+"  try { Object.defineProperty(G, 'length', { configurable: true, get: function () { return IO === 0 ? __exos_fin_figli().length : 0; } }); } catch (e) {}\n"
+"  try { Object.defineProperty(G, 'frames', { configurable: true, get: function () { return G; } }); } catch (e) {}\n"
+"  /* this window's postMessage goes the same road: to itself, at the next turn */\n"
+"  G.postMessage = function (m, o) { manda(IO, m, o); };\n"
+"  G.__exos_fin_arriva = function (da, origine, testo) {\n"
+"    var b = JSON.parse(testo), d = __exos_deser(b.d);\n"
+"    var ev = { type: 'message', data: d, origin: origine, lastEventId: '', source: Fin(da), ports: porte_qui(b.p),\n"
+"               target: G, currentTarget: G, bubbles: false, cancelable: false, defaultPrevented: false,\n"
+"               isTrusted: true, timeStamp: Date.now(), preventDefault: function () {}, stopPropagation: function () {},\n"
+"               stopImmediatePropagation: function () {} };\n"
+"    if (typeof G.MessageEvent === 'function') try { Object.setPrototypeOf(ev, G.MessageEvent.prototype); } catch (e) {}\n"
+"    if (typeof G.onmessage === 'function') try { G.onmessage(ev); } catch (e) { if (G.console) console.error(e); }\n"
+"    var l = (G._asc || []).slice(0), i;\n"
+"    for (i = 0; i < l.length; i++) try { l[i].call(G, ev); } catch (e) { if (G.console) console.error(e); }\n"
+"  };\n"
+"})(this);\n";
+
+/* Registers the other windows in the current view's engine: after the
+ * prelude, which gives __exos_ser and the window's message listeners. */
+static void finestre_registra(void)
+{
+    ExJsErrore err;
+    ExJsVal    r;
+
+    if (!g_js) return;
+    exjs_metti(g_js, exjs_globale(g_js), "__exos_fin_io",    exjs_nativa(g_js, nat_fin_io, 0, "__exos_fin_io"));
+    exjs_metti(g_js, exjs_globale(g_js), "__exos_fin_figli", exjs_nativa(g_js, nat_fin_figli, 0, "__exos_fin_figli"));
+    exjs_metti(g_js, exjs_globale(g_js), "__exos_fin_di",    exjs_nativa(g_js, nat_fin_di, 0, "__exos_fin_di"));
+    exjs_metti(g_js, exjs_globale(g_js), "__exos_fin_posta", exjs_nativa(g_js, nat_fin_posta, 0, "__exos_fin_posta"));
+    exjs_metti(g_js, exjs_globale(g_js), "__exos_fin_nuovo_id", exjs_nativa(g_js, nat_fin_nuovo_id, 0, "__exos_fin_nuovo_id"));
+    memset(&err, 0, sizeof(err));
+    if (!exjs_esegui(g_js, FINESTRE_JS, (unsigned int)(sizeof(FINESTRE_JS) - 1), &r, &err))
+        diario("exbrowser: finestre, riga %d: %s\n", err.riga, err.messaggio);
 }
 
 void disegna_tutto(void)
@@ -8507,6 +8873,9 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
          * engine, and the wake-up goes off only when NOBODY waits. */
         cornici = cornici_pompa();
         cornici_carica();
+        /* (P14) messages between the page and its iframes, then their
+         * timers may have more: the wake-up stays on while any is queued */
+        if (fin_consegna() || g_posta_n) cornici = 1;
         /* Le GIF animate tengono accesa la sveglia finche' ce n'e' una viva. */
         if (anima_giro()) aspetta = 1;
         if (!aspetta && !cornici && !cornici_da_caricare()) ex_set_timer(g_f, 0);

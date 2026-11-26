@@ -35,7 +35,8 @@
 #define LAV_CODICE  (2 * 1024 * 1024)
 
 /* exbrowser.c */
-int  lav_scarica(const char *url, char *buf, unsigned int max, unsigned int *n, char *finale, unsigned int fmax);
+int  lav_scarica(const char *url, char *buf, unsigned int max, unsigned int *n, char *finale, unsigned int fmax,
+                 int da_dove_vuole);   /* 1: importScripts, any origin (P14) */
 void lav_ganci(ExJsCtx *c);
 unsigned int lav_arena(void);
 
@@ -117,7 +118,7 @@ static ExJsVal nat_importa(ExJsCtx *c, ExJsVal questo, const ExJsVal *a, int n_a
     if (!buf) return exjs_indefinito();
     for (i = 0; i < n_arg; i++) {
         if (!(u = exjs_a_stringa(c, a[i]))) continue;
-        if (!lav_scarica(u, buf, LAV_CODICE, &n, fin, sizeof(fin))) { errore_dal_lavoro("importScripts: non si carica"); continue; }
+        if (!lav_scarica(u, buf, LAV_CODICE, &n, fin, sizeof(fin), 1)) { errore_dal_lavoro("importScripts: non si carica"); continue; }
         buf[n] = 0;
         esegui(w, buf, n);
     }
@@ -265,7 +266,7 @@ static ExJsVal nat_nuovo(ExJsCtx *c, ExJsVal questo, const ExJsVal *a, int n_arg
         /* ! THE SCRIPT OF THE PAGE'S OWN ORIGIN only (lav_scarica checks) */
         char fin[1024];
 
-        if (!lav_scarica(u, g_lav[i].codice, LAV_CODICE, &n, fin, sizeof(fin))) {
+        if (!lav_scarica(u, g_lav[i].codice, LAV_CODICE, &n, fin, sizeof(fin), 0)) {
             lav_via(&g_lav[i]);
             return exjs_numero(c, -1);
         }

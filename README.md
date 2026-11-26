@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.371
+**Version:** 0.372
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -120,14 +120,14 @@ Inside EX-OS the same manuals are in `/doc/manuali` (from the CD:
 
 ## Latest changes
 
+- [Every program starts in the user's folder (exwin, pm 0.033, filemgr 0.017)](manuali/novita.md#every-program-starts-in-the-users-folder-exwin-pm-0033-filemgr-0017-voce-124--tested-in-qemu) — *tested in QEMU*
+- [The shell has history and line editing in the Terminal and over telnet too (sh 0.017)](manuali/novita.md#the-shell-has-history-and-line-editing-in-the-terminal-and-over-telnet-too-sh-0017-exwinso-0029-voce-125--tested-in-qemu) — *tested in QEMU*
+- [The file manager opens a shell in the folder shown (filemgr 0.017)](manuali/novita.md#the-file-manager-opens-a-shell-in-the-folder-shown-filemgr-0017-voce-126--tested-in-qemu) — *tested in QEMU*
+- [Start menu: icon in a small button, name beside it, a triangle on the groups (exwin.so 0.029)](manuali/novita.md#the-start-menu-has-rows-with-the-icon-in-a-small-button-and-the-name-beside-it-and-a-triangle-on-the-groups-exwinso-0029-menuitem-pm-0032-voce-122--tested-in-qemu) — *tested in QEMU*
 - [Firefox goes full screen, YouTube included (wserver 0.020, exwin.so 0.028)](manuali/novita.md#firefox-goes-full-screen-youtube-included-wserver-takes-the-frame-off-an-open-window-wserver-0020-exwinso-0028-voce-121--tested-in-qemu-and-on-the-test-pc) — *tested in QEMU and on the test PC*
 - [Firefox starts sooner: pages read when needed, symbols by hash, no freeze at start (kernel 0.371)](manuali/novita.md#firefox-starts-sooner-libraries-and-omnija-are-read-when-needed-symbols-through-hash-tables-no-more-freezes-at-start-kernel-0371-voce-120--tested-in-qemu-and-on-the-test-pc) — *tested in QEMU and on the test PC*
 - [File manager: hidden files and extensions on request, a sheet beside the dragged rows](manuali/novita.md#the-file-manager-hides-dot-files-and-extensions-on-request-and-dragged-rows-show-a-sheet-beside-the-pointer-filemgr-0016-exwinso-0027-voce-114--tested-in-qemu) — *tested in QEMU*
 - [Exilla: video and sound again with several processes, YouTube included](manuali/novita.md#exilla-plays-video-and-sound-again-with-several-processes-youtube-included-exos-mediajs--tested-in-qemu) — *tested in QEMU*
-- [ExWin's screen saver: a text or a bouncing circle (pm 0.031)](manuali/novita.md#exwin-has-a-screen-saver-a-text-or-a-circle-after-the-minutes-chosen-the-screen-switched-off-by-dpmsdrv-salvaschermo-0001-pm-0031-voce-116--tested-in-qemu) — *tested in QEMU*
-- [Firefox: half the memory, no longer closes with three tabs (kernel 0.370)](manuali/novita.md#firefox-with-many-processes-takes-half-the-memory-and-no-longer-closes-with-three-tabs-kernel-0368-0370--tested-in-qemu) — *tested in QEMU*
-- [ExWin classic theme: warmer panels, two-ring relief, shaded buttons](manuali/novita.md#exwin-wears-the-classic-theme-warmer-panels-two-ring-relief-shaded-buttons-exwinso-0026-wserver-0019--tested-in-qemu) — *tested in QEMU*
-- [Kernel 0.367: su brake, owners for terminals and shared memory, signed netupdate, sshd/TCP/DNS hardened](manuali/novita.md#kernel-0367-and-the-network-su-terminals-shared-memory-and-the-kernel-log-have-an-owner-signed-updates-sshd-tcp-and-dns-against-blind-attacks--tested-in-qemu) — *tested in QEMU*
 
 All the others, newest first: [What's new](manuali/novita.md).
 

@@ -370,8 +370,8 @@ static int est_misura(int v, VistaPezzo *p)
         }
         /* a script may have changed src: then it loads again */
         if (strcmp(g_ve->corn[k].src, src ? src : "") != 0) {
-            strncpy(g_ve->corn[k].src, src ? src : "", EXHTTP_URL_MAX - 1);
-            g_ve->corn[k].src[EXHTTP_URL_MAX - 1] = '\0';
+            strncpy(g_ve->corn[k].src, src ? src : "", sizeof(g_ve->corn[k].src) - 1);
+            g_ve->corn[k].src[sizeof(g_ve->corn[k].src) - 1] = '\0';
             g_ve->corn[k].stato = 0;
         }
         g_ve->corn[k].w = (aw && numero(aw) > 0) ? (int)numero(aw) : 300;
