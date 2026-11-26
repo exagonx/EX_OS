@@ -1,0 +1,27 @@
+# tools/taffy-exos/taffy_exos — Taffy 0.16.0 behind a small C interface, for
+# EXBrowser's layout (debug/implementazione_BROWSER002.txt, P7). No std:
+# core + alloc only (see src/lib.rs). Built by tools/taffy-exos/costruisci.sh.
+# SPDX-License-Identifier: GPL-2.0-or-later
+[package]
+name = "taffy_exos"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+
+[lib]
+crate-type = ["staticlib"]
+path = "src/lib.rs"
+
+[dependencies]
+taffy = { version = "=0.16.0", default-features = false, features = ["alloc", "taffy_tree", "flexbox", "grid", "block_layout", "content_size"] }
+
+[workspace]
+
+[profile.release]
+panic = "abort"
+opt-level = 2
+codegen-units = 1
+lto = true
+
+[profile.dev]
+panic = "abort"

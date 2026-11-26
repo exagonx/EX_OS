@@ -51,10 +51,16 @@
 #include "syscall.h"
 #include "kmalloc.h"
 #include "condivise.h"
+#include "zone.h"
 
 typedef struct {
     paddr_t  fisico;    /* the cache's frame; 0 = no file bytes (a promise) */
     uint32_t pg;        /* PG_USER | maybe PG_WRITABLE; 0 = not covered */
+    uint32_t off;       /* pigra: the file's offset of this page */
+    uint8_t  segmenti;  /* how many PT_LOAD cover it */
+    uint8_t  intera;    /* one segment's file bytes fill it, page aligned in the file */
+    uint8_t  pigra;     /* read-only and intera: a ZONE, from filecache at the
+                           first touch, never read here (0.371) */
 } SoPagina;
 
 #define SO_PRONTA     1
@@ -192,9 +198,50 @@ static int32_t so_leggi(int h, SoVoce *v)
     v->n     = (hi - lo) / PAGE_SIZE;
     v->pag   = (SoPagina *)kmalloc(v->n * sizeof(SoPagina));
     if (v->pag == NULL) { rc = ERR(ENOMEM); goto fuori; }
-    for (i = 0; i < v->n; i++) { v->pag[i].fisico = 0; v->pag[i].pg = 0; }
+    for (i = 0; i < v->n; i++) {
+        v->pag[i].fisico = 0; v->pag[i].pg = 0; v->pag[i].off = 0;
+        v->pag[i].segmenti = 0; v->pag[i].intera = 0; v->pag[i].pigra = 0;
+    }
 
-    /* 1. which pages, with which rights, and which ones hold file bytes */
+    /* 1. which pages, with which rights, and which ones hold file bytes.
+     * ! THE WHOLE READ-ONLY PAGES ARE NOT READ HERE (0.371, voce 120): they
+     * become a zone of each process that maps the object (so_aggancia,
+     * mm/zone.c) and come from filecache.c at the first touch, one frame
+     * for the whole machine as before. What is read here is what each
+     * process copies or what does not sit on a page of the file: writable
+     * pages, pages where two segments meet, the last partial page. */
+    for (i = 0; i < hdr.e_phnum; i++) {
+        uint32_t a, z, f, p;
+
+        if (ph[i].p_type != PT_LOAD || ph[i].p_memsz == 0) continue;
+        a = ALIGN_DOWN((uint32_t)ph[i].p_vaddr, PAGE_SIZE);
+        z = ALIGN_UP((uint32_t)(ph[i].p_vaddr + ph[i].p_memsz), PAGE_SIZE);
+        f = (uint32_t)(ph[i].p_vaddr + ph[i].p_filesz);
+        for (p = a; p < z; p += PAGE_SIZE) {
+            SoPagina *P = &v->pag[(p - lo) / PAGE_SIZE];
+
+            if (P->segmenti < 255) P->segmenti++;
+            if (p >= (uint32_t)ph[i].p_vaddr && p + PAGE_SIZE <= f &&
+                (((uint32_t)ph[i].p_offset - (uint32_t)ph[i].p_vaddr) & (PAGE_SIZE - 1)) == 0) {
+                P->intera = 1;
+                P->off = (uint32_t)ph[i].p_offset + (p - (uint32_t)ph[i].p_vaddr);
+            }
+        }
+    }
+    for (i = 0; i < hdr.e_phnum; i++) {
+        uint32_t a, z, p;
+
+        if (ph[i].p_type != PT_LOAD || ph[i].p_memsz == 0 || (ph[i].p_flags & PF_W)) continue;
+        a = ALIGN_DOWN((uint32_t)ph[i].p_vaddr, PAGE_SIZE);
+        z = ALIGN_UP((uint32_t)(ph[i].p_vaddr + ph[i].p_memsz), PAGE_SIZE);
+        for (p = a; p < z; p += PAGE_SIZE) {
+            SoPagina *P = &v->pag[(p - lo) / PAGE_SIZE];
+
+            if (P->segmenti == 1 && P->intera) P->pigra = 1;
+        }
+    }
+
+    /* 1b. rights, and a frame for each page read here */
     for (i = 0; i < hdr.e_phnum; i++) {
         uint32_t a, z, f, p;
 
@@ -207,7 +254,7 @@ static int32_t so_leggi(int h, SoVoce *v)
 
             P->pg |= PG_USER;
             if (ph[i].p_flags & PF_W) P->pg |= PG_WRITABLE;
-            if (ph[i].p_filesz && p < f && P->fisico == 0) {
+            if (ph[i].p_filesz && p < f && P->fisico == 0 && !P->pigra) {
                 /* ! ZEROED BEFORE THE BYTES GO IN: the tail of the last
                  * page is .bss, and it would hold somebody else's memory */
                 P->fisico = pmm_alloc_page_utente();
@@ -231,6 +278,10 @@ static int32_t so_leggi(int h, SoVoce *v)
             int      letti;
 
             if (pezzo > resta) pezzo = resta;
+            if (v->pag[(ALIGN_DOWN(va, PAGE_SIZE) - lo) / PAGE_SIZE].pigra) {
+                va += pezzo; off += pezzo; resta -= pezzo;      /* a zone page */
+                continue;
+            }
             letti = vfs_read(h, buf, pezzo, off);
             if (letti != (int)pezzo) {
                 klog(LOG_ERROR, "SO: '%s': lettura fallita a 0x%x", v->nome, off);
@@ -316,7 +367,7 @@ static void so_lascia(SoVoce *v)
 
 /* Maps `v` into `proc` with its lowest page at `inizio`. Nothing here sleeps
  * on the disk: every byte is in the cache already. */
-static int32_t so_aggancia(SoVoce *v, Process *proc, uint32_t inizio)
+static int32_t so_aggancia(SoVoce *v, Process *proc, uint32_t inizio, int h)
 {
     PDE     *pd = proc->page_directory;
     uint32_t i;
@@ -327,6 +378,16 @@ static int32_t so_aggancia(SoVoce *v, Process *proc, uint32_t inizio)
         paddr_t   f;
 
         if (P->pg == 0) continue;                       /* a hole between segments */
+        if (P->pigra) {
+            /* the run of zone pages that follow each other in the file */
+            uint32_t n = 1;
+
+            while (i + n < v->n && v->pag[i + n].pigra && v->pag[i + n].pg == P->pg &&
+                   v->pag[i + n].off == P->off + n * PAGE_SIZE) n++;
+            if (zona_aggiungi(proc, va, n, h, P->off, PG_PRESENT | P->pg) != 0) goto senza;
+            i += n - 1;
+            continue;
+        }
         if (P->pg & PG_WRITABLE) {
             if (P->fisico == 0) {
                 if (paging_pigra(pd, va, P->pg) != 0) goto senza;
@@ -355,11 +416,12 @@ static int32_t so_aggancia(SoVoce *v, Process *proc, uint32_t inizio)
 senza:
     /* ! WHAT WAS MAPPED COMES DOWN AGAIN: half an object would fault on a
      * function that is not there, far from the real cause */
+    zona_togli(proc, inizio, v->n);
     while (i-- > 0) {
         uint32_t va = inizio + i * PAGE_SIZE;
         paddr_t  f  = paging_get_physical(pd, va);
 
-        if (v->pag[i].pg == 0) continue;
+        if (v->pag[i].pg == 0 || v->pag[i].pigra) continue;
         paging_unmap_page(pd, va);
         if (f) pmm_free_page(f & ~(paddr_t)(PAGE_SIZE - 1));
     }
@@ -400,7 +462,7 @@ int32_t so_mappa(int h, const char *nome, Process *proc, uint32_t dove, SoEsito 
         }
     }
 
-    rc = so_aggancia(v, proc, inizio);
+    rc = so_aggancia(v, proc, inizio, h);
     if (rc == 0) {
         if (dove == 0) proc->heap_end = inizio + misura;
         out->base   = inizio - v->lo;

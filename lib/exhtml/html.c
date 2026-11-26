@@ -274,6 +274,7 @@ void html_prepara(HtmlDoc *d,
                   HtmlAttr *attr, unsigned int attr_max,
                   char *arena, unsigned int arena_max)
 {
+    html_slega_tutti(d);
     if (!d) return;
 
     d->nodi = nodi;   d->nodi_max = nodi_max;   d->nodi_n = 0;
@@ -381,6 +382,121 @@ int html_crea_testo(HtmlDoc *d, const char *testo)
  * un campo `precedente` costerebbe quattro byte su OGNI nodo di ogni pagina per
  * far risparmiare un giro a un'operazione rara. Se un giorno le mutazioni
  * diventassero il caso normale, il conto cambia e il campo si aggiunge. */
+/* =============================================================================
+ * WHO WANTS TO KNOW OF A CHANGE (P8, 26 November 2026: MutationObserver)
+ *
+ * One hook per document, called by the functions here that change the tree,
+ * with what the DOM's MutationRecord says: the kind, the node changed (for
+ * the children, the parent), the node added or removed, the siblings around
+ * it, the attribute and the value before. ! A TABLE HERE, NOT A FIELD OF
+ * HtmlDoc: programs allocate HtmlDoc, and its size stays. The parser of a
+ * whole document (html_analizza) does not call it; html_analizza_in
+ * (innerHTML) does, for the children it made at the top.
+ * ========================================================================== */
+#define CAMBI_MAX 8
+static struct { const HtmlDoc *d; HtmlCambio f; void *dato; } g_cambi[CAMBI_MAX];
+
+void html_su_cambio(HtmlDoc *d, HtmlCambio f, void *dato)
+{
+    int i, libero = -1;
+
+    for (i = 0; i < CAMBI_MAX; i++) {
+        if (g_cambi[i].d == d) { g_cambi[i].f = f; g_cambi[i].dato = dato; if (!f) g_cambi[i].d = 0; return; }
+        if (!g_cambi[i].d && libero < 0) libero = i;
+    }
+    if (f && libero >= 0) { g_cambi[libero].d = d; g_cambi[libero].f = f; g_cambi[libero].dato = dato; }
+}
+
+static void cambio(const HtmlDoc *d, int tipo, int bersaglio, int nodo, const char *attr,
+                   const char *vecchio, int prima, int dopo)
+{
+    int i;
+
+    for (i = 0; i < CAMBI_MAX; i++)
+        if (g_cambi[i].d == d && g_cambi[i].f) {
+            g_cambi[i].f(g_cambi[i].dato, tipo, bersaglio, nodo, attr, vecchio, prima, dopo);
+            return;
+        }
+}
+
+static int c_attivo(const HtmlDoc *d)
+{
+    int i;
+
+    for (i = 0; i < CAMBI_MAX; i++) if (g_cambi[i].d == d && g_cambi[i].f) return 1;
+    return 0;
+}
+
+/* =============================================================================
+ * SHADOW ROOTS AND TEMPLATE CONTENTS (P9, 26 November 2026)
+ *
+ * A shadow root is a node of its own, named "#shadow-root", that hangs from
+ * NO parent (padre -1): nobody walking the document meets it, as the DOM
+ * wants. Which host it belongs to is said here; the same for the content of
+ * a <template> (a "#document-fragment" its children were moved into).
+ * ! A TABLE HERE, NOT FIELDS OF THE NODES: HtmlNodo's size stays. Up to
+ * LEGAMI_MAX pairs per program; past them, a host without its shadow.
+ * ========================================================================== */
+#define LEGAMI_MAX 2048
+static struct { const HtmlDoc *d; int da, a; unsigned char tipo, modo; } g_legami[LEGAMI_MAX];
+static int g_legami_n = 0;
+
+void html_lega(HtmlDoc *d, int tipo, int da, int a, int modo)
+{
+    int i, libero = -1;
+
+    for (i = 0; i < g_legami_n; i++) {
+        if (g_legami[i].d == d && g_legami[i].tipo == tipo && g_legami[i].da == da) {
+            g_legami[i].a = a; g_legami[i].modo = (unsigned char)modo; return;
+        }
+        if (!g_legami[i].d && libero < 0) libero = i;
+    }
+    if (libero < 0) {
+        if (g_legami_n >= LEGAMI_MAX) return;
+        libero = g_legami_n++;
+    }
+    g_legami[libero].d = d; g_legami[libero].tipo = (unsigned char)tipo;
+    g_legami[libero].da = da; g_legami[libero].a = a; g_legami[libero].modo = (unsigned char)modo;
+}
+
+int html_legato(const HtmlDoc *d, int tipo, int da, int *modo)
+{
+    int i;
+
+    for (i = 0; i < g_legami_n; i++)
+        if (g_legami[i].d == d && g_legami[i].tipo == tipo && g_legami[i].da == da) {
+            if (modo) *modo = g_legami[i].modo;
+            return g_legami[i].a;
+        }
+    return -1;
+}
+
+/* who points to `a` (the host of a shadow root, the template of a content) */
+int html_legato_da(const HtmlDoc *d, int tipo, int a)
+{
+    int i;
+
+    for (i = 0; i < g_legami_n; i++)
+        if (g_legami[i].d == d && g_legami[i].tipo == tipo && g_legami[i].a == a) return g_legami[i].da;
+    return -1;
+}
+
+void html_slega_tutti(const HtmlDoc *d)
+{
+    int i;
+
+    for (i = 0; i < g_legami_n; i++) if (g_legami[i].d == d) g_legami[i].d = 0;
+}
+
+static int fratello_prima(const HtmlDoc *d, int nodo)
+{
+    int p = d->nodi[nodo].padre, f, prima = -1;
+
+    if (p < 0) return -1;
+    for (f = d->nodi[p].primo_figlio; f >= 0 && f != nodo; f = d->nodi[f].prossimo) prima = f;
+    return prima;
+}
+
 int html_togli(HtmlDoc *d, int nodo)
 {
     int padre, f;
@@ -388,6 +504,8 @@ int html_togli(HtmlDoc *d, int nodo)
     if (!valido(d, nodo)) return 0;
     padre = d->nodi[nodo].padre;
     if (!valido(d, padre)) return 0;
+    if (c_attivo(d))
+        cambio(d, HTML_CAMBIO_TOLTO, padre, nodo, 0, 0, fratello_prima(d, nodo), d->nodi[nodo].prossimo);
 
     if (d->nodi[padre].primo_figlio == nodo) {
         d->nodi[padre].primo_figlio = d->nodi[nodo].prossimo;
@@ -466,6 +584,8 @@ int html_inserisci_prima(HtmlDoc *d, int padre, int figlio, int riferimento)
     }
 
     d->versione++;
+    if (c_attivo(d))
+        cambio(d, HTML_CAMBIO_AGGIUNTO, padre, figlio, 0, 0, fratello_prima(d, figlio), d->nodi[figlio].prossimo);
     return 1;
 }
 
@@ -498,8 +618,12 @@ int html_attr_metti(HtmlDoc *d, int nodo, const char *nome, const char *valore)
         /* ! IL VALORE VECCHIO RESTA NELL'ARENA. Vedi html.h: niente si libera,
          * e uno script che riscrive lo stesso attributo in un ciclo consuma
          * arena. E' il prezzo dichiarato di questo scaglione. */
+        unsigned int vecchio = d->attr[a].valore;
+
         d->attr[a].valore = arena_stringa(d, valore ? valore : "", 0);
         d->versione++;
+        /* after the change (P9: attributeChangedCallback reads the new value) */
+        if (c_attivo(d)) cambio(d, HTML_CAMBIO_ATTRIBUTO, nodo, -1, nome, d->arena + vecchio, -1, -1);
         return !d->troncato;
     }
 
@@ -518,6 +642,7 @@ int html_attr_metti(HtmlDoc *d, int nodo, const char *nome, const char *valore)
         d->nodi[nodo].attributi = na;
     }
     d->versione++;
+    if (c_attivo(d)) cambio(d, HTML_CAMBIO_ATTRIBUTO, nodo, -1, nome, 0, -1, -1);
     return !d->troncato;
 }
 
@@ -537,6 +662,7 @@ int html_attr_togli(HtmlDoc *d, int nodo, const char *nome)
             if (d->attr[p].prossimo == a) { d->attr[p].prossimo = d->attr[a].prossimo; break; }
     }
     d->versione++;
+    if (c_attivo(d)) cambio(d, HTML_CAMBIO_ATTRIBUTO, nodo, -1, nome, d->arena + d->attr[a].valore, -1, -1);
     return 1;
 }
 
@@ -544,6 +670,7 @@ int html_testo_metti(HtmlDoc *d, int nodo, const char *testo)
 {
     if (!valido(d, nodo)) return 0;
     if (d->nodi[nodo].tipo != HTML_TESTO) return 0;
+    if (c_attivo(d)) cambio(d, HTML_CAMBIO_TESTO, nodo, -1, 0, d->arena + d->nodi[nodo].testo, -1, -1);
 
     d->nodi[nodo].testo = arena_stringa(d, testo ? testo : "", 0);
     d->versione++;
@@ -970,7 +1097,16 @@ int html_analizza_in(HtmlDoc *d, int padre, const char *t, unsigned int n)
     if (d->nodi[padre].tipo != HTML_ELEMENTO) return 0;
 
     d->versione++;
-    return analizza_dentro(d, padre, t, n);
+    {
+        int ultimo = d->nodi[padre].ultimo_figlio, r2, f;
+
+        r2 = analizza_dentro(d, padre, t, n);
+        if (c_attivo(d))
+            for (f = valido(d, ultimo) ? d->nodi[ultimo].prossimo : d->nodi[padre].primo_figlio;
+                 valido(d, f); f = d->nodi[f].prossimo)
+                cambio(d, HTML_CAMBIO_AGGIUNTO, padre, f, 0, 0, fratello_prima(d, f), d->nodi[f].prossimo);
+        return r2;
+    }
 }
 
 int html_svuota(HtmlDoc *d, int nodo)
@@ -986,6 +1122,9 @@ int html_svuota(HtmlDoc *d, int nodo)
 
         while (f >= 0) {
             int prossimo = d->nodi[f].prossimo;
+
+            /* each child leaving, in order: the one before it has left already */
+            if (c_attivo(d)) cambio(d, HTML_CAMBIO_TOLTO, nodo, f, 0, 0, -1, prossimo);
 
             d->nodi[f].padre    = -1;
             d->nodi[f].prossimo = -1;

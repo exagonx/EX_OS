@@ -1569,3 +1569,32 @@ const char *exjs_vettore_testo(ExJsCtx *c, ExJsVal vet)
 {
     return exjs_vettore_testo_sep(c, vet, ",");
 }
+
+/* =============================================================================
+ * BINARY DATA (P12, exjs.h): ExJs has no ArrayBuffer. The answers say so:
+ * undefined, and no bytes. WebAssembly and response.arrayBuffer() need the
+ * QuickJS engine (lib/exqjs).
+ * ========================================================================== */
+ExJsVal exjs_buffer_esterno(ExJsCtx *c, void *dati, unsigned int n)
+{
+    (void)c; (void)dati; (void)n;
+    return exjs_indefinito();
+}
+
+ExJsVal exjs_buffer_copia(ExJsCtx *c, const void *dati, unsigned int n)
+{
+    (void)c; (void)dati; (void)n;
+    return exjs_indefinito();
+}
+
+void *exjs_buffer_dati(ExJsCtx *c, ExJsVal v, unsigned int *n)
+{
+    (void)c; (void)v;
+    if (n) *n = 0;
+    return 0;
+}
+
+void exjs_buffer_stacca(ExJsCtx *c, ExJsVal v)
+{
+    (void)c; (void)v;
+}

@@ -39,6 +39,20 @@
  *
  *     CONTROLLI fine 0                every one holds all it was given
  *
+ *     finestreprova -s [secondi]
+ *
+ * The frame of voce 121 (wserver 0.020, exwin.so 0.028): a window painted
+ * C83296 goes, one step every [secondi] (default 3), through
+ *
+ *     TELAIO 1 normale       as created, with its frame
+ *     TELAIO 2 schermo WxH   full screen (EXM_SIZE says the size)
+ *     TELAIO 3 sopra         a small EX_TOPMOST window, green, opened now
+ *     TELAIO 4 normale WxH   the green one closed, the frame back
+ *     TELAIO 5 nudo          no frame, where it is
+ *     TELAIO fine
+ *
+ * tools/prova_telaio.sh takes a photograph at each step.
+ *
  *     finestreprova -t [secondi]
  *
  * The keys of voce 42 point 2 (kbd.drv 0.007, wserver 0.014, exwin.so
@@ -355,6 +369,74 @@ static int tasti(int tieni_ms)
     return 0;
 }
 
+/* --- -s: the frame (voce 121) ---------------------------------------------- */
+#define TELAIO_COLORE 0x00C83296u
+static ExWindow g_s_fin, g_s_verde;
+static int      g_s_passo, g_s_w = 360, g_s_h = 240;
+
+static long proc_verde(ExWindow f, unsigned int msg, unsigned int wp, long lp)
+{
+    if (msg == EXM_PAINT) { ex_fill_rect(f, 0, 0, 160, 100, 0x0000C000u); ex_update(f); return 0; }
+    return ex_default_proc(f, msg, wp, lp);
+}
+
+static long proc_telaio(ExWindow f, unsigned int msg, unsigned int wp, long lp)
+{
+    switch (msg) {
+    case EXM_PAINT:
+        ex_fill_rect(f, 0, 0, g_s_w, g_s_h, TELAIO_COLORE);
+        ex_update(f);
+        return 0;
+    case EXM_SIZE:
+        g_s_w = EX_X(lp); g_s_h = EX_Y(lp);
+        ex_fill_rect(f, 0, 0, g_s_w, g_s_h, TELAIO_COLORE);
+        ex_update(f);
+        riga("TELAIO misura %dx%d", g_s_w, g_s_h);
+        return 0;
+    case EXM_TIMER:
+        g_s_passo++;
+        if (g_s_passo == 1) {
+            ex_window_frame(f, EX_FRAME_FULLSCREEN);
+            log_seriale("TELAIO 2 schermo");
+        } else if (g_s_passo == 2) {
+            g_s_verde = ex_create("window", "", EX_TOPMOST, 300, 200, 160, 100, 0, 0, proc_verde);
+            if (g_s_verde) proc_verde(g_s_verde, EXM_PAINT, 0, 0);
+            log_seriale(g_s_verde ? "TELAIO 3 sopra" : "TELAIO 3 sopra non creata");
+        } else if (g_s_passo == 3) {
+            if (g_s_verde) ex_destroy(g_s_verde);
+            g_s_verde = 0;
+            ex_window_frame(f, EX_FRAME_NORMAL);
+            log_seriale("TELAIO 4 normale");
+        } else if (g_s_passo == 4) {
+            ex_window_frame(f, EX_FRAME_NONE);
+            log_seriale("TELAIO 5 nudo");
+        } else {
+            log_seriale("TELAIO fine");
+            ex_destroy(f);
+            exit(0);
+        }
+        return 0;
+    case EXM_CLOSE:
+        log_seriale("TELAIO fine (chiusa)");
+        exit(0);
+    }
+    return ex_default_proc(f, msg, wp, lp);
+}
+
+static int telaio_prova(int passo_ms)
+{
+    ExMsg msg;
+
+    g_s_fin = ex_create("window", "Telaio", EX_CAPTION | EX_BORDER | EX_CLOSEBOX | EX_RESIZABLE,
+                        120, 100, g_s_w, g_s_h, 0, 0, proc_telaio);
+    if (!g_s_fin) { log_seriale("TELAIO fine (nessuna finestra)"); return 1; }
+    proc_telaio(g_s_fin, EXM_PAINT, 0, 0);
+    log_seriale("TELAIO 1 normale");
+    ex_set_timer(g_s_fin, (unsigned int)passo_ms);
+    while (ex_get_message(&msg)) ex_dispatch(&msg);
+    return 0;
+}
+
 /* --- -f: child windows, on the protocol ------------------------------------ */
 static unsigned int g_f_server = 0;
 
@@ -510,7 +592,8 @@ int main(int argc, char **argv)
     if (argc > 1 && strcmp(argv[1], "-f") == 0)
         return figlie((argc > 2 && atoi(argv[2]) > 0) ? atoi(argv[2]) * 1000 : 3000);
 
-    if (argc > 1 && (strcmp(argv[1], "-c") == 0 || strcmp(argv[1], "-t") == 0)) {
+    if (argc > 1 && (strcmp(argv[1], "-c") == 0 || strcmp(argv[1], "-t") == 0 ||
+                     strcmp(argv[1], "-s") == 0)) {
         unsigned int w0 = 0, h0 = 0;
         int          ms = (argc > 2 && atoi(argv[2]) > 0) ? atoi(argv[2]) * 1000 : 5000;
 
@@ -519,6 +602,7 @@ int main(int argc, char **argv)
             printf("finestreprova: il server a finestre non risponde (exwin).\n");
             return 1;
         }
+        if (argv[1][1] == 's') return telaio_prova(argc > 2 && atoi(argv[2]) > 0 ? ms : 3000);
         return argv[1][1] == 'c' ? controlli(ms) : tasti(ms);
     }
 

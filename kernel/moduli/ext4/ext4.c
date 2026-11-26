@@ -13,6 +13,8 @@
  * the kernel is the one it was built for, and what it can write.
  *
  *     EXT4MOD_VERSIONE 0.004 (+0.001 a ogni modifica)
+ *     0.008: a truncate frees its blocks in one batch of the bitmap, as a
+ *            whole file does (scrittura.c, pota_inode; voce 120).
  *     0.006: unlink, rmdir and truncate no longer commit the journal: the
  *            blocks they free are held until the commit (giornale.c,
  *            TRATTENUTI; analisi_kernel voce 74 step 1).
@@ -30,7 +32,7 @@
 
 #include "ext4.h"
 
-#define EXT4MOD_VERSIONE "0.007"
+#define EXT4MOD_VERSIONE "0.008"
 
 const ModuloKernel    *MK = NULL;
 const Ext2Interfaccia *K  = NULL;

@@ -73,6 +73,9 @@ typedef struct {
     /* DETTO DALL'IMPAGINATO: la larghezza che il CSS chiede per questo
      * elemento, gia' in pixel (width: 100% risolto sulla colonna), o 0. */
     int          larg_css;
+    /* (P10) and the height, and the CSS colour (an <svg>'s currentColor) */
+    int          alt_css;
+    unsigned int colore;
 } VistaPezzo;
 
 typedef struct {

@@ -1,0 +1,26 @@
+<html><head><title>grid</title><style>
+body { font-family: sans-serif; font-size: 13px; margin: 4px; }
+.g { display: grid; background: #eeeeee; margin-bottom: 8px; gap: 6px; }
+.g div { background: #b0c8ff; padding: 4px; }
+.uno { grid-template-columns: 1fr 2fr 1fr; }
+.auto { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.span { grid-template-columns: repeat(3, 1fr); }
+.span .largo { grid-column: span 2; background: #ffb0b0; }
+.righe { grid-template-columns: 100px 1fr; grid-template-rows: 30px 50px; }
+.posti { grid-template-columns: repeat(3, 80px); }
+.posti .x { grid-column: 3; grid-row: 1; background: #b0ffb0; }
+.centro { grid-template-columns: 1fr 1fr; place-items: center; height: 60px; }
+</style></head><body>
+<p>1. colonne 1fr 2fr 1fr</p>
+<div class="g uno"><div>a</div><div>b, larga il doppio</div><div>c</div></div>
+<p>2. repeat(auto-fill, minmax(150px, 1fr)): schede che riempiono la riga</p>
+<div class="g auto"><div>1</div><div>2</div><div>3</div><div>4</div><div>5</div><div>6</div><div>7</div></div>
+<p>3. span 2: la rossa larga due colonne</p>
+<div class="g span"><div class="largo">larga</div><div>b</div><div>c</div><div>d</div><div>e</div></div>
+<p>4. righe da 30 e 50, prima colonna da 100</p>
+<div class="g righe"><div>a</div><div>b</div><div>c</div><div>d</div></div>
+<p>5. grid-column: 3 sulla verde: va in fondo alla prima riga</p>
+<div class="g posti"><div class="x">verde</div><div>1</div><div>2</div></div>
+<p>6. place-items: center</p>
+<div class="g centro"><div>qui</div><div>e qui</div></div>
+</body></html>

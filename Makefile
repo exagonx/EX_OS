@@ -3324,6 +3324,15 @@ BROWSER_IMP := exwin/bin/exbrowser/browser_impagina.c
 BROWSER_EST := exwin/bin/exbrowser/browser_estranei.c
 BROWSER_PRE := exwin/bin/exbrowser/browser_preludio.c
 BROWSER_CAR := exwin/bin/exbrowser/browser_caratteri.c
+BROWSER_DIS := exwin/bin/exbrowser/browser_disegno.c
+BROWSER_CRI := exwin/bin/exbrowser/browser_cripto.c
+BROWSER_WS := exwin/bin/exbrowser/browser_ws.c
+BROWSER_LAV := exwin/bin/exbrowser/browser_lavoratori.c
+BROWSER_IDB := exwin/bin/exbrowser/browser_idb.c
+BROWSER_IDBJS := exwin/bin/exbrowser/browser_idb.js
+BROWSER_INTL := exwin/bin/exbrowser/browser_intl.c
+BROWSER_INTLJS := exwin/bin/exbrowser/browser_intl.js
+BROWSER_WASM := exwin/bin/exbrowser/browser_wasm.c
 BROWSER_ESTH := exwin/bin/exbrowser/browser_estranei.h
 BROWSER_VISTA := exwin/bin/exbrowser/browser_vista.h
 BROWSER_PRIV := exwin/bin/exbrowser/browser_priv.h
@@ -3355,13 +3364,30 @@ $(PSL_H): $(PSL_DAT) tools/psl-tabella.py
 	@mkdir -p $(PSL_DIR)
 	@python3 -I tools/psl-tabella.py $(PSL_DAT) $@
 
+# ! EXBrowser's JavaScript files as C strings (P11: IndexedDB, Intl), made
+# here next to the PSL table: the 64-bit build (tools/costruisci-utente64.sh)
+# asks for psl-tabella and has build/generati in its include path.
+BROWSER_JS_H := $(PSL_DIR)/browser_idb_js.h $(PSL_DIR)/browser_intl_js.h $(PSL_DIR)/browser_wasm_js.h
+
+$(PSL_DIR)/browser_idb_js.h: exwin/bin/exbrowser/browser_idb.js tools/js-in-c.py
+	@mkdir -p $(PSL_DIR)
+	@python3 -I tools/js-in-c.py $< $@ IDB_JS
+
+$(PSL_DIR)/browser_intl_js.h: exwin/bin/exbrowser/browser_intl.js tools/js-in-c.py
+	@mkdir -p $(PSL_DIR)
+	@python3 -I tools/js-in-c.py $< $@ INTL_JS
+
+$(PSL_DIR)/browser_wasm_js.h: exwin/bin/exbrowser/browser_wasm.js tools/js-in-c.py
+	@mkdir -p $(PSL_DIR)
+	@python3 -I tools/js-in-c.py $< $@ WASM_JS
+
 .PHONY: psl-tabella
-psl-tabella: $(PSL_H)
+psl-tabella: $(PSL_H) $(BROWSER_JS_H)
 
 $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
              $(BROWSER_IMP) $(BROWSER_PRIV) \
              $(BROWSER_EST) $(BROWSER_ESTH) $(BROWSER_VISTA) $(BROWSER_PRE) \
-             $(BROWSER_CAR) $(BROWSER_BIS) $(BROWSER_BISH) $(EXWIN_SO) \
+             $(BROWSER_CAR) $(BROWSER_DIS) $(BROWSER_CRI) $(BROWSER_WS) $(BROWSER_LAV) $(BROWSER_IDB) $(BROWSER_INTL) $(BROWSER_WASM) $(BROWSER_JS_H) $(BROWSER_BIS) $(BROWSER_BISH) $(EXWIN_SO) \
              $(EXIMG_INFLATE) lib/eximg/inflate.h \
              $(EXLIB_HDR) $(EXWIN_HDR) $(WIN_PROTO) $(EXHTTP_SRC) \
              $(EXHTTP_HTTP) $(EXHTTP_HDR) lib/eximg/eximg.h \
@@ -3380,6 +3406,22 @@ $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_PRE) -o $(BUILD_OBJ)/browser_pre.o
 	@# the page's own fonts (P6): FreeType, HarfBuzz and woff2 with dlopen
 	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_CAR) -o $(BUILD_OBJ)/browser_car.o
+	@# corners, shadows, gradients, canvas, SVG (P10): plutovg with dlopen
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_DIS) -o $(BUILD_OBJ)/browser_dis.o
+	@# crypto.subtle (P11): the hashes of lib/excrypt compiled in, SHA-256 from the libc
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I lib/excrypt -I exwin/bin/exbrowser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_CRI) -o $(BUILD_OBJ)/browser_cri.o
+	@# WebSocket (P11): RFC 6455 over exhttp's TCP and TLS
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_WS) -o $(BUILD_OBJ)/browser_ws.o
+	@# Web Workers (P11): a context of their own, in the browser's loop
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_LAV) -o $(BUILD_OBJ)/browser_lav.o
+	@# IndexedDB (P11): SQLite with dlopen; the JavaScript as a C string
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I $(PSL_DIR) -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_IDB) -o $(BUILD_OBJ)/browser_idb.o
+	@# Intl (P11): ICU4C with dlopen
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I $(PSL_DIR) -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_INTL) -o $(BUILD_OBJ)/browser_intl.o
+	@# WebAssembly (P12): WAMR with dlopen
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/exwin -I lib/eximg -I lib/exhttp -I lib/exhtml -I lib/excss -I lib/exjs -I lib/exdom -I lib/exdlg -I lib/exinfo -I exwin/bin/exbrowser -I $(PSL_DIR) -I drivers/net -I drivers/wserver -I drivers/kbd -c $(BROWSER_WASM) -o $(BUILD_OBJ)/browser_wasm.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/excrypt -c lib/excrypt/sha1.c -o $(BUILD_OBJ)/browser_sha1.o
+	$(CC) $(CFLAGS_USER) -I lib/include -I lib/excrypt -c lib/excrypt/sha512.c -o $(BUILD_OBJ)/browser_sha512.o
 	$(CC) $(CFLAGS_USER) -I lib/include -I exwin/bin/exbrowser -I $(PSL_DIR) -c $(BROWSER_BIS) -o $(BUILD_OBJ)/browser_bis.o
 	@# ! inflate.c COMPILED IN, as netupdate and exzip do: some servers
 	@# (amazon.com, 23 Sept 2026) send a gzip body without Content-Encoding.
@@ -3396,7 +3438,9 @@ $(BROWSER_BIN): $(EXINFO_SRC) $(EXINFO_HDR) $(BROWSER_SRC) $(BROWSER_LD) \
 	    $(BUILD_OBJ)/browser_start.o $(BUILD_OBJ)/browser_main.o \
 	    $(BUILD_OBJ)/browser_imp.o \
 	    $(BUILD_OBJ)/browser_est.o $(BUILD_OBJ)/browser_pre.o \
-	    $(BUILD_OBJ)/browser_car.o \
+	    $(BUILD_OBJ)/browser_car.o $(BUILD_OBJ)/browser_dis.o \
+	    $(BUILD_OBJ)/browser_cri.o $(BUILD_OBJ)/browser_sha1.o $(BUILD_OBJ)/browser_sha512.o \
+	    $(BUILD_OBJ)/browser_ws.o $(BUILD_OBJ)/browser_lav.o $(BUILD_OBJ)/browser_idb.o $(BUILD_OBJ)/browser_intl.o $(BUILD_OBJ)/browser_wasm.o \
 	    $(BUILD_OBJ)/browser_bis.o $(BUILD_OBJ)/browser_inflate.o \
 	    $(EXWIN_SO) $(EXHTTP_SO) \
 	    $(EXHTML_SO) $(BUILD_OBJ)/browser_css.o \
@@ -5908,6 +5952,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/mm/shmfd.c \
                   $(KERNEL_DIR)/mm/swap.c \
                   $(KERNEL_DIR)/mm/filecache.c \
+                  $(KERNEL_DIR)/mm/zone.c \
                   $(KERNEL_DIR)/sched/sched.c \
                   $(KERNEL_DIR)/sched/segnali.c \
                   $(KERNEL_DIR)/ipc/ipc.c \

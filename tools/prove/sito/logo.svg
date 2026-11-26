@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- tools/prove/sito/logo.svg: an SVG image for svg.html (P10) -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 40" width="120" height="40">
+  <defs><linearGradient id="g"><stop offset="0" stop-color="#2060c0"/><stop offset="1" stop-color="#40c0a0"/></linearGradient></defs>
+  <rect x="1" y="1" width="118" height="38" rx="8" fill="url(#g)" stroke="#103060" stroke-width="2"/>
+  <circle cx="20" cy="20" r="10" fill="#ffffff"/>
+  <path d="M40 28 L50 12 L60 28 Z M66 12 h20 v4 h-16 v4 h12 v4 h-12 v4 h16 v4 h-20 z" fill="#ffffff"/>
+</svg>

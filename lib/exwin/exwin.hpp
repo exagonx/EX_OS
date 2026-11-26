@@ -57,6 +57,7 @@ public:
     void        move(int x, int y)      { ex_move(h, x, y); }
     /* h_ and not h: the member is already called that, and is the handle. */
     void        resize(int w, int h_)   { ex_resize(h, w, h_); }
+    void        frame(int modo)         { ex_window_frame(h, modo); }
     void        draw_raised(int x, int y, int w, int h_) { ex_draw_raised(h, x, y, w, h_); }
     void        draw_sunken(int x, int y, int w, int h_) { ex_draw_sunken(h, x, y, w, h_); }
 

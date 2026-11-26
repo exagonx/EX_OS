@@ -1,0 +1,44 @@
+<html><head><title>Intl</title></head><body style="font-family: sans-serif; font-size: 13px">
+<h1>Intl su ICU (P11)</h1>
+<div id="r">in corso...</div>
+<script>
+var out = [];
+function v(n, a, b) { out.push(n + ': ' + (a === b ? 'OK' : 'NO [' + a + '] invece di [' + b + ']')); }
+function t(n, f) { try { f(); } catch (e) { out.push(n + ': ECCEZIONE ' + e); } }
+var d = new Date(Date.UTC(2026, 10, 26, 14, 5, 9));
+t('n', function () {
+  v('1. numero it', new Intl.NumberFormat('it-IT').format(1234567.891), '1.234.567,891');
+  v('2. numero en', (1234567.891).toLocaleString('en-US'), '1,234,567.891');
+  v('3. valuta EUR it', new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(1234.5), '1234,50 €');
+  v('4. valuta USD en', new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(-1234.5), '-$1,234.50');
+  v('5. percentuale', new Intl.NumberFormat('it-IT', { style: 'percent' }).format(0.256), '26%');
+  v('6. compatto', new Intl.NumberFormat('en', { notation: 'compact' }).format(12345), '12K');
+  v('7. cifre decimali', new Intl.NumberFormat('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(1.005), '1.01');
+  v('8. unita', new Intl.NumberFormat('en', { style: 'unit', unit: 'kilometer-per-hour' }).format(50), '50 km/h');
+  v('9. formatToParts', new Intl.NumberFormat('en').formatToParts(1234.5).map(function (p) { return p.type; }).join(','), 'integer,group,integer,decimal,fraction');
+});
+t('d', function () {
+  v('10. data it UTC', new Intl.DateTimeFormat('it-IT', { timeZone: 'UTC' }).format(d), '26/11/2026');
+  v('11. data lunga it', d.toLocaleDateString('it-IT', { timeZone: 'UTC', weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }), 'giovedì 26 novembre 2026');
+  v('12. ora en 12h', d.toLocaleTimeString('en-US', { timeZone: 'UTC', hour: 'numeric', minute: '2-digit' }), '2:05 PM');
+  v('13. dateStyle', new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeZone: 'UTC' }).format(d), 'Nov 26, 2026');
+  v('14. fuso Europe/Rome', new Intl.DateTimeFormat('it-IT', { timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit' }).format(d), '15:05');
+  v('15. il fuso del sistema', Intl.DateTimeFormat().resolvedOptions().timeZone, 'Europe/Rome');
+  v('16. formatToParts data', new Intl.DateTimeFormat('en-US', { timeZone: 'UTC' }).formatToParts(d).map(function (p) { return p.type; }).join(','), 'month,literal,day,literal,year');
+});
+t('a', function () {
+  v('17. plurali en ordinali', new Intl.PluralRules('en', { type: 'ordinal' }).select(22), 'two');
+  v('18. plurali it', new Intl.PluralRules('it').select(1) + ' ' + new Intl.PluralRules('it').select(2), 'one other');
+  v('19. relativo it', new Intl.RelativeTimeFormat('it', { numeric: 'auto' }).format(-1, 'day'), 'ieri');
+  v('20. relativo en', new Intl.RelativeTimeFormat('en').format(3, 'hours'), 'in 3 hours');
+  v('21. collator: a = á con base', new Intl.Collator('it', { sensitivity: 'base' }).compare('a', 'á'), 0);
+  v('22. ordine numerico', ['10', '9', '1'].sort(new Intl.Collator('en', { numeric: true }).compare).join(','), '1,9,10');
+  v('23. localeCompare', 'è'.localeCompare('f', 'it') < 0, true);
+  v('24. lista it', new Intl.ListFormat('it').format(['a', 'b', 'c']), 'a, b e c');
+  v('25. nomi', new Intl.DisplayNames('it', { type: 'region' }).of('DE') + ' / ' + new Intl.DisplayNames('en', { type: 'language' }).of('it'), 'Germania / Italian');
+  v('26. segmenti di parole', Array.from(new Intl.Segmenter('it', { granularity: 'word' }).segment('Ciao, mondo!')).filter(function (s) { return s.isWordLike; }).map(function (s) { return s.segment; }).join('|'), 'Ciao|mondo');
+  v('27. Locale', new Intl.Locale('it').maximize().toString(), 'it-Latn-IT');
+  v('28. getCanonicalLocales', Intl.getCanonicalLocales('EN-us')[0], 'en-US');
+});
+document.getElementById('r').innerHTML = out.join('<br>');
+</script></body></html>

@@ -214,7 +214,7 @@ __attribute__((used)) static uintptr_t ld_principale(uintptr_t *sp)
     }
     if (!m->rel_v) m->rel_n = 0;
     if (!m->jmp_v) m->jmp_n = 0;
-    m->nsim = dl_conta_sim(_DYNAMIC, base);
+    dl_tabelle(m, _DYNAMIC, base);
     g_ld_libc = m;
     g_ld_phdr = ph;
     g_ld_phnum = phnum;

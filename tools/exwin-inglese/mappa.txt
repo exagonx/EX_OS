@@ -15,6 +15,7 @@ ex_titolo ex_set_title
 ex_sposta ex_move
 ex_mostra ex_show
 ex_misura ex_resize
+ex_telaio ex_window_frame
 ex_fuoco ex_set_focus
 ex_fuoco_via ex_clear_focus
 ex_fuoco_chi ex_get_focus

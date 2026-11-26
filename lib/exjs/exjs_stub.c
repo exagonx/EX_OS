@@ -116,6 +116,13 @@ static struct {
     int (*lavori_in_attesa)(ExJsCtx *);
     void (*memoria)(ExJsCtx *, unsigned int *, unsigned int *, unsigned int *, unsigned int *);
     void (*orologio_metti)(ExJsCtx *, ExJsOrologio, void *);   /* puo' mancare */
+    int  (*prossimo_ms)(ExJsCtx *, unsigned int);               /* puo' mancare (P8) */
+    void (*cronometro_metti)(ExJsCtx *, unsigned int (*)(void *), void *);   /* idem */
+    /* binary data (P12): QuickJS only */
+    ExJsVal (*buf_esterno)(ExJsCtx *, void *, unsigned int);
+    ExJsVal (*buf_copia)(ExJsCtx *, const void *, unsigned int);
+    void   *(*buf_dati)(ExJsCtx *, ExJsVal, unsigned int *);
+    void    (*buf_stacca)(ExJsCtx *, ExJsVal);
     void (*fuso_metti)(ExJsCtx *, ExJsFuso, void *);           /* anche questa */
 } P;
 
@@ -266,6 +273,15 @@ static void assicura(void)
     /* the zone (16/11/2026): an older exjs.so keeps Date in UTC */
     P.fuso_metti = (void (*)(ExJsCtx *, ExJsFuso, void *))
         exlib_simbolo(t, "exjs_fuso_metti");
+    /* the event loop (P8, 26/11/2026): an engine without them keeps the
+     * host's fixed wake-up and timers measured from the last pump */
+    P.prossimo_ms = (int (*)(ExJsCtx *, unsigned int))exlib_simbolo(t, "exjs_prossimo_ms");
+    P.cronometro_metti = (void (*)(ExJsCtx *, unsigned int (*)(void *), void *))
+        exlib_simbolo(t, "exjs_cronometro_metti");
+    P.buf_esterno = (ExJsVal (*)(ExJsCtx *, void *, unsigned int))exlib_simbolo(t, "exjs_buffer_esterno");
+    P.buf_copia   = (ExJsVal (*)(ExJsCtx *, const void *, unsigned int))exlib_simbolo(t, "exjs_buffer_copia");
+    P.buf_dati    = (void *(*)(ExJsCtx *, ExJsVal, unsigned int *))exlib_simbolo(t, "exjs_buffer_dati");
+    P.buf_stacca  = (void (*)(ExJsCtx *, ExJsVal))exlib_simbolo(t, "exjs_buffer_stacca");
 
     P.pronto = 1;
 }
@@ -357,6 +373,12 @@ void exjs_orologio_metti(ExJsCtx *c, ExJsOrologio f, void *dato)
 void exjs_fuso_metti(ExJsCtx *c, ExJsFuso f, void *dato)
 { assicura(); if (P.fuso_metti) P.fuso_metti(c, f, dato); }
 
+int exjs_prossimo_ms(ExJsCtx *c, unsigned int ora_ms)
+{ assicura(); return P.prossimo_ms ? P.prossimo_ms(c, ora_ms) : (exjs_lavori_in_attesa(c) ? 200 : -1); }
+
+void exjs_cronometro_metti(ExJsCtx *c, unsigned int (*f)(void *), void *dato)
+{ assicura(); if (P.cronometro_metti) P.cronometro_metti(c, f, dato); }
+
 ExJsVal exjs_globale(ExJsCtx *c)
 { assicura(); return P.globale(c); }
 
@@ -386,3 +408,14 @@ void exjs_memoria(ExJsCtx *c, unsigned int *caselle_usate,
                   unsigned int *arena_max)
 { assicura(); P.memoria(c, caselle_usate, caselle_max, arena_usata, arena_max); }
 
+ExJsVal exjs_buffer_esterno(ExJsCtx *c, void *dati, unsigned int n)
+{ assicura(); return P.buf_esterno ? P.buf_esterno(c, dati, n) : exjs_indefinito(); }
+
+ExJsVal exjs_buffer_copia(ExJsCtx *c, const void *dati, unsigned int n)
+{ assicura(); return P.buf_copia ? P.buf_copia(c, dati, n) : exjs_indefinito(); }
+
+void *exjs_buffer_dati(ExJsCtx *c, ExJsVal v, unsigned int *n)
+{ assicura(); if (n) *n = 0; return P.buf_dati ? P.buf_dati(c, v, n) : 0; }
+
+void exjs_buffer_stacca(ExJsCtx *c, ExJsVal v)
+{ assicura(); if (P.buf_stacca) P.buf_stacca(c, v); }

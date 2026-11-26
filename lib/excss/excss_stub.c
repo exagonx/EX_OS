@@ -50,6 +50,9 @@ static struct {
     int  (*media_vale)(const char *, unsigned int);
     void (*variabili)(void *, unsigned int);
     int  (*font_face)(const CssFoglio *, unsigned int, CssFontFace *);
+    void (*disposizione)(CssDisposizione *);
+    void (*ambito)(CssFoglio *, unsigned int);
+    void (*decoro)(CssDecoro *);
 } P;
 
 static int assicura(void)
@@ -92,6 +95,12 @@ static int assicura(void)
             P.variabili  = (void (*)(void *, unsigned int))exlib_simbolo(t, "css_variabili");
             P.font_face  = (int (*)(const CssFoglio *, unsigned int, CssFontFace *))
                            exlib_simbolo(t, "css_font_face");
+            /* FACOLTATIVA (P7): senza, nessuna griglia e i valori iniziali */
+            P.disposizione = (void (*)(CssDisposizione *))exlib_simbolo(t, "css_disposizione");
+            /* FACOLTATIVA (P9): senza, i fogli delle ombre valgono ovunque */
+            P.ambito = (void (*)(CssFoglio *, unsigned int))exlib_simbolo(t, "css_ambito");
+            /* FACOLTATIVA (P10): senza, niente angoli tondi, ombre, sfumature */
+            P.decoro = (void (*)(CssDecoro *))exlib_simbolo(t, "css_decoro");
         }
     }
 
@@ -213,4 +222,34 @@ void css_variabili(void *buf, unsigned int n)
 int css_font_face(const CssFoglio *f, unsigned int i, CssFontFace *out)
 {
     return (assicura() && P.font_face) ? P.font_face(f, i, out) : 0;
+}
+
+void css_disposizione(CssDisposizione *out)
+{
+    if (!out) return;
+    if (assicura() && P.disposizione) { P.disposizione(out); return; }
+    {
+        unsigned char *b = (unsigned char *)out;
+        unsigned int   i;
+
+        for (i = 0; i < sizeof(*out); i++) b[i] = 0;
+    }
+    out->restringe = 100;
+}
+
+void css_ambito(CssFoglio *f, unsigned int ambito)
+{
+    if (assicura() && P.ambito) P.ambito(f, ambito);
+}
+
+void css_decoro(CssDecoro *out)
+{
+    if (!out) return;
+    if (assicura() && P.decoro) { P.decoro(out); return; }
+    {
+        unsigned char *b = (unsigned char *)out;
+        unsigned int   i;
+
+        for (i = 0; i < sizeof(*out); i++) b[i] = 0;
+    }
 }

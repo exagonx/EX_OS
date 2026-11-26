@@ -226,6 +226,10 @@ GRUPPO  VOCI             COSA
  --     61 76            solo se ricompare (76: orologio in FAULT, 3/11)
  --     77               seguiti del 3-4/11: H.264 Firefox, Firefox 32, repo 64 da
                          pubblicare, ExPackage sul portatile, statici rimasti
+ --     121              (25/11) EXILLA: YOUTUBE NON VA A SCHERMO INTERO (il widget lo
+                         tratta come ingrandito; wserver senza messaggio per il telaio)
+ --     120              (25/11) EXILLA 90 s CONTRO 14: libxul letta intera, simboli
+                         cercati scorrendo; prima misurare
  --     116              (23/11) EXWIN SALVASCHERMO: Impostazioni > Video, tempi,
                          spegnimento schermo; due salvaschermi. FATTA 25/11 (pm 0.031),
                          resta la password al ritorno (decisione dell'utente)
@@ -10570,6 +10574,89 @@ tools/netinst/velocita tolto da netinst.
       prove rischiose. Trovato: vedi la voce 100.
       17/11, DOPO IL RIAVVIO NELLA 0.343: il telnetd 0.015 dell'avvio, porta
       23, telnet_piu_prova.py 6 su 6.
+
+  121. EXILLA: IL VIDEO DI YOUTUBE NON VA A SCHERMO INTERO (25/11/2026, appunto
+      dell'utente, in coda). "i video di youtube non vengono portati a
+      fullscreen facendo click sull'ingrandimento".
+      LETTO NEL CODICE (non misurato): firefox-main/widget/exos/nsWindow.cpp,
+      ApplySizeModeSideEffects tratta nsSizeMode_Fullscreen COME Maximized:
+      la finestra resta col telaio e il titolo, sotto la barra (kBordo,
+      kBarra); se era gia' ingrandita non cambia niente. Il widget non ha
+      MakeFullScreen/HideWindowChrome suoi, e wserver non ha un messaggio
+      per togliere il telaio a una finestra gia' aperta (la finestra senza
+      telaio sopra tutto c'e' solo alla creazione: EX_TOPMOST senza
+      EX_CAPTION, come il salvaschermo).
+      DA FARE: wserver, un messaggio per schermo intero (senza telaio, 0,0,
+      tutto lo schermo, sopra la barra) e per tornare com'era; exwin.so lo
+      espone; il widget di Gecko lo usa per nsSizeMode_Fullscreen e Esc
+      torna indietro. Prima: DIARIO di nsWindow sul .253 per vedere cosa
+      arriva al clic (SetSizeMode 3?).
+
+  120. EXILLA PARTE IN 90 s E PIU', SU WINDOWS E LINUX LA STESSA VERSIONE IN 14
+      (25/11/2026, appunto dell'utente, in coda). L'utente: "cosa rende firefox
+      cosi veloce nel caricamento negli altri OS ?, per caso viene caricata la
+      maschera e le librerie piu urgenti e successivamente vengono caricate le
+      altre librerie se e quando richieste ?".
+      COSA FANNO GLI ALTRI (il caricamento "quando serve" lo fa il sistema,
+      non Firefox): libxul.so (o xul.dll) e' MAPPATA, non letta: il disco si
+      legge solo per le pagine che il codice tocca (paginazione a richiesta,
+      con lettura anticipata), e alla seconda partenza sono gia' nella cache
+      del sistema. I simboli si cercano con le tabelle hash (DT_GNU_HASH, un
+      filtro bloom e pochi confronti). omni.ja e la cache di avvio di
+      Firefox sono mappate anche loro.
+      COSA FA EX-OS (letto nel codice, NON ancora misurato):
+      - kernel/loader/condivise.c, SYS_SO_MAPPA: legge TUTTO l'oggetto nella
+        cache alla prima mappa (voce 117: "legge tutto l'oggetto dentro una
+        sola chiamata"), libxul intera prima che parta una riga di Firefox;
+      - lib/libc_dl.c, dl_nel_modulo: ogni simbolo si cerca SCORRENDO tutta
+        la tabella di ogni modulo con strcmp (DT_GNU_HASH si usa solo per
+        contare i simboli), e senza lazy binding ogni JUMP_SLOT si risolve
+        all'avvio: rilocazioni con simbolo x simboli di tutti i moduli;
+      - ogni processo dei contenuti rifa' le rilocazioni del suo libxul.
+      L'UTENTE (25/11): i 14 s sono A FREDDO, sullo stesso .253 con Linux.
+      Vale per tutti i programmi grossi (Thunderbird, domani LibreOffice,
+      GIMP): il rimedio e' nel kernel e nel caricatore, non in Firefox.
+      PRIMA MISURARE (certezze, non ipotesi), a freddo e alla seconda
+      partenza, sul .253: quanto in SYS_SO_MAPPA di libxul, quanto nelle
+      rilocazioni (dl_carica), quanto in omni.ja, quanto nei processi dei
+      contenuti; e chiedere all'utente se i 14 s di Linux/Windows sono a
+      freddo o con la cache calda, e su che macchina.
+      POSSIBILI RIMEDI, nell'ordine dei numeri: la ricerca dei simboli con
+      DT_GNU_HASH/DT_HASH (come ld.so); le pagine di sola lettura della cache
+      delle .so lette alla prima pagina toccata (come gia' PG_PIGRA per la
+      .bss); lettura anticipata a blocchi.
+      STATO 26/11 NOTTE, kernel 0.371, PROVATO IN QEMU (64 bit, -smp 2,
+      2 GB, disco cache=none sul disco dell'host; non ancora sul .253):
+      - rimedio 1: lib/libc_dl.c cerca i simboli con DT_GNU_HASH (filtro
+        bloom) o DT_HASH, scorre solo se il modulo non ne ha;
+      - rimedio 2: kernel/mm/zone.c, "zone": un file mappato senza scrittura
+        e le pagine intere di sola lettura di una .so (condivise.c, pigra)
+        vengono da filecache.c alla prima pagina toccata, non lette tutte a
+        mmap/SYS_SO_MAPPA; una pagina che la cache ha gia' non prende il
+        lucchetto dei file;
+      - lettura anticipata: la pagina mancante arriva con 128 KB intorno in
+        una richiesta sola, e le vicine gia' nella cache si mappano insieme
+        (come ra_pages e fault-around di Linux);
+      - trovato e riparato durante le misure: Firefox si FERMAVA per sempre
+        3 avvii su 8 con la 0.371 (il codice di sched_yield era gia' cosi'
+        nel kernel di partenza; li' i fermi non sono stati contati).
+        sched_yield lasciava il lucchetto del kernel solo se non aveva a chi
+        cedere: due fili in fd_posizione_prendi sul processore 1 si cedevano
+        il posto a vicenda col lucchetto in mano, il processore 0 (orologio
+        e interrupt del disco) restava in bkl_entra. Ora lo lascia sempre:
+        0 fermi su 10 avvii.
+      MISURE (tools/exilla/prova-avvio.sh, ogni giro da un disco vergine,
+      giro 1 = primo avvio col profilo da creare, giro 2 = secondo avvio
+      a cache fredda): partenza 0ccef66d 104-304 s e 36-95 s; 0.371
+      90-159 s e 24-74 s. Memoria con tre schede 774 MB (0.370: 784).
+      La varianza in QEMU e' grande: il numero vero va preso sul .253.
+      RESTA (misurato, non di questa voce): ogni scrittura su ext4 tiene il
+      lucchetto dei file 0,5-4 s, tutto tempo del disco: 20-280 comandi
+      uno dopo l'altro, ~45 ms l'uno (scrittura sincrona, nessuna cache
+      in scrittura). Il primo avvio di Firefox scrive il profilo: 20-56 s
+      di lucchetto tenuto. Da proporre come voce a parte.
+      Prove a posto: prova-dl, prova-tante, prova-cxx, prova-avvio
+      (tools/prova-dl) a 32 e 64 bit.
 
   119. EXWIN: LE ETICHETTE COL TESTO PIU' LUNGO DEL LORO SPAZIO (25/11/2026,
       appunto dell'utente, in coda). L'utente: "nelle label quando il testo e'

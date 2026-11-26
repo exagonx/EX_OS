@@ -105,3 +105,65 @@ tempi. E' 672 KB di testo altrui sotto CC BY-SA: si riscarica in un secondo con
   libfreetype.so.6, libharfbuzz.so.0, libwoff2common.so.1.0.2,
   libwoff2dec.so.1.0.2, libbrotlidec.so.1, libbrotlicommon.so.1 e libz.so.1.
 
+## Le pagine del P7 (26 novembre 2026)
+
+- `flex.html`: flexbox con Taffy (space-between, grow, colonna centrata,
+  stretch, margin-left: auto, order, wrap con gap, row-reverse, il centro in
+  tutte e due le direzioni). Ogni riga dice cosa si deve vedere.
+- `grid.html`: CSS grid con Taffy (fr, repeat(auto-fill, minmax()), span,
+  righe fisse, una voce messa per numero di colonna, place-items).
+  Servono libtaffy_exos.so.1 in /lib (tools/taffy-exos); senza, il browser
+  impagina come prima del P7.
+
+## La pagina del P8 (26 novembre 2026)
+
+- `ciclo.html`: il ciclo degli eventi (l'ordine dei compiti e dei
+  microcompiti, setTimeout che aspetta davvero, i timer da 0/4/16 ms),
+  MutationObserver, IntersectionObserver (una casella in vista, una a 3000
+  pixel), ResizeObserver con getBoundingClientRect e offsetWidth,
+  requestAnimationFrame. Ogni riga dice OK o NO; la 3 dice i tempi veri
+  (finche' ExWin sveglia a 200 ms, sono 200).
+
+## La pagina del P9 (26 novembre 2026)
+
+- `ombra.html`: Shadow DOM e Custom Elements. Una classe che estende
+  HTMLElement con la sua ombra (il foglio dell'ombra non esce: i paragrafi
+  dell'ombra sono blu, quelli della pagina rosso scuro), :host, uno slot con
+  nome e uno senza, il ripiego "nessuno", un elemento creato da script e
+  uno che costruisce i suoi figli. La riga 0 dice OK o NO.
+
+## Le pagine del P10 (26 novembre 2026)
+
+- `decoro.html`: border-radius (anche 50%, un cerchio), box-shadow sfocata,
+  linear-gradient e radial-gradient, i colori con l'alfa (rgba, hsla).
+- `svg.html` e `logo.svg`: SVG in linea (forme, path con archi, viewBox,
+  use e symbol col currentColor, trasformazioni, opacita', tratteggio,
+  evenodd) e un'immagine SVG con una sfumatura, a due misure.
+- `tela.html`: il canvas 2D (rettangoli, archi, uno spicchio il cui percorso
+  sopravvive a fillRect, sfumature, rotate, tratteggio, testo, clearRect,
+  getImageData, drawImage da un altro canvas, ellipse). La riga 0 dice ok o
+  NO per misura, pixel e width.
+  Serve libplutovg.so.1 in /lib (tools/plutovg-exos); senza, il browser
+  disegna come prima del P10 (rettangoli, niente SVG ne' canvas).
+
+## Le pagine del P11 (26 novembre 2026)
+
+- `cripto.html`: crypto.subtle (SHA-1/256/384/512 di "abc", HMAC dell'RFC
+  4231, MD5 rifiutato) e localStorage, che con un disco scrivibile conta le
+  visite fra un'apertura e l'altra.
+- `ws.html`: WebSocket contro un server di eco sulla porta 8022 (lo script
+  e' in ~/ex_os/prove-p11/ws/eco.py: solo la libreria standard di Python).
+- `lavoro.html`, `lavoro.js`, `lavoro-aiuto.js`: Web Worker da file (con
+  importScripts e un timer) e da un blob:.
+- `idb.html`: IndexedDB su SQLite (serve libsqlite3.so.0 in /lib).
+- `intl.html`: Intl su ICU (servono libicuuc.so.79, libicui18n.so.79 in /lib
+  e /lib/icu/icudt79l.dat).
+
+## La pagina del P12 (26 novembre 2026)
+
+- `wasm.html` e `prova.wasm`: WebAssembly su WAMR (serve libiwasm.so.2 in
+  /lib, tools/wamr-exos). prova.wasm e' fatto a byte da uno script Python
+  (~/ex_os/prove-wasm/fai/modulo.py), perche' sull'host non ci sono gli
+  strumenti di WebAssembly: somma, un'importazione che il modulo chiama,
+  memoria esportata e memory.grow, unreachable, fib ricorsivo, un globale.
+

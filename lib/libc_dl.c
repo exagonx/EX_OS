@@ -128,6 +128,7 @@ typedef struct DlModulo {
     size_t           init_n;
     const void      *rel_v, *jmp_v;       /* relocations, done by dl_finisci */
     size_t           rel_n, jmp_n;
+    const uint32_t  *gnu, *sysv;          /* DT_GNU_HASH, DT_HASH: 0 = none (dl_tabelle) */
 } DlModulo;
 
 static DlTab *volatile g_dlm_tab;          /* every module loaded; 0 = free slot */
@@ -253,6 +254,73 @@ static unsigned int dl_conta_sim(const DlDin *d, uintptr_t base)
     return 0;
 }
 
+/* =============================================================================
+ * THE SYMBOLS THROUGH THE HASH TABLES (25 November 2026, voce 120). Until
+ * then dl_nel_modulo walked every symbol of every module with strcmp, for
+ * every relocation: Firefox's 6829 against libstdc++, libm, the libc, in each
+ * of its processes. The tables are in every object (ld writes DT_HASH, DT_GNU_HASH
+ * or both: --hash-style=both in our Makefile): GNU first, with its bloom
+ * filter that says "not here" without reading a string, DT_HASH otherwise,
+ * the walk only for an object that has neither.
+ * ! THE ANSWER IS THE SAME AS THE WALK'S: the first symbol in table order
+ * that passes the test. GNU chains run in table order; a DT_HASH chain may
+ * not, so the whole chain is read and the lowest index kept. And GNU_HASH
+ * leaves out the symbols below symoffset, the undefined ones - among them
+ * the program's FUNC with a value (its PLT slot is the function's address,
+ * see dl_nel_modulo): those few are tested one by one, the test on the
+ * fields before any strcmp. No malloc here: ld-exos.so comes here for
+ * itself before it is relocated.
+ * ============================================================================= */
+static uint32_t dl_hash_gnu(const char *n)
+{
+    uint32_t h = 5381;
+
+    while (*n) h = h * 33u + (unsigned char)*n++;
+    return h;
+}
+
+static uint32_t dl_hash_sysv(const char *n)
+{
+    uint32_t h = 0, g;
+
+    while (*n) {
+        h = (h << 4) + (unsigned char)*n++;
+        g = h & 0xf0000000u;
+        if (g) h ^= g >> 24;
+        h &= ~g;
+    }
+    return h;
+}
+
+static void dl_tabelle(DlModulo *m, const DlDin *d, uintptr_t base)
+{
+    const DlDin *x;
+
+    m->nsim = dl_conta_sim(d, base);
+    for (x = d; x->d_tag; x++) {
+        if (x->d_tag == 4) m->sysv = (const uint32_t *)(base + x->d_val);          /* DT_HASH */
+        if (x->d_tag == 0x6ffffef5) m->gnu = (const uint32_t *)(base + x->d_val);  /* DT_GNU_HASH */
+    }
+}
+
+/* the walk's test for symbol i: 1 and the address in *p if it answers */
+static int dl_prova_sim(const DlModulo *m, unsigned int i, const char *nome,
+                        const DlSim **s_out, int plt, void **p)
+{
+    const DlSim *s = &m->sim[i];
+    unsigned int leg = s->st_info >> 4;
+
+    if (leg != 1 && leg != 2 && leg != 10) return 0;                           /* GLOBAL WEAK UNIQUE */
+    if (s->st_shndx == 0 && (plt || (s->st_info & 0xf) != 2 || s->st_value == 0)) return 0;
+    if (strcmp(m->str + s->st_name, nome) != 0) return 0;
+    if (s_out) *s_out = s;
+    if ((s->st_info & 0xf) == 6) *p = (void *)(uintptr_t)s->st_value;           /* STT_TLS: offset */
+    else if ((s->st_info & 0xf) == 10)                                          /* STT_GNU_IFUNC */
+        *p = ((void *(*)(void))(m->base + s->st_value))();
+    else *p = (void *)(m->base + s->st_value);
+    return 1;
+}
+
 /* a symbol DEFINED in module m, or 0.
  * ! THE PROGRAM'S PLT SLOT IS THE FUNCTION'S ADDRESS for everybody but the
  * PLT itself (19 November 2026, as glibc does): a program built without -fPIC
@@ -260,32 +328,75 @@ static unsigned int dl_conta_sim(const DlDin *d, uintptr_t base)
  * value. Every other reference (GOT, R_*_32, dlsym) must get that same
  * address, or two pointers to one function differ; only the JUMP_SLOT that
  * fills the slot (plt = 1) goes to the real definition. */
-static void *dl_nel_modulo(const DlModulo *m, const char *nome, const DlSim **s_out, int plt)
+static void *dl_nel_modulo_h(const DlModulo *m, const char *nome, uint32_t hg, uint32_t hs,
+                             const DlSim **s_out, int plt)
 {
+    void        *p = 0;
     unsigned int i;
 
-    for (i = 1; i < m->nsim; i++) {
-        const DlSim *s = &m->sim[i];
-        unsigned int leg = s->st_info >> 4;
+    if (m->gnu) {
+        const uint32_t  *g = m->gnu;
+        uint32_t         nb = g[0], primo = g[1], nbloom = g[2], spost = g[3];
+        const uintptr_t *bloom = (const uintptr_t *)(g + 4);
+        const uint32_t  *secchi = (const uint32_t *)(bloom + nbloom), *catena = secchi + nb;
+        const unsigned   W = sizeof(uintptr_t) * 8u;
+        uintptr_t        parola, maschera;
 
-        if (leg != 1 && leg != 2 && leg != 10) continue;                       /* GLOBAL WEAK UNIQUE */
-        if (s->st_shndx == 0 && (plt || (s->st_info & 0xf) != 2 || s->st_value == 0)) continue;
-        if (strcmp(m->str + s->st_name, nome) != 0) continue;
-        if (s_out) *s_out = s;
-        if ((s->st_info & 0xf) == 6) return (void *)(uintptr_t)s->st_value;     /* STT_TLS: offset */
-        if ((s->st_info & 0xf) == 10)                                           /* STT_GNU_IFUNC */
-            return ((void *(*)(void))(m->base + s->st_value))();
-        return (void *)(m->base + s->st_value);
+        if (!plt)                                /* below symoffset: see above */
+            for (i = 1; i < primo && i < m->nsim; i++)
+                if (m->sim[i].st_shndx == 0 && m->sim[i].st_value &&
+                    (m->sim[i].st_info & 0xf) == 2 && dl_prova_sim(m, i, nome, s_out, plt, &p))
+                    return p;
+        if (nb == 0 || nbloom == 0) return 0;
+        parola   = bloom[(hg / W) % nbloom];
+        maschera = ((uintptr_t)1 << (hg % W)) | ((uintptr_t)1 << ((hg >> spost) % W));
+        if ((parola & maschera) != maschera) return 0;
+        i = secchi[hg % nb];
+        if (i < primo) return 0;
+        for (; i < m->nsim; i++) {
+            uint32_t c = catena[i - primo];
+
+            if (((c ^ hg) >> 1) == 0 && dl_prova_sim(m, i, nome, s_out, plt, &p)) return p;
+            if (c & 1) break;
+        }
+        return 0;
     }
+    if (m->sysv) {
+        const uint32_t *h = m->sysv, *secchi = h + 2, *catena = secchi + h[0];
+        uint32_t        nb = h[0], nc = h[1], giri = 0;
+        unsigned int    meglio = 0;
+        const DlSim    *ms = 0;
+        void           *mp = 0;
+
+        if (nb == 0) return 0;
+        for (i = secchi[hs % nb]; i && i < nc && giri++ < nc; i = catena[i]) {
+            const DlSim *s = 0;
+            void        *q = 0;
+
+            if ((meglio == 0 || i < meglio) && dl_prova_sim(m, i, nome, &s, plt, &q)) {
+                meglio = i; ms = s; mp = q;
+            }
+        }
+        if (meglio) { if (s_out) *s_out = ms; return mp; }
+        return 0;
+    }
+    for (i = 1; i < m->nsim; i++)                /* no table: the walk */
+        if (dl_prova_sim(m, i, nome, s_out, plt, &p)) return p;
     return 0;
+}
+
+static void *dl_nel_modulo(const DlModulo *m, const char *nome, const DlSim **s_out, int plt)
+{
+    return dl_nel_modulo_h(m, nome, dl_hash_gnu(nome), dl_hash_sysv(nome), s_out, plt);
 }
 
 /* the global scope: the program's table, the libc's, then every library */
 static void *dl_globale(const char *nome, DlModulo **chi, const DlSim **s_out, int plt)
 {
-    void  *p;
-    DlTab *t = dl_tab_leggi(&g_dlm_tab);
-    int    i;
+    void    *p;
+    DlTab   *t = dl_tab_leggi(&g_dlm_tab);
+    int      i;
+    uint32_t hg = dl_hash_gnu(nome), hs = dl_hash_sysv(nome);   /* once, for every module */
 
     *chi = 0;
     if (__exos_esportati && &__exos_esportati_n &&
@@ -300,7 +411,7 @@ static void *dl_globale(const char *nome, DlModulo **chi, const DlSim **s_out, i
         DlModulo    *m = (DlModulo *)t->v[i];
         const DlSim *s = 0;
         if (!m) continue;
-        p = dl_nel_modulo(m, nome, &s, plt);
+        p = dl_nel_modulo_h(m, nome, hg, hs, &s, plt);
         if (p || s) { *chi = m; if (s_out) *s_out = s; return p; }
     }
     return 0;
@@ -673,7 +784,7 @@ static DlModulo *dl_da_file(const char *percorso)
     }
     for (d = m->din; d->d_tag; d++)
         if ((d->d_tag == 29 || d->d_tag == 15) && m->str) runpath = m->str + d->d_val;   /* RUNPATH, RPATH */
-    m->nsim = dl_conta_sim(m->din, m->base);
+    dl_tabelle(m, m->din, m->base);
     if (!m->sim || !m->str) { dl_libera(m); dl_dici("no dynamic symbol table", percorso); return (DlModulo *)-1; }
 
     /* the module is in the global scope before its own relocations: it may
@@ -960,7 +1071,7 @@ void __exos_dl_avvio_programma(const char *argv0)
     }
     for (d = m->din; d->d_tag; d++)
         if ((d->d_tag == 29 || d->d_tag == 15) && m->str) runpath = m->str + d->d_val;
-    m->nsim = dl_conta_sim(m->din, 0);
+    dl_tabelle(m, m->din, 0);
     if (!m->sim || !m->str) { dl_dici("no dynamic symbol table", argv0); dl_muori(argv0); }
     if (dl_tab_metti(&g_dlm_tab, 0, m) != 0) { dl_dici("out of memory", argv0); dl_muori(argv0); }
 #ifdef EXOS_LIBC_ELF

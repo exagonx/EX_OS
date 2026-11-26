@@ -70,6 +70,7 @@ static int ug_min(const char *a, const char *b)
  * si confondono mai.
  * --------------------------------------------------------------------------- */
 static void var_azzera(void);
+static unsigned int g_ambito;          /* the tree of the rules being read (P9) */
 
 static unsigned int arena_metti(CssFoglio *f, const char *s, unsigned int n)
 {
@@ -160,6 +161,7 @@ void css_prepara(CssFoglio *f,
 
     if (arena && arena_max > 0) { arena[0] = '\0'; f->arena_n = 1; }
     var_azzera();
+    g_ambito = 0;
 }
 
 /* -----------------------------------------------------------------------------
@@ -205,6 +207,7 @@ int css_colore(const char *v, unsigned int n, unsigned int *out)
     return leggi_colore(v, n, out);
 }
 
+static int parola_e(const char *v, unsigned int n, const char *p);
 static int leggi_colore_grezzo(const char *v, unsigned int n, unsigned int *out);
 
 /* ! IL BIANCO ERA «NESSUN COLORE» (trovato il 28 settembre 2026). In ARGB il
@@ -242,6 +245,26 @@ static int leggi_colore_grezzo(const char *v, unsigned int n, unsigned int *out)
                 c[k] = esa((unsigned char)v[k + 1]);
                 if (c[k] < 0) return 0;
             }
+        } else if (n == 5 || n == 9) {
+            /* #rgba, #rrggbbaa (P10): the alpha too */
+            int al[2], j;
+
+            for (k = 0; k < (n == 5 ? 3 : 6); k++) {
+                int h = esa((unsigned char)v[(n == 5 ? k : k) + 1]);
+
+                if (h < 0) return 0;
+                if (n == 5) { c[k * 2] = c[k * 2 + 1] = h; } else c[k] = h;
+            }
+            for (j = 0; j < (n == 5 ? 1 : 2); j++) {
+                al[j] = esa((unsigned char)v[n - (n == 5 ? 1 : 2) + j]);
+                if (al[j] < 0) return 0;
+            }
+            if (n == 5) al[1] = al[0];
+            *out = (unsigned int)((al[0] << 4 | al[1]) << 24)
+                 | (unsigned int)((c[0] << 4 | c[1]) << 16)
+                 | (unsigned int)((c[2] << 4 | c[3]) << 8)
+                 | (unsigned int)( c[4] << 4 | c[5]);
+            return 1;
         } else {
             return 0;
         }
@@ -251,6 +274,79 @@ static int leggi_colore_grezzo(const char *v, unsigned int n, unsigned int *out)
              | (unsigned int)((c[2] << 4 | c[3]) << 8)
              | (unsigned int)( c[4] << 4 | c[5]);
         return 1;
+    }
+
+    /* (P10, 26 November 2026) rgb(), rgba(), hsl(), hsla(), with commas or
+     * with spaces and a «/ alpha»; and transparent. ! THE ALPHA IS KEPT:
+     * until today all of these were thrown away, and the browser draws a
+     * colour that is not opaque blended over what is under it. */
+    if (n == 11 && parola_e(v, 11, "transparent")) { *out = 0; return 1; }
+    if (n > 5 && v[n - 1] == ')' &&
+        (parola_e(v, 4, "rgb(") || parola_e(v, 5, "rgba(") || parola_e(v, 4, "hsl(") || parola_e(v, 5, "hsla("))) {
+        double       x[4] = { 0, 0, 0, 1 };
+        int          perc[4] = { 0, 0, 0, 0 }, k = 0, hsl = minusc((unsigned char)v[0]) == 'h';
+        unsigned int j = (v[3] == '(') ? 4 : 5;
+
+        while (j < n - 1 && k < 4) {
+            double val = 0, sc = 1;
+            int    neg = 0, cifre = 0;
+
+            while (j < n - 1 && (spazio((unsigned char)v[j]) || v[j] == ',' || v[j] == '/')) j++;
+            if (j >= n - 1) break;
+            if (v[j] == '-') { neg = 1; j++; }
+            else if (v[j] == '+') j++;
+            while (j < n - 1 && v[j] >= '0' && v[j] <= '9') { val = val * 10 + (v[j] - '0'); j++; cifre = 1; }
+            if (j < n - 1 && v[j] == '.') { j++; while (j < n - 1 && v[j] >= '0' && v[j] <= '9') { sc /= 10; val += (v[j] - '0') * sc; j++; cifre = 1; } }
+            if (!cifre) return 0;                        /* none, a var() left: not ours */
+            if (j < n - 1 && v[j] == '%') { perc[k] = 1; j++; }
+            else while (j < n - 1 && ((v[j] >= 'a' && v[j] <= 'z') || (v[j] >= 'A' && v[j] <= 'Z'))) j++;   /* deg */
+            x[k++] = neg ? -val : val;
+        }
+        if (k < 3) return 0;
+        {
+            double r, g, b2, a;
+
+            a = perc[3] ? x[3] / 100.0 : x[3];
+            if (a < 0) a = 0;
+            if (a > 1) a = 1;
+            if (hsl) {
+                double h = x[0] - 360.0 * (double)(int)(x[0] / 360.0), sa = x[1] / 100.0, l = x[2] / 100.0, c, q2, m;
+
+                if (h < 0) h += 360;
+                if (sa < 0) sa = 0;
+                if (sa > 1) sa = 1;
+                if (l < 0) l = 0;
+                if (l > 1) l = 1;
+                c = (1 - (2 * l - 1 < 0 ? -(2 * l - 1) : 2 * l - 1)) * sa;
+                q2 = h / 60.0;
+                q2 = q2 - 2.0 * (double)(int)(q2 / 2.0) - 1;
+                m = l - c / 2;
+                {
+                    double xx = c * (1 - (q2 < 0 ? -q2 : q2));
+
+                    if (h < 60)       { r = c;  g = xx; b2 = 0; }
+                    else if (h < 120) { r = xx; g = c;  b2 = 0; }
+                    else if (h < 180) { r = 0;  g = c;  b2 = xx; }
+                    else if (h < 240) { r = 0;  g = xx; b2 = c; }
+                    else if (h < 300) { r = xx; g = 0;  b2 = c; }
+                    else              { r = c;  g = 0;  b2 = xx; }
+                }
+                r = (r + m) * 255; g = (g + m) * 255; b2 = (b2 + m) * 255;
+            } else {
+                r  = perc[0] ? x[0] * 2.55 : x[0];
+                g  = perc[1] ? x[1] * 2.55 : x[1];
+                b2 = perc[2] ? x[2] * 2.55 : x[2];
+            }
+            if (r < 0) r = 0;
+            if (r > 255) r = 255;
+            if (g < 0) g = 0;
+            if (g > 255) g = 255;
+            if (b2 < 0) b2 = 0;
+            if (b2 > 255) b2 = 255;
+            *out = (unsigned int)(a * 255 + 0.5) << 24 | (unsigned int)(r + 0.5) << 16 |
+                   (unsigned int)(g + 0.5) << 8 | (unsigned int)(b2 + 0.5);
+            return 1;
+        }
     }
 
     for (i = 0; COLORI[i].nome; i++) {
@@ -1009,6 +1105,32 @@ static const PropNota PROPRIETA[] = {
     { "pointer-events",      CSS_P_PUNTATORE       },
     { "grid-row-gap",        CSS_P_SPAZIO_RIGA     },
     { "grid-column-gap",     CSS_P_SPAZIO_COL      },
+    /* P7: for Taffy (css_disposizione) */
+    { "flex-shrink",           CSS_P_FLEX_RESTRINGE },
+    { "flex-basis",            CSS_P_FLEX_BASE      },
+    { "order",                 CSS_P_ORDINE         },
+    { "align-self",            CSS_P_ALLINEA_SE     },
+    { "align-content",         CSS_P_ALLINEA_CONT   },
+    { "justify-items",         CSS_P_GIUST_VOCI     },
+    { "justify-self",          CSS_P_GIUST_SE       },
+    { "grid-template-columns", CSS_P_GR_COLONNE     },
+    { "grid-template-rows",    CSS_P_GR_RIGHE       },
+    { "grid-auto-columns",     CSS_P_GR_AUTO_COL    },
+    { "grid-auto-rows",        CSS_P_GR_AUTO_RIG    },
+    { "grid-auto-flow",        CSS_P_GR_FLUSSO      },
+    { "grid-column-start",     CSS_P_GR_POSTO + 0   },
+    { "grid-column-end",       CSS_P_GR_POSTO + 1   },
+    { "grid-row-start",        CSS_P_GR_POSTO + 2   },
+    { "grid-row-end",          CSS_P_GR_POSTO + 3   },
+    { "overflow",              CSS_P_TRABOCCA       },
+    { "grid-template-areas",   CSS_P_GR_AREE        },
+    /* P10: css_decoro */
+    { "border-top-left-radius",     CSS_P_RAGGIO + 0 },
+    { "border-top-right-radius",    CSS_P_RAGGIO + 1 },
+    { "border-bottom-right-radius", CSS_P_RAGGIO + 2 },
+    { "border-bottom-left-radius",  CSS_P_RAGGIO + 3 },
+    { "box-shadow",                 CSS_P_OMBRA      },
+    { "overflow-x",            CSS_P_TRABOCCA       },
     { 0, 0 }
 };
 
@@ -1191,6 +1313,51 @@ static int leggi_sf_mis(const char *v, unsigned int n, unsigned int *out)
     return 1;
 }
 
+/* An alignment word (P7): CSS_AL_*. «safe» and «unsafe» are read past; the
+ * «first»/«last» of a baseline too. */
+static int leggi_allinea(const char *v, unsigned int n, unsigned int *out)
+{
+    unsigned int k;
+
+    if (n > 5 && parola_e(v, 5, "safe ")) { v += 5; n -= 5; }
+    else if (n > 7 && parola_e(v, 7, "unsafe ")) { v += 7; n -= 7; }
+    for (k = 0; k + 8 <= n; k++)
+        if (parola_e(v + k, 8, "baseline")) { *out = CSS_AL_BASE; return 1; }
+    if (parola_e(v, n, "normal") || parola_e(v, n, "auto")) { *out = CSS_AL_NORMALE; return 1; }
+    if (parola_e(v, n, "start") || parola_e(v, n, "flex-start") || parola_e(v, n, "self-start") ||
+        parola_e(v, n, "left")) { *out = CSS_AL_INIZIO; return 1; }
+    if (parola_e(v, n, "end") || parola_e(v, n, "flex-end") || parola_e(v, n, "self-end") ||
+        parola_e(v, n, "right")) { *out = CSS_AL_FINE; return 1; }
+    if (parola_e(v, n, "center"))        { *out = CSS_AL_CENTRO;  return 1; }
+    if (parola_e(v, n, "stretch"))       { *out = CSS_AL_STIRA;   return 1; }
+    if (parola_e(v, n, "space-between")) { *out = CSS_AL_TRA;     return 1; }
+    if (parola_e(v, n, "space-around"))  { *out = CSS_AL_INTORNO; return 1; }
+    if (parola_e(v, n, "space-evenly"))  { *out = CSS_AL_UGUALE;  return 1; }
+    return 0;
+}
+
+/* A value kept as TEXT, read later by css_disposizione (the grid's tracks
+ * and lines: their em need the element). In the sheet's arena, or in g_loc
+ * with the top bit set (an attribute style, a value made by var()). */
+#define TESTO_LOC 0x80000000u
+
+static int testo_tieni(const char *v, unsigned int n, unsigned int *out)
+{
+    unsigned int o;
+
+    if (n == 0) return 0;
+    if (g_fog_legge) {
+        o = arena_coppia(g_fog_legge, v, n, "", 0, 0);
+        if (!o || o >= TESTO_LOC) return 0;
+        *out = o;
+        return 1;
+    }
+    o = loc_metti(v, n);
+    if (!o) return 0;
+    *out = o | TESTO_LOC;
+    return 1;
+}
+
 /* Da testo del valore al numero che finisce in CssDich. Rende 0 se il valore
  * non si capisce: la dichiarazione allora si butta, non il resto della regola. */
 static int leggi_valore(unsigned short prop, const char *v, unsigned int n,
@@ -1281,15 +1448,77 @@ static int leggi_valore(unsigned short prop, const char *v, unsigned int n,
             { *out = CSS_POS_APPICCICA; return 1; }
         return 0;
 
+    /* ! THE REVERSE FORMS ARE THEIR OWN VALUES since P7 (2, 3): CssStile
+     * keeps 0/1 (flex_colonna = value & 1), CssDisposizione the four */
     case CSS_P_FLEX_DIR:
-        if (parola_e(v, n, "row") || parola_e(v, n, "row-reverse"))       { *out = 0; return 1; }
-        if (parola_e(v, n, "column") || parola_e(v, n, "column-reverse")) { *out = 1; return 1; }
+        if (parola_e(v, n, "row"))            { *out = 0; return 1; }
+        if (parola_e(v, n, "column"))         { *out = 1; return 1; }
+        if (parola_e(v, n, "row-reverse"))    { *out = 2; return 1; }
+        if (parola_e(v, n, "column-reverse")) { *out = 3; return 1; }
         return 0;
 
     case CSS_P_FLEX_CAPO:
-        if (parola_e(v, n, "wrap") || parola_e(v, n, "wrap-reverse")) { *out = 1; return 1; }
+        if (parola_e(v, n, "wrap"))         { *out = 1; return 1; }
+        if (parola_e(v, n, "wrap-reverse")) { *out = 2; return 1; }
         if (parola_e(v, n, "nowrap")) { *out = 0; return 1; }
         return 0;
+
+    /* P7 ------------------------------------------------------------- */
+    case CSS_P_FLEX_RESTRINGE: {
+        unsigned int c2;
+
+        if (!leggi_valore(CSS_P_FLEX_CRESCE, v, n, &c2)) return 0;
+        *out = c2;
+        return 1;
+    }
+    case CSS_P_FLEX_BASE:
+        if (parola_e(v, n, "auto"))    { *out = 0; return 1; }
+        if (parola_e(v, n, "content") || parola_e(v, n, "max-content") ||
+            parola_e(v, n, "fit-content") || parola_e(v, n, "min-content")) { *out = 1; return 1; }
+        return leggi_lunghezza(v, n, 0, out);
+    case CSS_P_ORDINE: {
+        int o2 = 0;
+
+        if (!leggi_misura(v, n, &o2) || n > 6) return 0;
+        *out = (unsigned int)(o2 + 32768);
+        return 1;
+    }
+    case CSS_P_ALLINEA_SE: case CSS_P_ALLINEA_CONT:
+    case CSS_P_GIUST_VOCI: case CSS_P_GIUST_SE:
+        return leggi_allinea(v, n, out);
+    case CSS_P_GR_COLONNE: case CSS_P_GR_RIGHE:
+    case CSS_P_GR_AUTO_COL: case CSS_P_GR_AUTO_RIG:
+    case CSS_P_GR_POSTO + 0: case CSS_P_GR_POSTO + 1:
+    case CSS_P_GR_POSTO + 2: case CSS_P_GR_POSTO + 3:
+    case CSS_P_GR_AREE: case CSS_P_SFUMATURA:
+        return testo_tieni(v, n, out);
+    case CSS_P_OMBRA:
+        if (parola_e(v, n, "none")) { *out = 0; return 1; }
+        return testo_tieni(v, n, out);
+    case CSS_P_RAGGIO + 0: case CSS_P_RAGGIO + 1: case CSS_P_RAGGIO + 2: case CSS_P_RAGGIO + 3: {
+        unsigned int z = 0;
+
+        /* an elliptical corner «a b»: the first radius */
+        while (z < n && !spazio((unsigned char)v[z])) z++;
+        return leggi_lunghezza(v, z, 0, out);
+    }
+    case CSS_P_GR_FLUSSO: {
+        unsigned int k2 = 0;
+
+        if (n >= 6 && (minusc((unsigned char)v[0]) == 'c')) k2 = 1;
+        if (parola_e(v, n, "dense")) k2 = 0;
+        for (c = 0; c + 5 <= n; c++)
+            if (parola_e(v + c, 5, "dense")) k2 |= 2;
+        *out = k2;
+        return 1;
+    }
+    case CSS_P_TRABOCCA: {
+        unsigned int z2 = 0;
+
+        while (z2 < n && !spazio((unsigned char)v[z2])) z2++;
+        *out = !parola_e(v, z2, "visible");
+        return 1;
+    }
 
     case CSS_P_OPACITA: {
         /* Conta solo se e' zero: «0», «0.0», «0%», «.0». */
@@ -1332,13 +1561,18 @@ static int leggi_valore(unsigned short prop, const char *v, unsigned int n,
         if (parola_e(v, n, "space-evenly"))  { *out = CSS_GIU_UGUALE;  return 1; }
         return 0;
 
-    case CSS_P_ALLINEA_VOCI:
+    /* the second byte: the word as CssDisposizione says it (P7) */
+    case CSS_P_ALLINEA_VOCI: {
+        unsigned int al;
+
+        if (!leggi_allinea(v, n, &al)) return 0;
         if (parola_e(v, n, "stretch") || parola_e(v, n, "normal") || parola_e(v, n, "baseline"))
-            { *out = CSS_ALV_STIRA; return 1; }
-        if (parola_e(v, n, "flex-start") || parola_e(v, n, "start")) { *out = CSS_ALV_INIZIO; return 1; }
-        if (parola_e(v, n, "flex-end") || parola_e(v, n, "end"))     { *out = CSS_ALV_FINE;   return 1; }
-        if (parola_e(v, n, "center"))                                 { *out = CSS_ALV_CENTRO; return 1; }
+            { *out = CSS_ALV_STIRA | al << 8; return 1; }
+        if (al == CSS_AL_INIZIO) { *out = CSS_ALV_INIZIO | al << 8; return 1; }
+        if (al == CSS_AL_FINE)   { *out = CSS_ALV_FINE   | al << 8; return 1; }
+        if (al == CSS_AL_CENTRO) { *out = CSS_ALV_CENTRO | al << 8; return 1; }
         return 0;
+    }
 
     case CSS_P_SPAZIO_RIGA: case CSS_P_SPAZIO_COL:
         if (parola_e(v, n, "normal")) { *out = 0; return 1; }
@@ -1419,8 +1653,11 @@ static int leggi_valore(unsigned short prop, const char *v, unsigned int n,
             { *out = CSS_DISPLAY_INBLOCCO; return 1; }
         if (parola_e(v, n, "flex") || parola_e(v, n, "inline-flex"))
             { *out = CSS_DISPLAY_FLEX; return 1; }
-        if (parola_e(v, n, "list-item") || parola_e(v, n, "grid") ||
-            parola_e(v, n, "inline-grid") || parola_e(v, n, "table") ||
+        /* ! A GRID IS A BLOCK FOR CssStile, and says so in CssDisposizione
+         * (P7, griglia): what only knows blocks lays it out as before */
+        if (parola_e(v, n, "grid"))        { *out = CSS_DISPLAY_BLOCCO | 0x100u; return 1; }
+        if (parola_e(v, n, "inline-grid")) { *out = CSS_DISPLAY_INBLOCCO | 0x100u; return 1; }
+        if (parola_e(v, n, "list-item") || parola_e(v, n, "table") ||
             parola_e(v, n, "flow-root"))
             { *out = CSS_DISPLAY_BLOCCO; return 1; }
         return 0;
@@ -1515,6 +1752,14 @@ static int ha_var(const char *v, unsigned int n)
 
 static void var_in_linea(DichIter *it, const char *nome, unsigned int nn,
                          const char *v, unsigned int n);
+
+static int ha_gradiente(const char *v, unsigned int n)
+{
+    unsigned int i;
+
+    for (i = 0; i + 9 <= n; i++) if (parola_e(v + i, 9, "gradient(")) return 1;
+    return 0;
+}
 
 /* =============================================================================
  * @font-face (P6, 25 November 2026)
@@ -1763,7 +2008,7 @@ static int scorciatoia(DichIter *it, const char *nome, unsigned int nn,
     if (parola_e(nome, nn, "background")) {
         unsigned int bd[12], bl[12], bk, bq, val, npos = 0, col = CSS_NIENTE;
         unsigned int url = 0, rip = CSS_SF_RIPETE, px = CSS_SF_PERC, py = CSS_SF_PERC;
-        unsigned int mw = 0, mh = 0;
+        unsigned int mw = 0, mh = 0, sfum = 0;
         int          nmis = -1;             /* >= 0: si stanno leggendo le misure */
 
         bk = parole(v, n, bd, bl, 12);
@@ -1790,6 +2035,11 @@ static int scorciatoia(DichIter *it, const char *nome, unsigned int nn,
                 continue;
             }
             if (leggi_url(w, l, &val)) { url = val; continue; }
+            if ((l > 16 && parola_e(w, 16, "linear-gradient(")) || (l > 16 && parola_e(w, 16, "radial-gradient(")) ||
+                (l > 26 && parola_e(w, 26, "repeating-linear-gradient("))) {
+                if (testo_tieni(w, l, &val)) sfum = val;
+                continue;
+            }
             if (leggi_valore(CSS_P_SFONDO_RIP, w, l, &val)) { rip = val; continue; }
             if (leggi_sf_pos(w, l, &val)) {
                 /* Una parola verticale detta per prima (top, bottom) e' la y. */
@@ -1803,11 +2053,34 @@ static int scorciatoia(DichIter *it, const char *nome, unsigned int nn,
         if (npos == 1 && py == CSS_SF_PERC) py = CSS_SF_PERC + 50;   /* un valore solo: l'altro e' center */
         coda_metti(it, CSS_P_SFONDO, col);
         coda_metti(it, CSS_P_SFONDO_IMM, url);
+        coda_metti(it, CSS_P_SFUMATURA, sfum);
         coda_metti(it, CSS_P_SFONDO_RIP, rip);
         coda_metti(it, CSS_P_SFONDO_PX, px);
         coda_metti(it, CSS_P_SFONDO_PY, py);
         coda_metti(it, CSS_P_SFONDO_MW, mw);
         coda_metti(it, CSS_P_SFONDO_MH, mh);
+        return 1;
+    }
+    /* background-image: a gradient (P10) - an url() is leggi_valore's */
+    if (parola_e(nome, nn, "background-image")) {
+        unsigned int w2;
+
+        if (n > 9 && (ha_gradiente(v, n)) && testo_tieni(v, n, &w2)) {
+            coda_metti(it, CSS_P_SFUMATURA, w2);
+            coda_metti(it, CSS_P_SFONDO_IMM, 0);
+        }
+        return 1;
+    }
+    /* border-radius: one to four, as margin; what follows a «/» (the
+     * vertical radii of elliptical corners) is not read */
+    if (parola_e(nome, nn, "border-radius")) {
+        unsigned int rv[4], z = 0;
+
+        while (z < n && v[z] != '/') z++;
+        k = parole(v, z, da, lu, 4);
+        if (k == 0) return 1;
+        for (q = 0; q < k; q++) if (!leggi_lunghezza(v + da[q], lu[q], 0, &rv[q])) return 1;
+        for (x = 0; x < 4; x++) coda_metti(it, (unsigned short)(CSS_P_RAGGIO + x), rv[LATO_DA[k - 1][x]]);
         return 1;
     }
     if (parola_e(nome, nn, "background-position")) {
@@ -1904,16 +2177,153 @@ static int scorciatoia(DichIter *it, const char *nome, unsigned int nn,
         return 1;
     }
 
-    /* flex: «1», «1 1 0%», «auto», «none» — qui conta solo quanto cresce.
+    /* flex: «1», «1 1 0%», «auto», «none», «0 0 200px», «2 300px». Since P7
+     * all three parts: grow, shrink, basis (Taffy uses them). The numbers
+     * alone mean basis 0 (flex: 1 is 1 1 0%), as the spec says.
      * flex-flow: la direzione e l'andare a capo, in un ordine qualunque. */
     if (parola_e(nome, nn, "flex")) {
-        unsigned int w;
+        unsigned int w, cresce = 100, restringe = 100, base = (unsigned int)(0 + 32768), nnum = 0;
+        int          ha_base = 0;
+
         k = parole(v, n, da, lu, 3);
         if (k == 0) return 1;
-        if (parola_e(v + da[0], lu[0], "none"))      coda_metti(it, CSS_P_FLEX_CRESCE, 0);
-        else if (parola_e(v + da[0], lu[0], "auto")) coda_metti(it, CSS_P_FLEX_CRESCE, 100);
-        else if (leggi_valore(CSS_P_FLEX_CRESCE, v + da[0], lu[0], &w))
-            coda_metti(it, CSS_P_FLEX_CRESCE, w);
+        if (k == 1 && parola_e(v + da[0], lu[0], "none")) {
+            coda_metti(it, CSS_P_FLEX_CRESCE, 0);
+            coda_metti(it, CSS_P_FLEX_RESTRINGE, 0);
+            coda_metti(it, CSS_P_FLEX_BASE, 0);
+            return 1;
+        }
+        if (k == 1 && (parola_e(v + da[0], lu[0], "auto") || parola_e(v + da[0], lu[0], "initial"))) {
+            coda_metti(it, CSS_P_FLEX_CRESCE, parola_e(v + da[0], lu[0], "auto") ? 100 : 0);
+            coda_metti(it, CSS_P_FLEX_RESTRINGE, 100);
+            coda_metti(it, CSS_P_FLEX_BASE, 0);
+            return 1;
+        }
+        for (q = 0; q < k; q++) {
+            int e_num = 1;
+            unsigned int z;
+
+            for (z = 0; z < lu[q]; z++)
+                if (!((v[da[q] + z] >= '0' && v[da[q] + z] <= '9') || v[da[q] + z] == '.')) e_num = 0;
+            if (e_num && nnum < 2 && leggi_valore(CSS_P_FLEX_CRESCE, v + da[q], lu[q], &w)) {
+                if (nnum == 0) cresce = w; else restringe = w;
+                nnum++;
+            } else if (!ha_base && leggi_valore(CSS_P_FLEX_BASE, v + da[q], lu[q], &w)) {
+                base = w; ha_base = 1;
+            } else return 1;
+        }
+        coda_metti(it, CSS_P_FLEX_CRESCE, cresce);
+        coda_metti(it, CSS_P_FLEX_RESTRINGE, restringe);
+        coda_metti(it, CSS_P_FLEX_BASE, base);
+        return 1;
+    }
+    /* grid-column / grid-row: «a / b»; grid-area: «r1 / c1 / r2 / c2» (P7).
+     * A name alone (a grid-template-areas area) is not ours yet: auto. */
+    if (parola_e(nome, nn, "grid-column") || parola_e(nome, nn, "grid-row") ||
+        parola_e(nome, nn, "grid-area")) {
+        unsigned int pz[4][2], np = 0, a0 = 0, z, w;
+        unsigned short b0 = parola_e(nome, nn, "grid-row") ? CSS_P_GR_POSTO + 2 : CSS_P_GR_POSTO;
+
+        for (z = 0; z <= n && np < 4; z++)
+            if (z == n || v[z] == '/') { pz[np][0] = a0; pz[np][1] = z; np++; a0 = z + 1; }
+        /* ! A NAME ALONE STANDS FOR EVERY EDGE NOT SAID: «grid-area: main»
+         * is main / main / main / main, the area main; a number alone is not
+         * (its end is auto) */
+        {
+            unsigned int a1 = pz[0][0], b1 = pz[0][1];
+            int          un_nome;
+
+            while (a1 < b1 && spazio((unsigned char)v[a1])) a1++;
+            while (b1 > a1 && spazio((unsigned char)v[b1 - 1])) b1--;
+            un_nome = b1 > a1 && (c_lettera(v[a1]) || v[a1] == '_' || (v[a1] == '-' && b1 > a1 + 1 && !c_cifra(v[a1 + 1]))) &&
+                      !parola_e(v + a1, b1 - a1, "auto") && !(b1 - a1 > 4 && parola_e(v + a1, 4, "span"));
+            if (parola_e(nome, nn, "grid-area")) {
+                static const unsigned short DOVE[4] = { CSS_P_GR_POSTO + 2, CSS_P_GR_POSTO + 0,
+                                                        CSS_P_GR_POSTO + 3, CSS_P_GR_POSTO + 1 };
+                for (z = 0; z < 4; z++) {
+                    if (z < np && testo_tieni(v + pz[z][0], pz[z][1] - pz[z][0], &w)) coda_metti(it, DOVE[z], w);
+                    else if (z >= np && un_nome && testo_tieni(v + a1, b1 - a1, &w)) coda_metti(it, DOVE[z], w);
+                    else if (testo_tieni("auto", 4, &w)) coda_metti(it, DOVE[z], w);
+                }
+                return 1;
+            }
+            if (testo_tieni(v + pz[0][0], pz[0][1] - pz[0][0], &w)) coda_metti(it, b0, w);
+            if (np > 1 && testo_tieni(v + pz[1][0], pz[1][1] - pz[1][0], &w)) coda_metti(it, (unsigned short)(b0 + 1), w);
+            else if (un_nome && testo_tieni(v + a1, b1 - a1, &w)) coda_metti(it, (unsigned short)(b0 + 1), w);
+            else if (testo_tieni("auto", 4, &w)) coda_metti(it, (unsigned short)(b0 + 1), w);
+        }
+        return 1;
+    }
+    /* grid-template: «rows / columns», or the area strings each with its
+     * row size: «"a a" 40px "b c" 1fr / 1fr 1fr». The strings go to
+     * grid-template-areas, the sizes after them to the rows. */
+    if (parola_e(nome, nn, "grid-template")) {
+        unsigned int z, w, sb = 0;
+        int          stringhe = 0;
+        char         righe[256], aree[512];
+        unsigned int nr = 0, na = 0;
+
+        for (z = 0; z < n; z++) if (v[z] == '"' || v[z] == '\'') stringhe = 1;
+        for (z = 0; z < n; z++) {
+            if (v[z] == '"' || v[z] == '\'') { char q = v[z]; for (z++; z < n && v[z] != q; z++) {} continue; }
+            if (v[z] == '/') { sb = z; break; }
+        }
+        if (!stringhe) {
+            if (!sb) return 1;
+            if (testo_tieni(v, sb, &w)) coda_metti(it, CSS_P_GR_RIGHE, w);
+            if (testo_tieni(v + sb + 1, n - sb - 1, &w)) coda_metti(it, CSS_P_GR_COLONNE, w);
+            return 1;
+        }
+        z = 0;
+        while (z < (sb ? sb : n)) {
+            unsigned int fine = sb ? sb : n, a2, b2;
+            char         q;
+
+            while (z < fine && spazio((unsigned char)v[z])) z++;
+            if (z >= fine) break;
+            if (v[z] != '"' && v[z] != '\'') { z++; continue; }     /* a line name in [] and such */
+            q = v[z];
+            if (na + 1 < sizeof(aree)) aree[na++] = '"';
+            for (z++; z < fine && v[z] != q; z++) if (na + 3 < sizeof(aree)) aree[na++] = v[z];
+            z++;
+            if (na + 2 < sizeof(aree)) { aree[na++] = '"'; aree[na++] = ' '; }
+            /* its size: up to the next string, or auto */
+            a2 = z;
+            while (z < fine && v[z] != '"' && v[z] != '\'') z++;
+            b2 = z;
+            while (a2 < b2 && (spazio((unsigned char)v[a2]) || v[a2] == '[')) {
+                if (v[a2] == '[') { while (a2 < b2 && v[a2] != ']') a2++; }
+                a2++;
+            }
+            while (b2 > a2 && spazio((unsigned char)v[b2 - 1])) b2--;
+            if (nr + (b2 - a2) + 6 < sizeof(righe)) {
+                unsigned int t2;
+
+                if (b2 == a2) { righe[nr++] = 'a'; righe[nr++] = 'u'; righe[nr++] = 't'; righe[nr++] = 'o'; }
+                else for (t2 = a2; t2 < b2; t2++) righe[nr++] = v[t2];
+                righe[nr++] = ' ';
+            }
+        }
+        if (testo_tieni(aree, na, &w)) coda_metti(it, CSS_P_GR_AREE, w);
+        while (nr > 0 && righe[nr - 1] == ' ') nr--;
+        if (nr > 0 && testo_tieni(righe, nr, &w)) coda_metti(it, CSS_P_GR_RIGHE, w);
+        if (sb && testo_tieni(v + sb + 1, n - sb - 1, &w)) coda_metti(it, CSS_P_GR_COLONNE, w);
+        return 1;
+    }
+    /* place-items, place-self, place-content: «align [justify]» */
+    if (parola_e(nome, nn, "place-items") || parola_e(nome, nn, "place-self") ||
+        parola_e(nome, nn, "place-content")) {
+        unsigned short pa, pg;
+        unsigned int   w1, w2;
+
+        if (parola_e(nome, nn, "place-items"))     { pa = CSS_P_ALLINEA_VOCI; pg = CSS_P_GIUST_VOCI; }
+        else if (parola_e(nome, nn, "place-self")) { pa = CSS_P_ALLINEA_SE;   pg = CSS_P_GIUST_SE; }
+        else                                       { pa = CSS_P_ALLINEA_CONT; pg = CSS_P_GIUSTIFICA; }
+        k = parole(v, n, da, lu, 2);
+        if (k == 0 || !leggi_valore(pa, v + da[0], lu[0], &w1)) return 1;
+        if (!leggi_valore(pg, v + da[k - 1], lu[k - 1], &w2)) return 1;
+        coda_metti(it, pa, w1);
+        coda_metti(it, pg, w2);
         return 1;
     }
     /* gap: una o due lunghezze, riga e colonna */
@@ -2092,9 +2502,34 @@ static int dich_prossima(DichIter *it, unsigned short *prop, unsigned int *val)
  * dimentica di questo punto. */
 /* Le proprieta' che sono lunghezze, cioe' quelle in cui REL_BIT vuol dire
  * «relativa». ! SOLO QUESTE: un colore ARGB ha il bit alto acceso anche lui. */
+/* P7: what CssStile has no room for, of the element css_calcola is on */
+static CssDisposizione  g_disp;
+static unsigned int     g_disp_txt[9];       /* GR_COLONNE, RIGHE, AUTO_COL, AUTO_RIG, POSTO + 0..3, AREE */
+static int              g_disp_corpo = CSS_CORPO_PREDEFINITO;
+static const CssFoglio *g_disp_fog = 0;
+
+static CssDecoro        g_deco;
+static unsigned int     g_deco_txt[2];       /* OMBRA, SFUMATURA */
+
+static void disp_vuota(void)
+{
+    unsigned char *b = (unsigned char *)&g_disp;
+    unsigned int   i;
+
+    {
+        unsigned char *b2 = (unsigned char *)&g_deco;
+
+        for (i = 0; i < sizeof(g_deco); i++) b2[i] = 0;
+        g_deco_txt[0] = g_deco_txt[1] = 0;
+    }
+    for (i = 0; i < sizeof(g_disp); i++) b[i] = 0;
+    for (i = 0; i < 9; i++) g_disp_txt[i] = 0;
+    g_disp.restringe = 100;              /* flex-shrink: 1 */
+}
+
 static int e_lunghezza(unsigned short p)
 {
-    return p == CSS_P_CORPO || (p >= CSS_P_MARG_SOPRA && p <= CSS_P_MARG_SX) ||
+    return p == CSS_P_CORPO || p == CSS_P_FLEX_BASE || (p >= CSS_P_RAGGIO && p < CSS_P_RAGGIO + 4) || (p >= CSS_P_MARG_SOPRA && p <= CSS_P_MARG_SX) ||
            (p >= CSS_P_BORDO_LARG && p < CSS_P_BORDO_LARG + 4) ||
            (p >= CSS_P_IMBOTTITURA && p < CSS_P_IMBOTTITURA + 4) ||
            (p >= CSS_P_LARG && p <= CSS_P_LARG_MIN) ||
@@ -2137,7 +2572,7 @@ static short *campo_larg(CssStile *s, unsigned short prop)
 /* the lengths that cannot be negative: a calc() below zero becomes zero */
 static int non_negativa(unsigned short p)
 {
-    return p == CSS_P_CORPO || (p >= CSS_P_BORDO_LARG && p < CSS_P_BORDO_LARG + 4) ||
+    return p == CSS_P_CORPO || p == CSS_P_FLEX_BASE || (p >= CSS_P_BORDO_LARG && p < CSS_P_BORDO_LARG + 4) ||
            (p >= CSS_P_IMBOTTITURA && p < CSS_P_IMBOTTITURA + 4) ||
            (p >= CSS_P_LARG && p <= CSS_P_LARG_MIN) || p == CSS_P_ALT || p == CSS_P_ALT_MIN ||
            p == CSS_P_SPAZIO_RIGA || p == CSS_P_SPAZIO_COL;
@@ -2179,6 +2614,19 @@ static void posa_relativa(CssStile *s, unsigned short p, unsigned int val, int e
 
 static void css_posa(CssStile *s, unsigned short prop, unsigned int val)
 {
+    /* a corner's radius in percent: of the box (P10) */
+    if (prop >= CSS_P_RAGGIO && prop < CSS_P_RAGGIO + 4 && (val & REL_BIT) && ((val >> 24) & 0x7Fu) == REL_PERC) {
+        if (g_rel) g_rel[prop] = 0;
+        g_deco.raggio[prop - CSS_P_RAGGIO] = -((int)(val & 0xFFFFFFu) - (int)REL_ZERO);
+        return;
+    }
+    /* flex-basis in percent: of the container, as a width (P7) */
+    if (prop == CSS_P_FLEX_BASE && (val & REL_BIT) && ((val >> 24) & 0x7Fu) == REL_PERC) {
+        if (g_rel) g_rel[prop] = 0;
+        g_disp.base_tipo = 2;
+        g_disp.base = (int)(val & 0xFFFFFFu) - (int)REL_ZERO;
+        return;
+    }
     /* ! LA % DI UNA LARGHEZZA NON SI RISOLVE QUI: e' del contenitore, che
      * sa solo l'impaginatore (css.h, larghezza_perc). Si tiene in centesimi
      * di punto, e vince come un valore assoluto — non dipende dal corpo. */
@@ -2222,7 +2670,8 @@ static void css_posa(CssStile *s, unsigned short prop, unsigned int val)
         break;
     case CSS_P_CORPO:      s->corpo = (short)((int)val - 32768);       break;
     case CSS_P_ALLINEA:    s->allineamento = (unsigned char)val;       break;
-    case CSS_P_DISPLAY:    s->display = (unsigned char)val;            break;
+    case CSS_P_DISPLAY:    s->display = (unsigned char)(val & 0xFFu);
+                           g_disp.griglia = (unsigned char)((val >> 8) & 1u); break;
     case CSS_P_VISIBILE:   s->visibile = (unsigned char)val;           break;
     case CSS_P_MARG_SOPRA: s->margine[0] = (short)((int)val - 32768);  break;
     case CSS_P_MARG_DX:    s->margine[1] = (short)((int)val - 32768);  break;
@@ -2248,15 +2697,49 @@ static void css_posa(CssStile *s, unsigned short prop, unsigned int val)
     case CSS_P_POSIZIONE:  s->posizione = (unsigned char)val;           break;
     case CSS_P_POS + 0: case CSS_P_POS + 1: case CSS_P_POS + 2: case CSS_P_POS + 3:
         s->pos[prop - CSS_P_POS] = (short)((int)val - 32768);               break;
-    case CSS_P_FLEX_DIR:   s->flex_colonna = (unsigned char)val;        break;
-    case CSS_P_FLEX_CAPO:  s->flex_a_capo = (unsigned char)val;         break;
+    case CSS_P_FLEX_DIR:   s->flex_colonna = (unsigned char)(val & 1u);
+                           g_disp.dir = (unsigned char)val;             break;
+    case CSS_P_FLEX_CAPO:  s->flex_a_capo = (unsigned char)(val != 0);
+                           g_disp.a_capo = (unsigned char)val;          break;
     case CSS_P_FLEX_CRESCE: s->flex_cresce = (unsigned short)val;       break;
     case CSS_P_PULISCI:    s->pulisci = (unsigned char)val;             break;
     case CSS_P_GIUSTIFICA: s->giustifica = (unsigned char)val;          break;
-    case CSS_P_ALLINEA_VOCI: s->allinea_voci = (unsigned char)val;      break;
+    case CSS_P_ALLINEA_VOCI: s->allinea_voci = (unsigned char)(val & 0xFFu);
+                             g_disp.allinea_voci = (unsigned char)(val >> 8); break;
+    case CSS_P_FLEX_RESTRINGE: g_disp.restringe = (unsigned short)val;  break;
+    case CSS_P_FLEX_BASE:
+        if (val == 0)      { g_disp.base_tipo = 0; }
+        else if (val == 1) { g_disp.base_tipo = 3; }
+        else               { g_disp.base_tipo = 1; g_disp.base = (int)val - 32768; }
+        break;
+    case CSS_P_ORDINE:       g_disp.ordine = (short)((int)val - 32768);  break;
+    case CSS_P_ALLINEA_SE:   g_disp.allinea_se = (unsigned char)val;     break;
+    case CSS_P_ALLINEA_CONT: g_disp.allinea_contenuto = (unsigned char)val; break;
+    case CSS_P_GIUST_VOCI:   g_disp.giustifica_voci = (unsigned char)val; break;
+    case CSS_P_GIUST_SE:     g_disp.giustifica_se = (unsigned char)val;  break;
+    case CSS_P_GR_FLUSSO:    g_disp.flusso = (unsigned char)val;         break;
+    case CSS_P_TRABOCCA:     g_disp.trabocca = (unsigned char)val;       break;
+    case CSS_P_GR_COLONNE:   g_disp_txt[0] = val;                        break;
+    case CSS_P_GR_AREE:      g_disp_txt[8] = val;                        break;
+    case CSS_P_RAGGIO + 0: case CSS_P_RAGGIO + 1: case CSS_P_RAGGIO + 2: case CSS_P_RAGGIO + 3:
+        g_deco.raggio[prop - CSS_P_RAGGIO] = (int)val - 32768;           break;
+    case CSS_P_OMBRA:        g_deco_txt[0] = val;                        break;
+    case CSS_P_SFUMATURA:
+        g_deco_txt[1] = val;
+        if (val) s->sf_url = 0;
+        break;
+    case CSS_P_GR_RIGHE:     g_disp_txt[1] = val;                        break;
+    case CSS_P_GR_AUTO_COL:  g_disp_txt[2] = val;                        break;
+    case CSS_P_GR_AUTO_RIG:  g_disp_txt[3] = val;                        break;
+    case CSS_P_GR_POSTO + 0: case CSS_P_GR_POSTO + 1:
+    case CSS_P_GR_POSTO + 2: case CSS_P_GR_POSTO + 3:
+        g_disp_txt[4 + (prop - CSS_P_GR_POSTO)] = val;                   break;
     case CSS_P_SPAZIO_RIGA: s->spazio_riga = (short)((int)val - 32768); break;
     case CSS_P_SPAZIO_COL:  s->spazio_col  = (short)((int)val - 32768); break;
-    case CSS_P_SFONDO_IMM: s->sf_url    = (const char *)val;            break;
+    case CSS_P_SFONDO_IMM:
+        s->sf_url = (const char *)val;
+        if (val) g_deco_txt[1] = 0;
+        break;
     case CSS_P_SFONDO_RIP: s->sf_ripeti = (unsigned char)val;           break;
     case CSS_P_SFONDO_PX:  s->sf_px     = (short)(unsigned short)val;   break;
     case CSS_P_SFONDO_PY:  s->sf_py     = (short)(unsigned short)val;   break;
@@ -2630,6 +3113,11 @@ static int leggi_composto(CssFoglio *f, const char *t, unsigned int *pi,
             else if (pari(nm, "checked"))       p->pseudo |= CSS_PS_ACCESO;
             else if (pari(nm, "disabled"))      p->pseudo |= CSS_PS_SPENTO;
             else if (pari(nm, "enabled"))       p->pseudo |= CSS_PS_ABILITATO;
+            /* P9: the host of the rule's shadow root. ! :host(sel) is read
+             * as :host - the argument is not kept - one host more at most */
+            else if (pari(nm, "host"))          p->pseudo |= CSS_PS_HOST;
+            /* a custom element is defined when it is laid out: :defined holds */
+            else if (pari(nm, "defined"))       { }
             else if (inizia(nm, "nth-") && ba) {
                 if (!leggi_nth(t, ba, bf, &p->nth_a, &p->nth_b)) { esito = 2; continue; }
                 if      (pari(nm, "nth-child"))        p->pseudo |= CSS_PS_NTH;
@@ -3399,6 +3887,7 @@ unsigned int css_analizza(CssFoglio *f, const char *testo, unsigned int n,
 
             if (primo >= 0) {
                 r.origine    = origine;
+                r.ambito     = (unsigned short)g_ambito;
                 r.ordine     = f->ordine++;
                 r.prima_dich = primo;
                 r.seguente   = -1;
@@ -3581,6 +4070,46 @@ static int semplice(const HtmlDoc *d, int nodo, const char *s)
     { const char *nome = html_nome(d, nodo); return nome && ug_min(nome, s); }
 }
 
+/* =============================================================================
+ * THE TREES (P9): which tree an element belongs to, and the host whose
+ * shadow the rule being matched belongs to (for :host)
+ * ========================================================================== */
+static unsigned int g_ambito = 0;
+static int          g_host_ora = -1;
+
+void css_ambito(CssFoglio *f, unsigned int ambito)
+{
+    (void)f;
+    g_ambito = ambito < 65535u ? ambito : 0u;
+}
+
+static int e_ombra_css(const HtmlDoc *d, int n)
+{
+    const char *s;
+
+    if (n < 0 || d->nodi[n].tipo != HTML_ELEMENTO) return 0;
+    s = html_nome(d, n);
+    return s && s[0] == '#' && s[1] == 's' && ug_min(s, "#shadow-root");
+}
+
+/* 0 the document (or a detached tree), else the shadow root's node + 1 */
+static unsigned int ambito_di(const HtmlDoc *d, int n)
+{
+    int giri = 0;
+
+    while (n >= 0 && d->nodi[n].padre >= 0 && giri++ < 100000) n = d->nodi[n].padre;
+    return (n >= 0 && e_ombra_css(d, n) && n < 65534) ? (unsigned int)n + 1u : 0u;
+}
+
+/* the parent for the combinators: a shadow root is passed through, to its host */
+static int padre_css(const HtmlDoc *d, int n)
+{
+    int p = d->nodi[n].padre;
+
+    if (p >= 0 && e_ombra_css(d, p)) return html_legato_da(d, HTML_LEGAME_OMBRA, p);
+    return p;
+}
+
 static int pezzo_combacia(const CssFoglio *f, const HtmlDoc *d, int nodo,
                           const CssPezzo *p)
 {
@@ -3630,6 +4159,7 @@ static int pezzo_combacia(const CssFoglio *f, const HtmlDoc *d, int nodo,
             }
         }
         if ((ps & CSS_PS_RADICE) && d->nodi[nodo].padre != d->radice) return 0;
+        if ((ps & CSS_PS_HOST) && nodo != g_host_ora) return 0;
         if (ps & CSS_PS_LINK) {
             if (!nome || !(ug_min(nome, "a") || ug_min(nome, "area")) ||
                 !html_attr(d, nodo, "href")) return 0;
@@ -3670,7 +4200,7 @@ static int da_pezzo(const CssFoglio *f, const HtmlDoc *d, int nodo,
 
     switch (f->pezzi[r->pezzo_primo + k].comb) {
     case '>':
-        su = d->nodi[nodo].padre;
+        su = padre_css(d, nodo);
         return su >= 0 && da_pezzo(f, d, su, r, k - 1, budget);
     case '+':
         su = fratello_prima(d, nodo);
@@ -3680,7 +4210,7 @@ static int da_pezzo(const CssFoglio *f, const HtmlDoc *d, int nodo,
             if (da_pezzo(f, d, su, r, k - 1, budget)) return 1;
         return 0;
     default:
-        for (su = d->nodi[nodo].padre; su >= 0; su = d->nodi[su].padre)
+        for (su = padre_css(d, nodo); su >= 0; su = padre_css(d, su))
             if (da_pezzo(f, d, su, r, k - 1, budget)) return 1;
         return 0;
     }
@@ -3744,12 +4274,27 @@ static int abbina(const CssFoglio *f, const HtmlDoc *d, int nodo, int *out, int 
             cand[b + 1] = v;
         }
     }
-    for (q = 0; nc < 0 ? q < (int)f->regole_n : q < nc; q++) {
-        int ir = (nc < 0) ? q : cand[q];
+    {
+        /* ! A RULE MATCHES THE ELEMENTS OF ITS OWN TREE (P9), and a rule of
+         * this element's own shadow root may match it as :host */
+        unsigned int amb = ambito_di(d, nodo);
+        int          ombra = html_legato(d, HTML_LEGAME_OMBRA, nodo, 0);
+        unsigned int amb_ospite = (ombra >= 0 && ombra < 65534) ? (unsigned int)ombra + 1u : 0u;
+        int          host_amb = amb ? html_legato_da(d, HTML_LEGAME_OMBRA, (int)amb - 1) : -1;
 
-        if (nc >= 0 && q > 0 && cand[q] == cand[q - 1]) continue;
-        if (!regola_combacia(f, d, nodo, &f->regole[ir])) continue;
-        if (n < max) out[n++] = ir;
+        for (q = 0; nc < 0 ? q < (int)f->regole_n : q < nc; q++) {
+            int              ir = (nc < 0) ? q : cand[q];
+            const CssRegola *r = &f->regole[ir];
+
+            if (nc >= 0 && q > 0 && cand[q] == cand[q - 1]) continue;
+            if (r->ambito == amb) g_host_ora = host_amb;
+            else if (amb_ospite && r->ambito == amb_ospite &&
+                     (f->pezzi[r->pezzo_primo + r->n_pezzi - 1].pseudo & CSS_PS_HOST)) g_host_ora = nodo;
+            else continue;
+            if (!regola_combacia(f, d, nodo, r)) continue;
+            if (n < max) out[n++] = ir;
+        }
+        g_host_ora = -1;
     }
     return n;
 }
@@ -4223,6 +4768,9 @@ void css_calcola(const CssFoglio *f, const HtmlDoc *d, int nodo,
     if (!out) return;
     g_fog_legge = 0;
     css_stile_vuoto(out);
+    disp_vuota();
+    g_disp_fog = f;
+    g_disp_corpo = (ereditato && ereditato->corpo != CSS_MISURA_NO) ? ereditato->corpo : CSS_CORPO_PREDEFINITO;
     for (i = 0; i < CSS_P_N; i++) peso_di[i] = 0;
 
     /* ! SI EREDITA SOLO CIO' CHE SI EREDITA DAVVERO. Il colore del testo e il
@@ -4312,8 +4860,460 @@ void css_calcola(const CssFoglio *f, const HtmlDoc *d, int nodo,
             if (p != CSS_P_CORPO && rel[p]) posa_relativa(out, p, rel[p], mio, g_media_w);
     }
     nascosto_applica(out);
+    if (out->corpo != CSS_MISURA_NO) g_disp_corpo = out->corpo;
     g_in_calcola = 0;
     g_fog_calc = 0;
     g_calc_doc = 0;
     g_calc_vinte = 0;
 }
+
+/* =============================================================================
+ * css_disposizione (P7, 26 November 2026): the grid's tracks and lines are
+ * read here, from their text, with the em of the element just computed.
+ * ============================================================================= */
+static const char *disp_testo(unsigned int v)
+{
+    if (!v) return 0;
+    if (v & TESTO_LOC) return (v & ~TESTO_LOC) < sizeof(g_loc) ? g_loc + (v & ~TESTO_LOC) : 0;
+    return g_disp_fog && v < g_disp_fog->arena_n ? g_disp_fog->arena + v : 0;
+}
+
+/* the next word of a track list: a parenthesis is part of its word */
+static unsigned int parola_tr(const char *s, unsigned int *i, unsigned int n)
+{
+    unsigned int a, liv = 0;
+
+    while (*i < n && (spazio((unsigned char)s[*i]) || s[*i] == ',')) (*i)++;
+    a = *i;
+    if (*i < n && s[*i] == '[') {                  /* line names: a word of their own */
+        while (*i < n && s[*i] != ']') (*i)++;
+        if (*i < n) (*i)++;
+        return *i - a;
+    }
+    while (*i < n && (liv || (!spazio((unsigned char)s[*i]) && s[*i] != ','))) {
+        if (s[*i] == '(') liv++;
+        else if (s[*i] == ')' && liv) liv--;
+        (*i)++;
+    }
+    return *i - a;
+}
+
+/* one side of a track: 1 if understood */
+static int tr_lato(const char *s, unsigned int n, unsigned char *tipo, int *v, int consenti_fr)
+{
+    CalcBasi b;
+    int      px, tinto;
+
+    while (n > 0 && spazio((unsigned char)s[0])) { s++; n--; }
+    while (n > 0 && spazio((unsigned char)s[n - 1])) n--;
+    if (n == 0) return 0;
+    if (parola_e(s, n, "auto"))        { *tipo = CSS_TR_AUTO; *v = 0; return 1; }
+    if (parola_e(s, n, "min-content")) { *tipo = CSS_TR_MIN;  *v = 0; return 1; }
+    if (parola_e(s, n, "max-content")) { *tipo = CSS_TR_MAX;  *v = 0; return 1; }
+    if (n > 2 && minusc((unsigned char)s[n - 2]) == 'f' && minusc((unsigned char)s[n - 1]) == 'r') {
+        CalcL   l;
+        CalcVal x;
+
+        if (!consenti_fr) return 0;
+        b.em = 0; b.perc = 0; b.rem = 0; b.perc_ignota = 0;
+        l.s = s; l.i = 0; l.n = n - 2; l.b = &b; l.prof = 0;
+        if (!c_numero(&l, &x) || l.i != n - 2 || x.lung || x.v < 0) return 0;
+        *tipo = CSS_TR_FR; *v = c_arrotonda(x.v * 100);
+        return 1;
+    }
+    if (s[n - 1] == '%') {
+        CalcL   l;
+        CalcVal x;
+
+        b.em = 0; b.perc = 10000; b.rem = 0; b.perc_ignota = 0;
+        l.s = s; l.i = 0; l.n = n; l.b = &b; l.prof = 0;
+        if (c_numero(&l, &x) && l.i == n) { *tipo = CSS_TR_PERC; *v = c_arrotonda(x.v); return 1; }
+        return 0;
+    }
+    b.em = g_disp_corpo; b.rem = CSS_CORPO_PREDEFINITO; b.perc = 0; b.perc_ignota = 1;
+    if (!calc_valuta(s, n, &b, &px, &tinto) || tinto || px < 0) return 0;
+    *tipo = CSS_TR_PX; *v = px;
+    return 1;
+}
+
+/* one track: a size, minmax(a, b), fit-content(x) */
+static int tr_una(const char *s, unsigned int n, CssTraccia *t)
+{
+    if (n > 7 && parola_e(s, 7, "minmax(") && s[n - 1] == ')') {
+        unsigned int k, liv = 0;
+
+        for (k = 7; k < n - 1; k++) {
+            if (s[k] == '(') liv++;
+            else if (s[k] == ')') liv--;
+            else if (s[k] == ',' && !liv) break;
+        }
+        if (k >= n - 1) return 0;
+        if (!tr_lato(s + 7, k - 7, &t->min_tipo, &t->min_v, 0)) return 0;
+        return tr_lato(s + k + 1, n - 1 - (k + 1), &t->max_tipo, &t->max_v, 1);
+    }
+    if (n > 12 && parola_e(s, 12, "fit-content(") && s[n - 1] == ')') {
+        unsigned char tp;
+        int           v;
+
+        if (!tr_lato(s + 12, n - 13, &tp, &v, 0) || tp != CSS_TR_PX) return 0;
+        t->min_tipo = CSS_TR_AUTO; t->min_v = 0;
+        t->max_tipo = CSS_TR_ADATTA; t->max_v = v;
+        return 1;
+    }
+    if (!tr_lato(s, n, &t->max_tipo, &t->max_v, 1)) return 0;
+    if (t->max_tipo == CSS_TR_FR) { t->min_tipo = CSS_TR_AUTO; t->min_v = 0; }
+    else { t->min_tipo = t->max_tipo; t->min_v = t->max_v; }
+    return 1;
+}
+
+/* A whole track list into t[], at most max; 0 if it cannot be read (the
+ * template is then none). */
+static int tracce_leggi(const char *s, CssTraccia *t, int max, unsigned char *rip,
+                        unsigned char *rip_da, unsigned char *rip_n)
+{
+    unsigned int i = 0, n, a, l;
+    int          k = 0;
+
+    *rip = *rip_da = *rip_n = 0;
+    if (!s) return 0;
+    n = lun(s);
+    for (;;) {
+        a = i;
+        while (a < n && (spazio((unsigned char)s[a]) || s[a] == ',')) a++;
+        l = parola_tr(s, &i, n);
+        a = i - l;
+        if (l == 0) break;
+        if (s[a] == '[') continue;
+        if (parola_e(s + a, l, "none") || parola_e(s + a, l, "subgrid") || parola_e(s + a, l, "masonry"))
+            return 0;
+        if (l > 7 && parola_e(s + a, 7, "repeat(") && s[a + l - 1] == ')') {
+            const char  *q = s + a + 7;
+            unsigned int qn = l - 8, j = 0, cn, volte = 1, tipo = 0, x;
+            int          primo = k, m;
+            CssTraccia   dentro[CSS_TRACCE_MAX];
+            int          nd = 0;
+
+            while (j < qn && q[j] != ',') j++;
+            cn = j;
+            while (cn > 0 && spazio((unsigned char)q[cn - 1])) cn--;
+            if (parola_e(q, cn, "auto-fill")) tipo = 1;
+            else if (parola_e(q, cn, "auto-fit")) tipo = 2;
+            else {
+                int vv = 0;
+
+                if (!leggi_misura(q, cn, &vv) || vv < 1) return 0;
+                volte = (unsigned int)vv;
+            }
+            j++;
+            while (j < qn) {
+                unsigned int ll = parola_tr(q, &j, qn), aa = j - ll;
+
+                if (ll == 0) break;
+                if (q[aa] == '[') continue;
+                if (nd >= CSS_TRACCE_MAX || !tr_una(q + aa, ll, &dentro[nd])) return 0;
+                nd++;
+            }
+            if (nd == 0) return 0;
+            if (tipo) {
+                if (*rip || k + nd > max) return 0;   /* one auto repeat only */
+                *rip = (unsigned char)tipo; *rip_da = (unsigned char)k; *rip_n = (unsigned char)nd;
+                for (m = 0; m < nd; m++) t[k++] = dentro[m];
+            } else {
+                for (x = 0; x < volte && k + nd <= max; x++)
+                    for (m = 0; m < nd; m++) t[k++] = dentro[m];
+            }
+            (void)primo;
+            continue;
+        }
+        if (k >= max || !tr_una(s + a, l, &t[k])) return k > 0 ? k : 0;
+        k++;
+    }
+    return k;
+}
+
+/* a grid line: auto, n, -n, span n, n span, a name, n name. The name goes
+ * to `nome` (CSS_NOME_AREA, "" none), the number is its index then (0 =
+ * none: the area's edge, or the first line of that name). */
+static short linea_leggi(const char *s, char *nome)
+{
+    unsigned int n, i = 0, a;
+    int          span = 0, num = 0, ha = 0, v;
+
+    nome[0] = 0;
+    if (!s) return 0;
+    n = lun(s);
+    while (i < n) {
+        while (i < n && spazio((unsigned char)s[i])) i++;
+        a = i;
+        while (i < n && !spazio((unsigned char)s[i])) i++;
+        if (i == a) break;
+        if (parola_e(s + a, i - a, "span")) { span = 1; continue; }
+        if (parola_e(s + a, i - a, "auto")) continue;
+        if (leggi_misura(s + a, i - a, &v)) { num = v; ha = 1; continue; }
+        if (i - a < CSS_NOME_AREA) {
+            unsigned int k;
+
+            for (k = 0; k < i - a; k++) nome[k] = s[a + k];
+            nome[k] = 0;
+        }
+    }
+    if (nome[0] && !span) return (short)(ha && num > -1000 && num < 1000 ? num : 0);
+    if (nome[0]) nome[0] = 0;               /* «span name» is not ours: a span */
+    if (span) return (short)(CSS_GR_SPAN + (ha && num > 0 ? (num > 1000 ? 1000 : num) : 1));
+    if (ha && num != 0 && num > -1000 && num < 1000) return (short)num;
+    return 0;
+}
+
+/* grid-template-areas: «"a a b" "c c b"»: each string a row, each word a
+ * cell, "." (or dots) an empty one. An area is the rectangle of its name;
+ * one that is not a rectangle makes the whole value invalid, as the spec. */
+static void aree_leggi(const char *s, CssDisposizione *out)
+{
+    unsigned int n, i = 0;
+    int          riga = 0, k;
+
+    out->n_aree = out->aree_righe = out->aree_colonne = 0;
+    if (!s) return;
+    n = lun(s);
+    while (i < n && riga < 64) {
+        int col = 0;
+        char q;
+
+        while (i < n && s[i] != '"' && s[i] != '\'') i++;
+        if (i >= n) break;
+        q = s[i++];
+        while (i < n && s[i] != q) {
+            unsigned int a;
+
+            while (i < n && s[i] != q && spazio((unsigned char)s[i])) i++;
+            if (i >= n || s[i] == q) break;
+            a = i;
+            while (i < n && s[i] != q && !spazio((unsigned char)s[i])) i++;
+            if (s[a] != '.' && i - a < CSS_NOME_AREA) {
+                for (k = 0; k < out->n_aree; k++) {
+                    unsigned int z = 0;
+
+                    while (z < i - a && out->aree[k].nome[z] == s[a + z]) z++;
+                    if (z == i - a && out->aree[k].nome[z] == 0) break;
+                }
+                if (k == out->n_aree) {
+                    if (k >= CSS_AREE_MAX) { col++; continue; }
+                    {
+                        unsigned int z;
+
+                        for (z = 0; z < i - a; z++) out->aree[k].nome[z] = s[a + z];
+                        out->aree[k].nome[z] = 0;
+                    }
+                    out->aree[k].r0 = out->aree[k].r1 = (unsigned char)riga;
+                    out->aree[k].c0 = out->aree[k].c1 = (unsigned char)col;
+                    out->n_aree++;
+                } else {
+                    if (riga > out->aree[k].r1) out->aree[k].r1 = (unsigned char)riga;
+                    if (col < out->aree[k].c0) out->aree[k].c0 = (unsigned char)col;
+                    if (col > out->aree[k].c1) out->aree[k].c1 = (unsigned char)col;
+                }
+            }
+            col++;
+        }
+        if (i < n) i++;
+        if (riga == 0) out->aree_colonne = (unsigned char)col;
+        else if (col != out->aree_colonne) { out->n_aree = out->aree_righe = out->aree_colonne = 0; return; }
+        riga++;
+    }
+    out->aree_righe = (unsigned char)riga;
+}
+
+void css_disposizione(CssDisposizione *out)
+{
+    int k;
+
+    if (!out) return;
+    *out = g_disp;
+    k = tracce_leggi(disp_testo(g_disp_txt[0]), out->col, CSS_TRACCE_MAX,
+                     &out->col_rip, &out->col_rip_da, &out->col_rip_n);
+    out->n_col = (unsigned char)k;
+    k = tracce_leggi(disp_testo(g_disp_txt[1]), out->rig, CSS_TRACCE_MAX,
+                     &out->rig_rip, &out->rig_rip_da, &out->rig_rip_n);
+    out->n_rig = (unsigned char)k;
+    {
+        unsigned char r1, r2, r3;
+
+        k = tracce_leggi(disp_testo(g_disp_txt[2]), out->auto_col, 4, &r1, &r2, &r3);
+        out->n_auto_col = (unsigned char)(r1 ? 0 : k);
+        k = tracce_leggi(disp_testo(g_disp_txt[3]), out->auto_rig, 4, &r1, &r2, &r3);
+        out->n_auto_rig = (unsigned char)(r1 ? 0 : k);
+    }
+    out->col_inizio = linea_leggi(disp_testo(g_disp_txt[4]), out->nome_col_inizio);
+    out->col_fine   = linea_leggi(disp_testo(g_disp_txt[5]), out->nome_col_fine);
+    out->rig_inizio = linea_leggi(disp_testo(g_disp_txt[6]), out->nome_rig_inizio);
+    out->rig_fine   = linea_leggi(disp_testo(g_disp_txt[7]), out->nome_rig_fine);
+    aree_leggi(disp_testo(g_disp_txt[8]), out);
+}
+
+/* =============================================================================
+ * css_decoro (P10, 26 November 2026): the shadow and the gradient are read
+ * from their text, with the em of the element just computed.
+ * ========================================================================== */
+static int deco_lung(const char *s, unsigned int n, int *px)
+{
+    CalcBasi b;
+    int      t;
+
+    b.em = g_disp_corpo; b.rem = CSS_CORPO_PREDEFINITO; b.perc = 0; b.perc_ignota = 1;
+    return calc_valuta(s, n, &b, px, &t) && !t;
+}
+
+/* the parts of a list at the top level, split by commas: at most max */
+static int parti_virgola(const char *s, unsigned int n, unsigned int *da, unsigned int *lu, int max)
+{
+    unsigned int i, a = 0, liv = 0;
+    int          k = 0;
+
+    for (i = 0; i <= n && k < max; i++) {
+        if (i < n && s[i] == '(') liv++;
+        else if (i < n && s[i] == ')' && liv) liv--;
+        else if (i == n || (s[i] == ',' && !liv)) {
+            unsigned int x = a, y = i;
+
+            while (x < y && spazio((unsigned char)s[x])) x++;
+            while (y > x && spazio((unsigned char)s[y - 1])) y--;
+            da[k] = x; lu[k] = y - x; k++;
+            a = i + 1;
+        }
+    }
+    return k;
+}
+
+static void ombra_leggi(const char *s, CssDecoro *o)
+{
+    unsigned int da[8], lu[8], n, p0[2], l0[2], k, q;
+    int          num[4], nn = 0;
+
+    if (!s) return;
+    n = lun(s);
+    if (parti_virgola(s, n, p0, l0, 1) < 1) return;      /* the first shadow */
+    k = parole(s + p0[0], l0[0], da, lu, 8);
+    o->ombra_colore = 0xFF000000u;                       /* currentcolor: black here */
+    for (q = 0; q < k; q++) {
+        const char  *w = s + p0[0] + da[q];
+        unsigned int c;
+        int          v;
+
+        if (parola_e(w, lu[q], "inset")) { o->ombra_dentro = 1; continue; }
+        if (nn < 4 && deco_lung(w, lu[q], &v)) { num[nn++] = v; continue; }
+        if (leggi_colore(w, lu[q], &c)) { o->ombra_colore = c; continue; }
+        return;                                          /* not a shadow we can read */
+    }
+    if (nn < 2) return;
+    o->ombra = 1;
+    o->ombra_x = (short)num[0];
+    o->ombra_y = (short)num[1];
+    o->ombra_sfoca = (short)(nn > 2 && num[2] > 0 ? num[2] : 0);
+    o->ombra_allarga = (short)(nn > 3 ? num[3] : 0);
+}
+
+static void sfumatura_leggi(const char *s, CssDecoro *o)
+{
+    unsigned int n, a, b, da[CSS_FERMATE_MAX + 2], lu[CSS_FERMATE_MAX + 2], q;
+    int          k, primo = 0;
+
+    if (!s) return;
+    n = lun(s);
+    if (n > 26 && parola_e(s, 26, "repeating-linear-gradient(")) { o->sfumatura = 1; a = 26; }
+    else if (n > 16 && parola_e(s, 16, "linear-gradient(")) { o->sfumatura = 1; a = 16; }
+    else if (n > 16 && parola_e(s, 16, "radial-gradient(")) { o->sfumatura = 2; a = 16; }
+    else return;
+    b = n;
+    while (b > a && s[b - 1] != ')') b--;
+    if (b <= a) { o->sfumatura = 0; return; }
+    b--;
+    k = parti_virgola(s + a, b - a, da, lu, CSS_FERMATE_MAX + 2);
+    o->angolo = 180;
+    if (k > 0) {
+        const char  *w = s + a + da[0];
+        unsigned int l = lu[0];
+        unsigned int c;
+
+        /* the first part: a direction or a shape, if it is not a colour */
+        if (!leggi_colore(w, l, &c) && !(l > 3 && (w[0] == 'r' || w[0] == 'h') && w[3] == '(')) {
+            primo = 1;
+            if (o->sfumatura == 1) {
+                if (l > 3 && parola_e(w, 3, "to ")) {
+                    int su = 0, giu = 0, sx = 0, dx = 0;
+                    unsigned int z;
+
+                    for (z = 3; z + 3 <= l; z++) {
+                        if (parola_e(w + z, 3, "top")) su = 1;
+                        if (z + 6 <= l && parola_e(w + z, 6, "bottom")) giu = 1;
+                        if (z + 4 <= l && parola_e(w + z, 4, "left")) sx = 1;
+                        if (z + 5 <= l && parola_e(w + z, 5, "right")) dx = 1;
+                    }
+                    o->angolo = su ? (sx ? 315 : dx ? 45 : 0) : giu ? (sx ? 225 : dx ? 135 : 180)
+                              : sx ? 270 : dx ? 90 : 180;
+                } else {
+                    CalcL   cl;
+                    CalcVal x;
+                    CalcBasi bb;
+
+                    bb.em = 0; bb.perc = 0; bb.rem = 0; bb.perc_ignota = 0;
+                    cl.s = w; cl.i = 0; cl.n = l; cl.b = &bb; cl.prof = 0;
+                    if (l > 3 && c_numero(&cl, &x) == 0) {
+                        /* «45deg», «0.25turn», «1rad»: c_numero refuses the
+                         * unit, read it by hand */
+                        unsigned int z = 0;
+                        double v = 0, sc = 1;
+                        int neg = 0;
+
+                        if (w[0] == '-') { neg = 1; z = 1; }
+                        for (; z < l && c_cifra(w[z]); z++) v = v * 10 + (w[z] - '0');
+                        if (z < l && w[z] == '.') for (z++; z < l && c_cifra(w[z]); z++) { sc /= 10; v += (w[z] - '0') * sc; }
+                        if (parola_e(w + z, l - z, "deg")) {}
+                        else if (parola_e(w + z, l - z, "turn")) v *= 360;
+                        else if (parola_e(w + z, l - z, "rad")) v *= 57.29578;
+                        else if (parola_e(w + z, l - z, "grad")) v *= 0.9;
+                        if (neg) v = -v;
+                        o->angolo = (short)(((int)v % 360 + 360) % 360);
+                    }
+                }
+            }
+        }
+    }
+    for (q = (unsigned int)primo; (int)q < k && o->n_fermate < CSS_FERMATE_MAX; q++) {
+        const char  *w = s + a + da[q];
+        unsigned int l = lu[q], c, z, liv = 0;
+        int          pos = -1;
+
+        /* «colour [position]»: the colour may be a function with spaces */
+        for (z = 0; z < l; z++) {
+            if (w[z] == '(') liv++;
+            else if (w[z] == ')' && liv) liv--;
+            else if (!liv && spazio((unsigned char)w[z])) break;
+        }
+        if (!leggi_colore(w, z, &c)) continue;
+        if (z < l) {
+            unsigned int y = z;
+
+            while (y < l && spazio((unsigned char)w[y])) y++;
+            if (y < l && w[l - 1] == '%') {
+                unsigned int t = y;
+                int          v = 0;
+
+                while (t < l && c_cifra(w[t])) v = v * 10 + (w[t++] - '0');
+                pos = v * 100;
+            }
+        }
+        o->fermata_colore[o->n_fermate] = c;
+        o->fermata_pos[o->n_fermate] = (short)pos;
+        o->n_fermate++;
+    }
+    if (o->n_fermate < 2) o->sfumatura = 0;
+}
+
+void css_decoro(CssDecoro *out)
+{
+    if (!out) return;
+    *out = g_deco;
+    ombra_leggi(disp_testo(g_deco_txt[0]), out);
+    sfumatura_leggi(disp_testo(g_deco_txt[1]), out);
+}
+

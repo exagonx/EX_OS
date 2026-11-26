@@ -22,6 +22,7 @@
 #include "kmalloc.h"    /* g_wp_spento, one per processor (0.319) */
 #include "blk.h"        /* blk_cache_cedi */
 #include "filecache.h"  /* fc_pagina, fc_cedi: one copy of a file's pages */
+#include "zone.h"       /* zones of files at the first touch (0.371) */
 #include "vfs.h"   /* vfs_read: le pagine mancanti arrivano dall'eseguibile */
 #include "syscall.h" /* PROT_* and the errno values of paging_proteggi */
 
@@ -1642,6 +1643,9 @@ static Process *immagine_di(Process *p)
     return p;
 }
 
+/* pages around a fault in the executable: 32 = 128 KB, Linux's ra_pages */
+#define PF_INTORNO 32u
+
 static int pf_carica_da_file(Process *p, vaddr_t fault_addr)
 {
     vaddr_t  pagina = PAGINA_DI(fault_addr);
@@ -1677,9 +1681,25 @@ static int pf_carica_da_file(Process *p, vaddr_t fault_addr)
      * Firefox process reads nothing from the disk. Writable pages, the
      * page where the file ends and a page not aligned in the file stay
      * private, as before; so does any page the cache cannot give. */
+    /* ! AND AS ON LINUX (0.371, voce 120): a page the cache has costs no
+     * VFS (the key was read at exec), a missing one comes with the missing
+     * pages around it in one request, and the neighbours the cache has are
+     * mapped at once (PF_INTORNO pages, inside the segment's whole pages). */
     if (!(v->pg_flags & PG_WRITABLE) && da_leggere == PAGE_SIZE &&
         (off_file & (PAGE_SIZE - 1)) == 0) {
-        phys = fc_pagina(p->exe_handle, off_file / PAGE_SIZE);
+        vaddr_t  da = v->vstart, a = PAGINA_DI(v->file_fine), mezzo = (PF_INTORNO / 2u) * PAGE_SIZE;
+        uint32_t idx = off_file / PAGE_SIZE;
+
+        if (a > v->vend) a = v->vend;
+        if (pagina - da > mezzo) da = pagina - mezzo;
+        if (a - da > PF_INTORNO * PAGE_SIZE) a = da + PF_INTORNO * PAGE_SIZE;
+        phys = p->exe_chiave_ok ? fc_c_e(&p->exe_chiave, idx) : 0;
+        if (phys == 0 && p->exe_chiave_ok)
+            phys = fc_leggi(&p->exe_chiave, p->exe_handle, idx,
+                            (uint32_t)((v->file_off + (da - v->vstart)) / PAGE_SIZE),
+                            (uint32_t)((v->file_off + (a - v->vstart)) / PAGE_SIZE));
+        else if (phys == 0)
+            phys = fc_pagina(p->exe_handle, idx);
         if (phys != 0) {
             if (paging_get_physical(p->page_directory, pagina) != 0) {
                 pmm_free_page(phys);    /* another thread mapped it meanwhile */
@@ -1689,6 +1709,14 @@ static int pf_carica_da_file(Process *p, vaddr_t fault_addr)
                 pmm_free_page(phys);
                 klog(LOG_ERROR, "PF: mapping fallito per 0x%08x (PID %u)", pagina, p->pid);
                 return 0;
+            }
+            for (; p->exe_chiave_ok && da < a; da += PAGE_SIZE) {
+                paddr_t f2;
+
+                if (da == pagina || paging_get_physical(p->page_directory, da) != 0) continue;
+                f2 = fc_c_e(&p->exe_chiave, (uint32_t)((v->file_off + (da - v->vstart)) / PAGE_SIZE));
+                if (f2 == 0) continue;
+                if (paging_map_page(p->page_directory, da, f2, v->pg_flags) != 0) { pmm_free_page(f2); break; }
             }
             return 1;
         }
@@ -1783,7 +1811,8 @@ void vm_precarica_utente(vaddr_t addr, uint32_t len)
          * dire che se la memoria e' finita lo swap parla col disco DENTRO il
          * disco. Qui la strada e' libera. */
         if (paging_pigra_tocca(io, pag)) continue;
-        if (p->exe_handle >= 0 && p->n_vma != 0) pf_carica_da_file(p, pag);
+        if (p->exe_handle >= 0 && p->n_vma != 0 && pf_carica_da_file(p, pag)) continue;
+        zona_carica(io, pag);                   /* (0.371) the same reason */
     }
 }
 
@@ -2346,6 +2375,11 @@ void page_fault_handler(InterruptFrame *frame)
         if (!(err & 0x1) && pf_carica_da_file(p, fault_addr)) {
             return;
         }
+
+        /* a page of a file mapped without writing, or of a .so (0.371) */
+        if (!(err & 0x1) && zona_carica(p, fault_addr)) {
+            return;
+        }
     }
 
     /* A handler for SIGSEGV runs instead of the obituary below. SEGV_ACCERR
@@ -2701,7 +2735,7 @@ int paging_proteggi(Process *p, uint32_t virt, uint32_t pagine, uint32_t prot)
              * accesso. */
             if (PTE_E_RISERVA(pt[pti]) || PTE_E_PIGRA(pt[pti])) continue;
         }
-        if (!pf_carica_da_file(p, va)) return -ENOMEM;
+        if (!pf_carica_da_file(p, va) && !zona_carica(p, va)) return -ENOMEM;
     }
 
     nuovi = 0;

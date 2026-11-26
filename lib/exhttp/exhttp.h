@@ -296,6 +296,12 @@ void exhttp_da(unsigned long primo);
  * Facoltativa nello stub: su una exhttp.so vecchia non fa niente. */
 void exhttp_intestazioni(const char *righe);
 
+/* (26 November 2026, P11) The User-Agent of the process ("EX-OS" unless
+ * set), and Origin/Referer for the next call, set by a browser - not
+ * filtered as exhttp_intestazioni's. Both optional in the stub. */
+void exhttp_agente(const char *ua);
+void exhttp_provenienza(const char *origine, const char *referer);
+
 /* Compressed pages (25 November 2026, debug/implementazione_BROWSER002.txt
  * P2). 1: every request from now on carries «Accept-Encoding:» with the
  * codings this system can decode (gzip, deflate, br, zstd: those whose

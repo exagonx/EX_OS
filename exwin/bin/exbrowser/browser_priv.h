@@ -59,7 +59,7 @@
 #include "biscotti.h"
 
 /* ------------------------------------------------------------------ i tetti */
-#define VERSIONE_APP "0.039"
+#define VERSIONE_APP "0.045"
 /* ! GLI INDIRIZZI DI QUEL CHE LA PAGINA CARICA (fogli, script, immagini) si
  * risolvono in buffer da NAV_URL_MAX, non da EXHTTP_URL_MAX (600): il foglio
  * della pagina dei risultati di Wikipedia ne ha 636, e si perdeva. Quel che si
@@ -201,7 +201,20 @@ typedef struct {
     short         imm;
     unsigned char imm_rip;
     short         imm_px, imm_py;
+    /* (P10) the box's drawing - rounded corners, a shadow, a gradient, the
+     * borders when the corners are round - in VistaImp.deco, or -1 */
+    short         deco;
 } Sfondo;
+
+/* ! THE DRAWING OF ONE BOX (P10, 26 November 2026): what excss says
+ * (css_decoro) and the borders, which with rounded corners are drawn with the
+ * box instead of as four rectangles. browser_disegno.c draws it. */
+#define DECORI_MAX 256
+typedef struct {
+    CssDecoro     d;
+    unsigned char bordo[4];         /* top right bottom left, px; 0 = none here */
+    unsigned int  bordo_col[4];
+} Decoro;
 
 /* ------------------------------------------ quel che i tre file si dividono */
 
@@ -238,6 +251,8 @@ typedef struct {
     CssFoglio      css;
     Sfondo         sfondi[SFONDI_MAX];
     int            sfondi_n;
+    Decoro         deco[DECORI_MAX];
+    int            deco_n;
     char           gen[GEN_MAX];
     unsigned int   gen_n;
     int            scorri;
@@ -249,6 +264,10 @@ typedef struct {
      * others return the window's constants, as they always did. */
     int            cornice;
     int            ax, ay, aw, ah;
+    /* where each element ended up in the last layout (P8): 5 ints per node,
+     * x y w h in the document and the layout's number (rett_di) */
+    int           *rett;
+    unsigned int   rett_max;
     /* ...and where its DRAWING is cut: the part of the rectangle that is on
      * the screen, which moves when the page scrolls. The layout keeps ax..ah
      * (y from 0); cornice_disegna() sets these and g_scorri just before
@@ -280,6 +299,8 @@ extern VistaImp *g_vi;
 #define g_css              (g_vi->css)
 #define g_sfondi           (g_vi->sfondi)
 #define g_sfondi_n         (g_vi->sfondi_n)
+#define g_deco             (g_vi->deco)
+#define g_deco_n           (g_vi->deco_n)
 #define g_gen              (g_vi->gen)
 #define g_gen_n            (g_vi->gen_n)
 #define g_scorri           (g_vi->scorri)
@@ -315,6 +336,59 @@ int riga_x(void);
  * ex_text_width ed ex_draw_text_font: il testo della pagina passa da qui. */
 #define CAR_PAGINA 0x40000000u
 int    car_disponibile(void);
+
+/* browser_disegno.c (P10): plutovg with dlopen - a decorated box, a fill
+ * that may be transparent. Without libplutovg.so.1 a box is a rectangle. */
+int    dis_disponibile(void);
+
+/* browser_cripto.c (P11): __exos_digest and __exos_hmac for crypto.subtle */
+void   cripto_registra(ExJsCtx *js);
+/* browser_ws.c (P11): WebSocket's natives, and every socket closed when the
+ * page goes */
+void   ws_registra(ExJsCtx *js);
+void   ws_tutti_via(void);
+/* browser_lavoratori.c (P11): Web Workers */
+void   lav_registra(ExJsCtx *js);
+void   lav_tutti_via(void);
+/* browser_idb.c (P11): indexedDB over SQLite */
+void   idb_registra(ExJsCtx *js);
+void   idb_via(void);
+/* browser_intl.c (P11): Intl over ICU4C */
+void   intl_registra(ExJsCtx *js);
+/* browser_wasm.c (P12): WebAssembly over WAMR */
+void   wasm_registra(ExJsCtx *js);
+void   wasm_tutti_via(void);
+void   dis_riempi(int x, int y, int w, int h, unsigned int argb);
+void   dis_scatola(const Decoro *d, unsigned int sfondo, int bx, int by, int bw, int bh,
+                   int cx, int cy, int cw, int ch);
+void   dis_svg(int nodo, unsigned int colore, int x, int y, int w, int h,
+               int cx, int cy, int cw, int ch);
+void   dis_svg_misura(int nodo, int larg_css, int alt_css, int *w, int *h);
+/* an SVG file as an image: open it (its own size), then draw it at w x h
+ * into malloc'd straight ARGB, or 0 */
+int    dis_svg_immagine_apri(const unsigned char *b, unsigned int n, int *iw, int *ih);
+unsigned int *dis_svg_immagine(int w, int h);
+
+/* <canvas> 2D: the operations of the prelude's context (exbrowser.c,
+ * __exos_tela), the drawing of a canvas, and whether one changed since the
+ * last time it was asked (then the page is drawn again) */
+enum {
+    TELA_MUOVI = 1, TELA_LINEA, TELA_CUBICA, TELA_QUAD, TELA_ARCO, TELA_RETT, TELA_ELLISSE,
+    TELA_CHIUDI, TELA_NUOVO, TELA_RIEMPI, TELA_TRACCIA, TELA_RITAGLIA, TELA_PULISCI,
+    TELA_SALVA, TELA_RIPRISTINA, TELA_TRASLA, TELA_SCALA, TELA_RUOTA, TELA_MATRICE,
+    TELA_MATRICE_METTI, TELA_TESTO, TELA_TESTO_MISURA, TELA_IMMAGINE, TELA_PIXEL,
+    TELA_RETT_PIENO, TELA_RETT_TRACCIA
+};
+double dis_tela_op(int nodo, int w, int h, int op, const double *a, int na,
+                   const char *s1, const char *s2);
+void   dis_tela_disegna(int nodo, int x, int y, int w, int h, int cx, int cy, int cw, int ch);
+int    dis_tela_sporca(void);
+void   dis_tele_via(void);
+/* browser_estranei.c: the pixels of the <img> node, ARGB, or 0 */
+const unsigned int *est_imm_px(int nodo, int *w, int *h);
+void   est_testo_dentro(int v, char *out, unsigned int max);
+/* exbrowser.c: the User-Agent (P11) */
+const char *agente_browser(void);
 int    car_woff2_pronto(void);
 void   car_pagina_nuova(void);
 int    car_gia(const char *url);
@@ -324,6 +398,8 @@ int    car_aggiungi(const char *url, const CssFontFace *ff, const unsigned char 
                     unsigned int n, const char **come);
 void   car_conta(int *buone, int *tutte);
 ExFont car_della_pagina(int famiglia, int neretto, int corsivo, int corpo);
+/* the box of a node in the last layout, x y w h in the document (P8) */
+void   rett_di(int nodo, int *out);
 int    car_altezza(ExFont f);
 int    car_base(ExFont f);
 int    car_larghezza(ExFont f, const char *s);

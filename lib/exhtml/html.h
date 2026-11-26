@@ -182,6 +182,34 @@ int html_testo_metti(HtmlDoc *d, int nodo, const char *testo);
 /* Il numero di modifiche fatte finora. Vedi il campo `versione`. */
 unsigned int html_versione(const HtmlDoc *d);
 
+/* Who wants to know of each change of the tree (P8, 26 November 2026, for
+ * MutationObserver): tipo HTML_CAMBIO_*, `bersaglio` the node changed (the
+ * parent, for children), `nodo` the child added or removed, `prima` and
+ * `dopo` its siblings (-1 none), `attr` the attribute's name, `vecchio` the
+ * value before (attribute, or text), 0 if there was none. Called AFTER an
+ * addition and a change of attribute, BEFORE a removal and a change of
+ * text. f = 0 takes it away.
+ * One per document; the parse of a whole document is not reported. */
+#define HTML_CAMBIO_AGGIUNTO  1
+#define HTML_CAMBIO_TOLTO     2
+#define HTML_CAMBIO_ATTRIBUTO 3
+#define HTML_CAMBIO_TESTO     4
+typedef void (*HtmlCambio)(void *dato, int tipo, int bersaglio, int nodo, const char *attr,
+                           const char *vecchio, int prima, int dopo);
+void html_su_cambio(HtmlDoc *d, HtmlCambio f, void *dato);
+
+/* Shadow roots and template contents (P9): a node that belongs to another
+ * without being its child. HTML_LEGAME_OMBRA: host -> its "#shadow-root"
+ * (modo 1 open, 0 closed); HTML_LEGAME_CONTENUTO: <template> -> its
+ * "#document-fragment". html_legato rends `a` (or -1), html_legato_da the
+ * other way. A new document (html_prepara) forgets them. */
+#define HTML_LEGAME_OMBRA     1
+#define HTML_LEGAME_CONTENUTO 2
+void html_lega(HtmlDoc *d, int tipo, int da, int a, int modo);
+int  html_legato(const HtmlDoc *d, int tipo, int da, int *modo);
+int  html_legato_da(const HtmlDoc *d, int tipo, int a);
+void html_slega_tutti(const HtmlDoc *d);
+
 /* Analizza `testo` DENTRO un elemento che esiste gia', attaccando quel che
  * trova in fondo ai suoi figli. E' la meta' che serve a `innerHTML = ...`,
  * insieme a html_svuota. Rende 1, o 0 se il nodo non e' un elemento valido.

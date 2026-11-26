@@ -272,6 +272,34 @@ static ExFont font_di(const CssStile *st)
     return font_per(neretto, corsivo, fam, corpo);
 }
 
+/* ! A CSS COLOUR HAS ITS ALPHA IN THE TOP BYTE since P10 (excss), and
+ * ExWin's colours have 0 there and are opaque: what the layout keeps is made
+ * to mean the same here. Text: blended over white (the page has no layer
+ * for text that is not opaque); a background with alpha 0: none; a border
+ * with alpha 0: alpha 1, which browser_disegno.c does not draw; between:
+ * kept, and blended when drawn. */
+static unsigned int sopra_bianco(unsigned int c)
+{
+    unsigned int a = c >> 24, r, g, b;
+
+    if (c == CSS_NIENTE || a == 255) return c;
+    r = ((c >> 16) & 0xFF) * a / 255 + 255 - a;
+    g = ((c >> 8) & 0xFF) * a / 255 + 255 - a;
+    b = (c & 0xFF) * a / 255 + 255 - a;
+    return 0xFF000000u | r << 16 | g << 8 | b;
+}
+
+static void alfa_sistema(CssStile *st)
+{
+    int k;
+
+    st->colore = sopra_bianco(st->colore);
+    if (st->sfondo != CSS_NIENTE && (st->sfondo >> 24) == 0) st->sfondo = CSS_NIENTE;
+    for (k = 0; k < 4; k++)
+        if (st->bordo_col[k] != CSS_NIENTE && (st->bordo_col[k] >> 24) == 0)
+            st->bordo_col[k] = 0x01000000u;
+}
+
 static unsigned int colore_di(const CssStile *st)
 {
     return (st->colore == CSS_NIENTE) ? EX_BLACK : st->colore;
@@ -328,6 +356,7 @@ static int rettangolo(int x, int y, int w, int h, unsigned int colore)
     g_sfondi[i].colore = colore;
     g_sfondi[i].bordo  = 0;
     g_sfondi[i].imm    = -1;
+    g_sfondi[i].deco   = -1;
     return i;
 }
 
@@ -760,6 +789,7 @@ static int bordo_metti(int x, int y, int w, int h, int spess)
     g_sfondi[g_sfondi_n].colore = EX_DARK_GRAY;
     g_sfondi[g_sfondi_n].bordo  = (unsigned char)spess;
     g_sfondi[g_sfondi_n].imm    = -1;
+    g_sfondi[g_sfondi_n].deco   = -1;
     return g_sfondi_n++;
 }
 
@@ -901,7 +931,7 @@ static void impagina_tabella(int v, const CssStile *mio)
             if (!e_cella(html_nome(&g_doc, f))) continue;
             if (c >= TAB_COL_MAX) break;
 
-            css_calcola(&g_css, &g_doc, f, mio, &sc);
+            css_calcola(&g_css, &g_doc, f, mio, &sc); alfa_sistema(&sc);
             suggerimenti(f, &sc);
             w = impagina_in_colonna(f, &sc, rx(), 0, rw(), 1, &a);
 
@@ -1010,7 +1040,7 @@ static void impagina_tabella(int v, const CssStile *mio)
             }
             if (c >= n_col) break;
 
-            css_calcola(&g_css, &g_doc, f, mio, &sc);
+            css_calcola(&g_css, &g_doc, f, mio, &sc); alfa_sistema(&sc);
             suggerimenti(f, &sc);
 
             sp = quanto_scavalca(f, "colspan");
@@ -1032,6 +1062,7 @@ static void impagina_tabella(int v, const CssStile *mio)
                 g_sfondi[g_sfondi_n].colore = sc.sfondo;
                 g_sfondi[g_sfondi_n].bordo  = 0;
                 g_sfondi[g_sfondi_n].imm    = -1;
+                g_sfondi[g_sfondi_n].deco   = -1;
                 g_sfondi_n++;
             }
 
@@ -1213,7 +1244,7 @@ static void flessibile(int v, const CssStile *mio)
     for (f = g_doc.nodi[v].primo_figlio; f >= 0 && n < FLEX_VOCI; f = g_doc.nodi[f].prossimo) {
         if (!voce_flex(f)) continue;
         if (g_doc.nodi[f].tipo == HTML_ELEMENTO) {
-            css_calcola(&g_css, &g_doc, f, mio, &st);
+            css_calcola(&g_css, &g_doc, f, mio, &st); alfa_sistema(&st);
             if (st.display == CSS_DISPLAY_NIENTE || st.visibile == 0) continue;
             if (invisibile(html_nome(&g_doc, f))) continue;
             pref[n] = larg_elemento(f, &st, mio, disp);
@@ -1319,6 +1350,577 @@ static void flessibile(int v, const CssStile *mio)
     g_riga_primo = g_pez_n;
 }
 
+/* =============================================================================
+ * FLEX AND GRID WITH TAFFY (P7, 26 November 2026; BROWSER002 4.4 and 10.5)
+ *
+ * The container's own box - margins, borders, padding, background - stays
+ * this engine's, as for any block. INSIDE it, Taffy (libtaffy_exos.so.1,
+ * tools/taffy-exos) places the children: the whole of flexbox (both
+ * directions, the reverse ones, wrap, grow/shrink/basis, order, every
+ * alignment, gap) and CSS grid (tracks with px, %, fr, minmax, fit-content,
+ * repeat() and auto-fill/auto-fit, lines and spans, auto-flow, dense).
+ *
+ * ! TAFFY NEVER SEES TEXT: for each child it asks "how big are you with this
+ * much room", and the answer is this engine laying the child out in a
+ * column, for measure (impagina_in_colonna_ex, prova 1) - the same
+ * measurement the old flex, the floats and the table cells use. Then each
+ * child is laid out for real where Taffy put it, as wide as Taffy said; a
+ * child stretched taller than its content gets its box that tall (the
+ * background of a row of cards).
+ * ! A CHILD'S OWN MARGINS STAY OURS (the column applies them) except the
+ * auto ones, which are Taffy's: margin-left: auto pushes to the right.
+ * ! WITHOUT THE LIBRARY the old row flex (flessibile) and the rest as blocks:
+ * the browser as before P7.
+ * ========================================================================== */
+#include "browser_taffy.h"
+
+/* =============================================================================
+ * THE FLAT TREE (P9, 26 November 2026): what is drawn under an element
+ *
+ * A host with a shadow root draws the shadow's children, not its own; a
+ * <slot> in a shadow draws the host's children assigned to it (by `slot`,
+ * or all without one for the default slot), or its own as a fallback.
+ * ========================================================================== */
+static int figli_da(int v)
+{
+    int o = html_legato(&g_doc, HTML_LEGAME_OMBRA, v, 0);
+
+    return o >= 0 ? o : v;
+}
+
+/* the host of the shadow root `slot` is in, or -1 (not a slot in a shadow) */
+static int slot_ospite(int s)
+{
+    int r = s;
+
+    if (g_doc.nodi[s].tipo != HTML_ELEMENTO || !uguale(html_nome(&g_doc, s), "slot")) return -1;
+    while (g_doc.nodi[r].padre >= 0) r = g_doc.nodi[r].padre;
+    if (!uguale(html_nome(&g_doc, r), "#shadow-root")) return -1;
+    return html_legato_da(&g_doc, HTML_LEGAME_OMBRA, r);
+}
+
+static int slot_assegnati(int s, int h, int *out, int max)
+{
+    const char *nome = html_attr(&g_doc, s, "name");
+    int         n = 0, f;
+
+    for (f = g_doc.nodi[h].primo_figlio; f >= 0 && n < max; f = g_doc.nodi[f].prossimo) {
+        const char *sl = g_doc.nodi[f].tipo == HTML_ELEMENTO ? html_attr(&g_doc, f, "slot") : 0;
+
+        if (nome && nome[0] ? !(sl && uguale(sl, nome)) : (sl && sl[0])) continue;
+        out[n++] = f;
+    }
+    if (n == 0)                                      /* the fallback content */
+        for (f = g_doc.nodi[s].primo_figlio; f >= 0 && n < max; f = g_doc.nodi[f].prossimo) out[n++] = f;
+    return n;
+}
+
+static int figli_piatti(int v, int *out, int max)
+{
+    int n = 0, f;
+
+    for (f = g_doc.nodi[figli_da(v)].primo_figlio; f >= 0 && n < max; f = g_doc.nodi[f].prossimo) {
+        int h = slot_ospite(f);
+
+        if (h >= 0) n += slot_assegnati(f, h, out + n, max - n);
+        else out[n++] = f;
+    }
+    return n;
+}
+
+static void    *(*tx_nuovo)(void);
+static void     (*tx_libera)(void *);
+static unsigned long long (*tx_nodo)(void *, const TxStile *, unsigned int);
+static int      (*tx_figlio)(void *, unsigned long long, unsigned long long);
+static int      (*tx_calcola)(void *, unsigned long long, float, float, TxMisura, void *);
+static int      (*tx_esito)(void *, unsigned long long, float *);
+static int      (*tx_sporca)(void *, unsigned long long);
+static unsigned int (*tx_misura_stile)(void);
+static int g_tf_cercato = 0, g_tf_pronto = 0;
+
+static int tf_pronto(void)
+{
+    void *h;
+
+    if (g_tf_cercato) return g_tf_pronto;
+    g_tf_cercato = 1;
+    h = dlopen("libtaffy_exos.so.1", RTLD_NOW);
+    if (!h) return 0;
+    *(void **)&tx_nuovo        = dlsym(h, "tx_nuovo");
+    *(void **)&tx_libera       = dlsym(h, "tx_libera");
+    *(void **)&tx_nodo         = dlsym(h, "tx_nodo");
+    *(void **)&tx_figlio       = dlsym(h, "tx_figlio");
+    *(void **)&tx_calcola      = dlsym(h, "tx_calcola");
+    *(void **)&tx_esito        = dlsym(h, "tx_esito");
+    *(void **)&tx_misura_stile = dlsym(h, "tx_misura_stile");
+    *(void **)&tx_sporca       = dlsym(h, "tx_sporca");
+    g_tf_pronto = tx_nuovo && tx_libera && tx_nodo && tx_figlio && tx_calcola && tx_esito &&
+                  tx_misura_stile && tx_misura_stile() == sizeof(TxStile);
+    if (!g_tf_pronto) printf("exbrowser: libtaffy_exos.so.1 di un'altra versione: flex come prima\n");
+    return g_tf_pronto;
+}
+
+/* The measures of one layout: the same child at the same width is the same
+ * size, and Taffy asks the same thing several times (and a container inside
+ * a container multiplies it). Emptied at every impagina(). */
+#define TF_RISERVA 1024
+static struct { int nodo, larg, w, h; } g_tf_ris[TF_RISERVA];
+static int g_tf_ris_n = 0;
+/* the two-step layout of big children (see tf_misura): only when the
+ * library can forget a size (tx_sporca), and not inside a measure */
+static int g_tf_due_tempi = 0;
+/* what Taffy cost in the last layout, for the console (EXBROWSER_TAFFY=1) */
+static unsigned int g_tf_contenitori, g_tf_misure, g_tf_prese, g_tf_ms_misura;
+/* the child that must be at least this tall (stretched): read by
+ * impagina_nodo when it is the root of its column */
+static int g_forza_nodo = -1, g_forza_alt = 0;
+
+typedef struct {
+    int      nodo;
+    short    ordine;
+    CssStile st;
+    TxStile  tx;
+    char     nomi[4][CSS_NOME_AREA];     /* col start, col end, row start, row end */
+} TfVoce;
+
+typedef struct {
+    TfVoce         *voci;
+    const CssStile *mio;
+    int             disp;
+    int             stimate;    /* a big child's height was not measured: 0 for now */
+} TfGiro;
+
+static void tf_riserva_metti(int nodo, int larg, int w, int h)
+{
+    int k;
+
+    for (k = 0; k < g_tf_ris_n; k++)
+        if (g_tf_ris[k].nodo == nodo && g_tf_ris[k].larg == larg) { g_tf_ris[k].w = w; g_tf_ris[k].h = h; return; }
+    if (g_tf_ris_n < TF_RISERVA) {
+        g_tf_ris[g_tf_ris_n].nodo = nodo; g_tf_ris[g_tf_ris_n].larg = larg;
+        g_tf_ris[g_tf_ris_n].w = w;       g_tf_ris[g_tf_ris_n].h = h;
+        g_tf_ris_n++;
+    }
+}
+
+static int tf_e_nan(float v) { return v != v; }
+
+/* ! A BIG CHILD IS NOT MEASURED FOR ITS EXTREMES. Taffy asks a child its
+ * min-content and max-content width as well as its size at a width, and here
+ * each is a whole layout of the child: Wikipedia's article is ONE grid item
+ * of 20000 nodes, laid out at one pixel of width to know its widest word -
+ * 15 seconds instead of 6. Past TF_GRANDE nodes a child is text that wraps:
+ * min-content 0 (it gives way), max-content all the room there is. Its size
+ * at the width it gets is still measured, once. */
+#define TF_GRANDE 2000
+
+static int tf_grande(int nodo)
+{
+    int conta = 0, n = nodo;
+
+    /* depth first, stopping at TF_GRANDE: never more than that many steps */
+    while (n >= 0 && conta <= TF_GRANDE) {
+        conta++;
+        if (g_doc.nodi[n].primo_figlio >= 0) { n = g_doc.nodi[n].primo_figlio; continue; }
+        while (n >= 0 && n != nodo && g_doc.nodi[n].prossimo < 0) n = g_doc.nodi[n].padre;
+        if (n < 0 || n == nodo) break;
+        n = g_doc.nodi[n].prossimo;
+    }
+    return conta > TF_GRANDE;
+}
+
+/* ! THE NATURAL WIDTHS (min-content, max-content) ARE NOT A LAYOUT AT SOME
+ * WIDTH. A child laid out in a column as wide as the container, its right
+ * end looked at, said "as wide as everything" for Wikipedia's toolbar: its
+ * tab list is a flex container 100% wide with justify-content: end, so the
+ * tabs sat at the far right. While a natural width is being measured
+ * (g_tf_intr: -1 min-content, -2 max-content) a flex or grid container
+ * inside asks Taffy for ITS natural width - the sum of its children, the
+ * percentages treated as auto, as the spec says - instead of filling the
+ * column. */
+static int g_tf_intr = 0;
+
+/* one measure: modo > 0 a width, -1 min-content, -2 max-content; through
+ * the reserve (keyed by the mode too) */
+static void tf_misura_una(TfGiro *g, const TfVoce *it, int modo, int *w, int *h)
+{
+    int k, larg, alt = 0, usata, era;
+    unsigned int t0;
+
+    for (k = 0; k < g_tf_ris_n; k++)
+        if (g_tf_ris[k].nodo == it->nodo && g_tf_ris[k].larg == modo) {
+            g_tf_prese++;
+            *w = g_tf_ris[k].w;
+            *h = g_tf_ris[k].h;
+            return;
+        }
+    larg = modo > 0 ? modo : modo == -1 ? 1 : g->disp;
+    era = g_tf_intr;
+    g_tf_intr = modo < 0 ? modo : 0;
+    t0 = uptime_ms();
+    usata = impagina_in_colonna_ex(it->nodo, g->mio, rx(), 0, larg, 1, &alt, 1);
+    g_tf_ms_misura += uptime_ms() - t0;
+    g_tf_intr = era;
+    if (uptime_ms() - t0 > 150 && getenv("EXBROWSER_TAFFY")) {
+        const char *cl = g_doc.nodi[it->nodo].tipo == HTML_ELEMENTO ? html_attr(&g_doc, it->nodo, "class") : 0;
+        printf("exbrowser: taffy misura lenta %u ms: nodo %d <%s class=%.40s> modo %d\n",
+               uptime_ms() - t0, it->nodo,
+               g_doc.nodi[it->nodo].tipo == HTML_ELEMENTO ? html_nome(&g_doc, it->nodo) : "#testo",
+               cl ? cl : "", modo);
+    }
+    /* the pieces end where the text ends: the right padding, border and
+     * margin of the child are after it */
+    if (g_doc.nodi[it->nodo].tipo == HTML_ELEMENTO)
+        usata += imbottitura(&it->st, 1) + lato_bordo(&it->st, 1) + css_margine(&it->st, 1, 0);
+    if (modo > 0 && usata > modo) usata = modo;
+    if (usata < 0) usata = 0;
+    tf_riserva_metti(it->nodo, modo, usata, alt);
+    *w = usata;
+    *h = alt;
+}
+
+static void tf_misura(void *u, unsigned int ctx, float nw, float nh, float aw, float ah,
+                      float *w, float *h)
+{
+    TfGiro       *g = (TfGiro *)u;
+    const TfVoce *it = &g->voci[ctx - 1];
+    int           mw, mh;
+
+    (void)nh; (void)ah;
+    g_tf_misure++;
+    if (tf_e_nan(nw) && tf_grande(it->nodo) && (aw < 0 || g_tf_due_tempi)) {
+        /* min-content 0, max-content (or a width that is only available)
+         * all the room; the height of a big one is asked again at the width
+         * it gets, or found when it is laid out (see below) */
+        *w = aw == -1 ? 0.0f : aw >= 0 ? aw : (float)g->disp;
+        *h = 0;
+        if (g_tf_due_tempi) g->stimate = 1;
+        return;
+    }
+    /* ! A BIG ONE AT A WIDTH: not laid out twice (to measure, then for
+     * real). Its height is 0 for now; tf_disponi lays it out where it goes,
+     * keeps its true height in the reserve, and asks Taffy again if it moved
+     * the others. What the reserve already knows is taken. */
+    if (!tf_e_nan(nw)) {
+        int larg = (int)(nw + 0.5f), k;
+
+        if (larg < 1) larg = 1;
+        if (tf_grande(it->nodo) && g_tf_due_tempi) {
+            for (k = 0; k < g_tf_ris_n; k++)
+                if (g_tf_ris[k].nodo == it->nodo && g_tf_ris[k].larg == larg) break;
+            if (k == g_tf_ris_n) { g->stimate = 1; *w = nw; *h = 0; return; }
+        }
+        tf_misura_una(g, it, larg, &mw, &mh);
+        *w = nw;
+        *h = (float)mh;
+        return;
+    }
+    if (aw < 0) {                       /* a natural width */
+        tf_misura_una(g, it, aw == -1 ? -1 : -2, &mw, &mh);
+        *w = (float)mw;
+        *h = (float)mh;
+        return;
+    }
+    /* fit-content in what is available: the natural width, if it fits (a
+     * big one fills what is available: text that wraps) */
+    if (tf_grande(it->nodo)) mw = (int)aw + 1;
+    else tf_misura_una(g, it, -2, &mw, &mh);
+    if (mw > (int)aw) {
+        int larg = (int)aw < 1 ? 1 : (int)aw;
+
+        tf_misura_una(g, it, larg, &mw, &mh);
+        mw = larg;
+    }
+    *w = (float)mw;
+    *h = (float)mh;
+}
+
+static unsigned char tf_al(unsigned char a)      /* CSS_AL_* -> align of TxStile */
+{
+    switch (a) {
+    case CSS_AL_INIZIO: return 1; case CSS_AL_FINE: return 2; case CSS_AL_CENTRO: return 3;
+    case CSS_AL_BASE: return 4;   case CSS_AL_STIRA: return 5; default: return 0;
+    }
+}
+
+static unsigned char tf_cont(unsigned char a)    /* CSS_AL_* -> content of TxStile */
+{
+    switch (a) {
+    case CSS_AL_INIZIO: return 1; case CSS_AL_FINE: return 2; case CSS_AL_CENTRO: return 3;
+    case CSS_AL_TRA: return 4; case CSS_AL_INTORNO: return 5; case CSS_AL_UGUALE: return 6;
+    case CSS_AL_STIRA: return 7; default: return 0;
+    }
+}
+
+static void tf_tracce(const CssTraccia *c, int n, TxTraccia *t)
+{
+    int k;
+
+    for (k = 0; k < n; k++) {
+        t[k].min_tipo = c[k].min_tipo;
+        t[k].max_tipo = c[k].max_tipo;
+        t[k].min_v = c[k].min_tipo == CSS_TR_PERC ? c[k].min_v / 10000.0f : (float)c[k].min_v;
+        t[k].max_v = c[k].max_tipo == CSS_TR_PERC ? c[k].max_v / 10000.0f :
+                     c[k].max_tipo == CSS_TR_FR ? c[k].max_v / 100.0f : (float)c[k].max_v;
+    }
+}
+
+/* a width of CssStile as a TxDim, border-box */
+static TxDim tf_larg(short v, int perc, const CssStile *st)
+{
+    TxDim d;
+
+    d.tipo = 0; d.v = 0;
+    if (v == CSS_MISURA_NO) return d;
+    if (perc) { d.tipo = 2; d.v = v / 10000.0f; return d; }
+    d.tipo = 1;
+    d.v = (float)(v + (st->scatola_bordo ? 0 : lati_extra(st)));
+    return d;
+}
+
+static TxDim tf_alt(short v, const CssStile *st)
+{
+    TxDim d;
+
+    d.tipo = 0; d.v = 0;
+    if (v == CSS_MISURA_NO || v <= 0) return d;
+    d.tipo = 1;
+    d.v = (float)(v + (st->scatola_bordo ? 0 : imbottitura(st, 0) + imbottitura(st, 2) +
+                                              lato_bordo(st, 0) + lato_bordo(st, 2)));
+    return d;
+}
+
+static void tf_stile_vuoto(TxStile *t)
+{
+    int k;
+
+    memset(t, 0, sizeof(*t));
+    t->display = 1;
+    t->shrink = 1;
+    for (k = 0; k < 4; k++) t->margine[k].tipo = 1;     /* 0 px: auto is chosen, not given */
+}
+
+#define TF_VOCI 512
+
+static int nascosto_posizione(const CssStile *s);
+
+/* 1 done; 0 the old way must do it (no library, no memory) */
+static int tf_disponi(int v, const CssStile *mio, const CssStile *ered)
+{
+    static CssDisposizione D;
+    TxStile          cont;
+    TxTraccia        tc[CSS_TRACCE_MAX], tr[CSS_TRACCE_MAX], tac[4], tar[4];
+    TxArea           ta[CSS_AREE_MAX];
+    static char      area_nomi[CSS_AREE_MAX][CSS_NOME_AREA];
+    TfGiro           giro;
+    TfVoce          *voci;
+    unsigned long long radice, *nodi;
+    void            *a;
+    int              n = 0, f, i, k, x0, y0, disp, fondo;
+    float            e[4];
+    CssStile         st;
+
+    if (!tf_pronto()) return 0;
+    g_tf_contenitori++;
+    voci = (TfVoce *)malloc(TF_VOCI * sizeof(TfVoce));
+    nodi = (unsigned long long *)malloc(TF_VOCI * sizeof(unsigned long long));
+    if (!voci || !nodi) { free(voci); free(nodi); return 0; }
+
+    a_capo();
+    x0 = rx(); disp = rw(); y0 = g_pen_y;
+
+    /* the container: its style again, and what CssStile has no room for */
+    css_calcola(&g_css, &g_doc, v, ered, &st); alfa_sistema(&st);
+    css_disposizione(&D);
+    tf_stile_vuoto(&cont);
+    cont.display = D.griglia ? 3 : 2;
+    cont.dir = D.dir;
+    cont.wrap = D.a_capo;
+    switch (mio->giustifica) {
+    case CSS_GIU_FINE: cont.justify_content = 2; break;   case CSS_GIU_CENTRO: cont.justify_content = 3; break;
+    case CSS_GIU_TRA: cont.justify_content = 4; break;    case CSS_GIU_INTORNO: cont.justify_content = 5; break;
+    case CSS_GIU_UGUALE: cont.justify_content = 6; break; default: cont.justify_content = 0; break;
+    }
+    cont.align_items = tf_al(D.allinea_voci);
+    cont.align_content = tf_cont(D.allinea_contenuto);
+    cont.justify_items = tf_al(D.giustifica_voci);
+    cont.gap_col = mio->spazio_col == CSS_MISURA_NO ? 0 : mio->spazio_col;
+    cont.gap_rig = mio->spazio_riga == CSS_MISURA_NO ? 0 : mio->spazio_riga;
+    cont.w.tipo = 1; cont.w.v = (float)disp;
+    if (g_tf_intr) cont.w.tipo = 0;     /* its natural width: see g_tf_intr */
+    if (mio->altezza != CSS_MISURA_NO && mio->altezza > 0) {
+        cont.h.tipo = 1;
+        cont.h.v = (float)(mio->scatola_bordo ? mio->altezza - imbottitura(mio, 0) - imbottitura(mio, 2) -
+                                                lato_bordo(mio, 0) - lato_bordo(mio, 2) : mio->altezza);
+        if (cont.h.v < 0) cont.h.v = 0;
+    }
+    if (mio->altezza_min != CSS_MISURA_NO && mio->altezza_min > 0) {
+        cont.min_h.tipo = 1; cont.min_h.v = (float)mio->altezza_min;
+    }
+    tf_tracce(D.col, D.n_col, tc);            cont.col = tc;       cont.n_col = D.n_col;
+    tf_tracce(D.rig, D.n_rig, tr);            cont.rig = tr;       cont.n_rig = D.n_rig;
+    tf_tracce(D.auto_col, D.n_auto_col, tac); cont.auto_col = tac; cont.n_auto_col = D.n_auto_col;
+    tf_tracce(D.auto_rig, D.n_auto_rig, tar); cont.auto_rig = tar; cont.n_auto_rig = D.n_auto_rig;
+    cont.col_rip = D.col_rip; cont.col_rip_da = D.col_rip_da; cont.col_rip_n = D.col_rip_n;
+    cont.rig_rip = D.rig_rip; cont.rig_rip_da = D.rig_rip_da; cont.rig_rip_n = D.rig_rip_n;
+    cont.flusso = D.flusso;
+    if (D.n_aree) {
+        for (k = 0; k < D.n_aree && k < CSS_AREE_MAX; k++) {
+            memcpy(area_nomi[k], D.aree[k].nome, CSS_NOME_AREA);
+            ta[k].nome = area_nomi[k];      /* D is about to serve the children */
+            ta[k].r0 = (unsigned short)(D.aree[k].r0 + 1); ta[k].r1 = (unsigned short)(D.aree[k].r1 + 2);
+            ta[k].c0 = (unsigned short)(D.aree[k].c0 + 1); ta[k].c1 = (unsigned short)(D.aree[k].c1 + 2);
+        }
+        cont.aree = ta; cont.n_aree = D.n_aree;
+        cont.aree_righe = D.aree_righe; cont.aree_colonne = D.aree_colonne;
+    }
+
+    /* the children: elements and runs of text (an anonymous item), of the
+     * flat tree (P9: a shadow's, a slot's) */
+    {
+        int *piatti = (int *)malloc(TF_VOCI * sizeof(int)), np, q;
+
+        np = piatti ? figli_piatti(v, piatti, TF_VOCI) : 0;
+    for (q = 0; q < np && n < TF_VOCI; q++) {
+        TfVoce  *it = &voci[n];
+        TxStile *c = &it->tx;
+
+        f = piatti[q];
+
+        if (!voce_flex(f)) continue;
+        it->nodo = f;
+        it->ordine = 0;
+        tf_stile_vuoto(c);
+        if (g_doc.nodi[f].tipo == HTML_ELEMENTO) {
+            css_calcola(&g_css, &g_doc, f, mio, &it->st); alfa_sistema(&it->st);
+            if (it->st.display == CSS_DISPLAY_NIENTE || it->st.visibile == 0) continue;
+            if (invisibile(html_nome(&g_doc, f)) || nascosto_posizione(&it->st)) continue;
+            css_disposizione(&D);
+            it->ordine = D.ordine;
+            c->grow = it->st.flex_cresce / 100.0f;
+            c->shrink = D.restringe / 100.0f;
+            if (D.base_tipo == 1) { c->basis.tipo = 1; c->basis.v = (float)D.base; }
+            else if (D.base_tipo == 2) { c->basis.tipo = 2; c->basis.v = D.base / 10000.0f; }
+            c->w     = tf_larg(it->st.larghezza, it->st.larghezza_perc & CSS_LARG_PERC, &it->st);
+            c->min_w = tf_larg(it->st.larghezza_min, it->st.larghezza_perc & CSS_LARG_MIN_PERC, &it->st);
+            c->max_w = tf_larg(it->st.larghezza_max, it->st.larghezza_perc & CSS_LARG_MAX_PERC, &it->st);
+            c->h     = tf_alt(it->st.altezza, &it->st);
+            c->min_h = tf_alt(it->st.altezza_min, &it->st);
+            for (k = 0; k < 4; k++)
+                if (it->st.margine[k] == CSS_MISURA_AUTO) c->margine[k].tipo = 0;
+            c->align_self = tf_al(D.allinea_se);
+            c->justify_self = tf_al(D.giustifica_se);
+            c->col_inizio = D.col_inizio; c->col_fine = D.col_fine;
+            c->rig_inizio = D.rig_inizio; c->rig_fine = D.rig_fine;
+            memcpy(it->nomi[0], D.nome_col_inizio, CSS_NOME_AREA);
+            memcpy(it->nomi[1], D.nome_col_fine, CSS_NOME_AREA);
+            memcpy(it->nomi[2], D.nome_rig_inizio, CSS_NOME_AREA);
+            memcpy(it->nomi[3], D.nome_rig_fine, CSS_NOME_AREA);
+            c->nascosto = D.trabocca;
+        } else {
+            it->st = *mio;
+            for (k = 0; k < 4; k++) it->nomi[k][0] = 0;
+        }
+        n++;
+    }
+        free(piatti);
+    }
+    if (n == 0) { free(voci); free(nodi); return 0; }
+
+    /* order, then the document: insertion sort, stable */
+    for (i = 1; i < n; i++) {
+        TfVoce t = voci[i];
+
+        for (k = i - 1; k >= 0 && voci[k].ordine > t.ordine; k--) voci[k + 1] = voci[k];
+        voci[k + 1] = t;
+    }
+
+    a = tx_nuovo();
+    if (!a) { free(voci); free(nodi); return 0; }
+    radice = tx_nodo(a, &cont, 0);
+    for (i = 0; i < n; i++) {
+        /* the names now: the sort has moved the items */
+        voci[i].tx.nome_col_inizio = voci[i].nomi[0][0] ? voci[i].nomi[0] : 0;
+        voci[i].tx.nome_col_fine   = voci[i].nomi[1][0] ? voci[i].nomi[1] : 0;
+        voci[i].tx.nome_rig_inizio = voci[i].nomi[2][0] ? voci[i].nomi[2] : 0;
+        voci[i].tx.nome_rig_fine   = voci[i].nomi[3][0] ? voci[i].nomi[3] : 0;
+        nodi[i] = tx_nodo(a, &voci[i].tx, (unsigned int)i + 1);
+        tx_figlio(a, radice, nodi[i]);
+    }
+    giro.voci = voci;
+    giro.mio = mio;
+    giro.disp = disp;
+    giro.stimate = 0;
+    {
+        int era = g_tf_due_tempi;
+
+        g_tf_due_tempi = tx_sporca && !g_misura;
+        k = tx_calcola(a, radice, g_tf_intr ? (float)g_tf_intr : (float)disp, 0.0f / 0.0f, tf_misura, &giro);
+        g_tf_due_tempi = era;
+    }
+    if (k != 0) { tx_libera(a); free(voci); free(nodi); return 0; }
+
+    /* each child where Taffy put it, as wide as Taffy said */
+    tx_esito(a, radice, e);
+    fondo = y0 + (int)e[3];
+    {
+        int   *pz = (int *)malloc((size_t)(n + 1) * 2 * sizeof(int));
+        float *dove = (float *)malloc((size_t)n * 4 * sizeof(float));
+
+        for (i = 0; i < n; i++) {
+            int alt = 0;
+
+            if (pz) { pz[2 * i] = g_pez_n; pz[2 * i + 1] = g_sfondi_n; }
+            if (tx_esito(a, nodi[i], e) != 0) { e[0] = e[1] = e[3] = 0; e[2] = 1; }
+            if (dove) memcpy(&dove[4 * i], e, sizeof(e));
+            g_forza_nodo = voci[i].nodo;
+            g_forza_alt  = (int)e[3];
+            impagina_in_colonna_ex(voci[i].nodo, mio, x0 + (int)e[0], y0 + (int)e[1],
+                                   e[2] < 1 ? 1 : (int)e[2], g_misura ? 2 : 0, &alt, 1);
+            g_forza_nodo = -1;
+            if (giro.stimate && tf_grande(voci[i].nodo) && alt > (int)e[3]) {
+                /* its true height, for Taffy's second look */
+                tf_riserva_metti(voci[i].nodo, e[2] < 1 ? 1 : (int)(e[2] + 0.5f), (int)(e[2] + 0.5f), alt);
+                tx_sporca(a, nodi[i]);
+            }
+            if (y0 + (int)e[1] + alt > fondo) fondo = y0 + (int)e[1] + alt;
+        }
+        if (pz) { pz[2 * n] = g_pez_n; pz[2 * n + 1] = g_sfondi_n; }
+
+        /* ! THE SECOND LOOK: the big ones are now their true height, the
+         * others move where Taffy now puts them - their pieces are moved,
+         * not made again (widths do not change with heights) */
+        if (giro.stimate && pz && dove &&
+            tx_calcola(a, radice, g_tf_intr ? (float)g_tf_intr : (float)disp, 0.0f / 0.0f, tf_misura, &giro) == 0) {
+            tx_esito(a, radice, e);
+            fondo = y0 + (int)e[3];
+            for (i = 0; i < n; i++) {
+                int dx, dy, q;
+
+                if (tx_esito(a, nodi[i], e) != 0) continue;
+                dx = (int)e[0] - (int)dove[4 * i];
+                dy = (int)e[1] - (int)dove[4 * i + 1];
+                if ((int)e[2] == (int)dove[4 * i + 2] && (dx || dy)) {
+                    for (q = pz[2 * i]; q < pz[2 * i + 2]; q++) { g_pez[q].x += dx; g_pez[q].y += dy; }
+                    for (q = pz[2 * i + 1]; q < pz[2 * i + 3]; q++) { g_sfondi[q].x += dx; g_sfondi[q].y += dy; }
+                }
+                if (y0 + (int)e[1] + (int)e[3] > fondo) fondo = y0 + (int)e[1] + (int)e[3];
+            }
+        }
+        free(pz);
+        free(dove);
+    }
+    tx_libera(a);
+    free(voci);
+    free(nodi);
+
+    g_pen_y = fondo;
+    g_pen_x = rx();
+    g_riga_h = alt_riga_f(font_di(mio));
+    g_riga_primo = g_pez_n;
+    return 1;
+}
+
 /* ! IL TESTO «SOLO PER I LETTORI DI SCHERMO» NON SI MOSTRA. I siti lo
  * scrivono in posizione assoluta fuori dallo schermo (left: -9999px) o in un
  * riquadro di un pixel: per chi guarda non c'e'. Impaginato nel flusso — come
@@ -1335,7 +1937,79 @@ static int nascosto_posizione(const CssStile *s)
     return 0;
 }
 
+static void impagina_nodo_vero(int v, const CssStile *ered);
+
+/* =============================================================================
+ * WHERE EACH ELEMENT ENDED UP (P8, 26 November 2026)
+ *
+ * The box of an element is the union of what it made - its pieces of text
+ * and its backgrounds and borders - written at the end of its layout, when
+ * it is real (not a measure). getBoundingClientRect, offsetWidth and the
+ * Intersection- and ResizeObserver of the prelude read it (rett_di). One
+ * entry per node of the view, with the number of the layout that wrote it:
+ * an element not laid out this time (display: none) reads zeros.
+ * ========================================================================== */
+static unsigned int g_impagina_giro = 1;
+
+static void rett_segna(int v, int pz, int sf)
+{
+    int i, x0 = 0x7fffffff, y0 = 0x7fffffff, x1 = -0x7fffffff, y1 = -0x7fffffff;
+
+    if (!g_vi->rett || (unsigned int)v >= g_vi->rett_max) {
+        unsigned int serve = g_nodi_max ? g_nodi_max : 1024;
+        int *nuovo;
+
+        if ((unsigned int)v >= serve) return;
+        nuovo = (int *)realloc(g_vi->rett, serve * 5 * sizeof(int));
+        if (!nuovo) return;
+        memset(nuovo + g_vi->rett_max * 5, 0, (serve - g_vi->rett_max) * 5 * sizeof(int));
+        g_vi->rett = nuovo;
+        g_vi->rett_max = serve;
+    }
+    for (i = pz; i < g_pez_n; i++) {
+        int h = g_pez[i].rif >= 0 ? g_pez[i].h : car_altezza(g_pez[i].font);
+
+        if (g_pez[i].x < x0) x0 = g_pez[i].x;
+        if (g_pez[i].y < y0) y0 = g_pez[i].y;
+        if (g_pez[i].x + g_pez[i].w > x1) x1 = g_pez[i].x + g_pez[i].w;
+        if (g_pez[i].y + h > y1) y1 = g_pez[i].y + h;
+    }
+    for (i = sf; i < g_sfondi_n; i++) {
+        if (g_sfondi[i].x < x0) x0 = g_sfondi[i].x;
+        if (g_sfondi[i].y < y0) y0 = g_sfondi[i].y;
+        if (g_sfondi[i].x + g_sfondi[i].w > x1) x1 = g_sfondi[i].x + g_sfondi[i].w;
+        if (g_sfondi[i].y + g_sfondi[i].h > y1) y1 = g_sfondi[i].y + g_sfondi[i].h;
+    }
+    {
+        int *r = g_vi->rett + v * 5;
+
+        r[4] = (int)g_impagina_giro;
+        if (x1 < x0) { r[0] = r[1] = r[2] = r[3] = 0; return; }
+        r[0] = x0 - area_x();
+        r[1] = y0 - area_y();
+        r[2] = x1 - x0;
+        r[3] = y1 - y0;
+    }
+}
+
+void rett_di(int nodo, int *out)
+{
+    out[0] = out[1] = out[2] = out[3] = 0;
+    if (!g_vi->rett || nodo < 0 || (unsigned int)nodo >= g_vi->rett_max) return;
+    if (g_vi->rett[nodo * 5 + 4] != (int)g_impagina_giro) return;
+    memcpy(out, g_vi->rett + nodo * 5, 4 * sizeof(int));
+}
+
 static void impagina_nodo(int v, const CssStile *ered)
+{
+    int pz = g_pez_n, sf = g_sfondi_n;
+
+    impagina_nodo_vero(v, ered);
+    if (!g_misura && v >= 0 && (unsigned int)v < g_doc.nodi_n && g_doc.nodi[v].tipo == HTML_ELEMENTO)
+        rett_segna(v, pz, sf);
+}
+
+static void impagina_nodo_vero(int v, const CssStile *ered)
 {
     int f;
 
@@ -1356,6 +2030,9 @@ static void impagina_nodo(int v, const CssStile *ered)
         int         era_link = g_link_ora;
         int         era_sx = g_marg_sx, era_dx = g_marg_dx;
         int         sfondo_mio = -1;
+        int         bordi_nel_deco = 0;     /* P10: round corners */
+        int         ha_deco = 0;
+        CssDecoro   deco_mio;
         int         alt_cima   = -1;        /* dove comincia il contenuto del blocco */
         int         bt = 0, br = 0, bb = 0, bl = 0, pb = 0;   /* bordi e padding di sotto */
         int         i_sx = -1, i_dx = -1, box_x = 0, box_w = 0, box_y = 0;
@@ -1364,13 +2041,25 @@ static void impagina_nodo(int v, const CssStile *ered)
         int         e_blocco;
         int         radice = (v == g_col_radice);
         int         segno_mio = 2;      /* list-style di QUESTO elemento */
+        int         griglia_mio = 0;    /* display: grid (P7, css_disposizione) */
+        int         forza = 0;          /* stretched by Taffy to this height (P7) */
 
         if (invisibile(nome)) return;
         if (radice) g_col_radice = -1;      /* i figli sono figli qualunque */
+        if (radice && v == g_forza_nodo) { forza = g_forza_alt; g_forza_nodo = -1; }
 
-        css_calcola(&g_css, &g_doc, v, ered, &mio);
+        css_calcola(&g_css, &g_doc, v, ered, &mio); alfa_sistema(&mio);
         /* Si legge SUBITO: il prossimo css_calcola (un figlio) lo cambia. */
         segno_mio = css_segno_lista();
+        {
+            static CssDisposizione d;
+
+            css_disposizione(&d);
+            griglia_mio = d.griglia;
+        }
+        css_decoro(&deco_mio);          /* P10: subito anche questo */
+        ha_deco = deco_mio.raggio[0] || deco_mio.raggio[1] || deco_mio.raggio[2] || deco_mio.raggio[3] ||
+                  deco_mio.ombra || deco_mio.sfumatura;
         suggerimenti(v, &mio);
 
         /* ! `display: none` TOGLIE ANCHE I FIGLI, e va fatto qui prima di
@@ -1386,6 +2075,19 @@ static void impagina_nodo(int v, const CssStile *ered)
         if (mio.visibile == 0) return;
 
         if (nascosto_posizione(&mio)) return;
+
+        /* ! A <slot> HAS NO BOX OF ITS OWN (display: contents): it draws the
+         * host's children assigned to it, inheriting from it (P9) */
+        {
+            int h = slot_ospite(v);
+
+            if (h >= 0) {
+                int lista[256], k, q2 = slot_assegnati(v, h, lista, 256);
+
+                for (k = 0; k < q2; k++) { impagina_nodo(lista[k], &mio); g_stile_ora = mio; }
+                return;
+            }
+        }
 
         /* ! position: relative SPOSTA QUEL CHE HA GIA' IMPAGINATO, e il posto
          * resta dov'era: e' la definizione del CSS. Si impagina l'elemento
@@ -1446,6 +2148,7 @@ static void impagina_nodo(int v, const CssStile *ered)
                 g_sfondi[sf].colore = mio.sfondo;
                 g_sfondi[sf].bordo  = 0;   /* ! la voce si riusa: senza, restava il contorno di una tabella di prima */
                 g_sfondi[sf].imm    = -1;
+                g_sfondi[sf].deco   = -1;
             }
 
             impagina_tabella(v, &mio);
@@ -1474,6 +2177,10 @@ static void impagina_nodo(int v, const CssStile *ered)
                 g_sfondi[g_sfondi_n].w = rw();
                 g_sfondi[g_sfondi_n].h = 2;
                 g_sfondi[g_sfondi_n].colore = EX_SHADOW;
+                /* ! the entry is reused: what an earlier layout left there */
+                g_sfondi[g_sfondi_n].bordo  = 0;
+                g_sfondi[g_sfondi_n].imm    = -1;
+                g_sfondi[g_sfondi_n].deco   = -1;
                 g_sfondi_n++;
             }
             g_pen_y += 6;
@@ -1515,6 +2222,8 @@ static void impagina_nodo(int v, const CssStile *ered)
             }
             p.testo = 0;
             p.testo_off = 0;
+            p.alt_css = (mio.altezza != CSS_MISURA_NO && mio.altezza > 0) ? mio.altezza : 0;
+            p.colore = colore_di(&mio);
 
             r = g_cliente->misura(v, &p);
 
@@ -1644,7 +2353,7 @@ static void impagina_nodo(int v, const CssStile *ered)
             /* ! UN RIQUADRO DI SFONDO ANCHE PER LA SOLA IMMAGINE (10 ottobre
              * 2026): un logo o un'icona sono quasi sempre un elemento senza
              * colore e senza testo, con un'immagine di sfondo e una misura. */
-            if ((mio.sfondo != CSS_NIENTE || mio.sf_url) && g_sfondi_n < SFONDI_MAX) {
+            if ((mio.sfondo != CSS_NIENTE || mio.sf_url || ha_deco) && g_sfondi_n < SFONDI_MAX) {
                 sfondo_mio = g_sfondi_n++;
                 g_sfondi[sfondo_mio].x = rx();
                 g_sfondi[sfondo_mio].y = g_pen_y;
@@ -1653,6 +2362,15 @@ static void impagina_nodo(int v, const CssStile *ered)
                 g_sfondi[sfondo_mio].colore = mio.sfondo;
                 g_sfondi[sfondo_mio].bordo  = 0;   /* ! la voce si riusa: senza, restava il contorno di una tabella di prima */
                 g_sfondi[sfondo_mio].imm    = -1;
+                g_sfondi[sfondo_mio].deco   = -1;
+                /* (P10) rounded corners, a shadow, a gradient: a Decoro */
+                if (ha_deco && g_deco_n < DECORI_MAX) {
+                    Decoro *dd = &g_deco[g_deco_n];
+
+                    dd->d = deco_mio;
+                    dd->bordo[0] = dd->bordo[1] = dd->bordo[2] = dd->bordo[3] = 0;
+                    g_sfondi[sfondo_mio].deco = (short)g_deco_n++;
+                }
                 if (mio.sf_url && g_cliente && g_cliente->sfondo) {
                     /* cover e 100% vogliono l'immagine larga quanto il riquadro */
                     int larg = (mio.sf_mw == CSS_SF_COPRE || mio.sf_mw == -200) ? rw()
@@ -1673,9 +2391,21 @@ static void impagina_nodo(int v, const CssStile *ered)
             bt = lato_bordo(&mio, 0); br = lato_bordo(&mio, 1);
             bb = lato_bordo(&mio, 2); bl = lato_bordo(&mio, 3);
             box_x = rx(); box_w = rw(); box_y = g_pen_y;
+            if (sfondo_mio >= 0 && g_sfondi[sfondo_mio].deco >= 0 &&
+                (deco_mio.raggio[0] || deco_mio.raggio[1] || deco_mio.raggio[2] || deco_mio.raggio[3])) {
+                /* ! ROUND CORNERS: the borders are drawn with the box */
+                Decoro *dd = &g_deco[g_sfondi[sfondo_mio].deco];
+
+                dd->bordo[0] = (unsigned char)(bt > 255 ? 255 : bt); dd->bordo_col[0] = colore_bordo(&mio, 0);
+                dd->bordo[1] = (unsigned char)(br > 255 ? 255 : br); dd->bordo_col[1] = colore_bordo(&mio, 1);
+                dd->bordo[2] = (unsigned char)(bb > 255 ? 255 : bb); dd->bordo_col[2] = colore_bordo(&mio, 2);
+                dd->bordo[3] = (unsigned char)(bl > 255 ? 255 : bl); dd->bordo_col[3] = colore_bordo(&mio, 3);
+                bordi_nel_deco = 1;
+            } else {
             if (bt) rettangolo(box_x, box_y, box_w, bt, colore_bordo(&mio, 0));
             if (bl) i_sx = rettangolo(box_x, box_y, bl, 0, colore_bordo(&mio, 3));
             if (br) i_dx = rettangolo(box_x + box_w - br, box_y, br, 0, colore_bordo(&mio, 1));
+            }
             col_sotto = colore_bordo(&mio, 2);
             pb = imbottitura(&mio, 2);
             g_marg_sx += bl + imbottitura(&mio, 3);
@@ -1710,7 +2440,7 @@ static void impagina_nodo(int v, const CssStile *ered)
                 CssStile della_lista;
                 int      primo = g_doc.nodi[su].primo_figlio;
 
-                css_calcola(&g_css, &g_doc, su, 0, &della_lista);
+                css_calcola(&g_css, &g_doc, su, 0, &della_lista); alfa_sistema(&della_lista);
                 if (segno_mio == 2) segno_mio = css_segno_lista();
 
                 /* Le voci di un elenco in fila (display: flex) senza segno:
@@ -1805,11 +2535,14 @@ static void impagina_nodo(int v, const CssStile *ered)
         if (!e_blocco && mio.margine[3] != CSS_MISURA_NO && mio.margine[3] > 0)
             g_pen_x += mio.margine[3];
 
-        if (e_blocco && mio.display == CSS_DISPLAY_FLEX && !mio.flex_colonna) {
+        if (e_blocco && (mio.display == CSS_DISPLAY_FLEX || griglia_mio) && tf_disponi(v, &mio, ered)) {
+            g_stile_ora = mio;
+        } else if (e_blocco && mio.display == CSS_DISPLAY_FLEX && !mio.flex_colonna) {
             flessibile(v, &mio);
             g_stile_ora = mio;
         } else
-        for (f = g_doc.nodi[v].primo_figlio; f >= 0; f = g_doc.nodi[f].prossimo) {
+        /* the flat tree's children (P9): a host draws its shadow's */
+        for (f = g_doc.nodi[figli_da(v)].primo_figlio; f >= 0; f = g_doc.nodi[f].prossimo) {
             impagina_nodo(f, &mio);
             g_stile_ora = mio;      /* i figli l'hanno cambiato: si rimette */
         }
@@ -1833,6 +2566,12 @@ static void impagina_nodo(int v, const CssStile *ered)
                 int vuole = (mio.altezza != CSS_MISURA_NO && mio.altezza > 0) ? mio.altezza : 0;
 
                 if (mio.altezza_min != CSS_MISURA_NO && mio.altezza_min > vuole) vuole = mio.altezza_min;
+                /* stretched by its flex or grid container (P7) */
+                if (forza > 0) {
+                    int fz = forza - pb - bb - css_margine(&mio, 0, 0) - css_margine(&mio, 2, 0);
+
+                    if (fz > vuole) vuole = fz;
+                }
                 if (vuole > 0 && alt_cima >= 0 && g_pen_y - alt_cima < vuole) g_pen_y = alt_cima + vuole;
             }
             /* Il fondo del riquadro: il contenuto, il padding di sotto, poi il
@@ -1840,7 +2579,7 @@ static void impagina_nodo(int v, const CssStile *ered)
              * un blocco senza bordi e padding resta esattamente com'era. */
             if (pb || bb || bt || bl || br) {
                 g_pen_y += ((g_pen_x > rx()) ? g_riga_h : 0) + pb;
-                if (bb) rettangolo(box_x, g_pen_y, box_w, bb, col_sotto);
+                if (bb && !bordi_nel_deco) rettangolo(box_x, g_pen_y, box_w, bb, col_sotto);
                 g_pen_y += bb;
                 if (i_sx >= 0) g_sfondi[i_sx].h = g_pen_y - box_y;
                 if (i_dx >= 0) g_sfondi[i_dx].h = g_pen_y - box_y;
@@ -1872,6 +2611,10 @@ void impagina(void)
     int pagina_sf = -1;         /* il riquadro dello sfondo della pagina */
 
     css_variabili(g_css_var, sizeof(g_css_var));
+    g_impagina_giro++;          /* the boxes of the last layout are old */
+    g_tf_ris_n = 0;             /* the measures of the last layout are old */
+    g_tf_contenitori = g_tf_misure = g_tf_prese = g_tf_ms_misura = 0;
+    g_forza_nodo = -1;
 
     g_pez_n = 0;
     g_link_n = 0;
@@ -1891,6 +2634,7 @@ void impagina(void)
     g_marg_sx = g_marg_dx = 0;
     g_riga_primo = 0;
     g_sfondi_n = 0;
+    g_deco_n = 0;
     g_gal_n = 0;
     g_col_radice = -1;
     g_rel_nodo = -1;
@@ -1919,7 +2663,7 @@ void impagina(void)
 
                 if (g_doc.nodi[i].tipo != HTML_ELEMENTO ||
                     !uguale(html_nome(&g_doc, (int)i), CHI[k])) continue;
-                css_calcola(&g_css, &g_doc, (int)i, 0, &sb);
+                css_calcola(&g_css, &g_doc, (int)i, 0, &sb); alfa_sistema(&sb);
                 suggerimenti((int)i, &sb);
                 if (sb.sfondo != CSS_NIENTE && g_sfondi_n < SFONDI_MAX) {
                     pagina_sf = g_sfondi_n++;
@@ -1930,6 +2674,7 @@ void impagina(void)
                     g_sfondi[pagina_sf].colore = sb.sfondo;
                     g_sfondi[pagina_sf].bordo  = 0;
                     g_sfondi[pagina_sf].imm    = -1;
+                    g_sfondi[pagina_sf].deco   = -1;
                 }
                 break;
             }
@@ -1944,6 +2689,9 @@ void impagina(void)
     a_capo();
 
     g_altezza = g_pen_y - area_y() + g_riga_h;
+    if (g_tf_contenitori && getenv("EXBROWSER_TAFFY"))
+        printf("exbrowser: taffy %u contenitori, %u misure (%u dalla riserva), %u ms a misurare\n",
+               g_tf_contenitori, g_tf_misure, g_tf_prese, g_tf_ms_misura);
     /* un float puo' scendere piu' giu' dell'ultima riga di testo */
     if (gal_fondo() - area_y() > g_altezza) g_altezza = gal_fondo() - area_y();
     if (g_altezza < 1) g_altezza = 1;
@@ -2071,8 +2819,14 @@ void disegna_contenuto(void)
             int x = g_sfondi[i].x, w = g_sfondi[i].w;
             if (x < T_X()) { w -= T_X() - x; x = T_X(); }
             if (x + w > T_X() + T_W()) w = T_X() + T_W() - x;
-            if (w > 0 && g_sfondi[i].colore != CSS_NIENTE)
-                ex_fill_rect(g_f, x, y, w, h, g_sfondi[i].colore);
+            if (g_sfondi[i].deco >= 0 && g_sfondi[i].deco < g_deco_n) {
+                /* (P10) corners, shadow, gradient: plutovg; the clip is the
+                 * area, the box is all of it (its shadow may be outside) */
+                dis_scatola(&g_deco[g_sfondi[i].deco], g_sfondi[i].colore,
+                            g_sfondi[i].x, g_sfondi[i].y - g_scorri, g_sfondi[i].w, g_sfondi[i].h,
+                            T_X(), T_Y(), T_W(), T_H());
+            } else if (w > 0 && g_sfondi[i].colore != CSS_NIENTE)
+                dis_riempi(x, y, w, h, g_sfondi[i].colore);
             /* L'immagine sopra il colore, dentro lo stesso ritaglio. */
             if (w > 0 && g_sfondi[i].imm >= 0 && g_cliente && g_cliente->sfondo_disegna)
                 g_cliente->sfondo_disegna(g_sfondi[i].imm,
@@ -2093,12 +2847,12 @@ void disegna_contenuto(void)
             int y0 = g_sfondi[i].y - g_scorri;
             int h0 = g_sfondi[i].h;
 
-            ex_fill_rect(g_f, x, y, b, h, g_sfondi[i].colore);
-            ex_fill_rect(g_f, x + w - b, y, b, h, g_sfondi[i].colore);
+            dis_riempi(x, y, b, h, g_sfondi[i].colore);
+            dis_riempi(x + w - b, y, b, h, g_sfondi[i].colore);
             if (y0 >= T_Y())
-                ex_fill_rect(g_f, x, y0, w, b, g_sfondi[i].colore);
+                dis_riempi(x, y0, w, b, g_sfondi[i].colore);
             if (y0 + h0 <= T_Y() + T_H())
-                ex_fill_rect(g_f, x, y0 + h0 - b, w, b, g_sfondi[i].colore);
+                dis_riempi(x, y0 + h0 - b, w, b, g_sfondi[i].colore);
         }
     }
 

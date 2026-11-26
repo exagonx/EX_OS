@@ -115,6 +115,7 @@ typedef struct {
     unsigned int ripeti_ms;      /* 0 = una volta sola */
     unsigned int id;
     int          vivo;
+    int          livello;        /* how deep in a chain of timers (P8: the 4 ms rule) */
 } Lavoro;
 
 struct ExJsCtx {
@@ -146,6 +147,13 @@ struct ExJsCtx {
 
     /* Vero mentre un'esecuzione e' in corso: lo guarda exjs_invoca. */
     int           dentro;
+
+    /* P8 (26 novembre 2026): the host's monotonic clock in ms (uptime), for
+     * setTimeout; without it the time of the last pump. */
+    unsigned int (*cronometro)(void *);
+    void         *cronometro_dato;
+    unsigned int  ora_pompa;
+    int           livello_ora;    /* the level of the timer running now, 0 outside */
 };
 
 /* ! LA CLASSE DEGLI ESOTICI E' UNA SOLA PER TUTTO IL PROGRAMMA, e QuickJS
@@ -418,6 +426,51 @@ static int eso_scrivi(JSContext *jc, JSValueConst obj, JSAtom atomo,
 
     if (preso) return 1;
 
+    /* ! A SETTER ON THE PROTOTYPE CHAIN IS CALLED (P9, 26 November 2026). A
+     * custom element's class says `set value(v) {...}`, and the element is
+     * one of these objects: defining an own property here, as before, would
+     * hide the setter for ever and the component would never hear of it. An
+     * own property already there, or a data property up the chain, and the
+     * value is the element's own, as before. */
+    /* ! NOT JS_GetOwnProperty ON obj: for these objects it asks the read
+     * hook, which for `style` makes the style object and stores it with a
+     * write that comes back here. The prototypes are plain objects. */
+    {
+        {
+            JSValue p = JS_GetPrototype(jc, obj);
+            int     giri = 0;
+
+            while (JS_IsObject(p) && giri++ < 64) {
+                JSPropertyDescriptor d;
+                int                  r = JS_GetOwnProperty(jc, &d, p, atomo);
+                JSValue              q;
+
+                if (r < 0) { JS_FreeValue(jc, p); return -1; }
+                if (r == 1) {
+                    int esito = 2;          /* 2: a data property, go on below */
+
+                    if (d.flags & JS_PROP_GETSET) {
+                        esito = 1;
+                        if (JS_IsFunction(jc, d.setter)) {
+                            JSValue rr = JS_Call(jc, d.setter, obj, 1, &valore);
+
+                            if (JS_IsException(rr)) esito = -1;
+                            JS_FreeValue(jc, rr);
+                        }
+                    }
+                    JS_FreeValue(jc, d.value); JS_FreeValue(jc, d.getter); JS_FreeValue(jc, d.setter);
+                    JS_FreeValue(jc, p);
+                    p = JS_UNDEFINED;
+                    if (esito != 2) return esito;
+                    break;
+                }
+                q = JS_GetPrototype(jc, p);
+                JS_FreeValue(jc, p);
+                p = q;
+            }
+            if (JS_IsObject(p)) JS_FreeValue(jc, p);
+        }
+    }
     return JS_DefinePropertyValue(jc, obj, atomo, JS_DupValue(jc, valore),
                                   JS_PROP_C_W_E);
 }
@@ -561,21 +614,37 @@ static JSValue console_log(JSContext *jc, JSValueConst questo,
     return JS_UNDEFINED;
 }
 
-/* setTimeout(f, ms) / setInterval(f, ms) — `magic` distingue i due. */
+static unsigned int adesso(ExJsCtx *c)
+{
+    return c->cronometro ? c->cronometro(c->cronometro_dato) : c->ora_pompa;
+}
+
+/* setTimeout(f, ms) / setInterval(f, ms) — `magic` distingue i due.
+ * ! THE DELAY IS FROM NOW (P8, 26 November 2026): until today the ms were
+ * handed to exjs_accoda as the instant itself, which the pump compares with
+ * uptime: every timer fired at the first pump, setTimeout(f, 5000) as
+ * setTimeout(f, 0). And the HTML rule: a timer made by a chain of five
+ * timers or more waits at least 4 ms. */
 static JSValue js_accoda(JSContext *jc, JSValueConst questo,
                          int argc, JSValueConst *argv, int magic)
 {
     ExJsCtx     *c = (ExJsCtx *)JS_GetContextOpaque(jc);
     double       ms = 0;
-    unsigned int id;
+    unsigned int id, i;
+    int          livello;
 
     (void)questo;
     if (!c || argc < 1 || !JS_IsFunction(jc, argv[0])) return JS_NewInt32(jc, 0);
     if (argc >= 2) JS_ToFloat64(jc, &ms, argv[1]);
-    if (ms < 0) ms = 0;
+    if (!(ms >= 0)) ms = 0;
+    if (ms > 2147483647.0) ms = 2147483647.0;
+    livello = c->livello_ora + 1;
+    if (livello > 5 && ms < 4) ms = 4;
 
     id = exjs_accoda(c, da_js(c, JS_DupValue(jc, argv[0])),
-                     (unsigned int)ms, magic ? (unsigned int)ms : 0u);
+                     adesso(c) + (unsigned int)ms, magic ? ((unsigned int)ms ? (unsigned int)ms : 1u) : 0u);
+    for (i = 0; i < c->lav_max; i++)
+        if (c->lav[i].vivo && c->lav[i].id == id) c->lav[i].livello = livello;
     return JS_NewInt32(jc, (int)id);
 }
 
@@ -1115,6 +1184,7 @@ unsigned int exjs_accoda(ExJsCtx *c, ExJsVal f, unsigned int quando_ms,
         c->lav[i].ripeti_ms = ripeti_ms;
         c->lav[i].id        = c->prossimo_id++;
         c->lav[i].vivo      = 1;
+        c->lav[i].livello   = 0;
         return c->lav[i].id;
     }
     return 0;
@@ -1129,47 +1199,158 @@ void exjs_disdici(ExJsCtx *c, unsigned int id)
         if (c->lav[i].vivo && c->lav[i].id == id) c->lav[i].vivo = 0;
 }
 
+/* The microtasks: QuickJS's pending jobs (promises, queueMicrotask) until
+ * none is left - those that a job queues run in the same checkpoint. */
+static int microcompiti(ExJsCtx *c)
+{
+    /* ! IL SECONDO ARGOMENTO NON PUO' ESSERE NULLO, e il modo di scoprirlo
+     * e' stato un segmentation fault dentro QuickJS: la funzione ci scrive
+     * dentro il contesto del lavoro che ha eseguito, sempre, anche quando
+     * a noi non interessa. Un puntatore vero e buttato via costa una
+     * variabile sulla pila. */
+    JSContext *quale = 0;
+    int        fatti = 0;
+
+    while (JS_ExecutePendingJob(c->rt, &quale) > 0) fatti++;
+    return fatti;
+}
+
+/* =============================================================================
+ * THE EVENT LOOP'S TURN (P8, 26 November 2026; BROWSER002 4.7 a)
+ *
+ * ! ONE TIMER IS ONE TASK, AND AFTER EACH TASK THE MICROTASKS (HTML, "perform
+ * a microtask checkpoint"): before, all the due timers ran and the promises
+ * after them all - `setTimeout(a); setTimeout(b)` with a resolving a promise
+ * saw b run before a's `then`. The due ones in order of their instant, then
+ * of their number; only those due WHEN THE TURN BEGAN (one that a timer
+ * makes for "now" is the next turn's: setTimeout(f, 0) in a loop must not
+ * hold the browser forever).
+ * ========================================================================== */
 int exjs_pompa(ExJsCtx *c, unsigned int ora_ms)
 {
-    unsigned int i;
-    int          fatti = 0;
+    unsigned int limite_id;
+    int          fatti = 0, giri = 0;
 
     if (!c || !c->ctx) return 0;
+    c->ora_pompa = ora_ms;
+    limite_id = c->prossimo_id;
 
-    for (i = 0; i < c->lav_max; i++) {
-        Lavoro *l = &c->lav[i];
-        ExJsVal f;
+    /* what a script or an event left behind first */
+    fatti += microcompiti(c);
 
-        if (!l->vivo) continue;
-        /* ! IL CONFRONTO E' CON UNA DIFFERENZA CON SEGNO, non con `<=`: i
-         * millisecondi girano ogni quarantanove giorni, e un `<=` diretto
-         * farebbe scattare tutti i lavori insieme il giorno del giro. */
-        if ((int)(ora_ms - l->quando_ms) < 0) continue;
+    while (giri++ < 1000) {
+        unsigned int i, scelto = c->lav_max;
+        Lavoro      *l;
+        ExJsVal      f;
+        int          era;
 
+        for (i = 0; i < c->lav_max; i++) {
+            Lavoro *q = &c->lav[i];
+
+            if (!q->vivo || q->id >= limite_id) continue;
+            /* ! IL CONFRONTO E' CON UNA DIFFERENZA CON SEGNO, non con `<=`: i
+             * millisecondi girano ogni quarantanove giorni, e un `<=` diretto
+             * farebbe scattare tutti i lavori insieme il giorno del giro. */
+            if ((int)(ora_ms - q->quando_ms) < 0) continue;
+            if (scelto == c->lav_max ||
+                (int)(q->quando_ms - c->lav[scelto].quando_ms) < 0 ||
+                (q->quando_ms == c->lav[scelto].quando_ms && q->id < c->lav[scelto].id))
+                scelto = i;
+        }
+        if (scelto == c->lav_max) break;
+        l = &c->lav[scelto];
         f = l->f;
-        if (l->ripeti_ms) l->quando_ms = ora_ms + l->ripeti_ms;
-        else              l->vivo = 0;
-
+        if (l->ripeti_ms) {
+            /* an interval comes back after its period (at least 1 ms): it
+             * is not due again in this turn */
+            l->quando_ms = ora_ms + l->ripeti_ms;
+        } else {
+            l->vivo = 0;
+        }
+        era = c->livello_ora;
+        c->livello_ora = l->livello;
         exjs_invoca(c, f, exjs_indefinito(), 0, 0, 0);
+        c->livello_ora = era;
         fatti++;
+        fatti += microcompiti(c);
     }
-
-    /* ! E POI I LAVORI DI QUICKJS, che ExJs non aveva: sono le promesse. Una
-     * pagina che fa `fetch(...).then(...)` non vedrebbe mai il `then` senza
-     * questa riga, e il sintomo sarebbe uno script che semplicemente non
-     * finisce di funzionare. */
-    {
-        /* ! IL SECONDO ARGOMENTO NON PUO' ESSERE NULLO, e il modo di scoprirlo
-         * e' stato un segmentation fault dentro QuickJS: la funzione ci scrive
-         * dentro il contesto del lavoro che ha eseguito, sempre, anche quando
-         * a noi non interessa. Un puntatore vero e buttato via costa una
-         * variabile sulla pila. */
-        JSContext *quale = 0;
-
-        while (JS_ExecutePendingJob(c->rt, &quale) > 0) fatti++;
-    }
-
     return fatti;
+}
+
+/* ms until the next timer is due: 0 if something is due now (or microtasks
+ * wait), -1 if nothing waits. For the host's wake-up. */
+int exjs_prossimo_ms(ExJsCtx *c, unsigned int ora_ms)
+{
+    unsigned int i;
+    int          meglio = -1;
+
+    if (!c || !c->ctx) return -1;
+    if (JS_IsJobPending(c->rt)) return 0;
+    for (i = 0; i < c->lav_max; i++) {
+        int d;
+
+        if (!c->lav[i].vivo) continue;
+        d = (int)(c->lav[i].quando_ms - ora_ms);
+        if (d < 0) d = 0;
+        if (meglio < 0 || d < meglio) meglio = d;
+    }
+    return meglio;
+}
+
+void exjs_cronometro_metti(ExJsCtx *c, unsigned int (*f)(void *), void *dato)
+{
+    if (!c) return;
+    c->cronometro = f;
+    c->cronometro_dato = dato;
+}
+
+/* ---------------------------------------------- binary data (P12, exjs.h) */
+ExJsVal exjs_buffer_esterno(ExJsCtx *c, void *dati, unsigned int n)
+{
+    /* ! NO realloc_func: the engine never frees these bytes, the host does */
+    if (!c) return BOX_INDEF;
+    return da_js(c, JS_NewArrayBuffer(c->ctx, (uint8_t *)dati, n, 0, NULL, NULL, false));
+}
+
+ExJsVal exjs_buffer_copia(ExJsCtx *c, const void *dati, unsigned int n)
+{
+    if (!c) return BOX_INDEF;
+    return da_js(c, JS_NewArrayBufferCopy(c->ctx, (const uint8_t *)dati, n));
+}
+
+void *exjs_buffer_dati(ExJsCtx *c, ExJsVal v, unsigned int *n)
+{
+    JSValue  j, b;
+    size_t   l = 0, off = 0, len = 0, bpe = 0;
+    uint8_t *p;
+
+    if (n) *n = 0;
+    if (!c || !E_BOXED(v) || TAG(v) != BOX_MAN) return 0;
+    j = a_js(c, v);
+    if (JS_IsArrayBuffer(j)) {
+        p = JS_GetArrayBuffer(c->ctx, &l, j);
+        if (!p) { JS_FreeValue(c->ctx, JS_GetException(c->ctx)); return 0; }
+        if (n) *n = (unsigned int)l;
+        return p;
+    }
+    if (JS_GetTypedArrayType(j) < 0) return 0;
+    b = JS_GetTypedArrayBuffer(c->ctx, j, &off, &len, &bpe);
+    if (JS_IsException(b)) { JS_FreeValue(c->ctx, JS_GetException(c->ctx)); return 0; }
+    p = JS_GetArrayBuffer(c->ctx, &l, b);
+    JS_FreeValue(c->ctx, b);
+    if (!p) { JS_FreeValue(c->ctx, JS_GetException(c->ctx)); return 0; }
+    if (off + len > l) return 0;
+    if (n) *n = (unsigned int)len;
+    return p + off;
+}
+
+void exjs_buffer_stacca(ExJsCtx *c, ExJsVal v)
+{
+    JSValue j;
+
+    if (!c || !E_BOXED(v) || TAG(v) != BOX_MAN) return;
+    j = a_js(c, v);
+    if (JS_IsArrayBuffer(j)) JS_DetachArrayBuffer(c->ctx, j);
 }
 
 int exjs_lavori_in_attesa(ExJsCtx *c)

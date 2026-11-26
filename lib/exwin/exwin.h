@@ -470,6 +470,18 @@ int        ex_is_enabled(ExWindow c);
  * --------------------------------------------------------------------------- */
 void       ex_resize(ExWindow f, int w, int h);
 
+/* The frame of a top-level window while it lives (exwin.so 0.028, wserver
+ * 0.020, voce 121). EX_FRAME_FULLSCREEN: no frame, the whole screen, above
+ * the taskbar while it has the focus - a video, a game, a slide show; the
+ * new size arrives as EXM_SIZE, as after ex_resize. EX_FRAME_NORMAL: the
+ * frame back, where and as big as before. EX_FRAME_NONE: no frame, where it
+ * is. Leaving full screen is the program's job (Esc, F11): the server never
+ * does it. An older server ignores it. */
+#define EX_FRAME_NORMAL      0
+#define EX_FRAME_FULLSCREEN  1
+#define EX_FRAME_NONE        2
+void       ex_window_frame(ExWindow f, int modo);
+
 /* -----------------------------------------------------------------------------
  * Il fuoco: chi riceve i tasti dentro una finestra
  *
@@ -1424,6 +1436,7 @@ void ex_screen_size(unsigned int *larghezza, unsigned int *altezza);
 #define ex_sposta                ex_move
 #define ex_mostra                ex_show
 #define ex_misura                ex_resize
+#define ex_telaio                ex_window_frame
 #define ex_fuoco                 ex_set_focus
 #define ex_fuoco_via             ex_clear_focus
 #define ex_fuoco_chi             ex_get_focus

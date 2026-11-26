@@ -10,10 +10,12 @@
         exdom_nodo;
         exdom_documento;
         exdom_evento;
+        exdom_evento_tasto;
         exdom_perso;
         exdom_troncato;
         exdom_indirizzo;
         exdom_risolutore;
+        exdom_geometria;
         exdom_dove_andare;
         exdom_biscotti_metti;
         exdom_biscotti;

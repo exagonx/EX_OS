@@ -1,0 +1,39 @@
+<html><head><title>Canvas 2D</title><style>
+body { font-family: sans-serif; font-size: 14px; }
+canvas { border: 1px solid #888888; }
+</style></head><body>
+<h1>Canvas 2D (P10)</h1>
+<p id="esito">0. in corso...</p>
+<canvas id="a" width="360" height="200">1. (questo testo non si deve vedere)</canvas>
+<canvas id="b" width="200" height="100" style="width: 200px; height: 100px"></canvas>
+<script>
+var c = document.getElementById('a'), x = c.getContext('2d'), ok = [];
+x.fillStyle = '#e8f0ff'; x.fillRect(0, 0, c.width, c.height);
+x.fillStyle = 'rgb(200, 40, 40)'; x.fillRect(10, 10, 80, 50);
+x.strokeStyle = '#2040a0'; x.lineWidth = 4; x.strokeRect(100, 10, 80, 50);
+x.beginPath(); x.arc(240, 35, 25, 0, Math.PI * 2); x.fillStyle = 'orange'; x.fill();
+/* a pie slice: the path stays across fillRect */
+x.beginPath(); x.moveTo(310, 35); x.arc(310, 35, 25, 0, Math.PI * 1.5); x.closePath();
+x.fillRect(0, 0, 1, 1);
+x.fillStyle = '#40a040'; x.fill();
+var g = x.createLinearGradient(10, 0, 180, 0);
+g.addColorStop(0, '#ff8000'); g.addColorStop(1, '#8000ff');
+x.fillStyle = g; x.fillRect(10, 75, 170, 30);
+x.save(); x.translate(250, 110); x.rotate(Math.PI / 4); x.fillStyle = 'rgba(0, 0, 200, 0.5)'; x.fillRect(-20, -20, 40, 40); x.restore();
+x.beginPath(); x.moveTo(10, 130); x.bezierCurveTo(60, 100, 100, 170, 170, 130); x.lineWidth = 3; x.strokeStyle = 'purple';
+x.setLineDash([8, 4]); x.stroke(); x.setLineDash([]);
+x.font = 'bold 18px sans-serif'; x.fillStyle = 'black'; x.textBaseline = 'top';
+x.fillText('3. testo nel canvas', 10, 160);
+var w = x.measureText('abc').width;
+ok.push(w > 15 && w < 40 ? 'misura ok' : 'misura NO ' + w);
+x.clearRect(330, 150, 20, 40);
+var p = x.getImageData(20, 20, 1, 1).data;
+ok.push(p[0] === 200 && p[1] === 40 && p[3] === 255 ? 'pixel ok' : 'pixel NO ' + p[0] + ',' + p[1] + ',' + p[3]);
+ok.push(c.width === 360 && typeof c.width === 'number' ? 'width ok' : 'width NO');
+var d = document.getElementById('b').getContext('2d');
+d.fillStyle = '#ffe0e0'; d.fillRect(0, 0, 200, 100);
+d.drawImage(c, 0, 0, 180, 100, 10, 10, 90, 50);
+d.beginPath(); d.ellipse(150, 50, 40, 20, 0, 0, Math.PI * 2); d.strokeStyle = '#008080'; d.lineWidth = 2; d.stroke();
+document.getElementById('esito').textContent = '0. ' + ok.join(', ');
+</script>
+</body></html>

@@ -634,3 +634,5 @@ __pycache__/
 # the public suffix table is made at build time (build/generati, Makefile
 # PSL_H): never in the tree, a stale copy here would win the #include
 /exwin/bin/exbrowser/psl_tabella.h
+# notes between the agents working on the tree: local, not for the repository
+/collaborazione.txt

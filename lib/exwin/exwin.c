@@ -6448,6 +6448,19 @@ void ex_move(ExWindow f, int x, int y)
  * memoria condivisa. La misura la scrive un posto solo: rimappa(), quando la
  * zona nuova e' aperta per davvero.
  * ============================================================================= */
+/* WIN_MSG_TELAIO (voce 121): see exwin.h. The size comes back as EXM_SIZE. */
+void ex_window_frame(ExWindow f, int modo)
+{
+    Oggetto   *o = ogg(f);
+    WinRegione r;
+
+    if (!o || o->classe != CL_FINESTRA || g_server < 0 || modo < 0 || modo > 2) return;
+    memset(&r, 0, sizeof(r));
+    r.id = o->win_id;
+    r.x  = (unsigned int)modo;
+    (void)ipc_send((unsigned int)g_server, WIN_MSG_TELAIO, &r, sizeof(r));
+}
+
 void ex_resize(ExWindow f, int w, int h)
 {
     Oggetto *o = ogg(f);
@@ -9690,7 +9703,7 @@ void ex_item_rename(ExWindow c, unsigned int i, const char *testo)
  * modifica di lib/exwin. 0.001 = le tendine laterali e questa funzione;
  * 0.002 = ex_enable() ed EX_DISABLED; 0.003 = 192 oggetti, e il ridisegno
  * dell'applicazione quando si apre una tendina. */
-#define EXWIN_VERSIONE "0.027"   /* 0.027: il foglio accanto al puntatore quando si trascinano righe di una lista, tre fogli per piu' righe (voce 114); 0.026: i temi (extema.c, debug/implementazione_TEMA001), il classico rifinito, ex_tema_colore e ex_tema_nome; 0.025: ex_update_rect (debug/bug_EXIDE001), gli appunti di misura sbagliata rifiutati (debug/bug_SHM001); 0.024: ex_open_file apre le cartelle col programma del tipo "/" (il file manager); 0.023: i programmi per tipo scelti in Impostazioni (ex_types, ex_type_set, ex_type_program, /boot/tipi.cfg); 0.022: tabulazioni nelle aree (ex_textarea_set_tab, ex_textarea_get_column), voci di menu spente (ex_menu_enable) */
+#define EXWIN_VERSIONE "0.028"   /* 0.028: ex_window_frame, schermo intero e senza telaio (voce 121); 0.027: il foglio accanto al puntatore quando si trascinano righe di una lista, tre fogli per piu' righe (voce 114); 0.026: i temi (extema.c, debug/implementazione_TEMA001), il classico rifinito, ex_tema_colore e ex_tema_nome; 0.025: ex_update_rect (debug/bug_EXIDE001), gli appunti di misura sbagliata rifiutati (debug/bug_SHM001); 0.024: ex_open_file apre le cartelle col programma del tipo "/" (il file manager); 0.023: i programmi per tipo scelti in Impostazioni (ex_types, ex_type_set, ex_type_program, /boot/tipi.cfg); 0.022: tabulazioni nelle aree (ex_textarea_set_tab, ex_textarea_get_column), voci di menu spente (ex_menu_enable) */
 
 const char *ex_version(void) { return EXWIN_VERSIONE; }
 

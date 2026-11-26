@@ -33,8 +33,12 @@
 #define EST_CORN(k)    (IMM_MAX + CTRL_MAX + (k))     /* an iframe: 24 Sept 2026 */
 #define EST_E_IMM(r)   ((r) >= 0 && (r) < IMM_MAX)
 #define EST_E_CTRL(r)  ((r) >= IMM_MAX && (r) < IMM_MAX + CTRL_MAX)
-#define EST_E_CORN(r)  ((r) >= IMM_MAX + CTRL_MAX)
-#define EST_CHI(r)     ((r) >= IMM_MAX + CTRL_MAX ? (r) - IMM_MAX - CTRL_MAX : \
+#define EST_E_CORN(r)  ((r) >= IMM_MAX + CTRL_MAX && (r) < EST_SVG(0))
+/* an inline <svg> (P10): VistaEst.svg */
+#define EST_SVG(k)     (1024 + (k))
+#define EST_E_SVG(r)   ((r) >= EST_SVG(0))
+#define EST_CHI(r)     ((r) >= EST_SVG(0) ? (r) - EST_SVG(0) : \
+                        (r) >= IMM_MAX + CTRL_MAX ? (r) - IMM_MAX - CTRL_MAX : \
                         (r) >= IMM_MAX ? (r) - IMM_MAX : (r))
 
 /* =============================================================================
@@ -129,6 +133,7 @@ void imm_rifai(int k);
  * a fourth one, is an empty rectangle.
  * ============================================================================= */
 #define CORNICI_MAX  3
+#define SVG_MAX      512
 
 typedef struct {
     int  nodo;                  /* the <iframe> in the parent's tree        */
@@ -161,6 +166,10 @@ typedef struct {
     /* the iframes of this document: see Cornice */
     Cornice        corn[CORNICI_MAX];
     int            corn_n;
+    /* the inline <svg> of this layout (P10): node and colour */
+    int            svg[SVG_MAX];        /* the node; a <canvas> as -(node + 2) */
+    unsigned int   svg_col[SVG_MAX];
+    int            svg_n;
 } VistaEst;
 
 extern VistaEst *g_ve;

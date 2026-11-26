@@ -1,0 +1,30 @@
+# tools/wamr-exos/CMakeLists.txt — WAMR's runtime as a library for EX-OS
+# (EXBrowser's WebAssembly, debug/implementazione_BROWSER002.txt P12).
+# SPDX-License-Identifier: GPL-2.0-or-later (this file; WAMR: Apache-2.0 WITH LLVM-exception)
+cmake_minimum_required(VERSION 3.14)
+project(wamr_exos C ASM)
+set(WAMR_BUILD_PLATFORM "linux")
+# the fast interpreter only: no executable memory, no AOT, no JIT
+set(WAMR_BUILD_INTERP 1)
+set(WAMR_BUILD_FAST_INTERP 1)
+set(WAMR_BUILD_AOT 0)
+set(WAMR_BUILD_JIT 0)
+set(WAMR_BUILD_FAST_JIT 0)
+# a browser's module: no WASI, no libc of WAMR; imports come from JavaScript
+set(WAMR_BUILD_LIBC_BUILTIN 0)
+set(WAMR_BUILD_LIBC_WASI 0)
+set(WAMR_BUILD_MULTI_MODULE 0)
+set(WAMR_BUILD_SHARED_MEMORY 0)
+set(WAMR_BUILD_THREAD_MGR 0)
+set(WAMR_BUILD_LIB_PTHREAD 0)
+# the proposals that the browsers' modules use (wasm 2.0)
+set(WAMR_BUILD_BULK_MEMORY 1)
+set(WAMR_BUILD_REF_TYPES 1)
+set(WAMR_BUILD_SIMD 0)
+set(WAMR_BUILD_TAIL_CALL 1)
+set(WAMR_BUILD_EXCE_HANDLING 0)
+# ! bounds checked by the interpreter, not by guard pages and SIGSEGV
+set(WAMR_DISABLE_HW_BOUND_CHECK 1)
+set(WAMR_DISABLE_STACK_HW_BOUND_CHECK 1)
+include(${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake)
+add_library(iwasm STATIC ${WAMR_RUNTIME_LIB_SOURCE} ${CMAKE_CURRENT_LIST_DIR}/ripieghi/ripieghi.c)

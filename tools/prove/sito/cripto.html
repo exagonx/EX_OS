@@ -1,0 +1,24 @@
+<html><head><title>crypto.subtle e localStorage</title></head><body style="font-family: sans-serif">
+<h1>crypto.subtle e localStorage (P11)</h1>
+<div id="r">in corso...</div>
+<script>
+var out = [], n = 0, atteso = 7;
+function esa(b) { var a = new Uint8Array(b), s = '', i; for (i = 0; i < a.length; i++) s += (a[i] < 16 ? '0' : '') + a[i].toString(16); return s; }
+function scrivi(t) { out.push(t); document.getElementById('r').innerHTML = out.join('<br>'); }
+function prova(nome, p, giusto) {
+  p.then(function (v) { scrivi(nome + ': ' + (v === giusto ? 'OK' : 'NO ' + v)); },
+         function (e) { scrivi(nome + ': ' + (giusto === 'rifiuto' && e.name === 'NotSupportedError' ? 'OK' : 'NO ' + e.name + ' ' + e.message)); });
+}
+var abc = new TextEncoder().encode('abc'), S = crypto.subtle;
+prova('1. SHA-1', S.digest('SHA-1', abc).then(esa), 'a9993e364706816aba3e25717850c26c9cd0d89d');
+prova('2. SHA-256', S.digest({ name: 'SHA-256' }, abc).then(esa), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+prova('3. SHA-384', S.digest('SHA-384', abc).then(esa), 'cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7');
+prova('4. SHA-512', S.digest('SHA-512', abc).then(esa), 'ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f');
+prova('5. HMAC-SHA256 (RFC 4231, 2)', S.importKey('raw', new TextEncoder().encode('Jefe'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  .then(function (k) { return S.sign('HMAC', k, new TextEncoder().encode('what do ya want for nothing?')); }).then(esa),
+  '5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843');
+prova('6. MD5 rifiutato', S.digest('MD5', abc), 'rifiuto');
+var v = localStorage.getItem('visite');
+localStorage.setItem('visite', String((+v || 0) + 1));
+scrivi('7. localStorage: visite prima ' + v + ', ora ' + localStorage.getItem('visite'));
+</script></body></html>

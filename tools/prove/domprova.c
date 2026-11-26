@@ -636,8 +636,19 @@ static int pagina(const char *nomefile)
 
     /* I tempi: si pompano come farebbe il ciclo dei messaggi del browser. */
     if (exjs_lavori_in_attesa(c)) {
-        exjs_pompa(c, 5000);
+        g_console_n = 0; g_console[0] = '\0';
+        /* ! SEVERAL TURNS, as the browser's loop: a timer made inside a
+         * microtask belongs to the next turn (P8), and one turn only left
+         * the promises that wait on it pending (P12, 26/11/2026) */
+        {
+            int giri = 0;
+
+            do exjs_pompa(c, 5000u + 100u * (unsigned int)giri);
+            while (exjs_lavori_in_attesa(c) && ++giri < 20);
+        }
         printf("dopo i tempi, versione %u\n", html_versione(&g_doc));
+        /* what the timers and the microtasks wrote (P8) */
+        if (g_console[0]) printf("console dei tempi: %s", g_console);
     }
 
     /* ! E SI PREME QUEL CHE C'E' DA PREMERE. Una pagina di prova che non venga

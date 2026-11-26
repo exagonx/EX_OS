@@ -1,0 +1,62 @@
+<html><head><title>ciclo degli eventi</title><style>
+body { font-family: sans-serif; font-size: 14px; }
+#vista { width: 200px; height: 40px; background: #b0ffb0; }
+#lontano { margin-top: 3000px; width: 100px; height: 20px; background: #ffb0b0; }
+</style></head><body>
+<h1>Il ciclo degli eventi (P8)</h1>
+<p id="r1">1. ordine dei compiti e dei microcompiti: ...</p>
+<p id="r2">2. setTimeout(f, 1000) aspetta davvero: ...</p>
+<p id="r3">3. timer da 0, 4, 16 ms (con ExWin a 200 ms vanno a 200): ...</p>
+<p id="r4">4. MutationObserver: ...</p>
+<p id="r5">5. IntersectionObserver: ...</p>
+<p id="r6">6. ResizeObserver e getBoundingClientRect: ...</p>
+<p id="r7">7. requestAnimationFrame: ...</p>
+<div id="mo"><p id="moP">x</p></div>
+<div id="vista">visibile</div>
+<script>
+function scrivi(id, t) { document.getElementById(id).textContent = t; }
+var t0 = performance.now(), ordine = [];
+setTimeout(function () { ordine.push('t0'); Promise.resolve().then(function () { ordine.push('m-di-t0'); }); }, 0);
+setTimeout(function () { ordine.push('t0b'); }, 0);
+Promise.resolve().then(function () { ordine.push('micro'); });
+ordine.push('sync');
+setTimeout(function () {
+  var giusto = ordine.join(',') === 'sync,micro,t0,m-di-t0,t0b';
+  scrivi('r1', '1. ordine: ' + ordine.join(',') + (giusto ? '  OK' : '  NO'));
+}, 30);
+setTimeout(function () { var d = Math.round(performance.now() - t0); scrivi('r2', '2. setTimeout(f, 1000) e\' partito dopo ' + d + ' ms' + (d >= 990 ? '  OK' : '  NO')); }, 1000);
+(function () {
+  var m = [];
+  [0, 4, 16].forEach(function (ms) {
+    var a = performance.now();
+    setTimeout(function () { m.push(ms + '->' + Math.round(performance.now() - a)); if (m.length === 3) scrivi('r3', '3. timer: ' + m.join(', ')); }, ms);
+  });
+})();
+var mo = new MutationObserver(function (r) {
+  scrivi('r4', '4. MutationObserver: ' + r.length + ' record: ' + r.map(function (x) {
+    return x.type + (x.attributeName ? '(' + x.attributeName + ', era ' + x.oldValue + ')' : '') +
+      (x.addedNodes.length ? ' +' + x.addedNodes.length : '') + (x.removedNodes.length ? ' -' + x.removedNodes.length : '');
+  }).join('; ') + (r.length === 4 ? '  OK' : '  NO'));
+});
+mo.observe(document.getElementById('mo'), { childList: true, subtree: true, attributes: true, attributeOldValue: true });
+var mp = document.getElementById('moP');
+mp.setAttribute('title', 'a'); mp.setAttribute('title', 'b');
+document.getElementById('mo').appendChild(document.createElement('span'));
+mp.parentNode.removeChild(mp);
+var io = new IntersectionObserver(function (e) {
+  var s = e.map(function (x) { return x.target.id + '=' + x.isIntersecting; }).join(', ');
+  scrivi('r5', '5. IntersectionObserver: ' + s);
+});
+io.observe(document.getElementById('vista'));
+io.observe(document.getElementById('lontano'));
+new ResizeObserver(function (e) {
+  var r = document.getElementById('vista').getBoundingClientRect();
+  scrivi('r6', '6. ResizeObserver: ' + e[0].contentRect.width + 'x' + e[0].contentRect.height +
+    ', rect top ' + Math.round(r.top) + ' left ' + Math.round(r.left) + ', offsetWidth ' + document.getElementById('vista').offsetWidth +
+    (e[0].contentRect.width === 200 ? '  OK' : '  NO'));
+}).observe(document.getElementById('vista'));
+requestAnimationFrame(function (a) { requestAnimationFrame(function (b) {
+  scrivi('r7', '7. requestAnimationFrame: due fotogrammi a ' + Math.round(b - a) + ' ms' + (b > a ? '  OK' : '  NO')); }); });
+</script>
+<div id="lontano">lontano</div>
+</body></html>

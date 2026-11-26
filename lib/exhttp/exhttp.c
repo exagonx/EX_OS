@@ -1516,6 +1516,43 @@ static int intest_codifiche(char *req, int n, unsigned int max)
 static char g_intest[INTEST_MAX];          /* messe da chi chiama       */
 static char g_intest_attivo[INTEST_MAX];   /* quelle della chiamata     */
 
+/* =============================================================================
+ * THE USER-AGENT AND THE PROVENANCE (26 November 2026, BROWSER002 P11)
+ *
+ * exhttp_agente: the User-Agent of the process, "EX-OS" if nobody says
+ * otherwise (netupdate, scarica and the others do not change). EXBrowser
+ * says the one its user decided (BROWSER002, P0 1 b).
+ * exhttp_provenienza: Origin and Referer for the NEXT call, as
+ * exhttp_intestazioni - but set by the browser, which knows the page; the
+ * scripts cannot (intest_vietata). A form POST without Origin is refused by
+ * the servers that check it against cross-site requests.
+ * ============================================================================= */
+static char g_agente[200] = "EX-OS";
+static char g_prov[INTEST_MAX];
+
+static int riga_pulita(const char *s)
+{
+    for (; s && *s; s++) if (*s == '\r' || *s == '\n' || (unsigned char)*s < 0x20) return 0;
+    return 1;
+}
+
+void exhttp_agente(const char *ua)
+{
+    if (!ua || !ua[0] || strlen(ua) >= sizeof(g_agente) || !riga_pulita(ua)) return;
+    strcpy(g_agente, ua);
+}
+
+void exhttp_provenienza(const char *origine, const char *referer)
+{
+    unsigned int n = 0;
+
+    g_prov[0] = '\0';
+    if (origine && origine[0] && riga_pulita(origine) && strlen(origine) < 400)
+        n += (unsigned int)snprintf(g_prov + n, sizeof(g_prov) - n, "Origin: %s\r\n", origine);
+    if (referer && referer[0] && riga_pulita(referer) && strlen(referer) < 900 && n < sizeof(g_prov))
+        snprintf(g_prov + n, sizeof(g_prov) - n, "Referer: %s\r\n", referer);
+}
+
 static int intest_vietata(const char *n, unsigned int l)
 {
     static const char *const V[] = {
@@ -1792,7 +1829,7 @@ static int scambio(ExHttpTrasporto *t, const HttpUrl *u,
          * con questo buffer. */
         corpo_len = 0;
         if (g_corpo) while (g_corpo[corpo_len]) corpo_len++;
-        n = http_richiesta_testa_da(req, sizeof(req), u, "EX-OS",
+        n = http_richiesta_testa_da(req, sizeof(req), u, g_agente,
                                     g_corpo ? (long)corpo_len : -1L, 1, bis,
                                     g_da_attivo);
         if (n > 0) n = intest_metti(req, n, sizeof(req));
@@ -2248,6 +2285,9 @@ int exhttp_prendi(const char *url, unsigned char *buf, unsigned int max,
     g_da        = 0;
     strcpy(g_intest_attivo, g_intest);
     g_intest[0] = '\0';
+    if (g_prov[0] && strlen(g_intest_attivo) + strlen(g_prov) < sizeof(g_intest_attivo))
+        strcat(g_intest_attivo, g_prov);
+    g_prov[0] = '\0';
 
     for (salto = 0; salto <= EXHTTP_SALTI_MAX; salto++) {
         HttpUrl         u;
@@ -2594,7 +2634,7 @@ static int par_manda(ExHttpRichiesta *R)
     bis[0] = '\0';
     if (g_bis_chiedi)
         g_bis_chiedi(g_bis_dato, R->u.host, R->u.percorso, R->u.cifrato, bis, sizeof(bis));
-    n = http_richiesta_testa_da(req, sizeof(req), &R->u, "EX-OS", -1L, 1, bis, 0);
+    n = http_richiesta_testa_da(req, sizeof(req), &R->u, g_agente, -1L, 1, bis, 0);
     if (n > 0) n = intest_codifiche(req, n, sizeof(req));
     if (n <= 0) { strcpy(R->e.errore, "richiesta troppo lunga"); return -1; }
     return R->c->t.scrivi(R->c->t.stato, (const unsigned char *)req, (unsigned int)n) == n;
@@ -2907,7 +2947,7 @@ int exhttp_avanza(ExHttpRichiesta *R)
                 g_bis_chiedi(g_bis_dato, R->u.host, R->u.percorso, R->u.cifrato, bis, sizeof(bis));
             if (R->u.porta != 443) snprintf(aut, sizeof(aut), "%s:%u", R->u.host, R->u.porta);
             else                   snprintf(aut, sizeof(aut), "%s", R->u.host);
-            nomi[k] = "user-agent"; valori[k++] = "EX-OS";
+            nomi[k] = "user-agent"; valori[k++] = g_agente;
             nomi[k] = "accept";     valori[k++] = "*/*";
             if (g_srotola && srotola_codifiche && srotola_codifiche()[0]) {
                 nomi[k] = "accept-encoding"; valori[k++] = srotola_codifiche();

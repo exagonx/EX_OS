@@ -160,6 +160,11 @@ declare sub ex_destroy cdecl alias "ex_destroy" (byval f as ExWindow)
 declare sub ex_set_title     cdecl alias "ex_set_title" (byval f as ExWindow, byval s as const zstring ptr)
 declare sub ex_move     cdecl alias "ex_move" (byval f as ExWindow, byval x as long, byval y as long)
 declare sub ex_resize     cdecl alias "ex_resize" (byval f as ExWindow, byval w as long, byval h as long)
+' The frame while the window lives (exwin.so 0.028): see exwin.h.
+#define EX_FRAME_NORMAL 0
+#define EX_FRAME_FULLSCREEN 1
+#define EX_FRAME_NONE 2
+declare sub ex_window_frame cdecl alias "ex_window_frame" (byval f as ExWindow, byval modo as long)
 declare sub ex_show     cdecl alias "ex_show" (byval f as ExWindow, byval visibile as long)
 ' Visible and enabled, for every control (exwin.so 0.014): see exwin.h.
 declare sub ex_set_visible cdecl alias "ex_set_visible" (byval c as ExWindow, byval si as long)
@@ -247,6 +252,7 @@ declare sub ex_screen_size cdecl alias "ex_screen_size" (byval larghezza as ulon
 #define ex_lista_scelte          ex_list_get_selection
 #define ex_lista_riga_a          ex_list_row_at
 #define ex_lista_trascina_quanti ex_list_set_drag_count
+#define ex_telaio ex_window_frame
 #define ex_finestra_riduci       ex_minimize_window_id
 #define ex_mouse_passaggio       ex_track_mouse_hover
 #define ex_ridisegna             ex_redraw

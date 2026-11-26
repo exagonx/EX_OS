@@ -1,0 +1,26 @@
+<html><head><title>SVG in linea</title><style>
+body { font-family: sans-serif; font-size: 14px; }
+.icona { width: 32px; height: 32px; color: #c02060; }
+a { color: #2050c0; }
+</style></head><body>
+<h1>SVG in linea (P10)</h1>
+<svg style="display:none"><symbol id="stella" viewBox="0 0 24 24"><path d="M12 2l3 7h7l-5.5 4.5 2 7.5-6.5-4.5-6.5 4.5 2-7.5L2 9h7z"/></symbol></svg>
+<p>1. forme: <svg width="220" height="60">
+  <rect x="2" y="2" width="56" height="56" rx="8" fill="#3070d0" stroke="#102040" stroke-width="2"/>
+  <circle cx="90" cy="30" r="26" fill="orange"/>
+  <ellipse cx="150" cy="30" rx="30" ry="16" fill="none" stroke="green" stroke-width="4"/>
+  <line x1="185" y1="5" x2="215" y2="55" stroke="black" stroke-width="3" stroke-linecap="round"/>
+</svg></p>
+<p>2. path con archi e curve, viewBox ingrandito:
+<svg width="120" height="60" viewBox="0 0 60 30"><path d="M5 25 Q 15 0 30 15 T 55 15" fill="none" stroke="purple" stroke-width="2"/><path d="M40 5 a 5 5 0 1 0 10 0 a 5 5 0 1 0 -10 0" fill="#e04040"/></svg></p>
+<p>3. icone col currentColor (rosa), con use e symbol:
+<svg class="icona"><use href="#stella" fill="currentColor"/></svg>
+<a href="#"><svg width="24" height="24" viewBox="0 0 24 24"><use href="#stella" fill="currentColor"/></svg> un link blu</a></p>
+<p>4. polygon, polyline, trasformazioni, opacita':
+<svg width="200" height="70"><polygon points="10,60 40,10 70,60" fill="#40a040" fill-opacity="0.5" stroke="#204020"/>
+  <g transform="translate(100 35) rotate(45)"><rect x="-15" y="-15" width="30" height="30" fill="#2080e0" opacity="0.7"/></g>
+  <polyline points="140,60 155,20 170,50 190,10" fill="none" stroke="#c06000" stroke-width="3" stroke-dasharray="6 3"/></svg></p>
+<p>5. fill-rule evenodd (un anello): <svg width="60" height="60" viewBox="0 0 60 60"><path fill-rule="evenodd" fill="#806020" d="M30 2a28 28 0 1 0 0.01 0zM30 15a15 15 0 1 0 0.01 0z"/></svg></p>
+<p>6. un'immagine SVG (img, logo.svg, 120 x 40, poi ingrandita a 240):
+<img src="logo.svg"> <img src="logo.svg" width="240"></p>
+</body></html>

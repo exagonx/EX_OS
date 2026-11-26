@@ -36,11 +36,14 @@
  * scrivera' `elemento.style.color`, dovra' posare un valore in un campo, non
  * comporre del testo perche' qualcun altro lo rianalizzi.
  *
- * ! QUELLO CHE NON C'E', DICHIARATO: niente `@media`, niente `@import`, niente
- * pseudo-classi, niente selettori di attributo, niente unita' relative (`em`,
- * `%`, `rem`). Ci sono i selettori che si incontrano davvero — tipo, classe,
- * id, discendenza, elenco, `*` — e le proprieta' che l'impaginazione sa gia'
- * usare. Aggiungerne una e' una voce in una tabella.
+ * ! QUELLO CHE NON C'E', DICHIARATO (scritto all'inizio, e da allora quasi
+ * tutto e' arrivato: @media e @supports, le pseudo-classi di struttura, i
+ * selettori di attributo, em/rem/%, e col P6 del 25 novembre 2026 var(),
+ * calc()/min()/max()/clamp(), le @media del livello 4 e @font-face). Manca
+ * ancora: `@import` (lo fa il browser, se lo fa), `!important` come livello
+ * della cascata (si toglie e basta), :hover e :focus (nessuno ha il mouse
+ * sopra mentre si impagina), e le proprieta' che l'impaginazione non sa usare.
+ * Aggiungerne una e' una voce in una tabella.
  * ============================================================================= */
 #ifndef CSS_H
 #define CSS_H
@@ -359,6 +362,7 @@ typedef struct {
 #define CSS_PS_ACCESO     0x0200    /* :checked                     */
 #define CSS_PS_SPENTO     0x0400    /* :disabled                    */
 #define CSS_PS_ABILITATO  0x0800    /* :enabled                     */
+#define CSS_PS_HOST       0x1000    /* :host (P9): the shadow's host */
 
 /* ! THE PIECES LIVE IN THE SHEET'S VECTOR (f->pezzi), not in the rule: most
  * rules have one or two, and eight inside every rule would have made 16000
@@ -367,6 +371,10 @@ typedef struct {
     unsigned int  pezzo_primo;  /* index in f->pezzi                */
     unsigned char n_pezzi;      /* l'ultimo e' l'elemento stesso    */
     unsigned char origine;
+    /* (P9) the tree the rule belongs to: 0 the document, else a shadow
+     * root's node + 1 (css_ambito). In the two bytes the alignment left
+     * free after `origine`: CssRegola keeps its size. */
+    unsigned short ambito;
     unsigned int  peso;         /* specificita': id*10000+cl*100+tp */
     unsigned int  ordine;       /* per rompere la parita'           */
     int           prima_dich;   /* indice della prima dichiarazione */
@@ -424,7 +432,28 @@ typedef struct {
 #define CSS_P_SFONDO_MH     55  /*                  altezza   */
 #define CSS_P_ALT           56  /* height     */
 #define CSS_P_ALT_MIN       57  /* min-height */
-#define CSS_P_N             58
+/* (P7, 26 novembre 2026) What Taffy needs and CssStile has no room for:
+ * they land in CssDisposizione (css_disposizione), not in CssStile. */
+#define CSS_P_FLEX_RESTRINGE 58 /* flex-shrink    */
+#define CSS_P_FLEX_BASE     59  /* flex-basis     */
+#define CSS_P_ORDINE        60  /* order          */
+#define CSS_P_ALLINEA_SE    61  /* align-self     */
+#define CSS_P_ALLINEA_CONT  62  /* align-content  */
+#define CSS_P_GIUST_VOCI    63  /* justify-items  */
+#define CSS_P_GIUST_SE      64  /* justify-self   */
+#define CSS_P_GR_COLONNE    65  /* grid-template-columns */
+#define CSS_P_GR_RIGHE      66  /* grid-template-rows    */
+#define CSS_P_GR_AUTO_COL   67  /* grid-auto-columns     */
+#define CSS_P_GR_AUTO_RIG   68  /* grid-auto-rows        */
+#define CSS_P_GR_FLUSSO     69  /* grid-auto-flow        */
+#define CSS_P_GR_POSTO      70  /* grid-column-start, -end, grid-row-start, -end: 70..73 */
+#define CSS_P_TRABOCCA      74  /* overflow       */
+#define CSS_P_GR_AREE       75  /* grid-template-areas */
+/* (P10, 26 novembre 2026) the drawing: CssDecoro (css_decoro) */
+#define CSS_P_RAGGIO        76  /* border-*-radius: 76..79, top-left top-right bottom-right bottom-left */
+#define CSS_P_OMBRA         80  /* box-shadow      */
+#define CSS_P_SFUMATURA     81  /* a gradient as background-image */
+#define CSS_P_N             82
 
 typedef struct {
     unsigned short proprieta;   /* CSS_P_*                          */
@@ -531,6 +560,123 @@ typedef struct {
 } CssFontFace;
 
 int css_font_face(const CssFoglio *f, unsigned int i, CssFontFace *out);
+
+/* =============================================================================
+ * THE BOX OF A FLEX OR GRID CONTAINER AND OF ITS ITEMS (P7, 26 November 2026)
+ *
+ * What the layout library (Taffy) needs beyond CssStile: flex-shrink and
+ * flex-basis, order, the alignments of one item, the grid's tracks and where
+ * an item goes in it. ! NOT IN CssStile, whose size programs know; like
+ * css_segno_lista, it is the LAST element passed to css_calcola, and is read
+ * at once. With an excss.so of before, the stub gives it all zero
+ * (griglia 0: the container is laid out as before P7).
+ *
+ * Alignments: CSS_AL_*. Tracks: a minimum and a maximum (minmax), each a
+ * kind and a value - px; percent in hundredths (5000 = 50%); fr in
+ * hundredths. A repeat(N, ...) is written out N times; ONE
+ * repeat(auto-fill|auto-fit, ...) is kept as such: its tracks are
+ * col[col_rip_da .. col_rip_da + col_rip_n - 1]. Grid lines: 0 auto, a line
+ * number (negative from the end), CSS_GR_SPAN + n for «span n».
+ * ========================================================================== */
+#define CSS_AL_NORMALE  0       /* normal, auto                     */
+#define CSS_AL_INIZIO   1       /* start, flex-start, self-start, left */
+#define CSS_AL_FINE     2
+#define CSS_AL_CENTRO   3
+#define CSS_AL_BASE     4       /* baseline                         */
+#define CSS_AL_STIRA    5       /* stretch                          */
+#define CSS_AL_TRA      6       /* space-between (content only)     */
+#define CSS_AL_INTORNO  7       /* space-around                     */
+#define CSS_AL_UGUALE   8       /* space-evenly                     */
+
+#define CSS_TR_AUTO     0
+#define CSS_TR_PX       1
+#define CSS_TR_PERC     2
+#define CSS_TR_FR       3       /* max only */
+#define CSS_TR_MIN      4       /* min-content */
+#define CSS_TR_MAX      5       /* max-content */
+#define CSS_TR_ADATTA   6       /* fit-content(px), max only */
+
+#define CSS_GR_SPAN     10000
+#define CSS_TRACCE_MAX  32
+
+typedef struct {
+    unsigned char min_tipo, max_tipo;
+    int           min_v, max_v;
+} CssTraccia;
+
+/* A named area of grid-template-areas: its cells, from 0, both ends in. */
+#define CSS_AREE_MAX   24
+#define CSS_NOME_AREA  32
+typedef struct {
+    char          nome[CSS_NOME_AREA];
+    unsigned char r0, r1, c0, c1;
+} CssArea;
+
+typedef struct {
+    unsigned char  griglia;         /* display: grid or inline-grid           */
+    unsigned char  dir;             /* 0 row, 1 column, 2 row-reverse, 3 column-reverse */
+    unsigned char  a_capo;          /* 0 nowrap, 1 wrap, 2 wrap-reverse       */
+    unsigned char  allinea_voci;    /* align-items, CSS_AL_*                   */
+    unsigned char  allinea_se;      /* align-self                              */
+    unsigned char  allinea_contenuto;
+    unsigned char  giustifica_voci, giustifica_se;
+    unsigned char  flusso;          /* grid-auto-flow: 0 row, 1 column, +2 dense */
+    unsigned char  trabocca;        /* overflow other than visible             */
+    unsigned char  base_tipo;       /* flex-basis: 0 auto, 1 px, 2 percent (hundredths), 3 content */
+    short          ordine;          /* order                                   */
+    unsigned short restringe;       /* flex-shrink in hundredths (100 = 1)     */
+    int            base;
+    short          col_inizio, col_fine, rig_inizio, rig_fine;
+    unsigned char  n_col, n_rig, n_auto_col, n_auto_rig;
+    unsigned char  col_rip, col_rip_da, col_rip_n;   /* 0, 1 auto-fill, 2 auto-fit */
+    unsigned char  rig_rip, rig_rip_da, rig_rip_n;
+    CssTraccia     col[CSS_TRACCE_MAX], rig[CSS_TRACCE_MAX];
+    CssTraccia     auto_col[4], auto_rig[4];
+    /* grid-template-areas (the container), and the names an item is put
+     * by (grid-area: nome; grid-column: nome-start / nome-end): "" none */
+    unsigned char  n_aree, aree_righe, aree_colonne;
+    CssArea        aree[CSS_AREE_MAX];
+    char           nome_col_inizio[CSS_NOME_AREA], nome_col_fine[CSS_NOME_AREA];
+    char           nome_rig_inizio[CSS_NOME_AREA], nome_rig_fine[CSS_NOME_AREA];
+} CssDisposizione;
+
+void css_disposizione(CssDisposizione *out);
+
+/* =============================================================================
+ * SHADOW TREES (P9, 26 November 2026)
+ *
+ * The rules read after css_ambito(f, k) belong to the tree k: 0 the
+ * document, a shadow root's node + 1. A rule matches only the elements of
+ * its tree - a component's sheet does not leak into the page, nor the
+ * page's into the component (inheritance still flows, through the host) -
+ * and :host is the host of the rule's shadow root. css_ambito(f, 0) goes
+ * back to the document.
+ * ========================================================================== */
+void css_ambito(CssFoglio *f, unsigned int ambito);
+
+/* =============================================================================
+ * THE DRAWING OF A BOX (P10, 26 November 2026): rounded corners, the shadow,
+ * a gradient. Of the LAST element passed to css_calcola, as css_disposizione.
+ *
+ * raggio: px, or a percentage of the box as -(hundredths) (50% = -5000);
+ * the first shadow only (box-shadow: a b c d color, inset); a gradient with
+ * up to CSS_FERMATE_MAX stops, each a colour and a position in hundredths of
+ * percent (-1 not said: spread evenly, as CSS does).
+ * ========================================================================== */
+#define CSS_FERMATE_MAX 8
+typedef struct {
+    int           raggio[4];
+    unsigned char ombra, ombra_dentro;
+    short         ombra_x, ombra_y, ombra_sfoca, ombra_allarga;
+    unsigned int  ombra_colore;
+    unsigned char sfumatura;        /* 0 none, 1 linear, 2 radial */
+    unsigned char n_fermate;
+    short         angolo;           /* linear: degrees, 180 = to bottom (the default) */
+    unsigned int  fermata_colore[CSS_FERMATE_MAX];
+    short         fermata_pos[CSS_FERMATE_MAX];
+} CssDecoro;
+
+void css_decoro(CssDecoro *out);
 
 #ifdef __cplusplus
 }

@@ -384,6 +384,31 @@ int          exjs_pompa(ExJsCtx *c, unsigned int ora_ms);
  * qualcosa da fare prima di mettersi a dormire. */
 int exjs_lavori_in_attesa(ExJsCtx *c);
 
+/* THE EVENT LOOP (P8, 26 November 2026). exjs_prossimo_ms: in how many ms
+ * the next timer is due at `ora_ms` (0: now, or microtasks wait; -1:
+ * nothing waits) - the host sleeps that long. exjs_cronometro_metti: the
+ * host's monotonic clock in ms (the same as exjs_pompa's ora_ms), from
+ * which setTimeout counts its delay. Both optional: an engine of before
+ * does not have them, and the stub answers 200 / does nothing. */
+int  exjs_prossimo_ms(ExJsCtx *c, unsigned int ora_ms);
+void exjs_cronometro_metti(ExJsCtx *c, unsigned int (*f)(void *), void *dato);
+
+/* =============================================================================
+ * BINARY DATA (P12, 26 November 2026): ArrayBuffer for a host
+ *
+ * exjs_buffer_esterno: an ArrayBuffer over n bytes the HOST keeps - not
+ * copied, never freed by the engine (WebAssembly's memory.buffer).
+ * exjs_buffer_copia: a new ArrayBuffer with a copy of the bytes.
+ * exjs_buffer_dati: the bytes of an ArrayBuffer or of a typed array (its
+ * view: offset and length), or 0; valid until the script runs again.
+ * exjs_buffer_stacca: detach it (its length becomes 0): memory.grow.
+ * Only with QuickJS: ExJs has no ArrayBuffer, and they answer undefined / 0.
+ * ========================================================================== */
+ExJsVal exjs_buffer_esterno(ExJsCtx *c, void *dati, unsigned int n);
+ExJsVal exjs_buffer_copia(ExJsCtx *c, const void *dati, unsigned int n);
+void   *exjs_buffer_dati(ExJsCtx *c, ExJsVal v, unsigned int *n);
+void    exjs_buffer_stacca(ExJsCtx *c, ExJsVal v);
+
 /* =============================================================================
  * LA MEMORIA, guardata da fuori
  *

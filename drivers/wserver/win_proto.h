@@ -271,6 +271,30 @@ typedef struct {
 } WinCreaFiglia;
 
 #define WIN_MSG_FOTO        0x5710  /* WinFoto -> risponde WIN_MSG_FOTATA */
+
+/* =============================================================================
+ * THE FRAME OF A WINDOW, CHANGED WHILE IT LIVES (wserver 0.020, voce 121,
+ * 25 November 2026). WinRegione: id, x = WIN_TELAIO_*.
+ *
+ *   WIN_TELAIO_NORMALE  the frame it was created with, and back where and as
+ *                       big as it was before WIN_TELAIO_SCHERMO;
+ *   WIN_TELAIO_SCHERMO  full screen: no frame, at 0,0, as big as the screen,
+ *                       ABOVE THE TASKBAR while it has the focus (a video, a
+ *                       game, a presentation, F11 in a browser);
+ *   WIN_TELAIO_NUDO     no frame, where it is and as big as it is (a splash
+ *                       screen, a window that draws its own frame).
+ *
+ * The client hears what changed with the usual WIN_MSG_MISURATA and
+ * WIN_MSG_POSTA. Leaving full screen is the program's call (Esc, F11): the
+ * server never takes it away, and Alt+Tab only gives the focus to another
+ * window, which then covers the full-screen one - the taskbar too, as soon as
+ * the full-screen one lost the focus. Pop-ups, menus and the screen saver
+ * opened AFTER the window went full screen stay above it.
+ * ============================================================================= */
+#define WIN_MSG_TELAIO      0x5713  /* WinRegione: id, x = WIN_TELAIO_* */
+#define WIN_TELAIO_NORMALE  0
+#define WIN_TELAIO_SCHERMO  1
+#define WIN_TELAIO_NUDO     2
 #define WIN_FOTO_FUOCO      0x0001u /* only the window with the focus */
 
 typedef struct {

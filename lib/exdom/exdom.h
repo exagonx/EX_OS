@@ -172,6 +172,11 @@ ExJsVal exdom_documento(ExDom *D);
  * ========================================================================== */
 int exdom_evento(ExDom *D, int nodo, const char *tipo, ExJsErrore *err);
 
+/* A keyboard event (P11): key, code, keyCode; mod 1 shift, 2 ctrl, 4 alt,
+ * 8 meta. Rende 0 if the page called preventDefault. */
+int exdom_evento_tasto(ExDom *D, int nodo, const char *tipo, const char *key,
+                       const char *code, int keycode, int mod, ExJsErrore *err);
+
 /* =============================================================================
  * DOVE SI TROVA LA PAGINA — `location`
  *
@@ -210,6 +215,13 @@ typedef int (*ExDomRisolvi)(void *dato, const char *rif,
                             char *out, unsigned int max);
 
 void exdom_risolutore(ExDom *D, ExDomRisolvi f, void *dato);
+
+/* Where node `nodo` is (P8, 26 November 2026), asked to the host that laid
+ * it out: out[0..3] x, y, width, height in the document, out[4..5] the
+ * scroll (x, y). Zeros: not laid out. For getBoundingClientRect, offset*,
+ * client*, and IntersectionObserver/ResizeObserver in the prelude. */
+typedef void (*ExDomGeometria)(void *dato, int nodo, int *out);
+void exdom_geometria(ExDom *D, ExDomGeometria f, void *dato);
 
 /* ! LA NAVIGAZIONE LA FA IL BROWSER, NON IL PONTE. `location.href = "..."`
  * mette da parte l'indirizzo e basta; chi ha lo schermo lo raccoglie di qui

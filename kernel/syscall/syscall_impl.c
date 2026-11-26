@@ -11,6 +11,7 @@
 
 #include "kernel.h"
 #include "filecache.h"   /* mmap of a file: fc_pagina (0.370) */
+#include "zone.h"        /* ... at the first touch (0.371) */
 #include "idt.h"
 #include "syscall.h"
 #include "entropia.h"
@@ -1922,6 +1923,8 @@ int32_t sys_fork(InterruptFrame *frame)
     figlio->n_vma            = capo->n_vma;
     for (k = 0; k < capo->n_vma && k < PROC_MAX_VMA; k++) figlio->vma[k] = capo->vma[k];
     if (capo->exe_handle >= 0) {
+        figlio->exe_chiave    = capo->exe_chiave;
+        figlio->exe_chiave_ok = capo->exe_chiave_ok;
         if (vfs_dup(capo->exe_handle) >= 0) figlio->exe_handle = capo->exe_handle;
         else figlio->n_vma = 0;                     /* nothing left to load */
     }
@@ -1966,6 +1969,7 @@ int32_t sys_fork(InterruptFrame *frame)
     proc_spazio_prendi(capo);
     r = paging_copia_spazio(capo, figlio->page_directory);
     if (r == 0) r = shm_fork(capo, figlio);
+    if (r == 0) r = zone_copia(figlio, capo);   /* (0.371) */
     proc_spazio_lascia(capo);
     if (r != 0) goto via;
 
@@ -2545,6 +2549,7 @@ int32_t sys_mmap(InterruptFrame *frame)
             if (pa) pmm_free_page(pa & ~(paddr_t)(PAGE_SIZE - 1));
             paging_unmap_page(proc->page_directory, va);
         }
+        zona_togli(proc, vaddr, pages);         /* a zone there is gone too (0.371) */
     }
 
     /* =====================================================================
@@ -2585,12 +2590,10 @@ int32_t sys_mmap(InterruptFrame *frame)
      * has more owners, paging_proteggi); the last partial page and the
      * pages past the end are private, with zeros.
      *
-     * ! ALL THE PAGES NOW, NOT AT THE FIRST TOUCH. munmap, fork and exit
-     * already handle frames with more owners; pages loaded later would want
-     * a list of the zones of a process (voce 16), which is the next step.
-     * The first process reads the whole file, as the libc copy did; the
-     * others read nothing. Every 16 pages the others go first (the rule of
-     * condivise.c, voce 117).
+     * ! AT THE FIRST TOUCH SINCE 0.371 (voce 120): the mapping is a ZONE
+     * (mm/zone.c) and a page comes when the program touches it. Until 0.370
+     * all the pages came here: Firefox's first process read the two omni.ja
+     * whole before it could do anything.
      *
      * Writable mappings stay ENODEV: MAP_SHARED must write back to the file
      * (the libc does it, mappa_ricorda), MAP_PRIVATE writable would want
@@ -2603,28 +2606,15 @@ int32_t sys_mmap(InterruptFrame *frame)
 
         if (p->offset & (PAGE_SIZE - 1)) return ERR(EINVAL);
         if ((FDV(proc, p->fd).flags & 3u) == O_WRONLY) return ERR(EACCES);
-        for (i = 0; i < pages; i++) {
-            uint32_t idx = p->offset / PAGE_SIZE + i;
-            paddr_t  fr  = fc_pagina(h, idx);
+        {
+            int32_t r = zona_aggiungi(proc, vaddr, pages, h, p->offset,
+                                      pg_flags & ~(uint32_t)PG_WRITABLE);
 
-            if (fr == 0) fr = fc_pagina_privata(h, idx);
-            if (fr == 0 ||
-                paging_map_page(proc->page_directory, vaddr + i * PAGE_SIZE, fr,
-                                pg_flags & ~(uint32_t)PG_WRITABLE) != 0) {
-                uint32_t j;
-
-                if (fr) pmm_free_page(fr);
-                for (j = 0; j < i; j++) {
-                    paddr_t pa = paging_get_physical(proc->page_directory, vaddr + j * PAGE_SIZE);
-
-                    paging_unmap_page(proc->page_directory, vaddr + j * PAGE_SIZE);
-                    if (pa) pmm_free_page(pa & ~(paddr_t)(PAGE_SIZE - 1));
-                }
-                klog(LOG_WARN, "SYSCALL mmap: PID %u, file fd %d: pagina %u di %u "
-                     "non data (RAM o lettura)", proc->pid, p->fd, i, pages);
-                return ERR(ENOMEM);
+            if (r != 0) {
+                klog(LOG_WARN, "SYSCALL mmap: PID %u, file fd %d: zona di %u pagine "
+                     "non data (%d)", proc->pid, p->fd, pages, r);
+                return r == -EBADF ? ERR(EBADF) : ERR(ENOMEM);
             }
-            if ((i & 15u) == 15u) sched_yield();
         }
         if (vaddr + pages * PAGE_SIZE > proc->heap_end)
             proc->heap_end = vaddr + pages * PAGE_SIZE;
@@ -2768,6 +2758,7 @@ int32_t sys_munmap(InterruptFrame *frame)
         }
         paging_lotto_chiudi(lotto);
     }
+    zona_togli(proc, addr, pages);              /* (0.371) mm/zone.c */
 
     /* ! SE LA ZONA ERA IN CIMA, IL CONFINE TORNA GIU' (kernel 0.158).
      *

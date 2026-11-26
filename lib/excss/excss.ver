@@ -18,5 +18,8 @@
         css_media_vale;
         css_variabili;
         css_font_face;
+        css_disposizione;
+        css_ambito;
+        css_decoro;
     local: *;
 };

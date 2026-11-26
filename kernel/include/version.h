@@ -1140,7 +1140,20 @@
  * the libc asks it first and copies the file only on ENODEV. Gecko's two
  * omni.ja (106 MB) no longer cost 106 MB per process (debug/bug_FIREFOX001
  * C1). */
-#define EXOS_VERSION    "0.370"
+/* 0.370 -> 0.371 (voce 120): zones of files at the first touch
+ * (kernel/mm/zone.c): a file mapped without writing and the whole
+ * read-only pages of a .so come from filecache.c when a page is touched,
+ * not read whole at mmap / at the first SYS_SO_MAPPA (omni.ja, 106 MB, was
+ * read by Firefox's first process before it could do anything). A fault
+ * on a page filecache already has takes no VFS lock (the key is read at
+ * exec / mmap); a missing page comes with 128 KB around it in one request,
+ * and the neighbours in the cache are mapped with it, as on Linux.
+ * Also: sched_yield lets the other processors through every time, not only
+ * with nobody to yield to - two threads yielding to each other on processor
+ * 1 kept the kernel's lock for ever, processor 0 (clock, disk interrupt)
+ * stood in bkl_entra: Firefox froze 3 starts out of 8 in QEMU, 0 out of 10
+ * after. */
+#define EXOS_VERSION    "0.371"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

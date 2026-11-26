@@ -467,23 +467,25 @@ dalla macchina vera, e l'elenco che ne esce sostituisce questa sezione.
   P4  HTTP/2 con nghttp2 e ALPN.     FATTO il 25/11, vedi 7.4
                                                     in h2 (lo dice la console)
   P5  BROWSER001 + PSL + SameSite + prefissi.  FATTO il 25/11, vedi 7.5
-  P6  @media, var(), calc(), @font-face + WOFF2 +   tools/prove/sito/ nuove
-      FreeType/HarfBuzz per i caratteri delle       pagine: media.html,
-      pagine.                                       var.html, font.html
-  P7  L'ALBERO DEI RIQUADRI con Taffy: block, flex, le sette pagine identiche,
-      grid; il testo resta nostro.                  poi flex.html, grid.html
-  P8  Ciclo degli eventi vero (4.7 a), Mutation-,   prove dei microcompiti e
-      Intersection-, ResizeObserver.                dei timer a 0/4/16 ms
-  P9  Shadow DOM e Custom Elements.                 web-platform-tests in
+  P6  @media, var(), calc(), @font-face +    FATTO il 25/11, vedi 7.6
+      WOFF2 + FreeType/HarfBuzz per i caratteri     (media.html, var.html,
+      delle pagine.                                 caratteri.html)
+  P7  Taffy per flex e grid; il testo e i     FATTO il 26/11, vedi 7.7
+      blocchi restano nostri.                       (flex.html, grid.html)
+  P8  Ciclo degli eventi vero (4.7 a), Mutation-, FATTO il 26/11, vedi 7.8
+      Intersection-, ResizeObserver.                (ciclo.html)
+  P9  Shadow DOM e Custom Elements.     FATTO il 26/11, vedi 7.9 (ombra.html);
+                                                    web-platform-tests in
                                                     terze_browser/wpt (dom/,
                                                     custom-elements da
                                                     aggiungere allo sparse)
-  P10 plutovg: angoli, ombre, sfumature, canvas 2D; la ricerca di Google
+  P10 plutovg: angoli, ombre, sfumature, canvas 2D; FATTO il 26/11, 7.10;
       SVG (resvg o il sottoinsieme).                leggibile e coi loghi
-  P11 Intl su ICU4C, crypto.subtle, localStorage    accounts.google.com fino
+  P11 Intl su ICU4C, crypto.subtle, localStorage    FATTO il 26/11, 7.11;
+                                                    accounts.google.com fino
       su disco, IndexedDB su SQLite, Worker,        alla risposta del server
       WebSocket.                                    (vedi P0)
-  P12 WebAssembly (WAMR interprete).                wpt wasm/jsapi
+  P12 WebAssembly (WAMR interprete).  FATTO il 26/11, 7.12; wpt wasm/jsapi
   P13 <video>, MSE con FFmpeg.                      YouTube senza account
   Ogni passo: make prova-exdom, prova-exqjs, prova-excss, prova-exhttp a
   zero errori; le sette pagine di riferimento identiche; QEMU 32 e 64 bit.
@@ -732,6 +734,491 @@ dalla macchina vera, e l'elenco che ne esce sostituisce questa sezione.
   Il binario di EXBrowser cresce di ~200 KB (la tabella: 157 KB di testo e
   44 KB di indici). Se pesa, la si puo' stringere (trie o indici a 3 byte).
   Nessun file di exhttp toccato: SameSite e' una decisione del browser.
+  ! DOPO (25/11, sera, decisione dell'utente): la tabella NON sta piu' nel
+  repository (la lista ha domini con nomi che il filtro di gitupdate.sh
+  tiene fuori). La fa la costruzione: tools/psl-scarica.sh prende la lista
+  una volta, tools/psl-tabella.py la scrive in build/generati/psl_tabella.h
+  (Makefile: PSL_H, -I $(PSL_DIR); lo stesso per costruisci-utente64.sh e
+  per make prova-biscotti). Lo ha sistemato l'agente del kernel.
+
+7.6  P6 FATTO (25/11/2026): @media, var(), calc(), @font-face
+-----
+  Il piano in collaborazione.txt (22:03). exhttp, extls e lib/exwin non
+  toccati.
+  File:
+   - lib/excss/css.c, css.h, excss.ver, excss_stub.c. Solo funzioni NUOVE
+     (css_variabili, css_media_altezza, css_media_vale, css_font_face);
+     CssStile e CssFoglio hanno la misura di prima, e lo stub le cerca come
+     facoltative (un'excss.so vecchia: tutto come prima).
+     a) var() e le proprieta' personalizzate. `--x: v` e i valori con var()
+        si tengono come TESTO nell'arena (due codici di CssDich sopra
+        CSS_P_N: CSS_P_PERSONALE, CSS_P_RIMANDATA) e si leggono in
+        css_calcola. L'insieme delle personalizzate di un elemento e' un
+        record (le sue, gia' risolte dove sono dichiarate) che punta a
+        quello del padre; vive in un buffer del CHIAMANTE (css_variabili),
+        valido per un'impaginazione: EXBrowser glielo ridà, vuoto, a ogni
+        impagina() (512 KB). Si riempie a richiesta: un antenato non ancora
+        visto si abbina una volta in piu', poi resta. Ripieghi annidati,
+        cicli (tutto il ciclo invalido, vale il ripiego), env() (il ripiego
+        o 0px), var() nelle scorciatoie (border, background, font...), nello
+        style= e personalizzate nello style=. Una dichiarazione con var()
+        partecipa alla cascata col peso della sua regola, proprieta' per
+        proprieta' dopo l'espansione.
+     b) calc(), -webkit-calc, min(), max(), clamp(): un valutatore (somma,
+        prodotto, parentesi, numeri con esponente; px pt pc in cm mm q em
+        rem ex ch lh vw vh vmin vmax e i loro s/l/d). Un'espressione con
+        sole unita' assolute diventa pixel quando si legge il foglio; con em
+        o % resta testo (REL_CALC_F nell'arena, REL_CALC_L in g_loc) e la
+        legge rel_px alla fine di css_calcola, come le em. Un risultato
+        negativo dove non si puo' diventa 0 (padding, larghezze...).
+        ! LA % DI UNA LARGHEZZA: CssStile tiene pixel O percentuale. Una %
+        pura resta % (calc(100% / 3)); in min/max/clamp la % si lascia fuori
+        (min(100%, 1200px) = 1200px); calc(100% - 20px) non si pone (auto).
+        Lo risolve il P7 (Taffy, uno stile calcolato suo).
+     c) @media del livello 4: la forma a intervalli ((width >= 600px),
+        (400px <= width < 700px)), and/or/not con le parentesi annidate,
+        height/min-height (css_media_altezza: la finestra vera), aspect-
+        ratio, orientation calcolata, resolution e i pixel-ratio, e tutte le
+        caratteristiche di un solo valore (prefers-*, forced-colors,
+        display-mode, scripting, color-gamut...) con il contesto booleano
+        della specifica. em e rem valgono 16 nelle query. vh nelle misure.
+        css_media_vale() per matchMedia: EXBrowser la da' al preludio
+        (__exos_media), e uno script ora sente le stesse @media dei fogli.
+     d) @font-face: il blocco si tiene nell'arena (CSS_P_FONTFACE, in nessuna
+        regola) e css_font_face() lo rende (famiglia, src, unicode-range,
+        peso da-a, corsivo, il foglio da cui viene). font-family si risolve
+        in css_calcola: una famiglia della pagina e' CSS_FAM_PAGINA(k, gen),
+        16 + k*4 + la generica che l'elenco nomina dopo (il ripiego).
+     e) la scorciatoia `font` (stile, peso, corpo[/interlinea], famiglia).
+   - tools/prove/cssprova.c: +58 prove (224 in tutto).
+   - tools/woff2-exos/costruisci.sh (nuovo): woff2 1.0.2 di Google, solo il
+     decodificatore, senza CMake: libwoff2common.so.1.0.2 e
+     libwoff2dec.so.1.0.2 (soname di upstream), C++, 32 e 64 bit; ha
+     bisogno di libbrotlidec (P2), libstdc++ e libgcc_s. `-include cstdint`
+     al posto della riga che manca in output.h con il GCC di oggi.
+   - exwin/bin/exbrowser/browser_caratteri.c (nuovo): i caratteri della
+     pagina. FreeType (libfreetype.so.6) e HarfBuzz (libharfbuzz.so.0) con
+     dlopen, tipi e cinque scostamenti di FreeType 2.15 scritti a mano
+     (misurati con offsetof a 32 e 64 bit); woff2 col nome C++ della
+     funzione; WOFF1 con zlib (uncompress) e la tabella sfnt ricomposta; TTF
+     e OTF (CFF) come sono. HarfBuzz compone la parola (crenatura,
+     legature), FreeType disegna i glifi (in una riserva di 4 MB), la parola
+     va sulla finestra come un'immagine (ex_pixmap_blend). Un ExFont con
+     CAR_PAGINA e' nostro; car_altezza / car_larghezza / car_disegna
+     mandano a ExWin tutti gli altri. Una parola con un carattere che la
+     faccia non ha esce col ripiego (la generica dell'elenco).
+   - exbrowser.c: caratteri_della_pagina() alla fine di raccogli_css: i
+     blocchi che coprono il latino ('A' nel loro unicode-range, o nessun
+     range), il src migliore (woff2 > woff > ttf/otf, local() no, data: no),
+     al piu' 24 file, presi in parallelo (anticipa, P3) PRIMA della prima
+     impaginazione, solo quelli che mancano. car_pagina_nuova() quando cambia
+     la pagina. css_media_altezza(area_h()).
+   - browser_impagina.c: font_di sceglie la faccia della pagina (il peso
+     piu' vicino, lo stile giusto prima); css_variabili a ogni impagina().
+     browser_preludio.c: matchMedia chiede a excss. browser_priv.h: 0.039.
+   - Makefile: BROWSER_CAR (il file nuovo) nella regola di EXBrowser.
+     A 64 bit costruisci-utente64.sh compila gia' tutti i .c della
+     cartella: niente da cambiare.
+   - tools/prove/sito: var.html, media.html, caratteri.html (nuove; i file
+     dei caratteri NON nel progetto, licenze loro: leggimi.md dice quali
+     copiare dai pacchetti Debian dell'host). servi.py: un filo per
+     connessione (il browser ne apre quattro dal P3, e un server a una
+     connessione per volta le faceva scadere) e PORTA per una seconda copia.
+  Prove:
+   - make prova-excss 224/224 (anche compilato -m32), prova-exdom 267,
+     prova-exqjs 267, prova-exhttp a posto, prova-biscotti 102/102.
+   - QEMU 32 e 64 bit, ISO private (~/ex_os/prove-font, con le .so in /lib),
+     server dell'host sulla 8021:
+       caratteri.html  woff2 (Lato normale, grassetto, corsivo; Roboto Slab
+                       col solo pezzo latino: il blocco cirillico non e'
+                       stato chiesto), ttf, otf CFF (Nimbus Sans), woff1
+                       (Font Awesome: le lettere che non ha ripiegano su
+                       monospace), un file 404 (monospace), la scorciatoia
+                       font. Legature fi/fl e crenatura AVA/To/Wa visibili.
+                       Decodifica: 10-90 ms a file. Uguale a 64 bit.
+       var.html        le undici righe come scritte (rossa, verde dal
+                       ripiego annidato, il riquadro col bordo da var(), la
+                       ridefinizione nel figlio, calc(100%/2), min(),
+                       calc(1rem+6px), clamp(), il ciclo, lo style=).
+       media.html      sette righe SI, nessuna NO; matchMedia true/false.
+     32 e 64 bit danno la stessa immagine (salvo orologio e puntatore).
+   - www.google.com a 32 bit: la stessa immagine della 0.038 (284 regole
+     invece di 275: quelle con var() e le personalizzate ora restano). La
+     sua pagina principale non ha @font-face.
+   - Le sette pagine di riferimento, 0.038 contro 0.039 (QEMU 32
+     bit, stesse pagine, una dopo l'altra): IDENTICHE, 0 pixel diversi sopra
+     la barra delle applicazioni in tutte e sette.
+  Da sapere:
+   - Il PRIMO dlopen di FreeType + HarfBuzz (3 MB) dal CD in QEMU costa
+     ~3 s (3080 ms a 64 bit, misurati: la console lo dice), una volta per
+     processo e solo se la pagina ha un @font-face. Finisce nei "css" dei
+     tempi.
+   - Limiti, scritti accanto al codice: una var() che non si risolve fa
+     cadere la dichiarazione (la specifica vorrebbe `unset`); !important
+     resta ignorato; il peso e' grassetto si/no (500 prende il 400); un
+     carattere variabile da' la sua istanza predefinita; niente grassetto
+     o corsivo sintetici; i blocchi solo latini (un sito cirillico o CJK
+     tiene i ripieghi).
+   - Visto e NON corretto (c'era gia'): css.c tiene l'indirizzo di
+     un'immagine di sfondo come puntatore dentro un intero a 32 bit
+     (CssDich.numero, leggi_url / css_posa). A 64 bit vale finche' il
+     foglio sta sotto i 4 GB di indirizzi; da sistemare con uno
+     scostamento nell'arena.
+
+7.7  P7 FATTO (26/11/2026): flex e grid con Taffy
+-----
+  ! COSA SI E' FATTO, E COSA NO, rispetto al piano di 4.4. Il piano diceva
+  "l'albero dei riquadri con Taffy: block, flex, grid". Si e' fatto il
+  pezzo che il nostro flusso NON sapeva fare - flexbox intero e CSS grid -
+  e lo si e' fatto col confine giusto: il riquadro del contenitore
+  (margini, bordi, padding, sfondo) resta del nostro motore come per ogni
+  blocco, e DENTRO Taffy colloca i figli; ogni figlio Taffy lo chiede al
+  nostro motore ("quanto sei grande con questo spazio"), che lo impagina
+  in una colonna per misura, come gia' le celle, i float e il flex vecchio.
+  I blocchi normali e il testo restano il flusso di prima: e' per questo
+  che le sette pagine di riferimento sono identiche. Portare in Taffy anche
+  i blocchi (un albero dei riquadri intero, stile calcolato suo) resta il
+  lavoro di dopo; ora ha un pezzo vero sotto da cui partire.
+  File:
+   - tools/taffy-exos/costruisci.sh e tools/taffy-exos/taffy_exos (NUOVI):
+     Taffy 0.16.0 dietro un'interfaccia C piccola (tx_nuovo, tx_nodo,
+     tx_figlio, tx_calcola con la misura del chiamante, tx_esito,
+     tx_sporca, tx_misura_stile), crate GPL-2.0-or-later. SENZA std: core +
+     alloc (-Z build-std), panic = abort, malloc della libc; la std a 32 bit
+     usa TLS local-exec, che una .so non puo' avere. I crate dall'archivio
+     verificato (patch su percorsi locali, cargo --offline). La staticlib
+     diventa libtaffy_exos.so.1 col gcc di comune.sh, esportando solo tx_*
+     (370 KB a 32 bit, 340 a 64); chiede alla libc solo malloc, free,
+     realloc, mem*, abort.
+   - lib/excss: le proprieta' che servono a Taffy, in CssDisposizione
+     (css_disposizione(), dell'ULTIMO elemento calcolato, come
+     css_segno_lista: CssStile non cambia misura). flex-shrink, flex-basis,
+     la scorciatoia flex intera (1 = 1 1 0%), order, align-self,
+     align-content, justify-items/-self, align-items con baseline, le
+     direzioni e wrap-reverse, overflow; display: grid / inline-grid
+     (CssStile resta blocco, griglia = 1); grid-template-columns/-rows
+     (px, %, em, fr, auto, min/max-content, minmax, fit-content, repeat(N),
+     repeat(auto-fill|auto-fit), nomi di linea saltati), grid-auto-
+     columns/-rows/-flow (dense), grid-column/-row/-area (numeri, span,
+     nomi), grid-template (anche con le stringhe delle aree),
+     grid-template-areas, place-items/-self/-content. Le tracce si leggono
+     come testo in css_disposizione, con le em dell'elemento.
+   - exwin/bin/exbrowser/browser_impagina.c (tf_disponi, tf_misura) e
+     browser_taffy.h (NUOVO, TxStile e TxArea, gli stessi del crate):
+     libtaffy_exos.so.1 con dlopen; senza, il flex di prima (flessibile).
+     I margini auto dei figli vanno a Taffy (margin-left: auto), gli altri
+     restano nostri; un figlio stirato (stretch) ha il riquadro alto quanto
+     la riga.
+  ! LE MISURE (trovato su Wikipedia, 15 s di impaginazione invece di 6):
+   - una riserva delle misure di un'impaginazione (nodo, modo): Taffy
+     chiede piu' volte la stessa cosa;
+   - le larghezze NATURALI (min-content, max-content) non sono un'impagina-
+     zione a una larghezza: mentre se ne misura una, un flex o una griglia
+     dentro chiede a Taffy la SUA larghezza naturale (g_tf_intr). Prima la
+     barra di Wikipedia (una lista 100% con justify-content: end) risultava
+     larga quanto tutto, e le linguette finivano una sopra l'altra;
+   - un figlio GRANDE (oltre 2000 nodi: l'articolo) non si misura agli
+     estremi (0 e tutto lo spazio) e non si impagina due volte: la prima
+     risposta e' altezza 0, lo si impagina dove va, e se la sua altezza vera
+     sposta gli altri si richiede a Taffy (tx_sporca) e si SPOSTANO i pezzi
+     gia' posati.
+     it.wikipedia.org/wiki/Venezia, QEMU 32 bit: impaginazione 5060 ms
+     (0.039: 5840), 716 contenitori flex/grid.
+   - le aree con nome: Vector 2022 mette l'articolo in grid-area:
+     pageContent; senza nomi finiva nella colonna stretta (184 pixel).
+  Prove:
+   - make prova-excss 250/250 (+26: css_disposizione, tracce, aree,
+     scorciatoie); la tela di Taffy provata anche sull'host
+     (~/ex_os/prove-taffy/c/prova.c: space-between, centrato, auto-fill,
+     aree con nome: 10/10).
+   - flex.html e grid.html (nuove, tools/prove/sito) in QEMU 32 e 64 bit:
+     ogni riga come scritto, 32 e 64 bit identiche pixel per pixel.
+   - Le sette pagine di riferimento contro la 0.039 (QEMU 32 bit): IDENTICHE,
+     0 pixel diversi.
+   - Wikipedia: l'impaginazione di Vector a colonne (indice a sinistra,
+     articolo in pageContent, "Aspetto" a destra), la barra delle
+     linguette in ordine. Google: identica alla 0.039 (0 pixel diversi).
+   - EXBrowser 0.040. 64 bit: costruito con costruisci-utente64.sh
+     (copiata), flex.html e grid.html come a 32 bit.
+  Limiti:
+   - i blocchi normali sono ancora il flusso: un figlio di un flex o di una
+     griglia lo impagina lui, e i margini negativi li schiaccia a 0 (Discussione e
+     Leggi di Wikipedia si toccano);
+   - position: absolute dentro un flex conta come figlio normale (come
+     prima);
+   - le linee con nome fuori dalle aree ([nome]) si saltano.
+
+7.8  P8 FATTO (26/11/2026): il ciclo degli eventi e gli osservatori
+-----
+  File:
+   - lib/exqjs/exqjs.c: il turno del ciclo come la specifica HTML: un timer
+     e' un compito, e DOPO OGNI compito i microcompiti (prima: tutti i
+     timer, poi tutte le promesse); i timer in ordine di scadenza e poi di
+     numero; solo quelli scaduti quando il turno comincia (un setTimeout(f,
+     0) in un ciclo non tiene fermo il browser); la regola dei 4 ms dopo
+     cinque timer annidati. exjs_prossimo_ms (fra quanto scade il prossimo)
+     ed exjs_cronometro_metti (l'orologio dell'ospite), funzioni NUOVE e
+     facoltative (exjs.h, exjs.ver, exjs_stub.c).
+     ! DIFETTO TROVATO E CORRETTO: setTimeout passava il ritardo come
+     ISTANTE ("ms" invece di "adesso + ms"), e la pompa lo confronta con
+     uptime_ms: ogni timer scattava al primo giro, setTimeout(f, 5000) come
+     setTimeout(f, 0). Le pagine che aspettano (un carosello, un "riprova
+     fra 3 secondi") correvano.
+   - lib/exhtml/html.c, html.h, exhtml.ver: html_su_cambio, un gancio per
+     documento (tabella interna: HtmlDoc non cambia misura) chiamato dalle
+     funzioni che cambiano l'albero, coi dati di un MutationRecord.
+   - lib/exdom/exdom.c, exdom.h, exdom.ver: __exos_osserva (le mutazioni al
+     preludio), exdom_geometria (dove sta un nodo: lo dice il browser),
+     getBoundingClientRect, getClientRects, offsetWidth/Height/Left/Top,
+     clientWidth/Height, scrollWidth/Height, scrollTop del documento.
+   - exwin/bin/exbrowser: il rettangolo di ogni elemento dopo ogni
+     impaginazione vera (rett_segna, l'unione dei suoi pezzi e riquadri;
+     browser_impagina.c); ponte_geometria; osservatori_giro (dopo
+     un'impaginazione e a ogni scorrimento, mai da dentro uno script);
+     la sveglia sul prossimo timer (sveglia_per_i_tempi); il preludio:
+     MutationObserver (filtri della specifica, consegna in UN microcompito,
+     takeRecords, disconnect), IntersectionObserver (root, rootMargin,
+     threshold, la prima osservazione sempre), ResizeObserver,
+     requestAnimationFrame a fotogrammi (16 ms, un tempo per tutti).
+     EXBrowser 0.041.
+   - tools/prove/domprova.c: la console anche dopo i tempi.
+   - tools/prove/sito/ciclo.html (nuova).
+  Prove:
+   - Sull'host (domqjs, la prova del preludio in ~/ex_os/prove-ciclo):
+     ordine sync, micro, t0, microcompito di t0, t0b; MutationObserver 4
+     record coi valori vecchi in una consegna; la prima osservazione di
+     IntersectionObserver. make prova-exqjs 267, prova-exdom 267.
+   - ciclo.html in QEMU 32 e 64 bit: le sette righe OK. I timer da 0, 4 e
+     16 ms e i fotogrammi vanno a 200-320 ms: ! LA SVEGLIA DI EXWIN E' A 200
+     ms (il poll del ciclo dei messaggi). Chiesto all'agente del kernel
+     (collaborazione.txt, 26/11): il poll scada alla sveglia piu' vicina.
+     EXBrowser chiede gia' la sveglia giusta: col cambio di ExWin i timer
+     brevi diventano veri senza toccare altro.
+   - Regressioni (QEMU 32 bit): le sette pagine di riferimento identiche
+     alla 0.039; Wikipedia identica al P7 (impaginazione 5230 ms); Google
+     uguale salvo la barra di stato (il numero di byte della pagina).
+     64 bit: costruito con costruisci-utente64.sh (copiata), ciclo.html
+     come a 32 bit.
+
+7.9  P9 FATTO (26/11/2026): Shadow DOM, Custom Elements, il DOM moderno
+-----
+  File:
+   - lib/exhtml (html_lega, html_legato, html_legato_da, html_slega_tutti):
+     una radice d'ombra e' un nodo "#shadow-root" SENZA padre (nessuna
+     visita del documento la incontra, come vuole il DOM), legata al suo
+     ospite in una tabella; lo stesso per il contenuto di un <template>
+     ("#document-fragment"). HtmlNodo non cambia misura. Il gancio delle
+     mutazioni (P8) ora dice gli attributi DOPO averli scritti
+     (attributeChangedCallback legge il valore nuovo).
+   - lib/exdom: attachShadow (open/closed), shadowRoot, host, mode,
+     nodeType 11 per frammenti e ombre, getRootNode, isConnected,
+     template.content, createDocumentFragment, importNode, cloneNode (anche
+     del contenuto dei template), un frammento in appendChild/insertBefore
+     da' i suoi figli, attributes e getAttributeNames, assignedNodes e
+     assignedElements degli slot; gli eventi salgono dall'ombra all'ospite.
+   - lib/exqjs: ! UN SETTER SULLA CATENA DEI PROTOTIPI SI CHIAMA. Gli
+     oggetti di exdom sono esotici: una scrittura che il gancio non prende
+     diventava SEMPRE una proprieta' propria, e il `set valore(v)` di una
+     classe di elemento non veniva mai chiamato.
+   - lib/excss: css_ambito (l'albero di una regola, nei due byte liberi di
+     CssRegola: la misura resta 24), una regola vale solo per gli elementi
+     del suo albero, :host (l'argomento di :host(...) non si guarda),
+     :defined, i combinatori passano dall'ombra all'ospite.
+   - exwin/bin/exbrowser: i fogli hanno l'albero dove stanno (quelli dentro
+     un <template> o in un ramo staccato non valgono piu': prima si
+     applicavano a tutta la pagina); l'albero piatto nell'impaginazione: un
+     ospite disegna la sua ombra, uno <slot> i figli che gli toccano (per
+     nome, o il ripiego), anche nei contenitori di Taffy. Il preludio: i
+     metodi moderni del DOM (append, prepend, before, after, remove,
+     replaceWith, replaceChildren, replaceChild, toggleAttribute, contains,
+     insertAdjacentHTML/Element/Text, parentElement, *ElementChild,
+     *ElementSibling, childElementCount, localName, createTreeWalker,
+     NodeFilter) e customElements (define, get, getName, whenDefined,
+     upgrade): HTMLElement si puo' estendere, i costruttori restituiscono
+     l'elemento, connected/disconnected/attributeChangedCallback dal gancio
+     delle mutazioni. EXBrowser 0.042.
+   - tools/prove/sito/ombra.html (nuova), tools/prove/cssprova.c (+6).
+  Prove:
+   - Sull'host (domqjs col preludio, ~/ex_os/prove-ombra e prove-ciclo/
+     ce_test.js): 20 prove su Custom Elements, Shadow DOM e i metodi nuovi,
+     tutte giuste. make prova-excss 256, prova-exdom 267, prova-exqjs 267,
+     prova-exhtml, prova-exhttp, prova-biscotti 102.
+   - ombra.html in QEMU 32 e 64 bit (identiche): il foglio dell'ombra resta
+     nell'ombra, :host, slot con nome e senza, il ripiego, gli elementi
+     gia' nella pagina aggiornati alla define, uno creato da script.
+   - Regressioni (32 bit, contro le foto del P8): le sette pagine e
+     Wikipedia identiche al pixel (impaginazione di Wikipedia 5,24 s), Google
+     cambia solo nella barra di stato (10 righe, come al P8).
+  Non fatto: i web-platform-tests (testharness.js chiede molto piu' DOM di
+  questo: lo si fa quando i commenti diventano nodi, che servono anche a
+  Lit); ::slotted(); :host(sel) col suo argomento; adoptedStyleSheets.
+
+7.10 P10 FATTO (26/11/2026): angoli, ombre, sfumature, colori con l'alfa,
+     SVG, canvas 2D (plutovg 1.3.3, tools/plutovg-exos, dlopen)
+-----
+  File: lib/excss (rgb/rgba/hsl/hsla/#rgba/#rrggbbaa/transparent con l'alfa;
+  border-radius, box-shadow, linear/radial-gradient: css_decoro, facoltativa
+  nello stub); exwin/bin/exbrowser/browser_disegno.c (nuovo): la scatola
+  decorata (ombra sfocata, sfondo, bordi tondi), dis_riempi con l'alfa, SVG
+  in linea e come immagine (<img src=.svg>, sfumature SVG vere), il canvas 2D
+  (percorso proprio in coordinate del dispositivo, come lo standard);
+  browser_impagina.c (alfa_sistema dopo ogni css_calcola, Decoro per i
+  blocchi), browser_estranei.c (pezzi <svg> e <canvas>, est_imm_px),
+  exbrowser.c (__exos_tela, ridisegno dopo il canvas, le tele via con la
+  pagina, gli SVG non piu' scartati), browser_preludio.c
+  (CanvasRenderingContext2D), lib/exdom (canvas.width/height numeri).
+  EXBrowser 0.043. Pagine: decoro.html, svg.html, logo.svg, tela.html.
+  Prove: cssprova 269/269; decoro, svg, tela in QEMU 32 e 64 bit identiche.
+  Regressioni (build senza SVG/canvas): sette pagine identiche; Google: la
+  barra rossa ha gli angoli tondi; Wikipedia: spariscono due righe nere che
+  erano bordi `transparent` (.vector-column-start/end) disegnati neri.
+  Col browser finale (~/ex_os/prove-p10b): sette pagine identiche, Google
+  solo la barra di stato, Wikipedia mostra ora il logo in SVG (la scritta
+  "Wikipedia L'enciclopedia libera" e' l'immagine vera, non piu' il link).
+  (exbrowser 0.043 ricostruito a 32 e 64 bit.) DA FARE: la ricerca di
+  Google mostra la pagina dei biscotti (col logo e gli angoli giusti), i
+  risultati veri dopo il consenso non provati.
+  Non fatto: ombre inset, putImageData, toDataURL, pattern, testo SVG.
+
+7.11 P11 FATTO (26/11/2026): crypto.subtle, localStorage su disco, WebSocket,
+     Worker, URL e Blob, IndexedDB su SQLite, Intl su ICU4C
+-----
+  Fatti e provati in QEMU (32 bit):
+   - crypto.subtle (browser_cripto.c): digest SHA-1/256/384/512, HMAC
+     (importKey raw, generateKey, sign, verify, exportKey); il resto e' una
+     Promise rifiutata con NotSupportedError. sha1.c e sha512.c di excrypt
+     compilati dentro, SHA-256 della libc. I byte viaggiano in esadecimale.
+     cripto.html: i valori di FIPS 180 per "abc" e RFC 4231 caso 2, tutti OK.
+   - localStorage su disco: $HOME/.app/exbrowser/memoria/<origine in
+     esadecimale>.json, l'origine dall'indirizzo della pagina (mai da uno
+     script), 5 MB, scrittura su un file nuovo e rename. Provato con un disco
+     ext4 (mount hd0 /a, HOME=/a): la seconda apertura legge "visite 1".
+   - WebSocket (browser_ws.c): RFC 6455 sopra exhttp_tcp/exhttp_tls_sopra,
+     senza librerie; la connessione al primo giro (dopo il costruttore),
+     maschera su ogni frame, ping/pong, frammenti, 1 MB per messaggio (1009),
+     biscotti e Origin nella stretta di mano. ws.html con un server di eco
+     (~/ex_os/prove-p11/ws/eco.py): protocollo scelto, UTF-8, binario,
+     70000 caratteri, chiusura 4000 "fine", tutti OK. wss:// non provato.
+   - Worker (browser_lavoratori.c): un contesto JS suo (exjs_apri), nello
+     stesso filo del browser (le hook di rete e del motore non reggono un
+     secondo filo): self, postMessage, onmessage, importScripts, close,
+     setTimeout; ogni messaggio e' una copia (__exos_ser: anche Map, Set,
+     Date, ArrayBuffer, i typed array, undefined, Error); lo script solo
+     della stessa origine, o da blob:/data:. lavoro.html: sei prove OK.
+   - URL, URLSearchParams, Blob, File, URL.createObjectURL (nel preludio:
+     QuickJS non ha URL!): 25 prove sull'host (domqjs) tutte giuste.
+   - IndexedDB (browser_idb.c, browser_idb.js; tools/sqlite-exos:
+     libsqlite3.so.0 di SQLite 3.54.1 con dlopen): un file SQLite per
+     origine ($HOME/.app/exbrowser/idb/<origine>.sqlite, in memoria senza
+     disco), le tabelle di 10.8. Le chiavi sono stringhe il cui ordine di
+     byte e' quello della specifica (numero < data < stringa < binario <
+     array), cosi' ORDER BY di SQLite ordina come IndexedDB; il loro JSON
+     accanto. Transazioni una dopo l'altra (BEGIN/COMMIT, ROLLBACK su
+     abort), ogni richiesta in un SAVEPOINT (un add che rompe un indice
+     unico dopo aver scritto la riga non lascia niente), commit quando un
+     compito passa senza richieste nuove. open con upgradeneeded e
+     versioni, deleteDatabase, databases(), cmp, negozi con keyPath e
+     autoIncrement, indici unique e multiEntry, IDBKeyRange, cursori nei
+     quattro versi con continue/advance/update/delete. idb.html: dodici
+     prove OK; su un disco ext4 il file c'e' e ha le righe giuste.
+   - Intl (browser_intl.c, browser_intl.js; tools/icu-exos: ICU4C 79.1,
+     libicuuc.so.79 e libicui18n.so.79 con dlopen, i dati a parte in
+     /lib/icu/icudt79l.dat): dati RIDOTTI col filtro ufficiale di ICU
+     (tools/icu-exos/filtro.json: it, en, de, fr, es, pt; senza dizionari,
+     tabelle dei convertitori, traslitterazioni, numeri in lettere): 4,2 MB
+     invece di 32, un solo file per 32 e 64 bit. ICU si costruisce due volte
+     (per la macchina che costruisce, poi per EX-OS con --with-cross-build);
+     mh-linux al posto di mh-unknown (lo dice ICU), -DEXOS_SOLO_POSIX (il
+     tipo Mutex della libc), U_HAVE_NL_LANGINFO_CODESET=0. Un nativo,
+     __exos_icu: NumberFormat con gli scheletri di ICU (valute, percentuali,
+     unita', compatto, cifre, segni, arrotondamento halfExpand),
+     DateTimeFormat con lo scheletro e il generatore di schemi (dateStyle,
+     timeStyle, fusi, hourCycle), PluralRules, RelativeTimeFormat, Collator,
+     Segmenter, ListFormat, DisplayNames, Locale, e i toLocale*String e
+     localeCompare. Il fuso del sistema da quello del kernel (60 con l'ora
+     legale UE = Europe/Rome). formatToParts ricostruito dalla stringa.
+     intl.html: 28 prove OK, uguali a 32 e 64 bit. ICU si apre al primo
+     script: circa 1 s la prima volta.
+   - Eventi della tastiera (lib/exdom: exdom_evento_tasto): keydown e
+     keypress con key, code, keyCode e i modificatori PRIMA che la casella
+     faccia qualcosa, e preventDefault la ferma; input quando il valore e'
+     cambiato. Finora una pagina non vedeva nessun tasto.
+   - I moduli (exbrowser.c, manda_modulo): i campi si prendono dal
+     DOCUMENTO in ordine (anche quelli in un display:none, che prima non
+     partivano), il valore della casella se c'e'; in POST la query
+     dell'action resta (prima si buttava sempre); un campo nascosto vuoto
+     parte vuoto (prima "on"); Origin e Referer sulla POST.
+   - Lo user-agent deciso al P0 (1 b) era rimasto "EX-OS" in tre punti di
+     lib/exhttp: exhttp_agente e exhttp_provenienza (piano scritto prima in
+     collaborazione.txt). Ora "Mozilla/5.0 (X11; EX-OS i686)
+     EXBrowser/0.044" (x86_64 a 64 bit), anche in navigator.userAgent.
+  Criterio del P11, accounts.google.com fino alla risposta del server:
+  RAGGIUNTO. Con questo user-agent Google manda la versione senza
+  JavaScript (WebLiteSignIn); scritto un nome utente inventato, il server
+  risponde "Couldn't sign you in: the browser you're using doesn't support
+  JavaScript" (rhlk=js). E' il caso previsto al P0 (1 c): il riconoscimento
+  lo chiede l'utente a Google. Prima delle correzioni ai moduli la stessa
+  prova dava 400 (richiesta malformata).
+  Prove sull'host: excss 269, exdom 267, exqjs 267, biscotti 102, exhtml e
+  exhttp a posto. EXBrowser 0.044. Pagine nuove: cripto, ws, lavoro (+ .js),
+  idb, intl.
+  Regressioni (32 bit, contro il P10): bordi, tabella, font, modulo, con,
+  dinamico identiche; script cambia in 3 righe, la 12 che stampa
+  navigator.userAgent (lo user-agent nuovo, voluto); Google e Wikipedia
+  solo la barra di stato. Le pagine del P11 identiche a 32 e 64 bit.
+  Non fatto: Worker di tipo module e fetch nei worker; wss:// provato su un
+  server vero; putImageData; IndexedDB nei worker; formatToParts esatti.
+
+7.12 P12 FATTO (26/11/2026): WebAssembly su WAMR, in modo interprete
+-----
+  File:
+   - tools/wamr-exos (costruisci.sh, CMakeLists.txt, ripieghi/): WAMR 2.4.6
+     come libiwasm.so.2 a 32 e 64 bit, col suo runtime_lib.cmake: interprete
+     veloce, niente AOT ne' JIT (nessuna memoria eseguibile), niente WASI,
+     bulk memory, reference types e tail call; i limiti controllati
+     dall'interprete e non con pagine di guardia e SIGSEGV
+     (WAMR_DISABLE_HW_BOUND_CHECK). La piattaforma "linux" di WAMR, con due
+     ripieghi: sys/timeb.h vuoto (lo include e non lo usa) e sem_open/
+     sem_close/sem_unlink che rispondono ENOSYS (solo per i fili, spenti);
+     MAP_32BIT a 0 (solo per AOT/JIT).
+   - lib/exjs, lib/exqjs: exjs_buffer_esterno/copia/dati/stacca, gli
+     ArrayBuffer per chi ospita il motore (solo QuickJS: con ExJs rendono
+     undefined e 0). memory.buffer e' un ArrayBuffer SULLA memoria del
+     modulo, senza copie, staccato quando la memoria cresce.
+   - lib/exdom: response.arrayBuffer() (i byte veri della risposta, non il
+     testo).
+   - exwin/bin/exbrowser/browser_wasm.c e browser_wasm.js: l'API C standard
+     wasm.h di WAMR con dlopen; Module (exports, imports), Instance, Memory,
+     Global, Table (solo esportate, e la sola lunghezza), validate, compile,
+     instantiate, compileStreaming, instantiateStreaming, CompileError,
+     LinkError, RuntimeError. Le funzioni importate chiamano uno
+     smistatore JavaScript (__exos_wasm_su). ! memory.grow DALL'OSPITE:
+     wasm.h di WAMR lo rifiuta, la sua API propria lo fa
+     (wasm_runtime_get_memory e wasm_memory_enlarge, con l'istanza letta
+     da wasm_memory_t interno, riprodotto e annotato). ! WAMR fissa il
+     massimo della memoria alla misura iniziale se il modulo non ha
+     l'istruzione memory.grow: i moduli veri ce l'hanno.
+   - Trovato strada facendo, e corretto nel preludio: le promesse di exdom
+     (fatte per ExJs, che non aveva Promise) non adottavano una promessa
+     resa da un then: fetch(u).then(r => r.arrayBuffer()).then(b =>
+     WebAssembly.instantiate(b)) passava avanti la Promise stessa. fetch e i
+     metodi della risposta rendono ora promesse native. E la prova
+     sull'host (domprova) pompa piu' giri: un timer nato in un microcompito
+     e' del giro dopo.
+   - tools/prove/sito/wasm.html e prova.wasm (fatto a byte da
+     ~/ex_os/prove-wasm/fai/modulo.py: non ci sono wat2wasm ne' node).
+  Prove: wasm.html in QEMU 32 e 64 bit, tredici prove OK (validate,
+  descrizioni, i32 che trabocca, il modulo che chiama JavaScript, memoria
+  condivisa, grow da JS e dal modulo col buffer vecchio staccato, fib(25) in
+  110 ms a 32 bit e 100 a 64, un globale, RuntimeError, CompileError,
+  LinkError). Lo stesso modulo con WAMR sull'host e su EX-OS da riga di
+  comando. Host: excss 269, exdom 267, exqjs 267, biscotti 102, exhtml e
+  exhttp a posto. EXBrowser 0.045.
+  Regressioni: REGR_P12
+  Non fatto: i64 come BigInt (e' un Number, esatto fino a 2^53); Memory e
+  Table creati da JavaScript e importati in un modulo; Table.get/set;
+  customSections; i web-platform-tests wasm/jsapi (testharness.js chiede
+  piu' DOM, come al P9).
 
 
 ===============================================================================

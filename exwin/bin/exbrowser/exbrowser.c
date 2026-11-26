@@ -807,9 +807,12 @@ static int formato_ignoto(const char *src)
     static const char *const FUORI[] = { ".svg", ".avif", 0 };
     int n = 0, i, k;
 
+    /* ! AN SVG IS READ SINCE P10 when plutovg is there (browser_disegno.c) */
+    i = dis_disponibile() ? 1 : 0;
+
     while (src[n]) n++;
 
-    for (i = 0; FUORI[i]; i++) {
+    for (; FUORI[i]; i++) {
         int m = 0;
 
         while (FUORI[i][m]) m++;
@@ -2192,6 +2195,36 @@ static unsigned int ora_epoca(void)
  * indietro il tempo a ogni cambio di secondo, e `b - a` fra due Date
  * verrebbe negativo. Cosi' e' fermo di meno di un secondo rispetto all'ora
  * vera, ma cresce sempre. */
+/* setTimeout counts from here (P8): the same clock exjs_pompa is given */
+static unsigned int js_cronometro(void *dato)
+{
+    (void)dato;
+    return uptime_ms();
+}
+
+/* The wake-up for the page's timers (P8): as soon as the next one is due,
+ * between 1 ms and 200 (the toolkit's poll decides the real resolution:
+ * collaborazione.txt, 26/11). */
+static void sveglia_per_i_tempi(void)
+{
+    int p = g_js ? exjs_prossimo_ms(g_js, uptime_ms()) : -1;
+
+    if (p < 0 || p > 200) p = 200;
+    if (p < 1) p = 1;
+    ex_set_timer(g_f, (unsigned int)p);
+}
+
+static void osservatori_giro(void);
+
+/* Where a node is, for the bridge (P8): the last layout of the current view */
+static void ponte_geometria(void *dato, int nodo, int *out)
+{
+    (void)dato;
+    rett_di(nodo, out);
+    out[4] = 0;
+    out[5] = g_scorri;
+}
+
 static double js_orologio(void *dato)
 {
     static double base;
@@ -2341,6 +2374,27 @@ static int stesso_sito_di(const char *url, const char *host, int cifrata)
 }
 
 static void bis_chiedi(void *dato, const char *host, const char *percorso,
+                       int cifrata, char *fuori, unsigned int max);
+
+/* "Mozilla/5.0 (X11; EX-OS i686) EXBrowser/0.044", x86_64 at 64 bit */
+const char *agente_browser(void)
+{
+    static char ua[96];
+
+    if (!ua[0])
+        snprintf(ua, sizeof(ua), "Mozilla/5.0 (X11; EX-OS %s) EXBrowser/%s",
+                 sizeof(void *) == 8 ? "x86_64" : "i686", VERSIONE_APP);
+    return ua;
+}
+
+/* the cookies a WebSocket's handshake carries (browser_ws.c, P11): as a
+ * request of the page */
+void ws_biscotti(const char *host, const char *percorso, int cifrata, char *out, unsigned int max)
+{
+    bis_chiedi(0, host, percorso, cifrata, out, max);
+}
+
+static void bis_chiedi(void *dato, const char *host, const char *percorso,
                        int cifrata, char *fuori, unsigned int max)
 {
     int stesso, nav;
@@ -2392,6 +2446,9 @@ static void bis_per_script(char *fuori, unsigned int max)
  * Lax dopo il primo script della pagina, e partiva con una navigazione da
  * un altro sito. Trovato con la prova di SameSite in QEMU. */
 static ExDom *bis_ponte(void);          /* vedi motore_apri, piu' avanti */
+static ExJsVal nat_tela(ExJsCtx *c, ExJsVal questo, const ExJsVal *a, int n_arg, void *dato);   /* P10 */
+static ExJsVal nat_memoria_leggi(ExJsCtx *c, ExJsVal questo, const ExJsVal *a, int n_arg, void *dato);   /* P11 */
+static ExJsVal nat_memoria_scrivi(ExJsCtx *c, ExJsVal questo, const ExJsVal *a, int n_arg, void *dato);
 
 /* `pezzo` («n=v») is one of the items of `elenco` («a=1; n=v; b=2») as is */
 static int bis_c_e_gia(const char *elenco, const char *pezzo)
@@ -2858,7 +2915,24 @@ static int imm_prendi(int k)
         cache_scrivi(url, g_imm_buf, n);
     }
 
-    if (!g_img_carica(g_imm_buf, n, &bm)) return 0;
+    if (!g_img_carica(g_imm_buf, n, &bm)) {
+        /* ! AN SVG IS DRAWN, NOT DECODED (P10, browser_disegno.c): at the
+         * size the page gives it, so a logo stays sharp at any size */
+        int iw, ih;
+
+        if (!dis_svg_immagine_apri(g_imm_buf, n, &iw, &ih) || iw <= 0 || ih <= 0) return 0;
+        misura(im, (unsigned int)iw, (unsigned int)ih, &w, &h);
+        if (w == 0 || h == 0 || g_imm_px + w * h > g_imm_px_tot) {
+            if (w && h) g_imm_fuori++;
+            return 0;
+        }
+        im->px = dis_svg_immagine((int)w, (int)h);
+        if (!im->px) { g_imm_fuori++; return 0; }
+        im->w = w;
+        im->h = h;
+        g_imm_px += w * h;
+        return 1;
+    }
 
     misura(im, bm.larghezza, bm.altezza, &w, &h);
 
@@ -3214,6 +3288,44 @@ static void caratteri_della_pagina(void)
     free(buf);
 }
 
+/* =============================================================================
+ * WHICH TREE A SHEET BELONGS TO (P9, 26 November 2026)
+ *
+ * -1: none that is drawn (a removed subtree, a <template>'s inert content,
+ * a shadow root whose host is not in the page); 0: the document; k + 1: the
+ * shadow root k - its rules apply inside it only (css_ambito).
+ * ========================================================================== */
+/* the top of n's chain of parents; -1 if a <template> is on the way */
+static int cima_di(int n)
+{
+    int r = n;
+
+    for (; n >= 0; n = g_doc.nodi[n].padre) {
+        if (g_doc.nodi[n].tipo == HTML_ELEMENTO && uguale(html_nome(&g_doc, n), "template")) return -1;
+        r = n;
+    }
+    return r;
+}
+
+static int albero_del_foglio(int n)
+{
+    int r = cima_di(n), m, giri = 0;
+
+    if (r < 0) return -1;
+    if (r == g_doc.radice) return 0;
+    if (!uguale(html_nome(&g_doc, r), "#shadow-root")) return -1;
+    /* its host, and the host's host, must reach the document */
+    for (m = html_legato_da(&g_doc, HTML_LEGAME_OMBRA, r); m >= 0 && giri++ < 64; ) {
+        int t = cima_di(m);
+
+        if (t < 0) return -1;
+        if (t == g_doc.radice) return r + 1;
+        if (!uguale(html_nome(&g_doc, t), "#shadow-root")) return -1;
+        m = html_legato_da(&g_doc, HTML_LEGAME_OMBRA, t);
+    }
+    return -1;
+}
+
 static void raccogli_css(void)
 {
     int i, presi = 0;
@@ -3247,7 +3359,10 @@ static void raccogli_css(void)
         nome = html_nome(&g_doc, i);
 
         if (uguale(nome, "style")) {
-            int f;
+            int f, albero = albero_del_foglio(i);
+
+            if (albero < 0) continue;
+            css_ambito(&g_css, (unsigned int)albero);
 
             for (f = g_doc.nodi[i].primo_figlio; f >= 0;
                  f = g_doc.nodi[f].prossimo) {
@@ -3260,6 +3375,7 @@ static void raccogli_css(void)
                 css_base(&g_css, 0);        /* un <style>: gli url() sono della pagina */
                 css_analizza(&g_css, t, n, CSS_ORIGINE_FOGLIO);
             }
+            css_ambito(&g_css, 0);
             continue;
         }
 
@@ -3599,6 +3715,14 @@ static void motore_chiudi(void)
      * questa riga ogni pagina ne lascerebbe dietro uno intero. Liberare prima
      * il blocco vorrebbe dire chiamarla su un contesto che non c'e' piu'. */
     if (g_js) exjs_chiudi(g_js);
+    /* the tree's hook points into the bridge that is about to go (P8) */
+    html_su_cambio(&g_doc, 0, 0);
+    /* and the page's canvases go with it (P10), and its sockets (P11) */
+    dis_tele_via();
+    ws_tutti_via();
+    lav_tutti_via();
+    idb_via();
+    wasm_tutti_via();
 
     if (g_js_mem)  { free(g_js_mem);  g_js_mem = 0; }
     if (g_dom_mem) { free(g_dom_mem); g_dom_mem = 0; }
@@ -3627,6 +3751,7 @@ static int motore_apri(void)
     if (g_js && g_dom) {
         exdom_indirizzo(g_dom, g_qui);
         exdom_risolutore(g_dom, ponte_risolvi, 0);
+        exdom_geometria(g_dom, ponte_geometria, 0);
         return 1;
     }
     motore_chiudi();
@@ -3645,6 +3770,7 @@ static int motore_apri(void)
     if (!g_js) { motore_chiudi(); dico("javascript: il motore non si apre"); return 0; }
     exjs_uscita_metti(g_js, js_uscita, 0);
     exjs_orologio_metti(g_js, js_orologio, 0);
+    exjs_cronometro_metti(g_js, js_cronometro, 0);
     exjs_fuso_metti(g_js, js_fuso, 0);
 
     /* ! IL PONTE SI DIMENSIONA SUI NODI CHE LA PAGINA HA, piu' un margine
@@ -3695,6 +3821,15 @@ static int motore_apri(void)
      * Il giorno che risolvi() sbaglia, sbaglia in un posto solo — per i
      * collegamenti, per le immagini e per il DOM insieme. */
     exdom_risolutore(g_dom, ponte_risolvi, 0);
+    exdom_geometria(g_dom, ponte_geometria, 0);
+    /* <canvas> 2D (P10): the context's operations, in browser_disegno.c */
+    exjs_metti(g_js, exjs_globale(g_js), "__exos_tela",
+               exjs_nativa(g_js, nat_tela, 0, "__exos_tela"));
+    /* localStorage on disk (P11) */
+    exjs_metti(g_js, exjs_globale(g_js), "__exos_memoria_leggi",
+               exjs_nativa(g_js, nat_memoria_leggi, 0, "__exos_memoria_leggi"));
+    exjs_metti(g_js, exjs_globale(g_js), "__exos_memoria_scrivi",
+               exjs_nativa(g_js, nat_memoria_scrivi, 0, "__exos_memoria_scrivi"));
 
     /* The window's own objects: self, performance, storage, TextEncoder,
      * postMessage, crypto... — see browser_preludio.c. Last, because it
@@ -3949,7 +4084,7 @@ static void esegui_script(void)
      * uno script che ha finito non ha motivo di svegliare il browser cinque
      * volte al secondo per sempre — e su una macchina da 32 MB il costo di un
      * risveglio inutile e' un ridisegno che nessuno ha chiesto. */
-    if (g_js && exjs_lavori_in_attesa(g_js)) ex_set_timer(g_f, 200);
+    if (g_js && exjs_lavori_in_attesa(g_js)) sveglia_per_i_tempi();
 
     dopo_gli_script();
 }
@@ -4004,6 +4139,93 @@ static void ctrl_al_dom(void)
     if (pari) g_vista = html_versione(&g_doc);
 }
 
+/* =============================================================================
+ * THE KEYS AND THE input EVENT FOR THE PAGE (P11, 26 November 2026)
+ *
+ * keydown (and keypress for a character) go to the page BEFORE the control
+ * does anything with the key; if the page prevents them, the control does
+ * nothing (an Enter that a page handles itself does not submit the form).
+ * `input` goes when a control's value has changed since the page last heard
+ * of it: before each key and at each timer turn - so a page reads the new
+ * value in its input handler, not the one before.
+ * ============================================================================= */
+static int          g_inp_nodo[CTRL_MAX];
+static unsigned int g_inp_hash[CTRL_MAX];
+
+static unsigned int hash_valore(const char *s)
+{
+    unsigned int h = 2166136261u;
+
+    while (*s) h = (h ^ (unsigned char)*s++) * 16777619u;
+    return h | 1u;
+}
+
+static void input_dai_ctrl(void)
+{
+    int i;
+
+    if (!g_dom) return;
+    for (i = 0; i < g_ctrl_n && i < CTRL_MAX; i++) {
+        Ctrl        *c = &g_ctrl[i];
+        unsigned int h;
+
+        if (c->nodo < 0 || (c->tipo != CTRL_TESTO && c->tipo != CTRL_AREA)) continue;
+        h = hash_valore(c->valore);
+        if (g_inp_nodo[i] != c->nodo + 1) { g_inp_nodo[i] = c->nodo + 1; g_inp_hash[i] = h; continue; }
+        if (g_inp_hash[i] == h) continue;
+        g_inp_hash[i] = h;
+        ctrl_al_dom();
+        script_evento(c->nodo, "input");
+    }
+}
+
+/* the key's name and code, as KeyboardEvent says them */
+static int tasto_alla_pagina(int nodo, const char *tipo, unsigned int c, unsigned int wp)
+{
+    char        key[16], code[24];
+    int         kc = 0, mod = 0, r;
+    ExJsErrore  err;
+
+    if (!g_dom || nodo < 0) return 1;
+    key[0] = code[0] = 0;
+    switch (c) {
+    case '\n': case '\r': strcpy(key, "Enter"); strcpy(code, "Enter"); kc = 13; break;
+    case '\b':  strcpy(key, "Backspace"); strcpy(code, "Backspace"); kc = 8; break;
+    case '\t':  strcpy(key, "Tab"); strcpy(code, "Tab"); kc = 9; break;
+    case 27:    strcpy(key, "Escape"); strcpy(code, "Escape"); kc = 27; break;
+    case ' ':   strcpy(key, " "); strcpy(code, "Space"); kc = 32; break;
+    case KBD_K_DEL:   strcpy(key, "Delete"); strcpy(code, "Delete"); kc = 46; break;
+    case KBD_K_LEFT:  strcpy(key, "ArrowLeft"); strcpy(code, key); kc = 37; break;
+    case KBD_K_UP:    strcpy(key, "ArrowUp"); strcpy(code, key); kc = 38; break;
+    case KBD_K_RIGHT: strcpy(key, "ArrowRight"); strcpy(code, key); kc = 39; break;
+    case KBD_K_DOWN:  strcpy(key, "ArrowDown"); strcpy(code, key); kc = 40; break;
+    case KBD_K_HOME:  strcpy(key, "Home"); strcpy(code, key); kc = 36; break;
+    case KBD_K_END:   strcpy(key, "End"); strcpy(code, key); kc = 35; break;
+    case KBD_K_PGUP:  strcpy(key, "PageUp"); strcpy(code, key); kc = 33; break;
+    case KBD_K_PGDN:  strcpy(key, "PageDown"); strcpy(code, key); kc = 34; break;
+    default:
+        if (c >= 33 && c < 256) {
+            /* the character as UTF-8; keyCode the upper case letter or digit */
+            if (c < 128) { key[0] = (char)c; key[1] = 0; }
+            else { key[0] = (char)(0xC0 | (c >> 6)); key[1] = (char)(0x80 | (c & 63)); key[2] = 0; }
+            if (c >= 'a' && c <= 'z') { kc = (int)c - 32; snprintf(code, sizeof(code), "Key%c", (char)kc); }
+            else if (c >= 'A' && c <= 'Z') { kc = (int)c; snprintf(code, sizeof(code), "Key%c", (char)c); }
+            else if (c >= '0' && c <= '9') { kc = (int)c; snprintf(code, sizeof(code), "Digit%c", (char)c); }
+            else kc = (int)c;
+            if (!strcmp(tipo, "keypress")) kc = (int)c;
+        } else if (c >= KBD_K_F1 && c < KBD_K_F1 + 12) {
+            snprintf(key, sizeof(key), "F%u", c - KBD_K_F1 + 1); strcpy(code, key); kc = 112 + (int)(c - KBD_K_F1);
+        } else return 1;
+    }
+    if (wp & KBD_MOD_SHIFT) mod |= 1;
+    if (wp & KBD_MOD_CTRL)  mod |= 2;
+    if (wp & KBD_MOD_ALT)   mod |= 4;
+    memset(&err, 0, sizeof(err));
+    r = exdom_evento_tasto(g_dom, nodo, tipo, key, code, kc, mod, &err);
+    js_grida(&err);
+    return r;
+}
+
 static void dom_al_ctrl(void)
 {
     int i;
@@ -4033,10 +4255,193 @@ static void dom_al_ctrl(void)
  * senza, l'unica scelta sarebbe fra rimpaginare dopo ogni clic — su un albero
  * di ventiquattromila nodi, a ogni movimento — e non rimpaginare mai, cioe'
  * una pagina che non risponde. */
+/* =============================================================================
+ * __exos_tela(canvas, w, h, op, s1, s2, n...) — one operation of a <canvas>
+ * 2D context (P10, browser_disegno.c). An element among the numbers (the
+ * image of drawImage) becomes its node.
+ * ========================================================================== */
+static ExJsVal nat_tela(ExJsCtx *c, ExJsVal questo, const ExJsVal *a, int n_arg, void *dato)
+{
+    static char s1[4096], s2[512];
+    double      num[12];
+    int         nodo, i, nn = 0;
+    const char *t;
+
+    (void)questo; (void)dato;
+    if (n_arg < 4 || !g_dom) return exjs_numero(c, 0);
+    nodo = exdom_nodo(g_dom, a[0]);
+    if (nodo < 0) return exjs_numero(c, 0);
+    s1[0] = s2[0] = 0;
+    if (n_arg > 4 && (t = exjs_a_stringa(c, a[4])) != 0) { strncpy(s1, t, sizeof(s1) - 1); s1[sizeof(s1) - 1] = 0; }
+    if (n_arg > 5 && (t = exjs_a_stringa(c, a[5])) != 0) { strncpy(s2, t, sizeof(s2) - 1); s2[sizeof(s2) - 1] = 0; }
+    for (i = 6; i < n_arg && nn < 12; i++) {
+        double v = exjs_a_numero(c, a[i]);
+
+        if (v != v) { int m = exdom_nodo(g_dom, a[i]); v = m >= 0 ? m : 0; }
+        num[nn++] = v;
+    }
+    return exjs_numero(c, dis_tela_op(nodo, (int)exjs_a_numero(c, a[1]), (int)exjs_a_numero(c, a[2]),
+                                      (int)exjs_a_numero(c, a[3]), num, nn,
+                                      n_arg > 4 ? s1 : 0, n_arg > 5 ? s2 : 0));
+}
+
+/* =============================================================================
+ * localStorage ON DISK (P11, 26 November 2026)
+ *
+ * One file per origin, $HOME/.app/<browser>/memoria/<origin in hex>.json,
+ * next to the cache: the prelude reads it once when the page opens and
+ * writes all of it at each change (JSON of the keys). ! THE ORIGIN IS OURS,
+ * from the page's address (scheme, host, port), never what a script says:
+ * a page must not reach another origin's file. 5 MB per origin, as the
+ * other browsers; past that the write is refused and the data in memory
+ * stays as it is. Without a cache directory: in memory, as before.
+ * ========================================================================== */
+#define MEMORIA_MAX (5u * 1024u * 1024u)
+
+static int dati_file_di(const char *cartella, const char *est, char *out, unsigned int max);
+
+static int memoria_file(char *out, unsigned int max)
+{
+    return dati_file_di("memoria", ".json", out, max);
+}
+
+/* the file of this page's origin in <cache>/../<cartella>, for IndexedDB too
+ * (browser_idb.c, P11) */
+int dati_file(const char *cartella, const char *est, char *out, unsigned int max)
+{
+    return dati_file_di(cartella, est, out, max);
+}
+
+static int dati_file_di(const char *cartella, const char *est, char *out, unsigned int max)
+{
+    char         origine[512];
+    const char  *u = g_qui, *h;
+    unsigned int i, n = 0, k;
+    static const char C[] = "0123456789abcdef";
+
+    if (!g_cache[0] || !u) return 0;
+    h = strstr(u, "://");
+    if (!h || (strncmp(u, "http", 4) != 0)) return 0;
+    for (i = 0; u + i < h + 3 && n < sizeof(origine) - 1; i++) origine[n++] = u[i];
+    for (h += 3; *h && *h != '/' && *h != '?' && *h != '#' && n < sizeof(origine) - 1; h++)
+        if (*h == '@') n = (unsigned int)(strstr(u, "://") - u) + 3;   /* no user:password@ */
+        else origine[n++] = (char)(*h >= 'A' && *h <= 'Z' ? *h - 'A' + 'a' : *h);
+    origine[n] = 0;
+    /* <cache>/../memoria */
+    k = (unsigned int)strlen(g_cache);
+    while (k > 0 && g_cache[k - 1] != '/') k--;
+    if (k == 0 || k + strlen(cartella) + 2 * n + strlen(est) + 4 >= max) return 0;
+    memcpy(out, g_cache, k);
+    memcpy(out + k, cartella, strlen(cartella) + 1);
+    if (mkdir(out, 0700) != 0 && errno != EEXIST) return 0;
+    k += (unsigned int)strlen(cartella);
+    out[k++] = '/';
+    for (i = 0; i < n; i++) { out[k++] = C[(unsigned char)origine[i] >> 4]; out[k++] = C[(unsigned char)origine[i] & 15]; }
+    memcpy(out + k, est, strlen(est) + 1);
+    return 1;
+}
+
+static ExJsVal nat_memoria_leggi(ExJsCtx *c, ExJsVal questo, const ExJsVal *a, int n_arg, void *dato)
+{
+    char          p[CACHE_PERC_MAX + 1100];
+    static char  *buf;
+    int           fd;
+    long          n = 0, r;
+
+    (void)questo; (void)a; (void)n_arg; (void)dato;
+    if (!memoria_file(p, sizeof(p))) return exjs_stringa(c, "", -1);
+    if (!buf) buf = (char *)malloc(MEMORIA_MAX + 1);
+    if (!buf) return exjs_stringa(c, "", -1);
+    fd = open(p, O_RDONLY);
+    if (fd < 0) return exjs_stringa(c, "", -1);
+    while (n < (long)MEMORIA_MAX && (r = read(fd, buf + n, MEMORIA_MAX - (unsigned long)n)) > 0) n += r;
+    close(fd);
+    buf[n] = 0;
+    return exjs_stringa(c, buf, (int)n);
+}
+
+static ExJsVal nat_memoria_scrivi(ExJsCtx *c, ExJsVal questo, const ExJsVal *a, int n_arg, void *dato)
+{
+    char        p[CACHE_PERC_MAX + 1100], q[CACHE_PERC_MAX + 1110];
+    const char *t;
+    size_t      n;
+    int         fd;
+
+    (void)questo; (void)dato;
+    if (n_arg < 1 || !memoria_file(p, sizeof(p))) return exjs_booleano(0);
+    t = exjs_a_stringa(c, a[0]);
+    if (!t || (n = strlen(t)) > MEMORIA_MAX) return exjs_booleano(0);
+    /* ! A NEW FILE AND A RENAME: a write cut halfway leaves the old one */
+    snprintf(q, sizeof(q), "%s.nuovo", p);
+    fd = open(q, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) return exjs_booleano(0);
+    if (write(fd, t, n) != (long)n) { close(fd); unlink(q); return exjs_booleano(0); }
+    close(fd);
+    return exjs_booleano(rename(q, p) == 0);
+}
+
+/* =============================================================================
+ * WHAT A WORKER NEEDS FROM THE BROWSER (browser_lavoratori.c, P11)
+ * ========================================================================== */
+/* scheme://host[:port] of an absolute URL, into o */
+static void origine_di(const char *u, char *o, unsigned int max)
+{
+    const char  *h = strstr(u, "://");
+    unsigned int k = 0;
+
+    o[0] = 0;
+    if (!h) return;
+    for (h += 3; u < h && k < max - 1; u++) o[k++] = *u;
+    for (; *u && *u != '/' && *u != '?' && *u != '#' && k < max - 1; u++) o[k++] = *u;
+    o[k] = 0;
+}
+
+/* ! A WORKER'S SCRIPT OF THE PAGE'S ORIGIN ONLY, as the standard says:
+ * resolved, compared, then from the cache or the network */
+int lav_scarica(const char *url, char *buf, unsigned int max, unsigned int *n, char *finale, unsigned int fmax)
+{
+    char        ass[NAV_URL_MAX], o1[300], o2[300];
+    ExHttpEsito e;
+
+    if (!risolvi(url, ass, sizeof(ass))) return 0;
+    origine_di(ass, o1, sizeof(o1));
+    origine_di(g_qui, o2, sizeof(o2));
+    if (!o1[0] || strcmp(o1, o2) != 0) { diario("exbrowser: worker di un'altra origine rifiutato: %s\n", ass); return 0; }
+    snprintf(finale, fmax, "%s", ass);
+    if (cache_leggi(ass, (unsigned char *)buf, max, n)) return 1;
+    if (!prendi_in_rete(ass, (unsigned char *)buf, max, &e) || e.codice != 200 || e.troncata) return 0;
+    *n = e.byte;
+    return 1;
+}
+
+static void lav_uscita(const char *t, unsigned int n, void *dato)
+{
+    (void)dato;
+    printf("exbrowser: worker: %.*s\n", (int)n, t);
+}
+
+void lav_ganci(ExJsCtx *c)
+{
+    exjs_uscita_metti(c, lav_uscita, 0);
+    exjs_orologio_metti(c, js_orologio, 0);
+    exjs_cronometro_metti(c, js_cronometro, 0);
+    exjs_fuso_metti(c, js_fuso, 0);
+}
+
+unsigned int lav_arena(void)
+{
+    return js_arena();
+}
+
 static void rifai_se_cambiato(void)
 {
     if (!g_dom) return;
-    if (html_versione(&g_doc) == g_vista) return;
+    if (html_versione(&g_doc) == g_vista) {
+        /* a script drew on a <canvas> (P10): the page as it is, again */
+        if (dis_tela_sporca()) disegna();
+        return;
+    }
+    (void)dis_tela_sporca();
 
     dom_al_ctrl();      /* a script may have set a field: see ctrl_al_dom */
     esegui_script_nuovi();  /* and it may have added a <script> */
@@ -4931,6 +5336,7 @@ static void documento_nuovo(unsigned int n)
         g_t_imp += uptime_ms() - t0;
     }
     g_vista = html_versione(&g_doc);
+    osservatori_giro();
 
     /* After g_vista is set: a `load` handler's changes are then seen by
      * rifai_se_cambiato() as a new version, and laid out once. */
@@ -4990,7 +5396,7 @@ static Vista *cornice_vista(int k)
     /* ! ONLY THE SMALL FIELDS: a memset of the whole view would touch 4.7 MB
      * that the iframe's page may never use. The big vectors are filled by
      * html_prepara and the layout before anyone reads them. */
-    v->imp.pez_n = v->imp.link_n = v->imp.sfondi_n = 0;
+    v->imp.pez_n = v->imp.link_n = v->imp.sfondi_n = v->imp.deco_n = 0;
     v->imp.gen_n = 0;
     v->imp.scorri = v->imp.altezza = 0;
     v->imp.doc.nodi_n = 0;
@@ -4998,6 +5404,7 @@ static Vista *cornice_vista(int k)
     g_sfondi_imm = 0;           /* le immagini di sfondo ripartono con la pagina */
     v->est.imm_px_negato = 0;
     v->est.corn_n = 0;
+    v->est.svg_n = 0;
     v->pagina_n = 0;
     v->ancora[0] = v->qui[0] = '\0';
     v->load_sparato = 0;
@@ -5048,6 +5455,7 @@ static void cornici_chiudi(void)
         vista_usa(p);
     }
     g_principale.est.corn_n = 0;
+    g_principale.est.svg_n = 0;
 }
 
 /* Loads iframe k of the page, with its view current for the whole time. */
@@ -6686,80 +7094,117 @@ static void manda_modulo(int m, int attivato)
     /* Come per `vai`: mentre si scarica, un modulo non parte. */
     if (g_in_rete) { dico("sto ancora scaricando: Esc per fermare"); return; }
 
-    for (i = 0; i < g_ctrl_n; i++) {
-        const Ctrl *c = &g_ctrl[i];
+    /* =====================================================================
+     * ! THE FIELDS COME FROM THE DOCUMENT, not from the controls on the
+     * screen (P11, 26 November 2026): a hidden field inside a display:none
+     * box has no control, and was not sent - Google's sign-in form keeps
+     * `bgresponse` so, and answered 400. The controls give what the user
+     * changed (ctrl_al_dom writes it into the tree first); the order is the
+     * document's, as the standard's "form data set".
+     * ===================================================================== */
+    ctrl_al_dom();
+    {
+        int pila[512], np = 0, att = (attivato >= 0 && attivato < g_ctrl_n) ? g_ctrl[attivato].nodo : -1;
 
-        if (pos >= (int)sizeof(q) - 8) { pieno = 1; break; }
-        if (c->modulo != m) continue;
-        if (c->nome[0] == '\0') continue;
-        if ((c->tipo == CTRL_SPUNTA || c->tipo == CTRL_RADIO) && !c->acceso)
-            continue;
+        if (g_mod[m].nodo >= 0) pila[np++] = g_mod[m].nodo;
+        while (np > 0 && !pieno) {
+            int         v = pila[--np], f, k;
+            const char *nome, *tipo, *val = 0, *tag;
+            char        buf[CTRL_VAL_MAX];
 
-        if (c->tipo == CTRL_PULSANTE) {
-            int genere;
-
-            if (i != attivato) continue;        /* gli altri non c'entrano */
-            genere = genere_pulsante(c);
-            if (genere == PULS_AZZERA || genere == PULS_NULLA) continue;
-
-            /* ! UN PULSANTE IMMAGINE MANDA LE COORDINATE, non il suo valore:
-             * `nome.x` e `nome.y`. Certi server guardano solo se `nome.x` c'e'.
-             * Sono il punto del clic DENTRO IL RETTANGOLO del controllo
-             * (28 settembre 2026; prima erano sempre zero). Il rettangolo e'
-             * quello di un pulsante — l'immagine del `src` non si disegna
-             * ancora — quindi un server che guarda DOVE si e' cliccato nella
-             * figura riceve un punto del pulsante. Da tastiera restano zero,
-             * come nei browser veri. */
-            if (genere == PULS_IMMAGINE) {
-                const char *fine[2] = { ".x", ".y" };
-                int         k, v[2];
-
-                v[0] = g_imm_clic_x < 0 ? 0 : g_imm_clic_x;
-                v[1] = g_imm_clic_y < 0 ? 0 : g_imm_clic_y;
-                for (k = 0; k < 2; k++) {
-                    char num[12];
-                    int  j = 0;
-                    if (!primo) q[pos++] = '&';
-                    primo = 0;
-                    pos = aggiungi_codificato(q, pos, (int)sizeof(q), c->nome);
-                    pos = aggiungi_codificato(q, pos, (int)sizeof(q), fine[k]);
-                    q[pos++] = '=';
-                    snprintf(num, sizeof(num), "%d", v[k]);
-                    while (num[j] && pos < (int)sizeof(q) - 1) q[pos++] = num[j++];
-                }
-                g_imm_clic_x = g_imm_clic_y = 0;    /* il prossimo invio, se da tastiera, e' zero */
-                continue;
-            }
-
-            /* ! IL VALORE DI UN PULSANTE SI RILEGGE DALL'ALBERO, e non si
-             * prende da `c->valore`: li' dentro c'e' l'ETICHETTA, che per un
-             * <button> e' il testo che ci sta scritto e per un submit senza
-             * `value` e' «Invia», messa dall'impaginazione per avere qualcosa
-             * da disegnare. Mandare «Invia» al server sarebbe inventare un
-             * valore che nella pagina non c'e'. */
+            /* the children, in order: pushed backwards */
             {
-                const char *v = (c->nodo >= 0)
-                              ? html_attr(&g_doc, c->nodo, "value") : 0;
+                int figli[256], nf = 0;
 
-                if (!primo) q[pos++] = '&';
-                primo = 0;
-                pos = aggiungi_codificato(q, pos, (int)sizeof(q), c->nome);
-                q[pos++] = '=';
-                pos = aggiungi_codificato(q, pos, (int)sizeof(q), v ? v : "");
+                for (f = g_doc.nodi[v].primo_figlio; f >= 0 && nf < 256; f = g_doc.nodi[f].prossimo)
+                    if (g_doc.nodi[f].tipo == HTML_ELEMENTO) figli[nf++] = f;
+                while (nf > 0 && np < 512) pila[np++] = figli[--nf];
             }
-            continue;
+            if (v == g_mod[m].nodo) continue;
+            tag = html_nome(&g_doc, v);
+            if (uguale(tag, "template") || uguale(tag, "datalist")) { np = np; continue; }
+            if (!uguale(tag, "input") && !uguale(tag, "select") && !uguale(tag, "textarea") && !uguale(tag, "button")) continue;
+            nome = html_attr(&g_doc, v, "name");
+            if (!nome || !nome[0] || html_attr(&g_doc, v, "disabled")) continue;
+            tipo = html_attr(&g_doc, v, "type");
+            if (!tipo) tipo = uguale(tag, "button") ? "submit" : "text";
+            buf[0] = 0;
+            if (uguale(tag, "input") || uguale(tag, "button")) {
+                if (uguale(tipo, "submit") || uguale(tipo, "image") || uguale(tipo, "button") || uguale(tipo, "reset")) {
+                    if (v != att || uguale(tipo, "button") || uguale(tipo, "reset")) continue;
+                    if (uguale(tipo, "image")) {
+                        /* ! AN IMAGE BUTTON SENDS THE POINT OF THE CLICK:
+                         * nome.x and nome.y, in its rectangle (0 from the
+                         * keyboard, as the real browsers) */
+                        const char *fine[2] = { ".x", ".y" };
+                        int         vv[2];
+
+                        vv[0] = g_imm_clic_x < 0 ? 0 : g_imm_clic_x;
+                        vv[1] = g_imm_clic_y < 0 ? 0 : g_imm_clic_y;
+                        for (k = 0; k < 2 && pos < (int)sizeof(q) - 40; k++) {
+                            if (!primo) q[pos++] = '&';
+                            primo = 0;
+                            pos = aggiungi_codificato(q, pos, (int)sizeof(q), nome);
+                            pos = aggiungi_codificato(q, pos, (int)sizeof(q), fine[k]);
+                            pos += snprintf(q + pos, sizeof(q) - (size_t)pos, "=%d", vv[k]);
+                        }
+                        g_imm_clic_x = g_imm_clic_y = 0;
+                        continue;
+                    }
+                    val = html_attr(&g_doc, v, "value");
+                    if (!val) val = "";
+                } else if (uguale(tipo, "checkbox") || uguale(tipo, "radio")) {
+                    /* ! THE CONTROL'S STATE FIRST: without scripts the tree
+                     * is not kept in step (ctrl_al_dom needs the engine) */
+                    for (k = 0; k < g_ctrl_n; k++) if (g_ctrl[k].nodo == v) break;
+                    if (k < g_ctrl_n ? !g_ctrl[k].acceso : !html_attr(&g_doc, v, "checked")) continue;
+                    val = html_attr(&g_doc, v, "value");
+                    if (!val || !val[0]) val = "on";       /* a box without value */
+                } else if (uguale(tipo, "file")) val = "";
+                else {
+                    for (k = 0; k < g_ctrl_n; k++) if (g_ctrl[k].nodo == v) break;
+                    val = k < g_ctrl_n ? g_ctrl[k].valore : html_attr(&g_doc, v, "value");
+                    if (!val) val = "";
+                }
+            } else if (uguale(tag, "textarea")) {
+                for (k = 0; k < g_ctrl_n; k++) if (g_ctrl[k].nodo == v) break;
+                if (k < g_ctrl_n) val = g_ctrl[k].valore;
+                else { est_testo_dentro(v, buf, sizeof(buf)); val = buf; }
+            } else {
+                /* select: the option chosen on the screen, or the one
+                 * marked selected, or the first; its value, or its text */
+                int o, n_o = 0, scelta = -1, prima = -1;
+
+                for (k = 0; k < g_ctrl_n; k++) if (g_ctrl[k].nodo == v) break;
+                for (o = g_doc.nodi[v].primo_figlio; o >= 0; o = g_doc.nodi[o].prossimo) {
+                    int oo = o, dentro = 0;
+
+                    if (g_doc.nodi[o].tipo != HTML_ELEMENTO) continue;
+                    if (uguale(html_nome(&g_doc, o), "optgroup")) { oo = g_doc.nodi[o].primo_figlio; dentro = 1; }
+                    for (; oo >= 0; oo = dentro ? g_doc.nodi[oo].prossimo : -1) {
+                        if (g_doc.nodi[oo].tipo != HTML_ELEMENTO || !uguale(html_nome(&g_doc, oo), "option")) { if (!dentro) break; continue; }
+                        if (prima < 0) prima = oo;
+                        if (k < g_ctrl_n ? n_o == g_ctrl[k].opz_ora : html_attr(&g_doc, oo, "selected") != 0) scelta = oo;
+                        n_o++;
+                        if (!dentro) break;
+                    }
+                }
+                if (scelta < 0) scelta = prima;
+                if (scelta < 0) continue;
+                val = html_attr(&g_doc, scelta, "value");
+                if (!val) { est_testo_dentro(scelta, buf, sizeof(buf)); val = buf; }
+            }
+            if (pos >= (int)sizeof(q) - 8) { pieno = 1; break; }
+            if (!primo) q[pos++] = '&';
+            primo = 0;
+            pos = aggiungi_codificato(q, pos, (int)sizeof(q), nome);
+            if (pos >= (int)sizeof(q) - 4) { pieno = 1; break; }
+            q[pos++] = '=';
+            pos = aggiungi_codificato(q, pos, (int)sizeof(q), val);
+            if (pos >= (int)sizeof(q) - 4) { pieno = 1; break; }
         }
-
-        if (!primo) q[pos++] = '&';
-        primo = 0;
-
-        pos = aggiungi_codificato(q, pos, (int)sizeof(q), c->nome);
-        q[pos++] = '=';
-        /* Una spunta accesa senza valore vale «on», come ovunque. */
-        pos = aggiungi_codificato(q, pos, (int)sizeof(q),
-                (c->valore[0] || c->tipo == CTRL_TESTO || c->tipo == CTRL_AREA)
-                ? c->valore : "on");
     }
+    (void)i;
     q[pos] = '\0';
 
     if (pieno) {
@@ -6786,8 +7231,11 @@ static void manda_modulo(int m, int attivato)
 
     /* ! LA QUERY CHE C'E' GIA' NELL'AZIONE SI BUTTA, e non si mescola: la
      * specifica dice che i campi del modulo SOSTITUISCONO la query
-     * dell'action, e tenere tutt'e due darebbe due volte lo stesso parametro. */
-    {
+     * dell'action, e tenere tutt'e due darebbe due volte lo stesso parametro.
+     * ! MA SOLO IN GET (P11): in POST i campi vanno nel corpo e la query
+     * dell'action resta com'e' - Google ci tiene continue= e flowName=, e
+     * senza rispondeva 400. */
+    if (!g_mod[m].post) {
         int k = 0;
 
         while (meta[k] && meta[k] != '?') k++;
@@ -6833,9 +7281,14 @@ static void manda_modulo(int m, int attivato)
             }
 
             if (g_mod[m].post) {
+                char origine[300];
+
                 while (q[j] && j < (int)sizeof(corpo) - 1) { corpo[j] = q[j]; j++; }
                 corpo[j] = '\0';
                 g_da_postare = corpo;
+                /* ! Origin and Referer: the page that sends it (P11) */
+                origine_di(g_qui, origine, sizeof(origine));
+                exhttp_provenienza(origine, g_qui);
             }
 
             ex_set_text(g_url, assoluto);
@@ -7005,6 +7458,33 @@ void disegna_barra(void)
     ex_draw_raised(g_f, x + 1, py, SCORRI_W - 2, ph);
 }
 
+/* =============================================================================
+ * THE OBSERVERS' TURN (P8, 26 November 2026)
+ *
+ * IntersectionObserver and ResizeObserver look at the boxes of the layout:
+ * the prelude's __exos_dopo does it, called here after a new layout or a
+ * scroll - from the message loop only, never from inside a script (a
+ * network wait redraws while a script waits for a synchronous request).
+ * A callback that changed the page asks for the next turn.
+ * ========================================================================== */
+static unsigned int g_oss_vista = 0;
+static int          g_oss_scorri = -1;
+
+static void osservatori_giro(void)
+{
+    static const char Q[] = "typeof __exos_dopo === 'function' && __exos_dopo()";
+    ExJsErrore err;
+    ExJsVal    r;
+
+    if (!g_js || g_in_rete) return;
+    if (g_oss_vista == html_versione(&g_doc) + 1u && g_oss_scorri == g_scorri) return;
+    g_oss_vista = html_versione(&g_doc) + 1u;
+    g_oss_scorri = g_scorri;
+    memset(&err, 0, sizeof(err));
+    exjs_esegui(g_js, Q, (unsigned int)(sizeof(Q) - 1), &r, &err);
+    if (html_versione(&g_doc) != g_vista || exjs_lavori_in_attesa(g_js)) sveglia_per_i_tempi();
+}
+
 static void scorri(int quanto)
 {
     int max = scorri_max();
@@ -7014,6 +7494,7 @@ static void scorri(int quanto)
     if (g_scorri > max) g_scorri = max;
     disegna();
     immagini_vicine();
+    osservatori_giro();
 }
 
 static void scorri_a(int y);
@@ -7057,6 +7538,7 @@ static void scorri_a(int y)
     g_scorri = y;
     disegna();
     immagini_vicine();
+    osservatori_giro();
 }
 
 /* ! IL TRASCINAMENTO SI RICORDA DA DOVE HA PRESO IL POLLICE, e non e' un
@@ -7592,6 +8074,21 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
                 disegna();
                 return 0;
             }
+            /* (P11) the page hears the key first, and may keep it */
+            if (g_dom && k->nodo >= 0) {
+                int nodo = k->nodo, ok;
+
+                input_dai_ctrl();          /* a change from the key before */
+                ctrl_al_dom();
+                ok = tasto_alla_pagina(nodo, "keydown", c, wp);
+                if (ok && c >= 32 && c < 256 && !(wp & (KBD_MOD_CTRL | KBD_MOD_ALT)))
+                    ok = tasto_alla_pagina(nodo, "keypress", c, wp);
+                dom_al_ctrl();             /* a value the handler wrote */
+                rifai_se_cambiato();
+                if (!ok || g_ctrl_fuoco < 0 || &g_ctrl[g_ctrl_fuoco] != k || k->nodo != nodo) return 0;
+                n = 0;
+                while (k->valore[n]) n++;
+            }
             /* Tab: to the next stop, as in Firefox (see tab_muovi). */
             if (c == '\t') {
                 tab_muovi((wp & KBD_MOD_SHIFT) ? -1 : 1);
@@ -7882,6 +8379,7 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         }
 
         if (g_js) {
+            input_dai_ctrl();
             ctrl_al_dom();
             exjs_pompa(g_js, uptime_ms());
 
@@ -7914,12 +8412,14 @@ static long proc(ExWindow f, unsigned int msg, unsigned int wp, long lp)
         /* Le GIF animate tengono accesa la sveglia finche' ce n'e' una viva. */
         if (anima_giro()) aspetta = 1;
         if (!aspetta && !cornici && !cornici_da_caricare()) ex_set_timer(g_f, 0);
+        else if (g_js && exjs_lavori_in_attesa(g_js) && !cornici) sveglia_per_i_tempi();
 
         if (g_js) {
             /* Un `setTimeout` che cambia indirizzo e' il modo classico di
              * scrivere una redirezione: si guarda anche qui, non solo dopo
              * gli script della pagina. */
             segui_location();
+            osservatori_giro();
         }
         /* The status line is a toolkit control and shows only when the
          * window is redrawn: if a script or the network wrote there, the
@@ -8229,6 +8729,10 @@ int main(int argc, char **argv)
     bis_azzera(&g_bis);
     if (bis_prepara()) bis_leggi_file();
     exhttp_biscotti_schema(bis_chiedi, bis_arrivo, 0);
+    /* ! THE USER-AGENT THE USER DECIDED (BROWSER002, P0 1 b, 25/11/2026):
+     * autonomous, without Gecko/ or Firefox/; until today exhttp said only
+     * "EX-OS", to the servers and to navigator.userAgent */
+    exhttp_agente(agente_browser());
 
     /* ! E IL GANCIO DELL'ATTESA, che e' quel che tiene viva la finestra mentre
      * si scarica: senza, fra un pezzo e l'altro exhttp dorme e qui non arriva

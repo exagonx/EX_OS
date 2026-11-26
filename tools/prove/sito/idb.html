@@ -1,0 +1,71 @@
+<html><head><title>IndexedDB</title></head><body style="font-family: sans-serif; font-size: 13px">
+<h1>IndexedDB (P11)</h1>
+<div id="r">in corso...</div>
+<script>
+var out = [];
+function scrivi(t) { out.push(t); document.getElementById('r').innerHTML = out.join('<br>'); }
+function v(n, c, x) { scrivi(n + ': ' + (c ? 'OK' : 'NO ' + (x === undefined ? '' : JSON.stringify(x)))); }
+function p(r) { return new Promise(function (ok, no) { r.onsuccess = function () { ok(r.result); }; r.onerror = function (e) { e.preventDefault && e.preventDefault(); no(r.error); }; }); }
+function fine(tx) { return new Promise(function (ok, no) { tx.oncomplete = function () { ok(); }; tx.onabort = function () { no(tx.error || 'abort'); }; }); }
+var del = indexedDB.deleteDatabase('prova');
+del.onsuccess = function () {
+  var r = indexedDB.open('prova', 2), aggiornato = false;
+  r.onupgradeneeded = function (e) {
+    aggiornato = e.oldVersion === 0 && e.newVersion === 2;
+    var db = r.result;
+    var s = db.createObjectStore('persone', { keyPath: 'id', autoIncrement: true });
+    s.createIndex('email', 'email', { unique: true });
+    s.createIndex('eta', 'eta');
+    db.createObjectStore('chiavi');
+    s.add({ nome: 'Ada', email: 'ada@x', eta: 36 });
+  };
+  r.onsuccess = function () { prove(r.result, aggiornato); };
+  r.onerror = function () { scrivi('open: errore ' + r.error); };
+};
+async function prove(db, aggiornato) {
+  try {
+    v('1. upgradeneeded con le versioni giuste, negozi creati', aggiornato && db.objectStoreNames.contains('persone') && db.version === 2);
+    var tx = db.transaction(['persone'], 'readwrite'), s = tx.objectStore('persone');
+    var k2 = await p(s.add({ nome: 'Bruno', email: 'bruno@x', eta: 25 }));
+    await p(s.put({ nome: 'Carla', email: 'carla@x', eta: 41 }));
+    var tutte = await p(s.getAll());
+    v('2. autoIncrement e getAll in ordine di chiave', k2 === 2 && tutte.length === 3 && tutte[2].id === 3 && tutte[0].nome === 'Ada', tutte);
+    var b = await p(s.index('email').get('bruno@x'));
+    v('3. indice: get per email', b && b.nome === 'Bruno', b);
+    var giovani = await p(s.index('eta').getAll(IDBKeyRange.upperBound(36)));
+    v('4. indice con IDBKeyRange, ordinato per eta', giovani.length === 2 && giovani[0].nome === 'Bruno' && giovani[1].nome === 'Ada', giovani);
+    var errU = null; try { await p(s.add({ nome: 'X', email: 'ada@x', eta: 1 })); } catch (e) { errU = e; }
+    v('5. indice unico: ConstraintError', errU && errU.name === 'ConstraintError', errU && errU.name);
+    await fine(tx).catch(function () {});
+    var tx2 = db.transaction('chiavi', 'readwrite'), c = tx2.objectStore('chiavi');
+    var chiavi = [[1, 'b'], 'z', -5, new Date(0), 'a', 3.5, [1, 'a'], 0];
+    chiavi.forEach(function (k, i) { c.put('v' + i, k); });
+    var visti = [];
+    await new Promise(function (ok) {
+      c.openCursor().onsuccess = function (e) { var cur = e.target.result; if (!cur) return ok(); visti.push(cur.key instanceof Date ? 'D' : JSON.stringify(cur.key)); cur['continue'](); };
+    });
+    v('6. ordine delle chiavi: numeri, date, stringhe, array', visti.join(' ') === '-5 0 3.5 D "a" "z" [1,"a"] [1,"b"]', visti.join(' '));
+    var n = await p(c.count(IDBKeyRange.bound('a', 'z')));
+    v('7. count con un intervallo di stringhe', n === 2, n);
+    await fine(tx2);
+    var tx3 = db.transaction('chiavi', 'readwrite');
+    tx3.objectStore('chiavi').put('da annullare', 'abort');
+    tx3.abort();
+    await fine(tx3).catch(function () {});
+    var tx4 = db.transaction('chiavi'), x = await p(tx4.objectStore('chiavi').get('abort'));
+    v('8. abort() annulla le scritture', x === undefined, x);
+    var errR = null; try { tx4.objectStore('chiavi').put(1, 'q'); } catch (e) { errR = e; }
+    v('9. sola lettura: ReadOnlyError', errR && errR.name === 'ReadOnlyError', errR && errR.name);
+    var tx5 = db.transaction('persone', 'readwrite'), cur5 = s = tx5.objectStore('persone');
+    await new Promise(function (ok) {
+      s.openCursor(null, 'prev').onsuccess = function (e) { var k = e.target.result; if (!k) return ok(); if (k.value.nome === 'Carla') { k.value.eta = 42; k.update(k.value); } k['continue'](); };
+    });
+    var carla = await p(s.index('eta').get(42));
+    v('10. cursore all\'indietro e update', carla && carla.nome === 'Carla', carla);
+    await fine(tx5);
+    var dbs = await indexedDB.databases();
+    v('11. databases()', dbs.some(function (d) { return d.name === 'prova' && d.version === 2; }), dbs);
+    v('12. indexedDB.cmp', indexedDB.cmp([1], 'z') === 1 && indexedDB.cmp(2, 10) === -1, 0);
+  } catch (e) { scrivi('ECCEZIONE: ' + (e && e.name) + ' ' + (e && e.message)); }
+}
+</script></body></html>

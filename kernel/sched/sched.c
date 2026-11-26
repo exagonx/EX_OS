@@ -10,6 +10,7 @@
  * ============================================================================= */
 
 #include "kernel.h"
+#include "zone.h"
 #include "sched.h"
 #include "fat12.h"   /* fat12_motor_tick: il motore del floppy si ferma dal tick */
 #include "vga.h"   /* VGA_N_CONSOLE: una tabella di primo piano per console */
@@ -896,6 +897,8 @@ static void init_reaper_task(void)
                 p->n_vma = 0;
                 if (h >= 0) vfs_close(h);
             }
+            if (p->n_zone && p->tgid == p->pid && proc_gruppo_vivi(p->tgid) == 0)
+                zone_tutte_via(p);              /* the same, for its zones (0.371) */
 
             /* ! E ANCHE I FILI DI UN GRUPPO CHE NON C'E' PIU'. Un filo non e'
              * figlio di nessuno fuori dal suo gruppo (vedi proc_thread_crea e
@@ -1077,6 +1080,7 @@ Process *proc_create(const char *name, vaddr_t entry_point,
      * non 0, perche' 0 e' un handle VFS legittimo e chiuderlo per errore
      * chiuderebbe il file di qualcun altro. */
     proc->exe_handle = -1;
+    proc->exe_chiave_ok = 0;
     proc->n_vma      = 0;
 
     /* Stato x87 di partenza. pcb_alloc ha azzerato il PCB, e zero NON e'
@@ -1996,21 +2000,22 @@ void sched_yield(void)
 
     interrupts_disable();
     g_current->quantum = 0;     /* Forza preemption */
+    /* ! CHI CEDE LASCIA PASSARE GLI ALTRI PROCESSORI (tappa 3 dell'SMP).
+     * Un'attesa fatta di sched_yield() - «finche' il driver non ha
+     * risposto, cedo» - con un processore solo funziona perche' cedere fa
+     * girare il driver. Con due il driver puo' star girando sull'altro, e
+     * per rispondere deve entrare nel kernel, tenuto da chi lo aspetta. Si
+     * lascia il lucchetto e lo si riprende: e' a numeri, quindi chi
+     * aspettava passa prima. Con un processore non fa niente.
+     * ! ALWAYS, NOT ONLY WITH NOBODY TO YIELD TO (0.371). Two Firefox
+     * threads spinning in fd_posizione_prendi on processor 1 yielded to
+     * each other for ever with the lock in hand: processor 0, where the
+     * disk's interrupt and the clock land, sat in bkl_entra, so the holder
+     * of the position was never woken. 3 rounds out of 8 dead in QEMU. */
+    bkl_lascia();
+    bkl_entra();
     next = sched_pick_next();
-    if (next != g_current) {
-        sched_switch_to(next);
-    } else {
-        /* ! CHI CEDE E NON HA A CHI CEDERE LASCIA PASSARE GLI ALTRI PROCESSORI
-         * (tappa 3 dell'SMP). Un'attesa fatta di sched_yield() - «finche' il
-         * driver non ha risposto, cedo» - con un processore solo funziona
-         * perche' cedere fa girare il driver. Con due il driver puo' star
-         * girando sull'altro: qui non c'e' nessuno a cui cedere, e lui per
-         * rispondere deve entrare nel kernel, che e' tenuto da chi lo
-         * aspetta. Si lascia il lucchetto e lo si riprende: e' a numeri,
-         * quindi chi aspettava passa prima. Con un processore non fa niente. */
-        bkl_lascia();
-        bkl_entra();
-    }
+    if (next != g_current) sched_switch_to(next);
     interrupts_enable();
 }
 
@@ -2968,6 +2973,7 @@ void proc_chiudi_miei_fd(void)
         capo->n_vma = 0;
         if (h >= 0) vfs_close(h);
     }
+    if (capo != NULL) zone_tutte_via(capo);     /* its mapped files too (0.371) */
 }
 
 /* Il corpo di proc_exit() e di proc_esci_fatale(): la differenza e' una sola
@@ -3234,6 +3240,7 @@ void proc_reap_zombie(Process *p)
         p->n_vma = 0;
         if (h >= 0) vfs_close(h);
     }
+    zone_libera(p);                     /* its zones of files, and the list (0.371) */
 
     /* E i file che il processo aveva ancora aperti.
      *

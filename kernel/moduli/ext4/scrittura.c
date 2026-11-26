@@ -1122,11 +1122,19 @@ static int pota_inode(Ext2Mount *m, int mnt, uint32_t num, uint8_t *inode, uint3
         goto conta;
     }
 
+    /* ! THE BITMAP IN ONE BATCH, AS WHEN A WHOLE FILE GOES (0.008, voce 120,
+     * see "CANCELLARE COSTAVA"): a truncate freed block by block, four disk
+     * commands each - Firefox's ftruncate on a new profile held the VFS 6 s,
+     * and every page fault of every process waited behind it. */
+    g_lib_diff = 1;
+    g_lib_valido = 0;
+    g_lib_n = 0;
+
     /* --- i dodici diretti --- */
     for (i = primo; i < 12u; i++) {
         uint32_t p = le32(inode + 40u + i * 4u);
         if (p == 0) continue;
-        if (libera_blocco(m, p) != 0) return -1;
+        if (libera_blocco(m, p) != 0) goto fallito;
         liberati++;
         p32(inode + 40u + i * 4u, 0);
     }
@@ -1144,18 +1152,26 @@ static int pota_inode(Ext2Mount *m, int mnt, uint32_t num, uint8_t *inode, uint3
 
         if (base >= primo) {
             /* L'indiretto comincia gia' oltre il taglio: via tutto. */
-            if (libera_catena(m, mnt, p, liv, &liberati) != 0) return -1;
+            if (libera_catena(m, mnt, p, liv, &liberati) != 0) goto fallito;
             p32(inode + 40u + voce * 4u, 0);
         } else {
             int vuoto = pota_indiretto(m, mnt, p, liv, base, primo, &liberati);
-            if (vuoto < 0) return -1;
+            if (vuoto < 0) goto fallito;
             if (vuoto) {
-                if (libera_blocco(m, p) != 0) return -1;
+                if (libera_blocco(m, p) != 0) goto fallito;
                 liberati++;
                 p32(inode + 40u + voce * 4u, 0);
             }
         }
     }
+    g_lib_diff = 0;
+    if (lib_riversa(m) != 0) return -1;
+    goto conta;
+
+fallito:
+    g_lib_diff = 0;
+    (void)lib_riversa(m);
+    return -1;
 
 conta:
     /* i_blocks e' in unita' da 512 byte e comprende gli indiretti: la

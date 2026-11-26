@@ -1055,6 +1055,19 @@ sistema: `system -unload`, `chkdsk -r`, `system -load` - oppure
 l'avvio, prima di montarla.
 
 [problemi guasti]
+FIREFOX (EXILLA) RESTA FERMO MENTRE PARTE, E CON LUI TUTTO IL SISTEMA:
+  mouse, tastiera e console non rispondono piu', anche dopo minuti. E' il
+  kernel fino alla 0.370 con due o piu' processori: due fili che aspettano
+  lo stesso file si cedevano il posto a vicenda tenendo il lucchetto del
+  kernel, e il processore 0 (orologio e disco) non entrava piu'. Dal
+  kernel 0.371 non succede piu': netupdate -check -yes e riavvia. Intanto
+  si evita con  smp = 1  in /boot/kernel.cfg (un processore solo).
+FIREFOX CI METTE PIU' DI UN MINUTO A PARTIRE: fino al kernel 0.370
+  libxul e omni.ja si leggevano intere prima di partire. Dalla 0.371 si
+  leggono a pezzi quando servono (come Linux): netupdate -check -yes e
+  riavvia. Il primo avvio resta piu' lento: Firefox crea il profilo e ogni
+  scrittura sul disco aspetta il disco (dmesg: "VFS: lucchetto tenuto ...
+  disco N ms").
 FIREFOX SI CHIUDE DA SOLO SU UNA PAGINA PIENA DI IMMAGINI (unsplash.com),
   e l'ultima riga di ~/.exilla/firefox.log.1 e' "IPDL protocol error:
   Shared memory PlatformHandle is not safe to map": e' la libc fino al

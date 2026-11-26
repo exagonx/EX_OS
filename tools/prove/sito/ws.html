@@ -1,0 +1,23 @@
+<html><head><title>WebSocket</title></head><body style="font-family: sans-serif">
+<h1>WebSocket (P11)</h1>
+<div id="r">in corso...</div>
+<script>
+/* serve un server di eco su :8022 (ws/eco.py, vedi leggimi.md) */
+var out = [];
+function scrivi(t) { out.push(t); document.getElementById('r').innerHTML = out.join('<br>'); }
+var ws = new WebSocket('ws://' + location.hostname + ':8022/eco', ['eco', 'altro']);
+ws.binaryType = 'arraybuffer';
+scrivi('0. readyState subito: ' + ws.readyState + (ws.readyState === 0 ? ' OK' : ' NO'));
+var passo = 0;
+ws.onopen = function () { scrivi('1. aperto, protocollo ' + ws.protocol + (ws.protocol === 'eco' ? ' OK' : ' NO')); };
+ws.onmessage = function (e) {
+  if (e.data === 'benvenuto') { scrivi('2. il primo messaggio del server: OK'); ws.send('ciao è €'); return; }
+  if (e.data === 'pong ricevuto') { scrivi('3. il ping ha avuto il pong: OK'); return; }
+  if (e.data === 'ciao è €') { scrivi('4. eco in UTF-8: OK'); ws.send(new Uint8Array([1, 2, 255]).buffer); return; }
+  if (e.data instanceof ArrayBuffer) { var b = new Uint8Array(e.data); scrivi('5. eco binario: ' + (b.length === 3 && b[2] === 255 ? 'OK' : 'NO')); ws.send('grande'); return; }
+  if (typeof e.data === 'string' && e.data.length === 70000) { scrivi('6. 70000 caratteri: OK'); ws.send('chiudi'); return; }
+  scrivi('? ' + String(e.data).slice(0, 40));
+};
+ws.onclose = function (e) { scrivi('7. chiuso dal server: ' + e.code + ' ' + e.reason + ' ' + e.wasClean + (e.code === 4000 && e.reason === 'fine' ? ' OK' : ' NO')); };
+ws.onerror = function () { scrivi('errore'); };
+</script></body></html>

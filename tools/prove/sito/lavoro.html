@@ -1,0 +1,22 @@
+<html><head><title>Worker</title></head><body style="font-family: sans-serif">
+<h1>Web Worker (P11)</h1>
+<div id="r">in corso...</div>
+<script>
+var out = [];
+function scrivi(t) { out.push(t); document.getElementById('r').innerHTML = out.join('<br>'); }
+var w = new Worker('lavoro.js');
+w.onmessage = function (e) {
+  var d = e.data;
+  if (d.cmd === 'pronto') { scrivi('1. pronto, location ' + d.loc + (d.loc === 'lavoro.js' ? ' OK' : ' NO')); w.postMessage({ cmd: 'somma', v: new Uint8Array([1, 2, 3, 250]) }); }
+  else if (d.cmd === 'somma') { scrivi('2. importScripts e Uint8Array copiato: ' + d.r + ' ' + d.tipo + (d.r === 256 && d.tipo === 'Uint8Array' ? ' OK' : ' NO')); w.postMessage({ cmd: 'tempo' }); }
+  else if (d.cmd === 'tempo') { scrivi('3. setTimeout nel worker, senza document: ' + (d.ok && d.self ? 'OK' : 'NO')); w.postMessage({ cmd: 'mappa' }); }
+  else if (d.cmd === 'mappa') { scrivi('4. Map, Date, undefined: ' + (d.m.get('a') === 1 && d.dt.getTime() === 0 && 'u' in d && d.u === undefined ? 'OK' : 'NO')); w.postMessage({ cmd: 'errore' }); }
+};
+w.onerror = function (e) { scrivi('5. errore nel worker arriva alla pagina: ' + (/null/.test(e.message) ? 'OK' : 'NO ' + e.message)); w.terminate(); blob(); };
+function blob() {
+  var b = new Blob(['onmessage = function (e) { postMessage(e.data * 2); };']);
+  var w2 = new Worker(URL.createObjectURL(b));
+  w2.onmessage = function (e) { scrivi('6. worker da blob: ' + (e.data === 42 ? 'OK' : 'NO ' + e.data)); };
+  w2.postMessage(21);
+}
+</script></body></html>

@@ -75,7 +75,7 @@
 
 /* +0.001 a ogni modifica: `wserver -version` la stampa. Vedi
  * EX_VERSIONE in libc.h. */
-EX_VERSIONE("wserver", "0.019");   /* 0.019: i colori del tema classico, titolo in grassetto (debug/implementazione_TEMA001) */
+EX_VERSIONE("wserver", "0.020");   /* 0.020: WIN_MSG_TELAIO, schermo intero e senza telaio (voce 121) */
 
 /* ! NO FIXED NUMBER OF WINDOWS (wserver 0.013, the user's rule: only the
  * configuration and the hardware set limits). Up to 0.012 there were 16
@@ -201,6 +201,11 @@ typedef struct {
      * era grande prima, per tornarci. Vedi massimizza(). */
     unsigned int massima;
     unsigned int prima_x, prima_y, prima_w, prima_h;
+    /* WIN_MSG_TELAIO (wserver 0.020): WIN_TELAIO_*, the frame bits it was
+     * created with, and where and how big before full screen. sopra_da:
+     * windows with a bigger id (opened after it went full screen) stay above. */
+    unsigned int telaio, stile_vero;
+    unsigned int pieno_x, pieno_y, pieno_w, pieno_h, sopra_da;
     /* Gli eventi che il client non ha ancora potuto ricevere (casella piena):
      * vedi metti_evento. */
     WinEvento   *coda;              /* malloc'd, kept when the slot is reused */
@@ -1583,6 +1588,9 @@ static int prende_fuoco_da_solo(int idx)
 
 /* Il fuoco quando quello di prima se n'e' andato: la finestra normale piu' in
  * alto. Se non ce n'e' nessuna, nessun fuoco — meglio di uno a caso. */
+static void riordina_sopra(void);
+static int  intera_in_cima(void);
+
 static void fuoco_ricalcola(void)
 {
     int k;
@@ -1590,7 +1598,12 @@ static void fuoco_ricalcola(void)
     g_fuoco = -1;
     for (k = (int)g_n_ordine - 1; k >= 0; k--) {
         int idx = (int)g_ordine[k];
-        if (g_fin[idx].usata && prende_fuoco_da_solo(idx)) { g_fuoco = idx; return; }
+        if (g_fin[idx].usata && prende_fuoco_da_solo(idx)) {
+            g_fuoco = idx;
+            /* back to a full-screen one, or to one of its windows */
+            if (intera_in_cima() >= 0) { riordina_sopra(); sporca_tutto(); }
+            return;
+        }
     }
 }
 
@@ -1616,6 +1629,61 @@ static int modale_di(unsigned int pid)
             return idx;
     }
     return -1;
+}
+
+/* =============================================================================
+ * The "above" windows above the others, and a full-screen window above those
+ * (wserver 0.020, voce 121): the taskbar and the clock go under it. What was
+ * opened after it went full screen - its menus, a dialog, the screen saver -
+ * stays above it. It goes back under the taskbar only when the focus goes to
+ * an older window of another program (Alt+Tab, a click on the taskbar).
+ * ============================================================================= */
+static int sopra_l_intera(unsigned int k, int intera)
+{
+    return intera >= 0 && (int)k != intera && g_fin[k].id > g_fin[intera].sopra_da;
+}
+
+/* The full-screen window that keeps the top, or -1: the highest one in the
+ * stack, if the focus is on it, on a window opened after it, or on a window
+ * of its own program. */
+static int intera_in_cima(void)
+{
+    int k;
+
+    for (k = (int)g_n_ordine - 1; k >= 0; k--) {
+        int idx = (int)g_ordine[k];
+        const Finestra *f = &g_fin[idx];
+
+        if (!f->usata || f->telaio != WIN_TELAIO_SCHERMO || !(f->stile & WIN_ST_VISIBILE)) continue;
+        if (g_fuoco < 0 || g_fuoco == idx || !g_fin[g_fuoco].usata) return idx;
+        if (g_fin[g_fuoco].id > f->sopra_da || g_fin[g_fuoco].pid == f->pid) return idx;
+        return -1;
+    }
+    return -1;
+}
+
+static void riordina_sopra(void)
+{
+    unsigned int q, alto = 0;
+    unsigned int *tmp = g_ordine_tmp;
+    int intera = intera_in_cima();
+    static int intera_prima = -1;
+
+    /* the taskbar goes under it or comes back: all of the screen changes */
+    if (intera != intera_prima) { intera_prima = intera; sporca_tutto(); }
+
+    for (q = 0; q < g_n_ordine; q++)
+        if (!(g_fin[g_ordine[q]].stile & WIN_ST_SOPRA) && (int)g_ordine[q] != intera &&
+            !sopra_l_intera(g_ordine[q], intera))
+            tmp[alto++] = g_ordine[q];
+    for (q = 0; q < g_n_ordine; q++)
+        if ((g_fin[g_ordine[q]].stile & WIN_ST_SOPRA) && !sopra_l_intera(g_ordine[q], intera))
+            tmp[alto++] = g_ordine[q];
+    for (q = 0; q < g_n_ordine; q++)
+        if ((int)g_ordine[q] == intera) tmp[alto++] = g_ordine[q];
+    for (q = 0; q < g_n_ordine; q++)
+        if (sopra_l_intera(g_ordine[q], intera)) tmp[alto++] = g_ordine[q];
+    for (q = 0; q < g_n_ordine; q++) g_ordine[q] = tmp[q];
 }
 
 static void in_cima(int idx)
@@ -1672,16 +1740,7 @@ static void in_cima(int idx)
      * la barra delle applicazioni finirebbe coperta dalla prima finestra che
      * si porta davanti — e con una finestra a schermo intero non ci sarebbe
      * piu' modo di arrivare al menu. */
-    {
-        unsigned int q, alto = 0;
-        unsigned int *tmp = g_ordine_tmp;
-
-        for (q = 0; q < g_n_ordine; q++)
-            if (!(g_fin[g_ordine[q]].stile & WIN_ST_SOPRA)) tmp[alto++] = g_ordine[q];
-        for (q = 0; q < g_n_ordine; q++)
-            if (g_fin[g_ordine[q]].stile & WIN_ST_SOPRA) tmp[alto++] = g_ordine[q];
-        for (q = 0; q < g_n_ordine; q++) g_ordine[q] = tmp[q];
-    }
+    riordina_sopra();
 }
 
 /* Chi c'e' sotto il puntatore, dalla cima al fondo. -1 = nessuno.
@@ -3036,6 +3095,56 @@ static void massimizza(int idx)
     sporca_barra(f);
 }
 
+/* =============================================================================
+ * telaio - WIN_MSG_TELAIO (wserver 0.020, voce 121): see win_proto.h.
+ *
+ * ! THE FRAME IT WAS CREATED WITH IS KEPT, and every change starts from it:
+ * full screen, then no frame, then normal gives back the frame the program
+ * asked for, not a mix. Title, border and grip go together; the grip would
+ * be painted over the video.
+ * ============================================================================= */
+static void telaio(int idx, unsigned int modo)
+{
+    Finestra    *f;
+    unsigned int via = WIN_ST_TITOLO | WIN_ST_BORDO | WIN_ST_RIDIM;
+    int          prima = g_fuoco;
+
+    if (idx < 0 || modo > WIN_TELAIO_NUDO) return;
+    f = &g_fin[idx];
+    if (!f->usata || f->padre || modo == f->telaio) return;
+    if (f->stile & (WIN_ST_SFONDO | WIN_ST_SOPRA | WIN_ST_COMPARSA)) return;
+
+    sporca_tutto();                         /* the frame, the taskbar, all of it */
+    if (f->telaio == WIN_TELAIO_NORMALE) f->stile_vero = f->stile & via;
+    if (g_trascino == idx) g_trascino = -1;
+    if (g_ridim == idx) g_ridim = -1;
+
+    if (modo == WIN_TELAIO_SCHERMO) {
+        f->pieno_x = f->x; f->pieno_y = f->y;
+        f->pieno_w = f->w; f->pieno_h = f->h;
+        f->stile   &= ~via;
+        f->telaio   = WIN_TELAIO_SCHERMO;
+        f->sopra_da = g_prossimo_id - 1;
+        if (f->ridotta) { f->ridotta = 0; f->stile |= WIN_ST_VISIBILE; }
+        metti_e_misura(idx, 0, 0, g_fb_w, g_fb_h);
+        in_cima(idx);                       /* the focus, and above the taskbar */
+    } else {
+        unsigned int era = f->telaio;
+
+        f->telaio = modo;
+        if (modo == WIN_TELAIO_NUDO) f->stile &= ~via;
+        else f->stile = (f->stile & ~via) | f->stile_vero;
+        if (era == WIN_TELAIO_SCHERMO)
+            metti_e_misura(idx, f->pieno_x, f->pieno_y, f->pieno_w, f->pieno_h);
+        riordina_sopra();
+    }
+    if (prima >= 0 && prima != g_fuoco && g_fin[prima].usata) sporca_barra(&g_fin[prima]);
+    sporca_tutto();
+    if (g_verboso)
+        printf("wserver: la finestra %u ha il telaio %u (%ux%u a %u,%u)\n",
+               f->id, f->telaio, f->w, f->h, f->x, f->y);
+}
+
 static void distruggi(int idx)
 {
     unsigned int k, j = 0;
@@ -3631,6 +3740,15 @@ static int servi_messaggio(unsigned int ms)
         } else {
             riduci(idx);
         }
+        break;
+    }
+
+    case WIN_MSG_TELAIO: {
+        WinRegione *w = (WinRegione *)buf;
+        int idx;
+        if (meta.len < sizeof(WinRegione)) break;
+        idx = trova_id(w->id);
+        if (idx >= 0 && suo(g_fin[idx].pid, meta.sender_pid)) telaio(idx, w->x);
         break;
     }
 

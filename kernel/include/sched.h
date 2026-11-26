@@ -12,6 +12,7 @@
 #ifndef SCHED_H
 #define SCHED_H
 
+#include "filecache.h"     /* FcChiave */
 #include "kernel.h"
 #include "paging.h"
 #include "fpu.h"    /* FPU_STATE_SIZE: il PCB porta lo stato del coprocessore */
@@ -626,6 +627,16 @@ typedef struct Process {
     ProcVma         vma[PROC_MAX_VMA];
     uint32_t        n_vma;
     int             exe_handle;
+    FcChiave        exe_chiave;         /* its key in filecache.c (0.371)... */
+    uint8_t         exe_chiave_ok;      /* ...read at exec: faults skip the VFS */
+
+    /* --- Zones of files mapped without writing (kernel 0.371, voce 120) ---
+     * The pages come at the first touch, from filecache.c, like the
+     * executable's above: the read-only pages of a .so (condivise.c) and of
+     * a file mapped with mmap (omni.ja). Kept by the group's leader, a list
+     * that doubles when full; each zone holds its file open. See mm/zone.c. */
+    struct ProcZona *zone;
+    uint32_t         n_zone, zone_posti, zone_gen;
 
     /* --- File descriptors (0.281: a growing table, see FdTabella) --- */
     FdTabella       fdt_mia;

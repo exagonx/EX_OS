@@ -19,6 +19,8 @@
         exhttp_certi_aggiungi;
         exhttp_attesi;
         exhttp_intestazioni;
+        exhttp_agente;
+        exhttp_provenienza;
         exhttp_srotola;
         exhttp_parti;
         exhttp_avanza;

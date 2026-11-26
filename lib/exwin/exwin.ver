@@ -112,6 +112,7 @@
         ex_list_get_selection;
         ex_list_row_at;
         ex_list_set_drag_count;
+        ex_window_frame;
         ex_items_as_tabs;
         ex_item_remove;
         ex_item_rename;

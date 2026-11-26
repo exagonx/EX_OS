@@ -1,0 +1,38 @@
+<html><head><title>WebAssembly</title></head><body style="font-family: sans-serif; font-size: 13px">
+<h1>WebAssembly su WAMR (P12)</h1>
+<div id="r">in corso...</div>
+<script>
+/* prova.wasm: fatto da ~/ex_os/prove-wasm/fai/modulo.py (leggimi.md) */
+var out = [];
+function v(n, c, x) { out.push(n + ': ' + (c ? 'OK' : 'NO ' + x)); document.getElementById('r').innerHTML = out.join('<br>'); }
+var log = [];
+fetch('prova.wasm').then(function (r) { return r.arrayBuffer(); }).then(function (b) {
+  v('1. validate', WebAssembly.validate(b) === true && WebAssembly.validate(new Uint8Array([0, 1, 2])) === false, '');
+  var m = new WebAssembly.Module(b);
+  var es = WebAssembly.Module.exports(m).map(function (e) { return e.name + ':' + e.kind; }).join(' ');
+  v('2. Module.exports e imports', es === 'add:function chiama:function scrivi:function boom:function fib:function conta:function mem:memory g:global cresci:function' &&
+    WebAssembly.Module.imports(m)[0].name === 'log', es);
+  return WebAssembly.instantiate(b, { env: { log: function (x) { log.push(x); } } });
+}).then(function (r) {
+  var e = r.instance.exports;
+  v('3. add(2, 3)', e.add(2, 3) === 5, e.add(2, 3));
+  v('4. i32 che trabocca', e.add(2147483647, 1) === -2147483648, e.add(2147483647, 1));
+  var c = e.chiama(20);
+  v('5. il modulo chiama JavaScript', c === 21 && log[0] === 40, c + ' ' + log);
+  e.scrivi(8, 123456);
+  v('6. memoria condivisa con JS', new Int32Array(e.mem.buffer)[2] === 123456 && e.mem.buffer.byteLength === 65536, new Int32Array(e.mem.buffer)[2]);
+  new Uint8Array(e.mem.buffer)[100] = 7;
+  var vecchio = e.mem.buffer, p = e.mem.grow(1);
+  v('7. grow: le pagine e il buffer vecchio staccato', p === 1 && e.mem.buffer.byteLength === 131072 && vecchio.byteLength === 0 && new Uint8Array(e.mem.buffer)[100] === 7, p + ' ' + e.mem.buffer.byteLength + ' ' + vecchio.byteLength);
+  var t0 = Date.now(), f = e.fib(25), ms = Date.now() - t0;
+  v('8. fib(25) = 75025 in ' + ms + ' ms', f === 75025, f);
+  v('9. un globale', e.g.value === 10 && e.conta(5) === 15 && e.g.value === 15, e.g.value);
+  var err = null; try { e.boom(); } catch (x) { err = x; }
+  v('10. unreachable: RuntimeError', err instanceof WebAssembly.RuntimeError, err && err.name + ' ' + err.message);
+  var ce = null; try { new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 99])); } catch (x) { ce = x; }
+  v('11. un modulo rotto: CompileError', ce instanceof WebAssembly.CompileError, ce && ce.name);
+  v('12b. memory.grow dentro il modulo', e.cresci(1) === 2 && e.mem.buffer.byteLength === 196608, e.mem.buffer.byteLength);
+  var le = null; try { new WebAssembly.Instance(r.module, { env: {} }); } catch (x) { le = x; }
+  v('12. un import che manca: LinkError', le instanceof WebAssembly.LinkError, le && le.name);
+}).catch(function (e) { v('ECCEZIONE', false, e && e.name + ' ' + e.message); });
+</script></body></html>

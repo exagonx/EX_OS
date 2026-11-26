@@ -1,0 +1,35 @@
+<html><head><title>flex</title><style>
+body { font-family: sans-serif; font-size: 13px; margin: 4px; }
+.r { display: flex; background: #eeeeee; margin-bottom: 6px; }
+.r div { padding: 4px; }
+.a { background: #ffb0b0; } .b { background: #b0ffb0; } .c { background: #b0b0ff; }
+.tra { justify-content: space-between; }
+.cresce .a { flex-grow: 1; } .cresce .b { flex-grow: 2; } .cresce .c { flex-grow: 1; }
+.col { flex-direction: column; align-items: center; }
+.stira { align-items: stretch; }
+.auto .c { margin-left: auto; }
+.ord .a { order: 3; } .ord .b { order: 1; } .ord .c { order: 2; }
+.capo { flex-wrap: wrap; gap: 4px 8px; }
+.capo div { width: 150px; background: #ffe0a0; }
+.rov { flex-direction: row-reverse; }
+.centro { justify-content: center; align-items: center; height: 40px; }
+</style></head><body>
+<p>1. space-between: rosso a sinistra, blu a destra</p>
+<div class="r tra"><div class="a">uno</div><div class="b">due</div><div class="c">tre</div></div>
+<p>2. flex-grow 1, 2, 1: il verde largo il doppio dello spazio in piu'</p>
+<div class="r cresce"><div class="a">uno</div><div class="b">due</div><div class="c">tre</div></div>
+<p>3. colonna, align-items: center</p>
+<div class="r col"><div class="a">primo</div><div class="b">il secondo e' piu' lungo</div><div class="c">terzo</div></div>
+<p>4. stretch: tre riquadri alti uguali</p>
+<div class="r stira"><div class="a">corto</div><div class="b">questo testo e' lungo abbastanza da andare a capo in un riquadro stretto stretto</div><div class="c">corto</div></div>
+<p>5. margin-left: auto spinge il blu a destra</p>
+<div class="r auto"><div class="a">Home</div><div class="b">Notizie</div><div class="c">Accedi</div></div>
+<p>6. order: due, tre, uno</p>
+<div class="r ord"><div class="a">uno</div><div class="b">due</div><div class="c">tre</div></div>
+<p>7. wrap con gap: otto riquadri da 150 su piu' righe</p>
+<div class="r capo"><div>1</div><div>2</div><div>3</div><div>4</div><div>5</div><div>6</div><div>7</div><div>8</div></div>
+<p>8. row-reverse: tre, due, uno da destra</p>
+<div class="r rov"><div class="a">uno</div><div class="b">due</div><div class="c">tre</div></div>
+<p>9. centrato in orizzontale e in verticale in 40 pixel</p>
+<div class="r centro"><div class="a">centro</div></div>
+</body></html>

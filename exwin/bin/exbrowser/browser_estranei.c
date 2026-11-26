@@ -221,11 +221,28 @@ static int est_modulo_di(int v)
  * La riga scelta dall'utente non ne soffre: si tiene come posizione dentro
  * la SUA scelta (opz_ora), non come indice in g_opz.
  * ============================================================================= */
+/* the text inside node v, for a form's <option> and <textarea> (P11) */
+void est_testo_dentro(int v, char *out, unsigned int max)
+{
+    testo_dentro(v, out, max);
+}
+
+/* the pixels of the <img> node of this view, for a canvas's drawImage (P10) */
+const unsigned int *est_imm_px(int nodo, int *w, int *h)
+{
+    int k;
+
+    for (k = 0; k < g_imm_n; k++)
+        if (g_imm[k].nodo == nodo && g_imm[k].px) { *w = (int)g_imm[k].w; *h = (int)g_imm[k].h; return g_imm[k].px; }
+    return 0;
+}
+
 static void est_azzera(void)
 {
     g_ctrl_n = 0;
     g_mod_n  = 0;
     g_opz_n  = 0;
+    g_ve->svg_n = 0;
 }
 
 /* Una <option> in piu' nella scelta c. */
@@ -268,6 +285,48 @@ static int est_misura(int v, VistaPezzo *p)
      * The children of <iframe> are fallback for browsers without iframes:
      * VISTA_PEZZO skips them.
      * ===================================================================== */
+    /* =====================================================================
+     * AN INLINE <svg> (P10): a piece drawn from its nodes with plutovg
+     * (browser_disegno.c). Without the library: what it was before, nothing
+     * of its children (they are not text).
+     * ===================================================================== */
+    if (uguale(nome, "svg")) {
+        if (!dis_disponibile()) return VISTA_SALTA;
+        dis_svg_misura(v, p->larg_css, p->alt_css, &p->w, &p->h);
+        if (p->w <= 0 || p->h <= 0) return VISTA_SALTA;
+        if (p->w > riga_w()) { p->h = p->h * riga_w() / p->w; p->w = riga_w(); }
+        if (g_ve->svg_n >= SVG_MAX) return VISTA_SALTA;
+        g_ve->svg[g_ve->svg_n] = v;
+        g_ve->svg_col[g_ve->svg_n] = p->colore;
+        p->rif = EST_SVG(g_ve->svg_n);
+        g_ve->svg_n++;
+        p->nel_flusso = 1;
+        return VISTA_PEZZO;
+    }
+
+    /* A <canvas> (P10): its width and height attributes (300 x 150), the
+     * CSS size if there is one; drawn from its surface in browser_disegno.c.
+     * Without plutovg its children are the fallback, as in a browser
+     * without canvas. */
+    if (uguale(nome, "canvas")) {
+        const char *aw = html_attr(&g_doc, v, "width"), *ah = html_attr(&g_doc, v, "height");
+        int         w = (aw && numero(aw) > 0) ? (int)numero(aw) : 300;
+        int         h = (ah && numero(ah) > 0) ? (int)numero(ah) : 150;
+
+        if (!dis_disponibile()) return VISTA_NIENTE;
+        if (p->larg_css > 0 && p->alt_css > 0) { w = p->larg_css; h = p->alt_css; }
+        else if (p->larg_css > 0) { h = h * p->larg_css / w; w = p->larg_css; }
+        else if (p->alt_css > 0) { w = w * p->alt_css / h; h = p->alt_css; }
+        if (w > riga_w()) { h = h * riga_w() / w; w = riga_w(); }
+        if (w <= 0 || h <= 0 || g_ve->svg_n >= SVG_MAX) return VISTA_SALTA;
+        p->w = w; p->h = h;
+        g_ve->svg[g_ve->svg_n] = -(v + 2);
+        p->rif = EST_SVG(g_ve->svg_n);
+        g_ve->svg_n++;
+        p->nel_flusso = 1;
+        return VISTA_PEZZO;
+    }
+
     if (uguale(nome, "iframe") || uguale(nome, "frame")) {
         const char *src = html_attr(&g_doc, v, "src");
         const char *aw  = html_attr(&g_doc, v, "width");
@@ -748,6 +807,15 @@ int est_cursore_da_clic(int k, int x, int y)
 static void est_disegna(int rif, int x, int y, int w, int h)
 {
     if (EST_E_CORN(rif)) { cornice_disegna(EST_CHI(rif), x, y, w, h); return; }
+    if (EST_E_SVG(rif)) {
+        int k = EST_CHI(rif);
+
+        if (k < g_ve->svg_n && g_ve->svg[k] <= -2)
+            dis_tela_disegna(-g_ve->svg[k] - 2, x, y, w, h, area_x(), area_y(), area_w(), area_h());
+        else if (k < g_ve->svg_n)
+            dis_svg(g_ve->svg[k], g_ve->svg_col[k], x, y, w, h, area_x(), area_y(), area_w(), area_h());
+        return;
+    }
 
     /* =================================================================
      * UN CONTROLLO DI MODULO

@@ -136,6 +136,13 @@ struct ExDom {
     ExJsVal      documento;
     int          troncato;
     int          perso;
+    /* P8 (26 novembre 2026): where an element is (the browser's layout),
+     * and who wants to hear of the tree's changes (the prelude's
+     * MutationObserver) */
+    ExDomGeometria geom;
+    void          *geom_dato;
+    ExJsVal        muta;
+    int            muta_su;
 };
 
 /* -----------------------------------------------------------------------------
@@ -341,6 +348,64 @@ static int primo_tag(const HtmlDoc *d, int radice, const char *tag)
 /* =============================================================================
  * LE PROPRIETA' CHE SI LEGGONO
  * ========================================================================== */
+/* =============================================================================
+ * FRAGMENTS AND SHADOW ROOTS (P9, 26 November 2026)
+ *
+ * Both are element nodes of the tree with a reserved name - "#document-
+ * fragment", "#shadow-root" - and no parent; to JavaScript they are
+ * DocumentFragment (nodeType 11). A shadow root's host is said by exhtml
+ * (html_legato), as a template's content.
+ * ========================================================================== */
+static int e_ombra(const HtmlDoc *d, int n)
+{
+    const char *s;
+
+    if (n < 0 || n >= (int)d->nodi_n || d->nodi[n].tipo != HTML_ELEMENTO) return 0;
+    s = html_nome((HtmlDoc *)d, n);
+    return s && ugu(s, "#shadow-root");
+}
+
+static int e_frammento(const HtmlDoc *d, int n)
+{
+    const char *s;
+
+    if (n < 0 || n >= (int)d->nodi_n || d->nodi[n].tipo != HTML_ELEMENTO) return 0;
+    s = html_nome((HtmlDoc *)d, n);
+    /* ! BY THE WHOLE NAME: the document's root is called "#doc" */
+    return s && (ugu(s, "#document-fragment") || ugu(s, "#shadow-root"));
+}
+
+/* the parent in the tree, or the host for a shadow root (events cross it) */
+static int padre_composto(const HtmlDoc *d, int n)
+{
+    if (d->nodi[n].padre >= 0) return d->nodi[n].padre;
+    if (e_ombra(d, n)) return html_legato_da(d, HTML_LEGAME_OMBRA, n);
+    return -1;
+}
+
+/* the root: the document's, or a shadow root, or a detached node's top */
+static int radice_di(const HtmlDoc *d, int n)
+{
+    int giri = 0;
+
+    while (n >= 0 && d->nodi[n].padre >= 0 && giri++ < 100000) n = d->nodi[n].padre;
+    return n;
+}
+
+static int connesso(const HtmlDoc *d, int n)
+{
+    int giri = 0;
+
+    while (n >= 0 && giri++ < 64) {
+        int r = radice_di(d, n);
+
+        if (r == d->radice) return 1;
+        if (!e_ombra(d, r)) return 0;
+        n = html_legato_da(d, HTML_LEGAME_OMBRA, r);
+    }
+    return 0;
+}
+
 static ExJsVal stringa_c(ExJsCtx *c, const char *s)
 {
     return exjs_stringa(c, s ? s : "", -1);
@@ -416,10 +481,69 @@ static int leggi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori)
     if (ugu(nome, "nodeType")) {
         /* 1 = elemento, 3 = testo: sono i numeri del DOM, non i nostri. Il
          * codice delle pagine li scrive a mano. */
-        *fuori = exjs_numero(c, elemento ? 1.0 : 3.0);
+        *fuori = exjs_numero(c, e_frammento(d, n) ? 11.0 : elemento ? 1.0 : 3.0);
         return 1;
     }
-    if (ugu(nome, "nodeName"))  { *fuori = nome_del_nodo(D, n); return 1; }
+    if (ugu(nome, "nodeName"))  {
+        *fuori = e_frammento(d, n) ? stringa_c(c, "#document-fragment") : nome_del_nodo(D, n);
+        return 1;
+    }
+    /* P9: the root, the connection, the shadow root, its host */
+    if (ugu(nome, "isConnected")) { *fuori = exjs_booleano(connesso(d, n)); return 1; }
+    if (elemento && ugu(nome, "shadowRoot")) {
+        int modo = 0, o = html_legato(d, HTML_LEGAME_OMBRA, n, &modo);
+
+        *fuori = (o >= 0 && modo == 1) ? exdom_avvolgi(D, o) : exjs_nullo();
+        return 1;
+    }
+    if (e_ombra(d, n) && ugu(nome, "host")) {
+        *fuori = exdom_avvolgi(D, html_legato_da(d, HTML_LEGAME_OMBRA, n));
+        return 1;
+    }
+    if (e_ombra(d, n) && ugu(nome, "mode")) {
+        int modo = 0, h = html_legato_da(d, HTML_LEGAME_OMBRA, n);
+
+        if (h >= 0) html_legato(d, HTML_LEGAME_OMBRA, h, &modo);
+        *fuori = stringa_c(c, modo ? "open" : "closed");
+        return 1;
+    }
+    if (elemento && ugu(nome, "content")) {
+        const char *t = html_nome(d, n);
+
+        if (t && ugu(t, "template")) {
+            /* ! THE CONTENT IS MADE THE FIRST TIME IT IS ASKED FOR: the
+             * template's children move into a fragment of their own, which is
+             * what the DOM has from the parser on */
+            int fr = html_legato(d, HTML_LEGAME_CONTENUTO, n, 0);
+
+            if (fr < 0) {
+                fr = html_crea_elemento(d, "#document-fragment");
+                if (fr >= 0) {
+                    while (d->nodi[n].primo_figlio >= 0)
+                        html_aggiungi(d, fr, d->nodi[n].primo_figlio);
+                    html_lega(d, HTML_LEGAME_CONTENUTO, n, fr, 0);
+                }
+            }
+            *fuori = exdom_avvolgi(D, fr);
+            return 1;
+        }
+    }
+    if (elemento && !e_frammento(d, n) && ugu(nome, "attributes")) {
+        ExJsVal      v = exjs_vettore(c);
+        unsigned int k = 0;
+        int          at;
+
+        for (at = d->nodi[n].attributi; at >= 0 && (unsigned int)at < d->attr_n; at = d->attr[at].prossimo) {
+            ExJsVal o = exjs_oggetto(c);
+
+            exjs_metti(c, o, "name", stringa_c(c, d->arena + d->attr[at].nome));
+            exjs_metti(c, o, "localName", stringa_c(c, d->arena + d->attr[at].nome));
+            exjs_metti(c, o, "value", stringa_c(c, d->arena + d->attr[at].valore));
+            exjs_indice_metti(c, v, k++, o);
+        }
+        *fuori = v;
+        return 1;
+    }
     if (ugu(nome, "parentNode")) {
         /* ! IL PADRE DELLA RADICE E' null, non il documento: la radice E' il
          * documento. */
@@ -503,6 +627,30 @@ static int leggi_prop(ExJsCtx *c, void *dato, const char *nome, ExJsVal *fuori)
     }
 
     /* --- solo gli elementi -------------------------------------------- */
+    /* the box the layout gave it (P8): offset*, client*, scroll* */
+    if (nome[0] == 'o' || nome[0] == 'c' || nome[0] == 's') {
+        static const char *const NOMI[] = { "offsetWidth", "offsetHeight", "offsetLeft", "offsetTop",
+                                            "clientWidth", "clientHeight", "clientLeft", "clientTop",
+                                            "scrollWidth", "scrollHeight", "scrollLeft", "scrollTop", 0 };
+        int k;
+
+        for (k = 0; NOMI[k]; k++) if (ugu(nome, NOMI[k])) break;
+        if (NOMI[k]) {
+            int g[6] = { 0, 0, 0, 0, 0, 0 }, v = 0;
+
+            if (D->geom) D->geom(D->geom_dato, n, g);
+            switch (k) {
+            case 0: case 4: case 8:  v = g[2]; break;
+            case 1: case 5: case 9:  v = g[3]; break;
+            case 2: v = g[0]; break;
+            case 3: v = g[1]; break;
+            case 11: v = (n == d->radice) ? g[5] : 0; break;
+            default: v = 0; break;
+            }
+            *fuori = exjs_numero(c, (double)v);
+            return 1;
+        }
+    }
     if (ugu(nome, "tagName"))   { *fuori = nome_del_nodo(D, n); return 1; }
     if (ugu(nome, "innerHTML")) { *fuori = marcatore(D, n, 0); return 1; }
     if (ugu(nome, "children"))  { *fuori = figli_vettore(D, n, 1); return 1; }
@@ -806,6 +954,12 @@ static ExJsVal m_appendChild(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
     if (p < 0 || n_arg < 1) return exjs_nullo();
     f = exdom_nodo(D, a[0]);
     if (f < 0) return exjs_nullo();
+    /* a fragment gives its children, and stays empty (P9) */
+    if (e_frammento(D->doc, f)) {
+        while (D->doc->nodi[f].primo_figlio >= 0)
+            if (!html_aggiungi(D->doc, p, D->doc->nodi[f].primo_figlio)) break;
+        return a[0];
+    }
     if (!html_aggiungi(D->doc, p, f)) return exjs_nullo();
     /* Il DOM rende il figlio, non il padre: serve a incatenare. */
     return a[0];
@@ -822,6 +976,11 @@ static ExJsVal m_insertBefore(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
     f = exdom_nodo(D, a[0]);
     r = (n_arg >= 2) ? exdom_nodo(D, a[1]) : -1;
     if (f < 0) return exjs_nullo();
+    if (e_frammento(D->doc, f)) {
+        while (D->doc->nodi[f].primo_figlio >= 0)
+            if (!html_inserisci_prima(D->doc, p, D->doc->nodi[f].primo_figlio, r)) break;
+        return a[0];
+    }
     if (!html_inserisci_prima(D->doc, p, f, r)) return exjs_nullo();
     return a[0];
 }
@@ -2196,6 +2355,17 @@ static int riflesso_leggi(ExDom *D, ExJsCtx *c, HtmlDoc *d, int n,
          * si rende quel che c'e' scritto, che e' la verita' piu' vicina. */
     }
 
+    /* ! A CANVAS'S width AND height ARE NUMBERS, 300 and 150 when not said
+     * (P10): scripts compute with them (canvas.width + 10, * devicePixelRatio) */
+    if ((ugu(R->attr, "width") || ugu(R->attr, "height")) && ugu(html_nome(d, n), "canvas")) {
+        long x = 0;
+        int  k;
+
+        for (k = 0; v && v[k] >= '0' && v[k] <= '9' && x < 100000; k++) x = x * 10 + (v[k] - '0');
+        if (!v || k == 0) x = ugu(R->attr, "width") ? 300 : 150;
+        *fuori = exjs_numero(c, (double)x);
+        return 1;
+    }
     *fuori = stringa_c(c, v);
     return 1;
 }
@@ -2319,6 +2489,18 @@ static ExJsVal m_stopPropagation(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
     (void)a; (void)n_arg; (void)dato;
     exjs_metti(c, questo, "cancelBubble", exjs_booleano(1));
     return exjs_indefinito();
+}
+
+/* event.getModifierState("Shift") for a keyboard event: `dato` is the mask */
+static ExJsVal m_stato_tasti(ExJsCtx *c, ExJsVal questo, const ExJsVal *a, int n_arg, void *dato)
+{
+    int         m = (int)(long)dato;
+    const char *k;
+
+    (void)questo;
+    if (n_arg < 1 || !(k = exjs_a_stringa(c, a[0]))) return exjs_booleano(0);
+    return exjs_booleano((ugu(k, "Shift") && (m & 1)) || (ugu(k, "Control") && (m & 2)) ||
+                         (ugu(k, "Alt") && (m & 4)) || (ugu(k, "Meta") && (m & 8)));
 }
 
 static ExJsVal crea_evento(ExDom *D, const char *tipo, int bersaglio)
@@ -2471,23 +2653,70 @@ static int ascolti_di(ExDom *D, int nodo, const char *tipo, int cattura,
 
 #define STRADA_MAX  64
 
+static int evento_manda(ExDom *D, int nodo, const char *tipo, ExJsVal ev, ExJsErrore *err);
+
 int exdom_evento(ExDom *D, int nodo, const char *tipo, ExJsErrore *err)
 {
-    int     strada[STRADA_MAX];
-    int     n_strada = 0, i, avuto = 0;
     ExJsVal ev;
 
     if (!D || !tipo || !tipo[0]) return 1;
     if (nodo < 0 || nodo >= (int)D->doc->nodi_n) return 1;
-
     ev = crea_evento(D, tipo, nodo);
     if (exjs_tipo(D->js, ev) != EXJS_OGGETTO) return 1;
+    return evento_manda(D, nodo, tipo, ev, err);
+}
+
+/* =============================================================================
+ * A KEYBOARD EVENT (P11, 26 November 2026): keydown, keypress, keyup with
+ * key, code, keyCode, which, charCode and the modifiers. ! THE PAGES DECIDE
+ * ON THEM: a sign-in form (accounts.google.com) stops the form's own
+ * submission on Enter's keydown and sends the data its own way; without the
+ * event the browser submitted the bare form and the server said 400.
+ * mod: 1 shift, 2 ctrl, 4 alt, 8 meta. Rende 0 if the page prevented it.
+ * ========================================================================== */
+int exdom_evento_tasto(ExDom *D, int nodo, const char *tipo, const char *key,
+                       const char *code, int keycode, int mod, ExJsErrore *err)
+{
+    ExJsVal  ev;
+    ExJsCtx *c;
+    int      pr = tipo && ugu(tipo, "keypress");
+
+    if (!D || !tipo || !tipo[0]) return 1;
+    if (nodo < 0 || nodo >= (int)D->doc->nodi_n) return 1;
+    ev = crea_evento(D, tipo, nodo);
+    c = D->js;
+    if (exjs_tipo(c, ev) != EXJS_OGGETTO) return 1;
+    exjs_metti(c, ev, "key", stringa_c(c, key ? key : ""));
+    exjs_metti(c, ev, "code", stringa_c(c, code ? code : ""));
+    exjs_metti(c, ev, "keyCode", exjs_numero(c, keycode));
+    exjs_metti(c, ev, "which", exjs_numero(c, keycode));
+    exjs_metti(c, ev, "charCode", exjs_numero(c, pr ? keycode : 0));
+    exjs_metti(c, ev, "shiftKey", exjs_booleano(mod & 1));
+    exjs_metti(c, ev, "ctrlKey", exjs_booleano((mod & 2) != 0));
+    exjs_metti(c, ev, "altKey", exjs_booleano((mod & 4) != 0));
+    exjs_metti(c, ev, "metaKey", exjs_booleano((mod & 8) != 0));
+    exjs_metti(c, ev, "repeat", exjs_booleano(0));
+    exjs_metti(c, ev, "isComposing", exjs_booleano(0));
+    exjs_metti(c, ev, "location", exjs_numero(c, 0));
+    exjs_metti(c, ev, "bubbles", exjs_booleano(1));
+    exjs_metti(c, ev, "cancelable", exjs_booleano(1));
+    exjs_metti(c, ev, "getModifierState", exjs_nativa(c, m_stato_tasti, (void *)(long)mod, "getModifierState"));
+    return evento_manda(D, nodo, tipo, ev, err);
+}
+
+static int evento_manda(ExDom *D, int nodo, const char *tipo, ExJsVal ev, ExJsErrore *err)
+{
+    int     strada[STRADA_MAX];
+    int     n_strada = 0, i, avuto = 0;
+
     if (err) { err->messaggio[0] = '\0'; err->riga = 0; }
 
     /* La strada dal bersaglio in su. ! IL BERSAGLIO NON CI STA DENTRO: la sua
      * fase e' una sola e si fa in mezzo, con tutt'e due i tipi di gestore. */
-    for (i = D->doc->nodi[nodo].padre; i >= 0 && n_strada < STRADA_MAX;
-         i = D->doc->nodi[i].padre)
+    /* ! THROUGH A SHADOW ROOT TO ITS HOST (P9): the events of the browser
+     * (clicks, input) are composed, as the DOM's are */
+    for (i = padre_composto(D->doc, nodo); i >= 0 && n_strada < STRADA_MAX;
+         i = padre_composto(D->doc, i))
         strada[n_strada++] = i;
 
     /* --- discesa: dalla radice giu' fino al padre del bersaglio --------- */
@@ -3329,6 +3558,19 @@ static ExJsVal m_rp_text(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
     return promessa_nuova(D, exjs_prendi(c, questo, "__testo"), 1);
 }
 
+/* response.arrayBuffer() and bytes() (P12): the body's bytes, not text */
+static ExJsVal m_rp_arraybuffer(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                                int n_arg, void *dato)
+{
+    ExDom  *D = (ExDom *)dato;
+    ExJsVal b = exjs_prendi(c, questo, "__byte");
+
+    (void)a; (void)n_arg;
+    if (exjs_tipo(c, b) != EXJS_OGGETTO)
+        return promessa_nuova(D, motivo(D, "arrayBuffer: questo motore non ha ArrayBuffer"), 0);
+    return promessa_nuova(D, b, 1);
+}
+
 static ExJsVal m_rp_json(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
                          int n_arg, void *dato)
 {
@@ -3374,6 +3616,9 @@ static ExJsVal risposta_nuova(ExDom *D, const ExDomRichiesta *r,
     if (exjs_tipo(c, o) != EXJS_OGGETTO) return exjs_indefinito();
     exjs_proto_metti(c, o, D->proto_risposta);
     exjs_metti(c, o, "__testo", rete_testo(D, r));
+    /* (P12) the bytes as they came, for arrayBuffer(): a module, an image.
+     * Only with QuickJS (exjs_buffer_copia); with ExJs it stays undefined */
+    if (r->risposta) exjs_metti(c, o, "__byte", exjs_buffer_copia(c, r->risposta, r->byte));
     exjs_metti(c, o, "__tipo",
                r->tipo ? stringa_c(c, r->tipo) : exjs_nullo());
     /* ! `ok` E' 200..299 E NON «e' arrivata qualcosa». Una pagina che
@@ -3871,6 +4116,283 @@ unsigned int exdom_quanto_serve(unsigned int nodi_max, unsigned int testo_max,
            + ALLINEA8(testo_max);
 }
 
+/* =============================================================================
+ * WHERE AN ELEMENT IS (P8, 26 November 2026)
+ *
+ * The layout is the browser's: it gives, for a node, x y w h in the
+ * document and the scroll (exdom_geometria). getBoundingClientRect is that
+ * box minus the scroll; an element never laid out (display: none, not yet
+ * laid out) is all zeros, as in the DOM.
+ * ========================================================================== */
+void exdom_geometria(ExDom *D, ExDomGeometria f, void *dato)
+{
+    if (!D) return;
+    D->geom = f;
+    D->geom_dato = dato;
+}
+
+static ExJsVal rettangolo_js(ExDom *D, int n)
+{
+    ExJsCtx *c = D->js;
+    ExJsVal  o = exjs_oggetto(c);
+    int      g[6] = { 0, 0, 0, 0, 0, 0 };
+    double   x, y, w, h;
+
+    if (D->geom && n >= 0) D->geom(D->geom_dato, n, g);
+    x = g[0] - g[4]; y = g[1] - g[5]; w = g[2]; h = g[3];
+    if (!g[2] && !g[3]) x = y = 0;
+    exjs_metti(c, o, "x", exjs_numero(c, x));
+    exjs_metti(c, o, "y", exjs_numero(c, y));
+    exjs_metti(c, o, "left", exjs_numero(c, x));
+    exjs_metti(c, o, "top", exjs_numero(c, y));
+    exjs_metti(c, o, "width", exjs_numero(c, w));
+    exjs_metti(c, o, "height", exjs_numero(c, h));
+    exjs_metti(c, o, "right", exjs_numero(c, x + w));
+    exjs_metti(c, o, "bottom", exjs_numero(c, y + h));
+    return o;
+}
+
+static ExJsVal m_getBoundingClientRect(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                                       int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+
+    (void)c; (void)a; (void)n_arg;
+    return rettangolo_js(D, exdom_nodo(D, questo));
+}
+
+static ExJsVal m_getClientRects(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                                int n_arg, void *dato)
+{
+    ExDom  *D = (ExDom *)dato;
+    ExJsVal v = exjs_vettore(c);
+    int     n = exdom_nodo(D, questo), g[6] = { 0, 0, 0, 0, 0, 0 };
+
+    (void)a; (void)n_arg;
+    if (D->geom && n >= 0) D->geom(D->geom_dato, n, g);
+    if (g[2] || g[3]) exjs_indice_metti(c, v, 0, rettangolo_js(D, n));
+    return v;
+}
+
+/* =============================================================================
+ * THE TREE'S CHANGES, TO THE PRELUDE (P8: MutationObserver)
+ *
+ * __exos_osserva(f) - called by the prelude the first time an observer
+ * observes - asks exhtml for every change, and each one becomes
+ * f(kind, target, node, attribute, old value, previous, next). The records,
+ * the filtering by options and the delivery in a microtask are the
+ * prelude's: JavaScript, where the DOM's rules are short to write.
+ * ========================================================================== */
+static ExJsVal avvolto_o_nullo(ExDom *D, int n)
+{
+    return n >= 0 ? exdom_avvolgi(D, n) : exjs_nullo();
+}
+
+static void su_cambio(void *dato, int tipo, int bersaglio, int nodo, const char *attr,
+                      const char *vecchio, int prima, int dopo)
+{
+    ExDom  *D = (ExDom *)dato;
+    ExJsCtx *c = D->js;
+    ExJsVal a[7];
+
+    if (!D->muta_su || D->muta_su > 1) return;      /* not inside its own call */
+    D->muta_su = 2;
+    a[0] = exjs_numero(c, (double)tipo);
+    a[1] = avvolto_o_nullo(D, bersaglio);
+    a[2] = avvolto_o_nullo(D, nodo);
+    a[3] = attr ? exjs_stringa(c, attr, -1) : exjs_nullo();
+    a[4] = vecchio ? exjs_stringa(c, vecchio, -1) : exjs_nullo();
+    a[5] = avvolto_o_nullo(D, prima);
+    a[6] = avvolto_o_nullo(D, dopo);
+    exjs_invoca(c, D->muta, exjs_indefinito(), a, 7, 0);
+    D->muta_su = 1;
+}
+
+static ExJsVal m_osserva(ExJsCtx *c, ExJsVal questo, const ExJsVal *a, int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+
+    (void)c; (void)questo;
+    if (n_arg < 1) return exjs_indefinito();
+    D->muta = a[0];
+    D->muta_su = 1;
+    html_su_cambio(D->doc, su_cambio, D);
+    return exjs_indefinito();
+}
+
+/* P9 ------------------------------------------------------------------- */
+static ExJsVal m_attachShadow(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                              int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+    int    n = nodo_di(D, questo), o, modo = 1;
+
+    if (n < 0 || D->doc->nodi[n].tipo != HTML_ELEMENTO) return exjs_nullo();
+    if (n_arg >= 1 && exjs_tipo(c, a[0]) == EXJS_OGGETTO) {
+        const char *m = exjs_a_stringa(c, exjs_prendi(c, a[0], "mode"));
+
+        if (m && ugu(m, "closed")) modo = 0;
+    }
+    o = html_legato(D->doc, HTML_LEGAME_OMBRA, n, 0);
+    if (o >= 0) return exdom_avvolgi(D, o);        /* the DOM throws; one is kept */
+    o = html_crea_elemento(D->doc, "#shadow-root");
+    if (o < 0) return exjs_nullo();
+    html_lega(D->doc, HTML_LEGAME_OMBRA, n, o, modo);
+    /* the host is laid out again: its children are now the shadow's */
+    D->doc->versione++;
+    return exdom_avvolgi(D, o);
+}
+
+static ExJsVal m_getRootNode(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                             int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+    int    n = nodo_di(D, questo), r;
+
+    (void)c; (void)a; (void)n_arg;
+    if (n < 0) return exjs_nullo();
+    r = radice_di(D->doc, n);
+    return r == D->doc->radice ? D->documento : exdom_avvolgi(D, r);
+}
+
+static int copia_nodo(HtmlDoc *d, int n, int profondo)
+{
+    int nuovo, at, f;
+
+    if (d->nodi[n].tipo == HTML_TESTO) return html_crea_testo(d, html_testo(d, n));
+    nuovo = html_crea_elemento(d, html_nome(d, n));
+    if (nuovo < 0) return -1;
+    /* the attributes in their order: the list is kept newest first */
+    {
+        int lista[256], k = 0;
+
+        for (at = d->nodi[n].attributi; at >= 0 && (unsigned int)at < d->attr_n && k < 256; at = d->attr[at].prossimo)
+            lista[k++] = at;
+        while (k-- > 0)
+            html_attr_metti(d, nuovo, d->arena + d->attr[lista[k]].nome, d->arena + d->attr[lista[k]].valore);
+    }
+    if (profondo) {
+        int src = n, fr = html_legato(d, HTML_LEGAME_CONTENUTO, n, 0);
+
+        for (f = d->nodi[src].primo_figlio; f >= 0; f = d->nodi[f].prossimo) {
+            int c2 = copia_nodo(d, f, 1);
+
+            if (c2 >= 0) html_aggiungi(d, nuovo, c2);
+        }
+        /* a template's content goes with it, as its own content */
+        if (fr >= 0) {
+            int fr2 = html_crea_elemento(d, "#document-fragment");
+
+            if (fr2 >= 0) {
+                for (f = d->nodi[fr].primo_figlio; f >= 0; f = d->nodi[f].prossimo) {
+                    int c2 = copia_nodo(d, f, 1);
+
+                    if (c2 >= 0) html_aggiungi(d, fr2, c2);
+                }
+                html_lega(d, HTML_LEGAME_CONTENUTO, nuovo, fr2, 0);
+            }
+        }
+    }
+    return nuovo;
+}
+
+static ExJsVal m_cloneNode(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                           int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+    int    n = nodo_di(D, questo), k;
+
+    if (n < 0 || n == D->doc->radice) return exjs_nullo();
+    k = copia_nodo(D->doc, n, n_arg >= 1 && exjs_a_booleano(c, a[0]));
+    return k >= 0 ? exdom_avvolgi(D, k) : exjs_nullo();
+}
+
+static ExJsVal m_importNode(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                            int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+    int    n, k;
+
+    (void)questo;
+    if (n_arg < 1) return exjs_nullo();
+    n = exdom_nodo(D, a[0]);
+    if (n < 0 || n == D->doc->radice) return exjs_nullo();
+    k = copia_nodo(D->doc, n, n_arg >= 2 && exjs_a_booleano(c, a[1]));
+    return k >= 0 ? exdom_avvolgi(D, k) : exjs_nullo();
+}
+
+static ExJsVal m_createDocumentFragment(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                                        int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+    int    k;
+
+    (void)c; (void)questo; (void)a; (void)n_arg;
+    k = html_crea_elemento(D->doc, "#document-fragment");
+    return k >= 0 ? exdom_avvolgi(D, k) : exjs_nullo();
+}
+
+static ExJsVal m_getAttributeNames(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                                   int n_arg, void *dato)
+{
+    ExDom       *D = (ExDom *)dato;
+    int          n = nodo_di(D, questo), at, lista[256], k = 0;
+    ExJsVal      v = exjs_vettore(c);
+    unsigned int q = 0;
+
+    (void)a; (void)n_arg;
+    if (n < 0) return v;
+    for (at = D->doc->nodi[n].attributi; at >= 0 && (unsigned int)at < D->doc->attr_n && k < 256;
+         at = D->doc->attr[at].prossimo)
+        lista[k++] = at;
+    /* the list's order: the document's for parsed attributes */
+    for (at = 0; at < k; at++) exjs_indice_metti(c, v, q++, stringa_c(c, D->doc->arena + D->doc->attr[lista[at]].nome));
+    return v;
+}
+
+/* <slot>: the host's children that go there (named by `slot`, or all those
+ * without one for the default slot) */
+static ExJsVal assegnati(ExDom *D, int s, int solo_elementi)
+{
+    HtmlDoc     *d = D->doc;
+    ExJsVal      v = exjs_vettore(D->js);
+    unsigned int k = 0;
+    int          r = radice_di(d, s), h, f;
+    const char  *nome = html_attr(d, s, "name");
+
+    if (!e_ombra(d, r)) return v;
+    h = html_legato_da(d, HTML_LEGAME_OMBRA, r);
+    if (h < 0) return v;
+    for (f = d->nodi[h].primo_figlio; f >= 0; f = d->nodi[f].prossimo) {
+        const char *sl = d->nodi[f].tipo == HTML_ELEMENTO ? html_attr(d, f, "slot") : 0;
+
+        if (solo_elementi && d->nodi[f].tipo != HTML_ELEMENTO) continue;
+        if (nome && nome[0] ? !(sl && ugu(sl, nome)) : (sl && sl[0])) continue;
+        exjs_indice_metti(D->js, v, k++, exdom_avvolgi(D, f));
+    }
+    return v;
+}
+
+static ExJsVal m_assignedNodes(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                               int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+    int    n = nodo_di(D, questo);
+
+    (void)c; (void)a; (void)n_arg;
+    return n >= 0 ? assegnati(D, n, 0) : exjs_vettore(c);
+}
+
+static ExJsVal m_assignedElements(ExJsCtx *c, ExJsVal questo, const ExJsVal *a,
+                                  int n_arg, void *dato)
+{
+    ExDom *D = (ExDom *)dato;
+    int    n = nodo_di(D, questo);
+
+    (void)c; (void)a; (void)n_arg;
+    return n >= 0 ? assegnati(D, n, 1) : exjs_vettore(c);
+}
+
 static void metti_metodo(ExDom *D, ExJsVal dove, const char *nome, ExJsNativa f)
 {
     exjs_metti(D->js, dove, nome, exjs_nativa(D->js, f, D, nome));
@@ -3900,6 +4422,11 @@ ExDom *exdom_apri(void *memoria, unsigned int byte,
     D->asc_max   = ascolti_max;
     D->troncato  = 0;
     D->perso     = 0;
+    D->geom      = 0;
+    D->geom_dato = 0;
+    D->muta_su   = 0;
+    D->muta      = exjs_indefinito();
+    html_su_cambio(doc, 0, 0);      /* a hook left by a page of before */
     D->url[0]      = '\0';
     D->vai[0]      = '\0';
     D->biscotti[0] = '\0';
@@ -3943,6 +4470,14 @@ ExDom *exdom_apri(void *memoria, unsigned int byte,
     metti_metodo(D, D->proto, "addEventListener",       m_addEventListener);
     metti_metodo(D, D->proto, "removeEventListener",    m_removeEventListener);
     metti_metodo(D, D->proto, "dispatchEvent",          m_dispatchEvent);
+    metti_metodo(D, D->proto, "getBoundingClientRect",  m_getBoundingClientRect);
+    metti_metodo(D, D->proto, "getClientRects",         m_getClientRects);
+    metti_metodo(D, D->proto, "attachShadow",           m_attachShadow);
+    metti_metodo(D, D->proto, "getRootNode",            m_getRootNode);
+    metti_metodo(D, D->proto, "cloneNode",              m_cloneNode);
+    metti_metodo(D, D->proto, "getAttributeNames",      m_getAttributeNames);
+    metti_metodo(D, D->proto, "assignedNodes",          m_assignedNodes);
+    metti_metodo(D, D->proto, "assignedElements",       m_assignedElements);
 
     D->proto_stile = exjs_oggetto(js);
     metti_metodo(D, D->proto_stile, "setProperty",      m_setProperty);
@@ -3968,6 +4503,8 @@ ExDom *exdom_apri(void *memoria, unsigned int byte,
     metti_metodo(D, D->documento, "getElementById",  m_getElementById);
     metti_metodo(D, D->documento, "createElement",   m_createElement);
     metti_metodo(D, D->documento, "createTextNode",  m_createTextNode);
+    metti_metodo(D, D->documento, "createDocumentFragment", m_createDocumentFragment);
+    metti_metodo(D, D->documento, "importNode",      m_importNode);
 
     exjs_metti(js, exjs_globale(js), "document", D->documento);
 
@@ -3988,6 +4525,7 @@ ExDom *exdom_apri(void *memoria, unsigned int byte,
      * a frame here gets the same answer, which navigates the frame instead of
      * the whole page — a smaller error than a page that does nothing. */
     exjs_metti(js, exjs_globale(js), "self",   exjs_globale(js));
+    metti_metodo(D, exjs_globale(js), "__exos_osserva", m_osserva);
     exjs_metti(js, exjs_globale(js), "parent", exjs_globale(js));
     exjs_metti(js, exjs_globale(js), "top",    exjs_globale(js));
 
@@ -4071,6 +4609,7 @@ ExDom *exdom_apri(void *memoria, unsigned int byte,
     D->proto_risposta = exjs_oggetto(js);
     metti_metodo(D, D->proto_risposta, "text", m_rp_text);
     metti_metodo(D, D->proto_risposta, "json", m_rp_json);
+    metti_metodo(D, D->proto_risposta, "arrayBuffer", m_rp_arraybuffer);
 
     D->proto_xhr = exjs_oggetto(js);
     metti_metodo(D, D->proto_xhr, "open",                m_xhr_open);

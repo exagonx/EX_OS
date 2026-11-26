@@ -39,6 +39,12 @@
         exjs_lavori_in_attesa;
         exjs_memoria;
         exjs_orologio_metti;
+        exjs_prossimo_ms;
+        exjs_cronometro_metti;
+        exjs_buffer_esterno;
+        exjs_buffer_copia;
+        exjs_buffer_dati;
+        exjs_buffer_stacca;
         exjs_fuso_metti;
     local: *;
 };

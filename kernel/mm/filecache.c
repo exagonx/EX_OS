@@ -119,7 +119,7 @@ static void fc_togli(uint32_t i)
     fc_libera(v);
 }
 
-static FcVoce *fc_cerca(const VfsStat *st)
+static FcVoce *fc_cerca(const FcChiave *st)
 {
     uint32_t i = 0;
 
@@ -127,19 +127,19 @@ static FcVoce *fc_cerca(const VfsStat *st)
         FcVoce *v = g_fc[i];
 
         if (v->ident != st->ident) { i++; continue; }
-        if (v->dim == st->dimensione && v->mtime == st->mtime) return v;
+        if (v->dim == st->dim && v->mtime == st->mtime) return v;
         fc_togli(i);            /* the same file, changed */
     }
     return NULL;
 }
 
 /* The entry for `st`, made if missing, with usi + 1. NULL if no memory. */
-static FcVoce *fc_prendi(const VfsStat *st)
+static FcVoce *fc_prendi(const FcChiave *st)
 {
     uintptr_t fl = fc_chiudi();
     FcVoce   *v  = fc_cerca(st), *nuova;
     FcVoce  **lista = NULL;
-    uint32_t  n = st->dimensione / PAGE_SIZE, i, posti = 0;
+    uint32_t  n = st->dim / PAGE_SIZE, i, posti = 0;
 
     if (v) { v->usi++; fc_riapri(fl); return v; }
     fc_riapri(fl);
@@ -150,7 +150,7 @@ static FcVoce *fc_prendi(const VfsStat *st)
     nuova->f = (paddr_t *)kmalloc((n ? n : 1) * sizeof(paddr_t));
     if (nuova->f == NULL) { kfree(nuova); return NULL; }
     for (i = 0; i < n; i++) nuova->f[i] = 0;
-    nuova->ident = st->ident; nuova->dim = st->dimensione; nuova->mtime = st->mtime;
+    nuova->ident = st->ident; nuova->dim = st->dim; nuova->mtime = st->mtime;
     nuova->n = n; nuova->tenute = 0; nuova->usi = 1; nuova->fuori = 0;
     if (g_fc_n + 1 > g_fc_posti) {
         posti = g_fc_posti ? g_fc_posti * 2 : 16;
@@ -201,14 +201,44 @@ static void fc_conta(void)
          g_fc_letti / 256u, g_fc_ceduti);
 }
 
-paddr_t fc_pagina(int h, uint32_t idx)
+int fc_chiave(int h, FcChiave *k)
 {
-    VfsStat   st;
+    VfsStat st;
+    int     r;
+
+    if (h < 0 || k == NULL) return -1;
+    r = vfs_fstat(h, &st);
+    if (r != 0) { fc_rinuncia(1, "fstat", h, 0, r); return r; }
+    if (st.ident == 0) { fc_rinuncia(2, "identita' 0", h, 0, 0); return -1; }
+    k->ident = st.ident; k->dim = st.dimensione; k->mtime = st.mtime;
+    return 0;
+}
+
+/* ! NO VFS HERE (0.371): a page already in the cache is a lookup with the
+ * interrupts off. Until 0.370 every fault went through vfs_fstat, and the
+ * VFS lock: a fault on a page in RAM waited behind somebody's write to the
+ * disk (Firefox's profile, about a second each). */
+paddr_t fc_c_e(const FcChiave *k, uint32_t idx)
+{
+    uintptr_t fl = fc_chiudi();
+    FcVoce   *v  = fc_cerca(k);
+    paddr_t   fr = 0;
+
+    if (v && idx < v->n && v->f[idx] && pmm_ref_inc(v->f[idx]) == 0) {
+        fr = v->f[idx];
+        g_fc_presi++;
+    }
+    fc_riapri(fl);
+    return fr;
+}
+
+paddr_t fc_leggi(const FcChiave *k, int h, uint32_t idx, uint32_t a, uint32_t z)
+{
     FcVoce   *v;
     paddr_t   fr = 0;
     uintptr_t fl;
     uint8_t  *buf;
-    uint32_t  k, j, pagine;
+    uint32_t  da, fino, j, pagine;
     int       letti;
 
     if (!(g_fc_perche & (1u << 31))) {
@@ -216,13 +246,9 @@ paddr_t fc_pagina(int h, uint32_t idx)
         klog(LOG_WARN, "FC: prima pagina chiesta: handle %d pagina %u", h, idx);
     }
     if (h < 0) { fc_rinuncia(0, "handle", h, idx, 0); return 0; }
-    letti = vfs_fstat(h, &st);
-    if (letti != 0) { fc_rinuncia(1, "fstat", h, idx, letti); return 0; }
-    if (st.ident == 0) { fc_rinuncia(2, "identita' 0", h, idx, 0); return 0; }
-    if (idx >= st.dimensione / PAGE_SIZE) return 0;     /* not a whole page:
-                                                           the normal case */
-    v = fc_prendi(&st);
-    if (v == NULL) { fc_rinuncia(4, "voce", h, idx, (int)st.dimensione); return 0; }
+    if (idx >= k->dim / PAGE_SIZE) return 0;    /* not a whole page: the normal case */
+    v = fc_prendi(k);
+    if (v == NULL) { fc_rinuncia(4, "voce", h, idx, (int)k->dim); return 0; }
 
     fl = fc_chiudi();
     if (v->f[idx]) {
@@ -233,15 +259,19 @@ paddr_t fc_pagina(int h, uint32_t idx)
     fc_riapri(fl);
     if (fr) { fc_lascia(v); fc_conta(); return fr; }
 
-    /* how many to read: up to FC_AVANTI, not past the first one we have */
-    for (k = 1; k < FC_AVANTI && idx + k < v->n && v->f[idx + k] == 0; k++) ;
-    buf = (uint8_t *)kmalloc(k * PAGE_SIZE);
-    if (buf == NULL && k > 1) { k = 1; buf = (uint8_t *)kmalloc(PAGE_SIZE); }
+    /* the run of missing pages around idx, inside [a, z): one disk request */
+    if (a > idx) a = idx;
+    if (z > v->n) z = v->n;
+    if (z <= idx) z = idx + 1;
+    for (da = idx; da > a && v->f[da - 1] == 0; da--) ;
+    for (fino = idx + 1; fino < z && v->f[fino] == 0; fino++) ;
+    buf = (uint8_t *)kmalloc((fino - da) * PAGE_SIZE);
+    if (buf == NULL && fino - da > 1) { da = idx; fino = idx + 1; buf = (uint8_t *)kmalloc(PAGE_SIZE); }
     if (buf == NULL) { fc_rinuncia(5, "buffer", h, idx, 0); fc_lascia(v); return 0; }
 
     fl = fc_chiudi();
     __asm__ volatile ("sti");
-    letti = vfs_read(h, buf, k * PAGE_SIZE, idx * PAGE_SIZE);
+    letti = vfs_read(h, buf, (fino - da) * PAGE_SIZE, da * PAGE_SIZE);
     pagine = letti > 0 ? (uint32_t)letti / PAGE_SIZE : 0;
 
     for (j = 0; j < pagine; j++) {
@@ -255,17 +285,27 @@ paddr_t fc_pagina(int h, uint32_t idx)
         paging_finestra_chiudi();
 
         __asm__ volatile ("cli");
-        if (v->f[idx + j] == 0) { v->f[idx + j] = p; v->tenute++; g_fc_letti++; p = 0; }
-        if (j == 0 && pmm_ref_inc(v->f[idx]) == 0) fr = v->f[idx];
+        if (v->f[da + j] == 0) { v->f[da + j] = p; v->tenute++; g_fc_letti++; p = 0; }
         __asm__ volatile ("sti");
         if (p) pmm_free_page(p);        /* another fault put it there first */
     }
-    if (!(fl & (1u << 9))) __asm__ volatile ("cli");
+    __asm__ volatile ("cli");
+    if (v->f[idx] && pmm_ref_inc(v->f[idx]) == 0) fr = v->f[idx];
+    if (!(fl & (1u << 9))) __asm__ volatile ("cli"); else __asm__ volatile ("sti");
     if (fr == 0) fc_rinuncia(6, "lettura o RAM", h, idx, letti);
     kfree(buf);
     fc_lascia(v);
     fc_conta();
     return fr;
+}
+
+paddr_t fc_pagina(int h, uint32_t idx)
+{
+    FcChiave k;
+
+    if (h < 0) { fc_rinuncia(0, "handle", h, idx, 0); return 0; }
+    if (fc_chiave(h, &k) != 0) return 0;
+    return fc_leggi(&k, h, idx, idx, idx + FC_AVANTI);
 }
 
 paddr_t fc_pagina_privata(int h, uint32_t idx)

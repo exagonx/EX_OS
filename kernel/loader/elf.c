@@ -10,6 +10,7 @@
  * ============================================================================= */
 
 #include "kernel.h"
+#include "zone.h"
 #include "elf.h"
 #include "fat12.h"
 #include "vfs.h"
@@ -388,6 +389,7 @@ klog(LOG_INFO, "ELF: header valido, entry=0x%08x, phnum=%u",
         if (h >= 0) vfs_close(h);
     }
     if (proc != NULL) proc->n_vma = 0;
+    if (proc != NULL) zone_tutte_via(proc);     /* the old image's files (0.371) */
     toccato = 1;
 
     /* ==========================================================================
@@ -938,6 +940,7 @@ cleanup:
      * chiuderlo qui vorrebbe dire un processo che si ferma al primo fault
      * con "handle non valido". Lo chiude proc_reap_zombie. */
     if (ret == 0 && !residente) {
+        proc->exe_chiave_ok = fc_chiave(handle, &proc->exe_chiave) == 0;
         proc->exe_handle = handle;
     } else {
         vfs_close(handle);

@@ -574,6 +574,9 @@ static void fs_prendi_n(const char *chi)
     }
 }
 
+/* the bytes of the write holding the lock, for the warning below (0.371) */
+static uint32_t g_fs_byte;
+
 static void fs_rilascia(void)
 {
     uint32_t fl_if = read_eflags();   /* IF given back as found (voce 54) */
@@ -582,8 +585,18 @@ static void fs_rilascia(void)
     const char *cosa = g_fs_chi;
 
     if (tenuto > FS_TROPPO_TICK && chi_era != FS_SENZA_PROCESSO && proc_get_current() != NULL)
-        klog(LOG_WARN, "VFS: lucchetto tenuto %u ms dal PID %u (%s), %u in fila",
-             tenuto * 10u, chi_era, cosa, g_fs_n_attesa);
+    {
+        /* how much of it was the device: the rest is CPU or waiting for it */
+        BlkLavoro l;
+
+        blk_lavoro(&l);
+        klog(LOG_WARN, "VFS: lucchetto tenuto %u ms dal PID %u (%s %u byte), %u in fila; "
+             "disco %u ms, %u comandi, %u KB",
+             tenuto * 10u, chi_era, cosa, g_fs_byte, g_fs_n_attesa,
+             (l.us - g_fs_lav.us) / 1000u, l.comandi - g_fs_lav.comandi,
+             (l.settori - g_fs_lav.settori) / 2u);
+    }
+    g_fs_byte = 0;
     fs_misura(chi_era, cosa);
 
     interrupts_disable();
@@ -3154,7 +3167,7 @@ int vfs_read(int h, void *buf, uint32_t size, uint32_t offset)
 
 int vfs_write(int h, const void *buf, uint32_t size, uint32_t offset)
 {
-    int r; fs_prendi_n("write"); r = vfs_write_nl(h, buf, size, offset); fs_rilascia(); return r;
+    int r; fs_prendi_n("write"); g_fs_byte = size; r = vfs_write_nl(h, buf, size, offset); fs_rilascia(); return r;
 }
 
 int vfs_close(int h)

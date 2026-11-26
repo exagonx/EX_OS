@@ -1,0 +1,51 @@
+<html><head><title>Shadow DOM e Custom Elements</title><style>
+body { font-family: sans-serif; font-size: 14px; }
+p { color: #800000; }
+.scheda { border: 1px solid #888888; }
+x-scheda { display: block; margin: 6px 0; }
+</style></head><body>
+<h1>Shadow DOM e Custom Elements (P9)</h1>
+<p id="esito">0. in corso...</p>
+<p>1. testo della pagina, rosso scuro (il foglio della pagina)</p>
+<x-scheda titolo="Prima">
+  <span slot="sotto">2. sotto: dallo slot con nome</span>
+  3. il contenuto va nello slot senza nome
+</x-scheda>
+<x-scheda titolo="Seconda">4. una seconda scheda, stessa classe</x-scheda>
+<x-contatore></x-contatore>
+<div id="fine"></div>
+<script>
+var esiti = [];
+class Scheda extends HTMLElement {
+  static get observedAttributes() { return ['titolo']; }
+  constructor() {
+    super();
+    var o = this.attachShadow({ mode: 'open' });
+    o.innerHTML = '<style>:host { display: block; background: #e8f0ff; padding: 4px; }' +
+      ' p { color: #0040c0; margin: 2px; } .t { font-weight: bold; }</style>' +
+      '<p class="t"></p><p><slot></slot></p><p><slot name="sotto">nessuno</slot></p>';
+  }
+  attributeChangedCallback(n, v, nu) { this.shadowRoot.querySelector('.t').textContent = 'scheda ' + nu + ' (p dell\'ombra: blu, non rosso)'; }
+  connectedCallback() { esiti.push('connected ' + this.getAttribute('titolo')); }
+}
+customElements.define('x-scheda', Scheda);
+class Contatore extends HTMLElement {
+  connectedCallback() {
+    this.n = 0;
+    var b = document.createElement('button');
+    b.textContent = '5. un elemento fatto da script: ' + this.localName;
+    this.append(b);
+  }
+}
+customElements.define('x-contatore', Contatore);
+var dopo = document.createElement('x-scheda');
+dopo.setAttribute('titolo', 'Terza, creata da script');
+document.getElementById('fine').appendChild(dopo);
+setTimeout(function () {
+  var s = document.querySelectorAll('x-scheda');
+  var ok = s.length === 3 && s[0].shadowRoot && s[2].shadowRoot &&
+           esiti.length === 3 && document.querySelector('x-contatore button') !== null;
+  document.getElementById('esito').textContent = '0. ' + esiti.join(', ') + (ok ? '  OK' : '  NO');
+}, 50);
+</script>
+</body></html>

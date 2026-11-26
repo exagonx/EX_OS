@@ -18,6 +18,11 @@
         html_attr_togli;
         html_testo_metti;
         html_versione;
+        html_su_cambio;
+        html_lega;
+        html_legato;
+        html_legato_da;
+        html_slega_tutti;
         html_analizza_in;
         html_svuota;
         html_serializza;

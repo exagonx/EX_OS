@@ -732,6 +732,144 @@ int main(void)
     carica("<p>x</p>", "p { font: 500 16px \"Google Sans\", Roboto, Arial }");
     stile_di(trova("p"), &s); ok("font con il peso in cifre", s.corpo == 16 && s.grassetto == 0 && s.famiglia == CSS_FAM_SANS);
 
+
+    printf("\n=== flex e grid per Taffy: css_disposizione (P7) ===\n");
+    {
+        CssDisposizione d;
+
+        carica("<div>x</div>", "div { display: flex; flex-flow: row-reverse wrap-reverse; align-items: baseline; align-content: space-between }");
+        stile_di(trova("div"), &s); css_disposizione(&d);
+        ok("row-reverse e wrap-reverse", d.dir == 2 && d.a_capo == 2 && s.flex_colonna == 0 && s.flex_a_capo == 1);
+        ok("align-items: baseline, align-content: space-between", d.allinea_voci == CSS_AL_BASE && d.allinea_contenuto == CSS_AL_TRA);
+        carica("<p>x</p>", "p { flex: 2 3 120px; order: -1; align-self: flex-end }");
+        stile_di(trova("p"), &s); css_disposizione(&d);
+        ok("flex: 2 3 120px", s.flex_cresce == 200 && d.restringe == 300 && d.base_tipo == 1 && d.base == 120);
+        ok("order -1, align-self end", d.ordine == -1 && d.allinea_se == CSS_AL_FINE);
+        carica("<p>x</p>", "p { flex: 1 }");
+        stile_di(trova("p"), &s); css_disposizione(&d);
+        ok("flex: 1 = 1 1 0", s.flex_cresce == 100 && d.restringe == 100 && d.base_tipo == 1 && d.base == 0);
+        carica("<p>x</p>", "p { flex: none }");
+        stile_di(trova("p"), &s); css_disposizione(&d);
+        ok("flex: none = 0 0 auto", s.flex_cresce == 0 && d.restringe == 0 && d.base_tipo == 0);
+        carica("<p>x</p>", "p { font-size: 10px; flex-basis: 50% } p { flex-shrink: 0.5 }");
+        stile_di(trova("p"), &s); css_disposizione(&d);
+        ok("flex-basis 50%, flex-shrink 0.5", d.base_tipo == 2 && d.base == 5000 && d.restringe == 50);
+        carica("<div>x</div>", "div { display: grid; grid-template-columns: 200px 1fr minmax(100px, 2fr) repeat(2, 3em); font-size: 10px }");
+        stile_di(trova("div"), &s); css_disposizione(&d);
+        ok("display: grid e' un blocco con griglia", s.display == CSS_DISPLAY_BLOCCO && d.griglia == 1);
+        ok("cinque colonne", d.n_col == 5);
+        ok("200px, 1fr, minmax(100px, 2fr), 3em x 2",
+           d.col[0].max_tipo == CSS_TR_PX && d.col[0].max_v == 200 &&
+           d.col[1].max_tipo == CSS_TR_FR && d.col[1].max_v == 100 && d.col[1].min_tipo == CSS_TR_AUTO &&
+           d.col[2].min_tipo == CSS_TR_PX && d.col[2].min_v == 100 && d.col[2].max_v == 200 &&
+           d.col[4].max_tipo == CSS_TR_PX && d.col[4].max_v == 30);
+        carica("<div>x</div>", "div { display: grid; grid-template-columns: [a] repeat(auto-fill, minmax(150px, 1fr)) [b]; grid-auto-rows: 40px; grid-auto-flow: column dense }");
+        stile_di(trova("div"), &s); css_disposizione(&d);
+        ok("repeat(auto-fill, ...) resta tale", d.n_col == 1 && d.col_rip == 1 && d.col_rip_da == 0 && d.col_rip_n == 1);
+        ok("grid-auto-rows e grid-auto-flow", d.n_auto_rig == 1 && d.auto_rig[0].max_v == 40 && d.flusso == 3);
+        carica("<p>x</p>", "p { grid-column: 2 / span 3; grid-row: -1 }");
+        stile_di(trova("p"), &s); css_disposizione(&d);
+        ok("grid-column: 2 / span 3", d.col_inizio == 2 && d.col_fine == CSS_GR_SPAN + 3);
+        ok("grid-row: -1", d.rig_inizio == -1 && d.rig_fine == 0);
+        carica("<p>x</p>", "p { grid-area: 1 / 2 / 3 / 4 }");
+        stile_di(trova("p"), &s); css_disposizione(&d);
+        ok("grid-area", d.rig_inizio == 1 && d.col_inizio == 2 && d.rig_fine == 3 && d.col_fine == 4);
+        carica("<div>x</div>", "div { grid-template: 50px auto / 1fr 1fr; place-items: center end; overflow: hidden }");
+        stile_di(trova("div"), &s); css_disposizione(&d);
+        ok("grid-template: righe / colonne", d.n_rig == 2 && d.n_col == 2 && d.rig[0].max_v == 50);
+        ok("place-items: center end", d.allinea_voci == CSS_AL_CENTRO && d.giustifica_voci == CSS_AL_FINE);
+        ok("overflow: hidden", d.trabocca == 1);
+        carica("<div style='display:grid; grid-template-columns: var(--c)'>x</div>", ":root { --c: 1fr 2fr }");
+        stile_di(trova("div"), &s); css_disposizione(&d);
+        ok("le tracce da var() nello style=", d.griglia && d.n_col == 2 && d.col[1].max_v == 200);
+        carica("<div>x</div>", "div { display: grid; grid-template-areas: \"testa testa\" \"lato corpo\" \". piede\" }");
+        stile_di(trova("div"), &s); css_disposizione(&d);
+        ok("tre aree su tre righe e due colonne", d.n_aree == 4 && d.aree_righe == 3 && d.aree_colonne == 2);
+        ok("testa sulle due colonne della prima riga", !strcmp(d.aree[0].nome, "testa") && d.aree[0].r0 == 0 &&
+           d.aree[0].r1 == 0 && d.aree[0].c0 == 0 && d.aree[0].c1 == 1);
+        ok("piede nella seconda colonna dell'ultima", !strcmp(d.aree[3].nome, "piede") && d.aree[3].r0 == 2 && d.aree[3].c0 == 1);
+        carica("<div>x</div>", "div { grid-template: \"a a\" 40px \"b c\" / 100px 1fr }");
+        stile_di(trova("div"), &s); css_disposizione(&d);
+        ok("grid-template con le stringhe: aree, righe, colonne", d.n_aree == 3 && d.n_rig == 2 &&
+           d.rig[0].max_v == 40 && d.rig[1].max_tipo == CSS_TR_AUTO && d.n_col == 2 && d.col[0].max_v == 100);
+        carica("<p>x</p>", "p { grid-area: corpo }");
+        stile_di(trova("p"), &s); css_disposizione(&d);
+        ok("grid-area: un nome vale per i quattro lati", !strcmp(d.nome_rig_inizio, "corpo") && !strcmp(d.nome_col_inizio, "corpo") &&
+           !strcmp(d.nome_rig_fine, "corpo") && !strcmp(d.nome_col_fine, "corpo"));
+        carica("<p>x</p>", "p { grid-column: lato-start / corpo-end; grid-row: 2 }");
+        stile_di(trova("p"), &s); css_disposizione(&d);
+        ok("grid-column coi nomi delle linee", !strcmp(d.nome_col_inizio, "lato-start") && !strcmp(d.nome_col_fine, "corpo-end") &&
+           d.rig_inizio == 2 && d.nome_rig_inizio[0] == 0);
+        carica("<p>x</p>", "");
+        stile_di(trova("p"), &s); css_disposizione(&d);
+        ok("senza niente: tutto a zero, shrink 1", !d.griglia && d.restringe == 100 && d.n_col == 0 && d.ordine == 0);
+    }
+
+    printf("\n=== gli alberi d'ombra: css_ambito e :host (P9) ===\n");
+    {
+        int host, ombra, pd, po;
+        CssStile hs;
+
+        carica("<div id='h'>luce</div><p>fuori</p>", 0);
+        host = trova("div");
+        ombra = html_crea_elemento(&g_doc, "#shadow-root");
+        html_lega(&g_doc, HTML_LEGAME_OMBRA, host, ombra, 1);
+        html_analizza_in(&g_doc, ombra, "<p class='x'>dentro</p>", 22);
+        pd = trova_n("p", 0); po = trova_n("p", 1);
+        if (g_doc.nodi[pd].padre == ombra) { int t = pd; pd = po; po = t; }
+        css_analizza(&g_fog, "p { color: red } .x { font-weight: bold }", 41, CSS_ORIGINE_FOGLIO);
+        css_ambito(&g_fog, (unsigned int)ombra + 1);
+        css_analizza(&g_fog, "p { color: blue } :host { font-size: 20px } :host p { font-style: italic }", 75, CSS_ORIGINE_FOGLIO);
+        css_ambito(&g_fog, 0);
+        css_calcola(&g_fog, &g_doc, pd, 0, &s);
+        ok("il foglio del documento vale nel documento", s.colore == 0xFFFF0000u);
+        css_calcola(&g_fog, &g_doc, po, 0, &s);
+        ok("quello dell'ombra vale nell'ombra", s.colore == 0xFF0000FFu);
+        ok("quello del documento NON entra nell'ombra", s.grassetto != 1);
+        ok(":host p attraversa l'ombra fino all'ospite", s.corsivo == 1);
+        css_calcola(&g_fog, &g_doc, host, 0, &hs);
+        ok(":host e' l'ospite", hs.corpo == 20);
+        css_calcola(&g_fog, &g_doc, trova("body") >= 0 ? trova("body") : host, 0, &s);
+        ok(":host non e' un altro elemento", s.corpo != 20 || trova("body") < 0);
+    }
+
+    printf("\n=== angoli, ombre, sfumature: css_decoro (P10) ===\n");
+    {
+        CssDecoro g;
+
+        carica("<div>x</div>", "div { border-radius: 8px 4px; box-shadow: 2px 3px 6px 1px rgba(0,0,0,0.5) }");
+        stile_di(trova("div"), &s); css_decoro(&g);
+        ok("border-radius con due valori", g.raggio[0] == 8 && g.raggio[1] == 4 && g.raggio[2] == 8 && g.raggio[3] == 4);
+        ok("box-shadow letta", g.ombra && g.ombra_x == 2 && g.ombra_y == 3 && g.ombra_sfoca == 6 && g.ombra_allarga == 1);
+        carica("<div>x</div>", "div { border-radius: 50%; background: linear-gradient(to right, #ff0000, #0000ff 80%) }");
+        stile_di(trova("div"), &s); css_decoro(&g);
+        ok("border-radius 50%", g.raggio[0] == -5000);
+        ok("linear-gradient to right", g.sfumatura == 1 && g.angolo == 90 && g.n_fermate == 2 &&
+           (g.fermata_colore[0] & 0xFFFFFF) == 0xFF0000 && g.fermata_pos[1] == 8000 && g.fermata_pos[0] == -1);
+        carica("<div>x</div>", "div { background-image: linear-gradient(45deg, red, green, blue) }");
+        stile_di(trova("div"), &s); css_decoro(&g);
+        ok("linear-gradient 45deg con tre colori", g.sfumatura == 1 && g.angolo == 45 && g.n_fermate == 3);
+        carica("<div>x</div>", "div { box-shadow: none; background: radial-gradient(circle, white, black) }");
+        stile_di(trova("div"), &s); css_decoro(&g);
+        ok("radial-gradient e box-shadow: none", g.sfumatura == 2 && g.n_fermate == 2 && !g.ombra);
+        carica("<div>x</div>", "div { background: url(a.png) } div { border-top-left-radius: 1em; font-size: 10px }");
+        stile_di(trova("div"), &s); css_decoro(&g);
+        ok("niente sfumatura con un'immagine; il raggio in em", g.sfumatura == 0 && g.raggio[0] == 10);
+    }
+
+    printf("\n=== i colori con l'alfa: rgb(), rgba(), hsl(), transparent (P10) ===\n");
+    carica("<p>x</p>", "p { color: rgb(255, 0, 0); background-color: rgba(0, 0, 255, 0.5) }");
+    stile_di(trova("p"), &s);
+    ok("rgb(255, 0, 0)", s.colore == 0xFFFF0000u);
+    ok("rgba(0, 0, 255, 0.5): l'alfa resta", s.sfondo == 0x800000FFu);
+    carica("<p>x</p>", "p { color: rgb(0 128 0 / 25%); background: transparent }");
+    stile_di(trova("p"), &s);
+    ok("rgb(0 128 0 / 25%)", s.colore == 0x40008000u);
+    ok("transparent: alfa zero", s.sfondo == 0);
+    carica("<p>x</p>", "p { color: hsl(120, 100%, 25%); border-top: 1px solid #ff000080 }");
+    stile_di(trova("p"), &s);
+    ok("hsl(120, 100%, 25%) = #008000", s.colore == 0xFF008000u);
+    ok("#rrggbbaa", s.bordo_col[0] == 0x80FF0000u);
     printf("\n%d prove, %d fallite\n", fatti, falliti);
     return falliti ? 1 : 0;
 }
