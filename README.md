@@ -4,7 +4,7 @@
 
 **Download the ISOs:** <http://exagonx.altervista.org/exos>
 
-**Version:** 0.372
+**Version:** 0.373
 **Author:** Graziano Falcone <exagonx@hotmail.com>
 **License:** GNU General Public License v2 (GPL-2.0)
 **Architecture:** x86 32-bit (Pentium MMX and up) and x86-64, from the same sources
@@ -120,14 +120,14 @@ Inside EX-OS the same manuals are in `/doc/manuali` (from the CD:
 
 ## Latest changes
 
+- [Semaphores between processes and inotify: Qt's QSystemSemaphore, QSharedMemory, QFileSystemWatcher (kernel 0.373)](manuali/novita.md#semaphores-between-processes-and-inotify-qts-qsystemsemaphore-qsharedmemory-and-qfilesystemwatcher-work-kernel-0373-voce-85--tested-in-qemu) — *tested in QEMU*
+- [File dates, ppoll, network interfaces, the filesystem type (kernel 0.373)](manuali/novita.md#programs-find-more-of-what-linux-gives-them-file-dates-ppoll-network-interfaces-the-filesystem-type-kernel-0373-voci-103-and-85--tested-in-qemu) — *tested in QEMU*
 - [Firefox account login: localStorage and indexedDB have their space (kernel 0.372)](manuali/novita.md#logging-into-the-firefox-account-works-localstorage-and-indexeddb-have-their-space-kernel-0372-voce-131--tested-in-qemu) — *tested in QEMU*
 - [Names resolve at the first try: a lost DNS answer is asked again (libc)](manuali/novita.md#names-resolve-at-the-first-try-a-lost-dns-answer-is-asked-again-libc-voce-132--tested-in-qemu) — *tested in QEMU*
 - [Programs keep their folders in the user's profile, not in / (sh 0.018)](manuali/novita.md#programs-keep-their-folders-in-the-users-profile-not-in--sh-0018-exilla-0009-voce-132--tested-in-qemu) — *tested in QEMU*
 - [Writing on a fragmented ext2/3/4 disk costs fewer disk commands (ext4.mod 0.009)](manuali/novita.md#writing-on-a-fragmented-ext234-disk-costs-fewer-disk-commands-kernel-0372-ext4mod-0009-voce-123--tested-in-qemu) — *tested in QEMU*
 - [Every program starts in the user's folder (exwin, pm 0.033, filemgr 0.017)](manuali/novita.md#every-program-starts-in-the-users-folder-exwin-pm-0033-filemgr-0017-voce-124--tested-in-qemu) — *tested in QEMU*
 - [The shell has history and line editing in the Terminal and over telnet too (sh 0.017)](manuali/novita.md#the-shell-has-history-and-line-editing-in-the-terminal-and-over-telnet-too-sh-0017-exwinso-0029-voce-125--tested-in-qemu) — *tested in QEMU*
-- [The file manager opens a shell in the folder shown (filemgr 0.017)](manuali/novita.md#the-file-manager-opens-a-shell-in-the-folder-shown-filemgr-0017-voce-126--tested-in-qemu) — *tested in QEMU*
-- [Start menu: icon in a small button, name beside it, a triangle on the groups (exwin.so 0.029)](manuali/novita.md#the-start-menu-has-rows-with-the-icon-in-a-small-button-and-the-name-beside-it-and-a-triangle-on-the-groups-exwinso-0029-menuitem-pm-0032-voce-122--tested-in-qemu) — *tested in QEMU*
 
 All the others, newest first: [What's new](manuali/novita.md).
 

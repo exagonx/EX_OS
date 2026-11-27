@@ -59,4 +59,19 @@
 #define S_ISLNK(m)  (((m) & S_IFMT) == S_IFLNK)
 #define S_ISSOCK(m) (((m) & S_IFMT) == S_IFSOCK)
 
+/* The dates of a file (kernel 0.373): seconds kept, nanoseconds not (ext
+ * keeps seconds, FAT two of them, and the access only as a day). In tv_nsec,
+ * UTIME_NOW = now, UTIME_OMIT = leave it; ts NULL = both now. utimensat:
+ * dirfd AT_FDCWD, or any with an absolute path (no directory descriptors). */
+#define UTIME_NOW   ((1l << 30) - 1l)
+#define UTIME_OMIT  ((1l << 30) - 2l)
+#ifdef __cplusplus
+extern "C" {
+#endif
+int utimensat(int dirfd, const char *path, const struct timespec ts[2], int flag);
+int futimens(int fd, const struct timespec ts[2]);
+#ifdef __cplusplus
+}
+#endif
+
 #endif /* EXOS_SYS_STAT_H */

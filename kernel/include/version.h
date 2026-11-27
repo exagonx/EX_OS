@@ -1165,7 +1165,18 @@
  * QuotaManager gave every site a quota of 0. Now SYS_STATFS (284): size,
  * free and available blocks, inodes, read-only, from ext2/3/4 (the reserved
  * blocks of the superblock) and FAT (the free clusters). */
-#define EXOS_VERSION    "0.372"
+/* 0.372 -> 0.373 (voce 103, Thunderbird 161): statfs says the type of the
+ * filesystem (VfsSpazio.tipo, Linux's f_type numbers) to a libc that asks
+ * with VFS_SPAZIO_TIPO in esi/rsi - Gecko 161 checks a font file's volume
+ * with statfs().f_type (UnscaledFontFreeType::ValidateFontDescriptor).
+ * And, for Thunderbird and Qt (voce 85): SYS_TEMPI 285 sets the dates of a
+ * file (ext2 ABI 6, ext4.mod 0.010, FAT); SYS_PPOLL 286 waits with the
+ * signal mask of the wait; sigpending tells the pending signals;
+ * SYS_ATTESA_DORMI/SVEGLIA_COMUNE 287/288 wait between processes by the
+ * physical address of a shared page (sem_open, sem_init pshared); inotify
+ * (FD_INOTIFY, kernel/fs/inotify.c, 289-291, told by the VFS); FIONREAD on
+ * inotify, pipes and unix pairs. */
+#define EXOS_VERSION    "0.373"
 
 /* Autore e contatto */
 #define EXOS_AUTHOR     "Graziano Falcone"

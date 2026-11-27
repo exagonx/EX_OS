@@ -56,7 +56,10 @@ prodotto() {    # $1: firefox|thunderbird -> P ALBERO ORIG PATCHES
         firefox)     ALBERO=$R/firefox-main;     VERFILE=browser/config/version_display.txt
                      PATCHES="$R/tools/exilla/patch" ;;
         thunderbird) ALBERO=$R/thunderbird-main; VERFILE=comm/mail/config/version_display.txt
-                     PATCHES="$R/tools/exilla/patch $R/tools/thunderbird-exos/patch" ;;
+                     # its own whole set (patch-crea.sh thunderbird) once
+                     # made; the first time, Exilla's
+                     PATCHES="$R/tools/thunderbird-exos/patch"
+                     ls "$PATCHES"/*.patch > /dev/null 2>&1 || PATCHES="$R/tools/exilla/patch" ;;
         *) uso ;;
     esac
     ORIG=${EXOS_FUORI}/cross_build/$MACCHINA/$P-originali

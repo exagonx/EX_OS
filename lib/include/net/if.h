@@ -8,15 +8,15 @@
  *
  * <net/if.h> — le interfacce di rete per nome e per indice.
  *
- * ! EX-OS non numera le interfacce: lo stack IP ne ha una e non ha un nome
- * da dare. if_nametoindex risponde 0 («non c'e'»), if_indextoname NULL,
- * if_nameindex un elenco vuoto: e' la risposta vera, e chi la riceve (libevent,
- * per gli indirizzi IPv6 con zona) sa gia' cosa farne. Solo in libc.a.
- *
- * (18/11/2026, Qt's QNetworkInterface) struct ifreq, struct ifconf, IFF_* and
- * SIOCGIF*, Linux's layout and numbers. Same answer: SIOCGIFCONF on a socket
- * gives an empty list, the other SIOCGIF* ENXIO (lib/libc.c, presa_ioctl).
- * Interfaces get names with more than one card (voce 101).
+ * (0.373, Qt's QNetworkInterface) The stack's interfaces have names: lo
+ * (index 1, 127.0.0.1/8) and eth0 (index 2, the card ip.drv drives).
+ * if_nametoindex, if_indextoname, if_nameindex, SIOCGIFCONF (the ones with
+ * an address) and SIOCGIFNAME, FLAGS, ADDR, NETMASK, BRDADDR, MTU, INDEX,
+ * HWADDR on any socket; getifaddrs in <ifaddrs.h>. IFF_RUNNING on eth0 means
+ * "it has an address" (the stack does not say whether the cable is in).
+ * Without a running stack: none. Until 0.373 every list was empty.
+ * struct ifreq, struct ifconf, IFF_*, SIOCGIF*: Linux's layout and numbers.
+ * More than one card: voce 101. Not in the floppy's libc.so.
  * ============================================================================= */
 
 #ifndef EXOS_NET_IF_H

@@ -423,6 +423,20 @@ int32_t sys_seg_maschera(InterruptFrame *frame)
     if (prima != NULL && !syscall_verify_ptr(prima, sizeof(uint32_t)))
         return ERR(EFAULT);
 
+    /* (0.373) sigpending: the thread's pending signals and the process's
+     * (sent to the group, kept by its leader). Until then the libc said none. */
+    if (come == SEG_MASCHERA_PENDENTI) {
+        Process *capo;
+
+        if (prima == NULL) return ERR(EFAULT);
+        interrupts_disable();
+        capo = capo_di(p);
+        m = p->seg_pendenti | ((capo != NULL && capo != p) ? capo->seg_pendenti : 0u);
+        interrupts_enable();
+        *prima = m;
+        return 0;
+    }
+
     m = p->seg_bloccati;
     if (nuova != NULL) {
         switch (come) {
@@ -975,6 +989,35 @@ int32_t sys_seg_sospendi(InterruptFrame *frame)
     }
     interrupts_enable();
     return ERR(EINTR);
+}
+
+/* =============================================================================
+ * The mask of one wait (0.373, ppoll): set as sigsuspend sets it, so a
+ * signal it lets through either is pending already (metti says so: no
+ * sleeping then) or wakes the wait; the delivery puts the old mask back
+ * after the handler (seg_salvata). togli puts it back when no signal came.
+ * ============================================================================= */
+int segnali_maschera_metti(Process *self, uint32_t maschera)
+{
+    int pendente;
+
+    interrupts_disable();
+    self->seg_salvata  = self->seg_bloccati;
+    self->seg_bloccati = maschera & ~NON_BLOCCABILI;
+    self->seg_sospeso  = 1;
+    pendente = (self->seg_pendenti & ~self->seg_bloccati) != 0;
+    interrupts_enable();
+    return pendente;
+}
+
+void segnali_maschera_togli(Process *self)
+{
+    interrupts_disable();
+    if (self->seg_sospeso && (self->seg_pendenti & ~self->seg_bloccati) == 0) {
+        self->seg_bloccati = self->seg_salvata;
+        self->seg_sospeso  = 0;
+    }
+    interrupts_enable();
 }
 
 /* =============================================================================

@@ -24,7 +24,10 @@ MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
 B="${EXOS_FUORI}/cross_build/$MACCHINA"
 LAV="$B/costruzione-std"
 export RUSTUP_HOME="$B/rust-macchina/rustup" CARGO_HOME="$B/rust-macchina/cargo"
-PROXY_RUSTC="$HOME/.cargo/bin/rustc"   # il proxy di rustup: RUSTC puo essere rustc-exos
+# the rustup proxy (RUSTC may be rustc-exos): the machine's CARGO_HOME first
+# (27/11/2026: there is no ~/.cargo on nasi5deb), then ~/.cargo
+PROXY_RUSTC="$CARGO_HOME/bin/rustc"; [ -x "$PROXY_RUSTC" ] || PROXY_RUSTC="$HOME/.cargo/bin/rustc"
+export PATH="$(dirname "$PROXY_RUSTC"):$PATH"
 
 SRC="$("$PROXY_RUSTC" +nightly --print sysroot)/lib/rustlib/src/rust/library"
 [ -d "$SRC/std" ] || { echo "manca rust-src nel nightly ($SRC)" >&2; exit 1; }

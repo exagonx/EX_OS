@@ -148,10 +148,30 @@ typedef struct {
     uint32_t inode, inode_liberi;
     uint32_t sola_lettura;
     uint32_t nome_max;
+    /* 0.373: Linux's f_type (0xEF53 ext2/3/4, 0x4d44 FAT, 0x9660 ISO, 0x9fa0
+     * /proc, 0 the boot floppy). Only to a caller that asks for it with
+     * VFS_SPAZIO_TIPO in the fourth argument: a libc of 0.372 has a struct
+     * without it, and the kernel must not write past its end. */
+    uint32_t tipo;
 } VfsSpazio;
+#define VFS_SPAZIO_TIPO 0x53505A02u     /* "SPZ" 2 */
 
 int vfs_statfs(const char *abs, VfsSpazio *s);
 int vfs_fstatfs(int h, VfsSpazio *s);
+
+/* (0.373) the dates of a file: utimensat, futimens. Unix seconds (UTC). */
+typedef struct {
+    int64_t  atime;
+    int64_t  mtime;
+    uint32_t quali;         /* VFS_TEMPI_* */
+    uint32_t riserva;
+} VfsTempi;
+#define VFS_TEMPI_A         1u      /* atime = .atime */
+#define VFS_TEMPI_M         2u      /* mtime = .mtime */
+#define VFS_TEMPI_A_ADESSO  4u      /* atime = now (UTIME_NOW) */
+#define VFS_TEMPI_M_ADESSO  8u      /* mtime = now */
+/* abs, or abs NULL and h an open file */
+int vfs_tempi(const char *abs, int h, const VfsTempi *t);
 
 /* stat for a program: -EACCES when a folder of the path has no x for it */
 int vfs_stat_utente(const char *abs, VfsStat *st);

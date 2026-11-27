@@ -73,6 +73,11 @@ MODIFICHE = [
      "#elif defined(__exos__)\n"
      "/* EX-OS (tools/qt5-exos/applica.py): a POSIX system, Q_OS_UNIX below */\n"
      "#  define Q_OS_EXOS\n"),
+    # EX-OS has inotify since kernel 0.373: without this the watcher fell
+    # back to looking once a second (measured: QPollingFileSystemWatcherEngine)
+    ("src/corelib/io/qfilesystemwatcher.cpp",
+     "#if (defined(Q_OS_LINUX) || defined(Q_OS_QNX)) && QT_CONFIG(inotify)\n",
+     "#if (defined(Q_OS_LINUX) || defined(Q_OS_QNX) || defined(Q_OS_EXOS)) && QT_CONFIG(inotify)\n"),
 ]
 
 

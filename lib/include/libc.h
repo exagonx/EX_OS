@@ -208,6 +208,7 @@ char   *strdup(const char *s);
 /* strndup, bzero (5 November 2026): ported software, static libc only. */
 char   *strndup(const char *s, size_t n);
 void    bzero(void *p, size_t n);
+void    explicit_bzero(void *p, size_t n);  /* a clear never optimised away */
 /* stpcpy, stpncpy (7 November 2026, Mesa): POSIX 2008, static libc only. */
 char   *stpcpy(char *d, const char *s);
 char   *stpncpy(char *d, const char *s, size_t n);
@@ -1220,8 +1221,8 @@ char      *ctime(const time_t *t);
 char      *asctime_r(const struct tm *tm, char *buf);
 char      *ctime_r(const time_t *t, char *buf);
 
-/* ! utime NON CAMBIA NIENTE: nessun filesystem di EX-OS sa riscrivere le
- * date di un file. Ritorna 0 se il file c'e'. Vedi lib/libc.c. */
+/* utime: the dates of a file (struct utimbuf in <utime.h>; NULL = now),
+ * from kernel 0.373. See lib/libc.c, SYS_TEMPI. */
 int        utime(const char *path, const void *tempi);
 
 /* =============================================================================
@@ -4072,6 +4073,10 @@ struct pollfd {
 /* nfds_t (18/11/2026, Qt): the type POSIX gives the count, the same width */
 typedef unsigned int nfds_t;
 int     poll(struct pollfd *fds, nfds_t nfds, int timeout);
+/* ppoll (kernel 0.373, Qt): a timespec, and the signal mask of the wait set
+ * and put back atomically (as sigsuspend); NULL mask = poll. */
+int     ppoll(struct pollfd *fds, nfds_t nfds, const struct timespec *t,
+              const sigset_t *maschera);
 
 /* fd_set: one bit per descriptor, FD_SETSIZE of them (25 October 2026, the
  * openssl program's s_client). Since kernel 0.281 files, pipes and sockets
@@ -4295,6 +4300,9 @@ typedef unsigned int    in_addr_t;
 #define AF_LOCAL        AF_UNIX
 #define AF_INET         2
 #define AF_INET6        10
+/* (0.373) the family of getifaddrs' hardware entries (<netpacket/packet.h>);
+ * no socket of it can be opened */
+#define AF_PACKET       17
 #define PF_UNSPEC       AF_UNSPEC
 #define PF_UNIX         AF_UNIX
 #define PF_INET         AF_INET

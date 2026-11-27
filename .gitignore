@@ -488,6 +488,11 @@ __pycache__/
 # ! ANCORATO ALLA RADICE, come tutti gli altri.
 # =============================================================================
 /firefox-main/
+# THUNDERBIRD (voce 103, 27/11/2026): thunderbird-main, the 161.0 release
+# tarball (mozilla-central + comm) with Exilla's patches, made by
+# tools/exilla/sorgenti.sh. Mozilla's tree, out of our history like
+# firefox-main; ours is in tools/thunderbird-exos/.
+/thunderbird-main/
 
 # =============================================================================
 # MARIADB — the sources of the MariaDB server (mariadb-server, 25 October 2026)

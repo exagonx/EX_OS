@@ -9271,9 +9271,29 @@ tools/netinst/velocita tolto da netinst.
         di ogni suono tagliata (lo svuotamento chiudeva con le due meta'
         ancora da suonare: ora aspetta due sottoflussi) e small-shot.flac
         che VLC 3.0.24 non decodifica neanche su Linux (-> sin-441-1s).
-      - RESTA: provarlo sul portatile (dopo il CD strumenti e netupdate);
-        QSharedMemory/QSystemSemaphore, QNetworkInterface, futimens,
-        inotify (vedi sopra).
+      - FATTO 27/11 NEL KERNEL 0.373 E NELLA LIBC (quel che configure non
+        trovava, implementato e non aggirato), provato in QEMU a 32 e 64:
+        futimens/utimensat/utimes (SYS_TEMPI 285: ext2 ABI 6, ext4.mod
+        0.010, FAT; tools/prova_tempi.sh); ppoll (SYS_PPOLL 286, la maschera
+        atomica; tools/prova_ppoll.sh) e sigpending vero; getifaddrs,
+        if_nameindex, SIOCGIF* (tools/prova_interfacce.sh); semafori fra
+        processi: SYS_ATTESA_DORMI/SVEGLIA_COMUNE 287/288 per indirizzo
+        FISICO, solo su pagine condivise (non vanno mai nello swap, quindi
+        l'indirizzo non cambia sotto chi dorme), sem_init pshared, sem_open,
+        sem_close, sem_unlink sopra le zone con nome (tools/prova_semafori.sh);
+        inotify: FD_INOTIFY, kernel/fs/inotify.c, syscall 289-291, il VFS
+        avvisa dopo ogni modifica riuscita, FIONREAD anche su pipe e coppie
+        unix (QProcess), tetto inotify_eventi in kernel.cfg (16384)
+        (tools/prova_inotify.sh). Qt sceglie l'IPC POSIX, ma Qt 5 include
+        sys/ipc.h, sys/sem.h, sys/shm.h su ogni Unix: implementato l'IPC
+        System V nella libc (ftok, shmget/shmat/shmdt/shmctl, semget/semop/
+        semtimedop/semctl, SEM_UNDO all'uscita normale) sulle zone con nome
+        e l'attesa comune (tools/prova_sysv.sh, 11 passi a 32 e 64). Serve
+        anche a PostgreSQL, Apache, PHP sysvsem.
+      - RESTA: sysroot con la libc nuova, Qt riconfigurato e ricostruito
+        (configure deve dire si' a sharedmemory, systemsemaphore, inotify,
+        getifaddrs, ppoll, futimens), tools/qt5-exos/prova.sh e
+        tools/vlc-exos/prova.sh a 32 e 64; poi il portatile.
 
   86. CONSOLIDARE IL SISTEMA SUL FERRO (l'utente, 5/11: "restano da
       consolidare la gestione ACPI, il Plug and Play, il parallelismo SMP

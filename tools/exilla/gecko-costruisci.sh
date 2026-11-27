@@ -24,7 +24,10 @@
 # find <objdir> -type l -lname '<old>/*', and point each one to the new tree.
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
-if [ "$EXOS_ARCH" = x86_64 ]; then
+# (a mozconfig already given wins: Thunderbird, tools/thunderbird-exos)
+if [ -n "${EXILLA_MOZCONFIG:-}" ]; then
+    export EXILLA_MOZCONFIG
+elif [ "$EXOS_ARCH" = x86_64 ]; then
     export EXILLA_MOZCONFIG="$PWD/tools/exilla/mozconfig-gecko64"
 else
     export EXILLA_MOZCONFIG="$PWD/tools/exilla/mozconfig-gecko"

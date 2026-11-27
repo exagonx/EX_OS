@@ -23,6 +23,12 @@
  * ============================================================================= */
 #include <QApplication>
 #include <QBuffer>
+#include <QElapsedTimer>
+#include <QFile>
+#include <QFileSystemWatcher>
+#include <QNetworkInterface>
+#include <QSharedMemory>
+#include <QSystemSemaphore>
 #include <QImage>
 #include <QImageReader>
 #include <QLineEdit>
@@ -30,8 +36,12 @@
 #include <QMenuBar>
 #include <QPropertyAnimation>
 #include <QPushButton>
+#include <QSocketNotifier>
 #include <QTimer>
 #include <cstdio>
+#include <cstring>
+#include <sys/inotify.h>
+#include <unistd.h>
 
 static void di(const char *cosa, const QString &piu = QString())
 {
@@ -79,6 +89,65 @@ int main(int argc, char **argv)
         const QImage c = r.read();
         di("PNGFILE", QStringLiteral("%1x%2 formato %3 errore '%4'")
                           .arg(c.width()).arg(c.height()).arg(int(c.format())).arg(r.errorString()));
+    }
+    /* (kernel 0.373, voce 85) what Qt asks of the system: semaphores and
+     * shared memory between processes (POSIX IPC, sem_open and shm_open),
+     * inotify, getifaddrs. QT-IPC, QT-GUARDA, QT-RETE. */
+#if QT_CONFIG(systemsemaphore) && QT_CONFIG(sharedmemory)
+    {
+        QSystemSemaphore s1(QStringLiteral("ciaoqt"), 0, QSystemSemaphore::Create);
+        QSystemSemaphore s2(QStringLiteral("ciaoqt"), 0, QSystemSemaphore::Open);
+        const bool rel = s2.release(), acq = s1.acquire();
+        QSharedMemory m1(QStringLiteral("ciaoqt")), m2(QStringLiteral("ciaoqt"));
+        const bool crea = m1.create(4096);
+        if (crea) std::memcpy(m1.data(), "ciao", 5);
+        const bool att = m2.attach();
+        const QString letto = att ? QString::fromLatin1((const char *)m2.constData()) : QString();
+        di("IPC", QStringLiteral("sem %1%2 shm %3%4 %5 '%6'").arg(rel).arg(acq).arg(crea).arg(att)
+                      .arg(letto).arg(s1.errorString() + m1.errorString() + m2.errorString()));
+    }
+#else
+    di("IPC", QStringLiteral("spento"));
+#endif
+    QFileSystemWatcher *guarda = new QFileSystemWatcher(&w);
+    const QString casa = QString::fromLocal8Bit(qgetenv("HOME"));
+    QElapsedTimer *tempo = new QElapsedTimer;
+    int *quante = new int(0);
+    static qint64 scrittura = -1;
+    static qint64 grezzo = -1;
+    guarda->addPath(casa);
+    QObject::connect(guarda, &QFileSystemWatcher::directoryChanged, [tempo, quante, guarda](const QString &) {
+        if (!tempo->isValid() || ++*quante > 1) return;
+        QStringList motori;   /* Qt's engine is a child of the watcher */
+        for (QObject *o : guarda->children()) motori << QString::fromLatin1(o->metaObject()->className());
+        di("GUARDA", QStringLiteral("%1 ms scrittura %2 ms motori %3 grezzo %4 ms")
+                         .arg(tempo->elapsed()).arg(scrittura).arg(motori.join(QLatin1Char(',')))
+                         .arg(grezzo));
+    });
+    /* the same folder through a bare inotify fd and a QSocketNotifier: tells
+     * the kernel's wake-up apart from Qt's engine */
+    {
+        const int fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+        if (fd >= 0 && inotify_add_watch(fd, casa.toLocal8Bit().constData(), IN_CREATE | IN_MODIFY) >= 0) {
+            QSocketNotifier *n = new QSocketNotifier(fd, QSocketNotifier::Read, &w);
+            QObject::connect(n, &QSocketNotifier::activated, [fd, tempo] {
+                char buf[4096];
+                while (read(fd, buf, sizeof buf) > 0) {}
+                if (grezzo < 0 && tempo->isValid()) grezzo = tempo->elapsed();
+            });
+        }
+    }
+    QTimer::singleShot(1500, [casa, tempo] {
+        QFile f(casa + QStringLiteral("/guardato.txt"));
+        tempo->start();
+        if (f.open(QIODevice::WriteOnly)) { f.write("x"); f.close(); }
+        scrittura = tempo->elapsed();
+    });
+    {
+        QStringList nomi;
+        for (const QNetworkInterface &i : QNetworkInterface::allInterfaces())
+            nomi << i.name() + QLatin1Char('/') + QString::number(i.index());
+        di("RETE", nomi.join(QLatin1Char(' ')));
     }
     w.setProperty("opacita", 0.0);
     QPropertyAnimation *anima = new QPropertyAnimation(&w, "opacita", &w);

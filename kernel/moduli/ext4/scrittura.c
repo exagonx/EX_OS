@@ -1668,6 +1668,30 @@ int ext2_chmod(int mnt, const char *percorso, uint32_t modo)
     return super_aggiorna(m);
 }
 
+/* The dates (0.010): utimensat and futimens. i_ctime is the change of the
+ * inode, so it becomes now whatever was asked - as on Linux.
+ * ! ONLY THE 32-BIT SECONDS: the extra fields of a large ext4 inode
+ * (nanoseconds, epoch bits) are not in the 128 bytes this reads, and stay. */
+int ext2_tempi(int mnt, const char *percorso, uint32_t atime, uint32_t mtime,
+               uint32_t quali)
+{
+    Ext2Mount *m = prendi_scrivibile(mnt);
+    uint8_t    inode[128];
+    uint32_t   ino, adesso = unix_ora_corrente();
+
+    if (m == NULL) return -1;
+
+    ino = risolvi(m, mnt, percorso, inode);
+    if (ino == 0) return -1;
+
+    if (quali & EXT2_TEMPI_A) p32(inode +  8, atime);
+    if (quali & EXT2_TEMPI_M) p32(inode + 16, mtime);
+    if (adesso != 0) p32(inode + 12, adesso);
+
+    if (scrivi_inode(m, ino, inode) != 0) return -1;
+    return super_aggiorna(m);
+}
+
 int ext2_create(int mnt, const char *percorso, uint32_t uid, uint32_t gid)
 {
     Ext2Mount *m = prendi_scrivibile(mnt);

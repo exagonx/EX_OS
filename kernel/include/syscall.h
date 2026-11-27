@@ -271,7 +271,7 @@ typedef struct {
  * cioe' sopra qualunque cosa il compilatore avesse messo dopo. Il sintomo era
  * «video_info non risponde», che non somiglia per niente a una scrittura fuori
  * limite. Chi aggiunge una syscall aggiorna anche questo. */
-#define SYSCALL_COUNT   285     /* la piu' alta e' SYS_STATFS = 284 */
+#define SYSCALL_COUNT   292     /* la piu' alta e' SYS_INOTIFY_TOGLI = 291 */
 
 /* =============================================================================
  * Codici errno
@@ -469,8 +469,30 @@ typedef struct {
 #define SYS_FCHOWN         282
 #define SYS_FCHMOD         283
 /* (0.372, voce 131) statfs: ebx = path (NULL: use ecx = fd), edx = VfsSpazio*
- * (kernel/include/vfs.h). The room of the volume, for statvfs/fstatvfs. */
+ * (kernel/include/vfs.h). The room of the volume, for statvfs/fstatvfs.
+ * (0.373) esi = VFS_SPAZIO_TIPO: the struct with its last field, tipo
+ * (f_type); anything else gets it without, as 0.372 did. */
 #define SYS_STATFS         284
+/* (0.373) the dates of a file: ebx = path (NULL: use ecx = fd), edx =
+ * VfsTempi* (kernel/include/vfs.h). utimensat, futimens, utimes, utime. */
+#define SYS_TEMPI          285
+/* (0.373) ppoll: SYS_POLL's three arguments, esi = the signal mask for the
+ * wait (uint32_t*), set and put back as sigsuspend does; NULL = poll. */
+#define SYS_PPOLL          286
+/* (0.373) SYS_ATTESA_DORMI and _SVEGLIA between processes: the word must be
+ * on a page shared between processes (a named zone, MAP_SHARED, or one a
+ * fork shares); the key is its physical address. Else -EINVAL. sem_open,
+ * sem_init with pshared. */
+#define SYS_ATTESA_DORMI_COMUNE   287   /* ebx = indirizzo, ecx = valore, edx = ms */
+#define SYS_ATTESA_SVEGLIA_COMUNE 288   /* ebx = indirizzo, ecx = quanti (0 = tutti) */
+/* (0.373) inotify, see kernel/include/inotify.h. CREA: ebx = IN_NONBLOCK
+ * (O_NONBLOCK) | IN_CLOEXEC (O_CLOEXEC) -> the descriptor. GUARDA: ebx =
+ * fd, ecx = path, edx = mask -> the wd (ENOENT, ENOTDIR with IN_ONLYDIR,
+ * EACCES without read permission). TOGLI: ebx = fd, ecx = wd. read() gives
+ * struct inotify_event, FIONREAD the bytes waiting, poll POLLIN. */
+#define SYS_INOTIFY_CREA   289
+#define SYS_INOTIFY_GUARDA 290
+#define SYS_INOTIFY_TOGLI  291
 #define CONSOLE_NESSUNO    0xFFFFFFFFu
 #define STAT_ATTR_SHM      0x80
 typedef struct {
@@ -1192,6 +1214,9 @@ typedef struct {
 #define SYS_MPROTECT        125
 #define SYS_SEG_AZIONE      165
 #define SYS_SEG_MASCHERA    166
+/* (0.373) seg_maschera with ebx = SEG_MASCHERA_PENDENTI: the pending signals
+ * into edx (sigpending); ecx unused. Older kernels: -EINVAL. */
+#define SEG_MASCHERA_PENDENTI 0x100u
 #define SYS_SEG_RITORNO     167
 #define SYS_SEG_PILA        168
 #define SYS_SEG_MANDA       169
@@ -2010,6 +2035,10 @@ int32_t sys_seg_pila(InterruptFrame *f);
 int32_t sys_seg_manda(InterruptFrame *f);
 int32_t sys_seg_attendi(InterruptFrame *f);
 int32_t sys_seg_sospendi(InterruptFrame *f);
+/* (0.373) the mask of one wait, for ppoll: see kernel/sched/segnali.c */
+struct Process;
+int     segnali_maschera_metti(struct Process *self, uint32_t maschera);
+void    segnali_maschera_togli(struct Process *self);
 /* The two ways in: a fault in ring 3 (1 = the handler will run, 0 = kill as
  * before) and the pending signals on the way out of a syscall. */
 int     segnali_fault(InterruptFrame *f, int sig, int32_t codice, uint32_t indirizzo);
@@ -2098,6 +2127,13 @@ int32_t sys_fd_riserva(InterruptFrame *f);
 int32_t sys_fd_limite(InterruptFrame *f);
 int32_t sys_fsync(InterruptFrame *f);
 int32_t sys_statfs(InterruptFrame *f);     /* voce 131 */
+int32_t sys_tempi(InterruptFrame *f);      /* 0.373 */
+int32_t sys_ppoll(InterruptFrame *f);      /* 0.373 */
+int32_t sys_attesa_dormi_comune(InterruptFrame *f);    /* 0.373 */
+int32_t sys_attesa_sveglia_comune(InterruptFrame *f);  /* 0.373 */
+int32_t sys_inotify_crea(InterruptFrame *f);           /* 0.373 */
+int32_t sys_inotify_guarda(InterruptFrame *f);         /* 0.373 */
+int32_t sys_inotify_togli(InterruptFrame *f);          /* 0.373 */
 int32_t sys_console_ctrlc(InterruptFrame *f);
 int32_t sys_ipc_register(InterruptFrame *f);
 int32_t sys_ipc_lookup(InterruptFrame *f);

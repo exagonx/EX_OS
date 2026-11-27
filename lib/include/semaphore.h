@@ -8,10 +8,14 @@
  *
  * I semafori POSIX sopra il Semaforo della libc (@PTHREAD, 28 settembre 2026).
  *
- * ! SOLO DENTRO UN PROCESSO: `pshared` diverso da zero rende ENOSYS. Il
- * Semaforo di EX-OS dorme su un indirizzo che vale dentro un gruppo di fili,
- * e due processi non si aspettano cosi' (vedi attesa_dormi in libc.h). I
- * semafori con nome (sem_open) non ci sono per la stessa ragione.
+ * (0.373) BETWEEN PROCESSES TOO: sem_init with pshared on memory shared
+ * with another process (MAP_SHARED, a named zone), and the named ones,
+ * sem_open (Qt's QSystemSemaphore). A shared one waits in the kernel by the
+ * physical address of the word (SYS_ATTESA_DORMI_COMUNE). sem_t stays one
+ * int, as programs already built have it: bit 30 is "shared", the count is
+ * below it (SEM_VALUE_MAX). A named semaphore is a named zone: it lives
+ * while some process holds it, sem_unlink does nothing (kernel/include/shm.h).
+ * A kernel before 0.373: pshared is ENOSYS, as before.
  * ============================================================================= */
 #ifndef EXOS_SEMAPHORE_H
 #define EXOS_SEMAPHORE_H
@@ -31,6 +35,13 @@ int sem_trywait(sem_t *s);
 int sem_timedwait(sem_t *s, const struct timespec *quando);
 int sem_post(sem_t *s);
 int sem_getvalue(sem_t *s, int *valore);
+
+#define SEM_VALUE_MAX 0x3FFFFFFF
+#define SEM_FAILED    ((sem_t *)0)
+/* nome "/name"; with O_CREAT two more arguments: mode_t, unsigned value */
+sem_t *sem_open(const char *nome, int flag, ...);
+int    sem_close(sem_t *s);
+int    sem_unlink(const char *nome);
 
 #ifdef __cplusplus
 }

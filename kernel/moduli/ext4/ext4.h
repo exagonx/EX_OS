@@ -65,6 +65,8 @@ int ext2_rename  (int mnt, const char *da, const char *a);
 int ext2_write   (int mnt, const char *percorso, const void *buf, uint32_t size,
                   uint32_t offset);
 int ext2_truncate(int mnt, const char *percorso, uint32_t nuova_dim);
+int ext2_tempi   (int mnt, const char *percorso, uint32_t atime, uint32_t mtime,
+                  uint32_t quali);
 
 /* Blocks set aside for a file being appended to, and the superblock's
  * counters, to the disk (scrittura.c, «LA PRENOTAZIONE RESTA»). */

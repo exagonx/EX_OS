@@ -1,0 +1,38 @@
+# tools/thunderbird-exos/mozconfig-thunderbird - Thunderbird for 32-bit EX-OS (voce 103,
+# 27 November 2026): Exilla's choices (tools/exilla/mozconfig-gecko), the
+# mail project of comm/, objects in thunderbird-obj/tb.
+ac_add_options --enable-project=comm/mail
+ac_add_options --target=i386-unknown-exos
+ac_add_options --enable-default-toolkit=cairo-exos
+mk_add_options MOZ_OBJDIR=${EXOS_FUORI}/cross_build/thunderbird-obj/tb
+ac_add_options --enable-optimize
+ac_add_options --disable-debug
+ac_add_options --disable-tests
+ac_add_options --disable-bootstrap
+ac_add_options --disable-jemalloc
+# ! IL JIT E' ACCESO dal 3 ottobre 2026 (tappa 7): Exilla e' per macchine
+# moderne (decisione dell'utente), e il JIT x86 di SpiderMonkey vuole SSE2,
+# che il Pentium MMX di base di EX-OS non ha. Senza SSE2 si spegne da solo e
+# resta l'interprete. Senza JIT l'interfaccia (quasi tutta JavaScript)
+# impiegava decine di secondi a reagire.
+ac_add_options --without-system-zlib
+ac_add_options --without-wasm-sandboxed-libraries
+# Cio' che EX-OS non ha, o che alla tappa 6 non serve.
+ac_add_options --disable-crashreporter
+ac_add_options --disable-updater
+ac_add_options --disable-webrtc
+ac_add_options --disable-sandbox
+ac_add_options --disable-accessibility
+ac_add_options --disable-parental-controls
+# negotiateauth stays on (unlike Exilla): the mail protocols call
+# nsIAuthModule for NTLM and GSSAPI logins on IMAP, SMTP, POP3 and NNTP
+ac_add_options --disable-geckodriver
+ac_add_options --disable-default-browser-agent
+ac_add_options --disable-audio-backends
+# bindgen (Stylo e altri crate) legge gli header C++ con una libclang
+# dell'host. ! NON QUELLA DI DEBIAN 12 (clang 14): non capisce la libstdc++ di
+# GCC 17 (operator() statici del C++23, __builtin_popcountg). E' il clang di
+# Mozilla, scaricato con `mach artifact toolchain --from-build linux64-clang`
+# in cross_build/<macchina>/costruzione-strumenti/mozclang.
+ac_add_options --with-clang-path=${EXOS_FUORI}/cross_build/${MACCHINA}/costruzione-strumenti/mozclang/clang/bin/clang
+ac_add_options --with-libclang-path=${EXOS_FUORI}/cross_build/${MACCHINA}/costruzione-strumenti/mozclang/clang/lib

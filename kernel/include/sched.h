@@ -383,6 +383,11 @@ typedef enum {
      * per descriptor like a pipe, so it can go to a child by fork, spawn or
      * SCM_RIGHTS and be mapped there: see kernel/include/shmfd.h. */
     FD_SHM      = 13,
+
+    /* ! AN INOTIFY INSTANCE (0.373, voce 85: Qt's QFileSystemWatcher).
+     * `inode` is the handle of kernel/fs/inotify.c, counted per descriptor
+     * like FD_SHM: inherited by fork and spawn, dup'ed, passed along. */
+    FD_INOTIFY  = 14,
 } FDType;
 
 typedef struct {
@@ -1022,8 +1027,15 @@ typedef struct Process {
      * other way, and when the PCB is reaped. In fondo, as above. */
     struct Process *attesa_succ, *attesa_prec;
     uint32_t        attesa_secchio;
+    /* (0.373) THE WAIT BETWEEN PROCESSES (sem_open, sem_init pshared): the
+     * PHYSICAL address of the word, on a page shared between processes,
+     * which never goes to the disk (paging_vittima skips them), so the
+     * address cannot change under a sleeper. attesa_dove is then
+     * ATTESA_COMUNE (1, no word can sit there). */
+    paddr_t         attesa_fis;
 
 } Process;
+#define ATTESA_COMUNE 1u
 
 /* The TSS I/O bitmap of this processor for p (syscall_impl.c, 0.324). */
 void ioport_mappa_per(const Process *p);
@@ -1127,6 +1139,9 @@ int      proc_attesa_sveglia(uint32_t dove, int quanti);
  * happens if it is in none. */
 void     proc_attesa_metti(Process *p, uint32_t dove);
 void     proc_attesa_togli(Process *p);
+/* (0.373) the same between processes, by physical address: see attesa_fis */
+void     proc_attesa_metti_comune(Process *p, paddr_t fis);
+int      proc_attesa_sveglia_comune(paddr_t fis, int quanti);
 /* Quanti membri VIVI ha il gruppo di `tgid` (zombie esclusi). */
 int      proc_gruppo_vivi(uint32_t tgid);
 /* Quale filo vivo del gruppo ha `indirizzo` nella riserva del proprio stack,

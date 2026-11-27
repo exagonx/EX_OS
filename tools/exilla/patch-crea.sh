@@ -5,6 +5,8 @@
 # tools/exilla/patch-crea.sh — le patch di Exilla, da originali e file di adesso
 #
 #     tools/exilla/patch-crea.sh
+#     tools/exilla/patch-crea.sh thunderbird   thunderbird-main ->
+#                                              tools/thunderbird-exos/patch
 #
 # Per ogni file segnato da tools/exilla/tocca.sh scrive in tools/exilla/patch/
 # una patch unificata (percorsi relativi a firefox-main, livello -p1), con il
@@ -15,8 +17,15 @@
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
-ORIG="${EXOS_FUORI}/cross_build/$MACCHINA/firefox-originali"
-P="$PWD/tools/exilla/patch"
+# ! THUNDERBIRD'S SET IS WHOLE: every change against its own tarball, the
+# ones taken from Exilla too (its base is another Gecko version)
+if [ "${1:-}" = thunderbird ]; then
+    A=thunderbird-main; ORIG="${EXOS_FUORI}/cross_build/$MACCHINA/thunderbird-originali"
+    P="$PWD/tools/thunderbird-exos/patch"
+else
+    A=firefox-main; ORIG="${EXOS_FUORI}/cross_build/$MACCHINA/firefox-originali"
+    P="$PWD/tools/exilla/patch"
+fi
 mkdir -p "$P"; rm -f "$P"/*.patch
 [ -d "$ORIG" ] || { echo "nessun file toccato"; exit 0; }
 n=0
@@ -24,10 +33,10 @@ n=0
     r="${o%.nuovo}"
     nome=$(echo "$r" | tr '/' '_').patch
     if [ "$o" != "$r" ]; then
-        diff -u --label "a/$r" --label "b/$r" /dev/null "firefox-main/$r" > "$P/$nome"
+        diff -u --label "a/$r" --label "b/$r" /dev/null "$A/$r" > "$P/$nome"
     else
-        diff -u --label "a/$r" --label "b/$r" "$ORIG/$r" "firefox-main/$r" > "$P/$nome"
+        diff -u --label "a/$r" --label "b/$r" "$ORIG/$r" "$A/$r" > "$P/$nome"
     fi
     [ -s "$P/$nome" ] || rm -f "$P/$nome"
 done
-echo "patch: $(ls "$P"/*.patch 2>/dev/null | wc -l) in tools/exilla/patch/"
+echo "patch: $(ls "$P"/*.patch 2>/dev/null | wc -l) in ${P#$PWD/}/"

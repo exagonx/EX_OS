@@ -152,6 +152,9 @@ int  ext2_rename  (int mnt, const char *da, const char *a);
 int  ext2_write   (int mnt, const char *percorso, const void *buf,
                    uint32_t size, uint32_t offset);
 int  ext2_truncate(int mnt, const char *percorso, uint32_t nuova_dim);
+/* (0.373) the dates: atime and/or mtime (quali: 1 = a, 2 = m), Unix seconds */
+int  ext2_tempi   (int mnt, const char *percorso, uint32_t atime, uint32_t mtime,
+                   uint32_t quali);
 int  ext2_sync    (int mnt);
 /* fsync (0.285): ext2_sync without the disk flush; returns the block
  * device for the caller to flush outside the VFS lock, -1 if none. */

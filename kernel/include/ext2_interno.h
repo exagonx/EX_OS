@@ -28,8 +28,9 @@
 #include "kernel.h"
 #include "ext2.h"
 
-#define EXT2_IF_ABI         5u          /* 4: the journal hooks (kernel 0.265); 5: the mounts
-                                           grow, the module's state hangs off each (0.343) */
+#define EXT2_IF_ABI         6u          /* 4: the journal hooks (kernel 0.265); 5: the mounts
+                                           grow, the module's state hangs off each (0.343);
+                                           6: tempi, the dates of a file (0.373) */
 #define EXT2_BLOCCO_MAX     4096u   /* the largest block this driver accepts */
 
 /* --- the on-disk format, as both halves need it ----------------------------- */
@@ -228,7 +229,13 @@ typedef struct {
     void (*giornale_leggi) (Ext2Mount *m, uint32_t n, uint32_t quanti, void *dst);
     int  (*giornale_scrivi)(Ext2Mount *m, uint32_t n, const void *src);
     int  (*giornale_dati)  (Ext2Mount *m, uint32_t n, uint32_t quanti);
+    /* (ABI 6, kernel 0.373) the dates of a file: utimensat, futimens. quali:
+     * EXT2_TEMPI_A sets i_atime, EXT2_TEMPI_M i_mtime; i_ctime becomes now. */
+    int  (*tempi)  (int mnt, const char *p, uint32_t atime, uint32_t mtime,
+                    uint32_t quali);
 } Ext2Ops;
+#define EXT2_TEMPI_A 1u
+#define EXT2_TEMPI_M 2u
 
 /* What the kernel gives the write module: found by name ("ext2") through
  * the module table (modulo.h). Everything a write needs from the read side,

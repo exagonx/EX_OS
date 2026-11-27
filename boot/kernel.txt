@@ -269,6 +269,17 @@ secondo). Senza la voce: un ottavo della fascia, 8 MB (4 su una macchina da
 Conta solo un NUMERO.
 
 -------------------------------------------------------------------------------
+inotify_eventi = 16384    (commentata per default)
+-------------------------------------------------------------------------------
+
+Quanti eventi aspettano al massimo in ogni descrittore inotify (dal kernel
+0.373), il max_queued_events di Linux. inotify dice a un programma che un
+file e' cambiato (il file manager, QFileSystemWatcher di Qt). Chi non legge
+mai la sua coda non mangia la memoria del kernel: oltre il tetto arriva un
+solo IN_Q_OVERFLOW e il resto si perde, come su Linux. Gli eventi si
+allocano quando arrivano. Senza la voce: 16384. Conta solo un NUMERO.
+
+-------------------------------------------------------------------------------
 netrx = 2048              (commentata per default)
 nettx = 512               (commentata per default)
 -------------------------------------------------------------------------------

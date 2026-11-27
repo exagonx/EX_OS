@@ -28,9 +28,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* utimes (@EXILLA-NSS): i filesystem di EX-OS non si fanno cambiare le date da
- * un programma; rende 0 se il file c'e', senza toccarle. */
+/* utimes, futimes, lutimes: the dates of a file (kernel 0.373, SYS_TEMPI);
+ * NULL = now. lutimes is utimes: EX-OS follows no symbolic links. */
 int utimes(const char *percorso, const struct timeval tempi[2]);
+int futimes(int fd, const struct timeval tempi[2]);
+int lutimes(const char *percorso, const struct timeval tempi[2]);
 
 /* Il secondo argomento di gettimeofday, nella forma BSD: tz_minuteswest dal
  * fuso del kernel (0.340), tz_dsttime 0. */

@@ -302,6 +302,13 @@ void syscall_init(void)
     syscall_table[SYS_FD_LIMITE]   = sys_fd_limite;
     syscall_table[SYS_FSYNC]       = sys_fsync;
     syscall_table[SYS_STATFS]      = sys_statfs;
+    syscall_table[SYS_TEMPI]       = sys_tempi;
+    syscall_table[SYS_PPOLL]       = sys_ppoll;
+    syscall_table[SYS_ATTESA_DORMI_COMUNE]   = sys_attesa_dormi_comune;
+    syscall_table[SYS_ATTESA_SVEGLIA_COMUNE] = sys_attesa_sveglia_comune;
+    syscall_table[SYS_INOTIFY_CREA]   = sys_inotify_crea;
+    syscall_table[SYS_INOTIFY_GUARDA] = sys_inotify_guarda;
+    syscall_table[SYS_INOTIFY_TOGLI]  = sys_inotify_togli;
     syscall_table[SYS_CONSOLE_CTRLC]  = sys_console_ctrlc;
     syscall_table[SYS_CONSOLE_PRONTO] = sys_console_pronto;
 

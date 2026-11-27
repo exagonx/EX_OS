@@ -4,7 +4,7 @@
 
 **Scarica le ISO:** <http://exagonx.altervista.org/exos>
 
-**Versione:** 0.372
+**Versione:** 0.373
 **Autore:** Graziano Falcone <exagonx@hotmail.com>
 **Licenza:** GNU General Public License v2 (GPL-2.0)
 **Architettura:** x86 a 32 bit (dal Pentium MMX in su) e x86-64, dagli stessi sorgenti
@@ -120,14 +120,14 @@ Dentro EX-OS gli stessi manuali sono in `/doc/manuali` (dal CD:
 
 ## Ultime novità
 
+- [Semafori fra processi e inotify: QSystemSemaphore, QSharedMemory, QFileSystemWatcher di Qt (kernel 0.373)](manuali/novita.it.md#semafori-fra-processi-e-inotify-qsystemsemaphore-qsharedmemory-e-qfilesystemwatcher-di-qt-funzionano-kernel-0373-voce-85--testato-in-qemu) — *testato in QEMU*
+- [Date dei file, ppoll, interfacce di rete, il tipo di filesystem (kernel 0.373)](manuali/novita.it.md#i-programmi-trovano-di-piu-di-quel-che-linux-da-loro-date-dei-file-ppoll-interfacce-di-rete-il-tipo-di-filesystem-kernel-0373-voci-103-e-85--testato-in-qemu) — *testato in QEMU*
 - [Login nell'account di Firefox: localStorage e indexedDB hanno il loro spazio (kernel 0.372)](manuali/novita.it.md#il-login-nellaccount-di-firefox-funziona-localstorage-e-indexeddb-hanno-il-loro-spazio-kernel-0372-voce-131--testato-in-qemu) — *testato in QEMU*
 - [I nomi si risolvono al primo colpo: una risposta del DNS persa si richiede (libc)](manuali/novita.it.md#i-nomi-si-risolvono-al-primo-colpo-una-risposta-del-dns-persa-si-richiede-libc-voce-132--testato-in-qemu) — *testato in QEMU*
 - [I programmi tengono le loro cartelle nel profilo dell'utente, non in / (sh 0.018)](manuali/novita.it.md#i-programmi-tengono-le-loro-cartelle-nel-profilo-dellutente-non-in--sh-0018-exilla-0009-voce-132--testato-in-qemu) — *testato in QEMU*
 - [Scrivere su un disco ext2/3/4 frammentato costa meno comandi al disco (ext4.mod 0.009)](manuali/novita.it.md#scrivere-su-un-disco-ext234-frammentato-costa-meno-comandi-al-disco-kernel-0372-ext4mod-0009-voce-123--testato-in-qemu) — *testato in QEMU*
 - [Ogni programma parte nella cartella dell'utente (exwin, pm 0.033, filemgr 0.017)](manuali/novita.it.md#ogni-programma-parte-nella-cartella-dellutente-exwin-pm-0033-filemgr-0017-voce-124--testato-in-qemu) — *testato in QEMU*
 - [La shell ha cronologia e modifica della riga anche nel Terminale e in telnet (sh 0.017)](manuali/novita.it.md#la-shell-ha-cronologia-e-modifica-della-riga-anche-nel-terminale-e-in-telnet-sh-0017-exwinso-0029-voce-125--testato-in-qemu) — *testato in QEMU*
-- [Il file manager apre una shell nella cartella mostrata (filemgr 0.017)](manuali/novita.it.md#il-file-manager-apre-una-shell-nella-cartella-mostrata-filemgr-0017-voce-126--testato-in-qemu) — *testato in QEMU*
-- [Menu Avvio: icona in un piccolo pulsante, nome accanto, triangolino sui gruppi (exwin.so 0.029)](manuali/novita.it.md#il-menu-avvio-ha-righe-con-licona-in-un-piccolo-pulsante-e-il-nome-accanto-e-un-triangolino-sui-gruppi-exwinso-0029-menuitem-pm-0032-voce-122--testato-in-qemu) — *testato in QEMU*
 
 Tutte le altre, dalla più recente: [Novità](manuali/novita.it.md).
 

@@ -5188,7 +5188,7 @@ static int     epoll_chiudi(int fd);
 #define presa_chiudi(fd)            (-1)
 #define presa_fcntl(fd, cmd, arg)   (-1)
 #define presa_ioctl(fd, req, arg)   (-1)
-#define poll_misto(f, n, t)         (-1)
+#define poll_misto(f, n, t, m)      (-1)
 #endif
 ssize_t        send(int fd, const void *buf, size_t n, int flag);
 ssize_t        recv(int fd, void *buf, size_t n, int flag);
@@ -7007,29 +7007,72 @@ int pthread_setspecific(pthread_key_t k, const void *v)
     return 0;
 }
 
-/* --- i semafori POSIX ------------------------------------------------------------------------ */
+/* --- i semafori POSIX ------------------------------------------------------------------------
+ * (0.373) BETWEEN PROCESSES TOO: sem_init with pshared, sem_open. sem_t stays
+ * one int (programs already built have it so): bit 30 says "shared", the
+ * count is the 30 bits below (SEM_VALUE_MAX). A shared one sleeps and wakes
+ * with SYS_ATTESA_DORMI_COMUNE / _SVEGLIA_COMUNE, keyed by the physical
+ * address; on memory no other process shares the kernel says EINVAL and it
+ * waits as a private one - nobody else can reach it there anyway. */
+#define SEM_COMUNE  0x40000000
+#define SEM_CONTA   0x3FFFFFFF
+#define SYS_ATTESA_DORMI_COMUNE   287
+#define SYS_ATTESA_SVEGLIA_COMUNE 288
+
+static int sem_prova(volatile int *s)
+{
+    int v = *s;
+
+    while ((v & SEM_CONTA) > 0) {
+        if (mutex_cmpxchg(s, v, v - 1) == v) return 1;
+        v = *s;
+    }
+    return 0;
+}
+
+/* one sleep while the count is 0: 0, or -errno (-EINTR, -EAGAIN) */
+static int sem_dormi(volatile int *s, unsigned int ms)
+{
+    int v = *s;
+
+    if (v & SEM_CONTA) return 0;
+    if (v & SEM_COMUNE) {
+        int32_t r = punto_eintr(_syscall3(pn(SYS_ATTESA_DORMI_COMUNE), (uintptr_t)s, (uint32_t)v, ms));
+
+        if (r != -EINVAL) return r;
+    }
+    return punto_eintr(_syscall3(pn(SYS_ATTESA_DORMI), (uintptr_t)s, (uint32_t)v, ms));
+}
+
 int sem_init(sem_t *s, int pshared, unsigned int v)
 {
-    if (!s) { errno = EINVAL; return -1; }
-    if (pshared) { errno = ENOSYS; return -1; }
+    if (!s || v > SEM_CONTA) { errno = EINVAL; return -1; }
+    if (pshared) {
+        /* a kernel before 0.373 cannot wait between processes: ENOSYS, as before */
+        s->s = (int)v | SEM_COMUNE;
+        if (_syscall2(SYS_ATTESA_SVEGLIA_COMUNE, (uintptr_t)&s->s, 0) == -ENOSYS) {
+            s->s = 0;
+            errno = ENOSYS;
+            return -1;
+        }
+        return 0;
+    }
     s->s = (int)v;
     return 0;
 }
 int sem_destroy(sem_t *s) { (void)s; return 0; }
-/* sem_wait and sem_timedwait are cancellation points (0.349): the same loop
- * as semaforo_prendi, with the sleep marked */
+/* sem_wait and sem_timedwait are cancellation points (0.349) */
 int sem_wait(sem_t *s)
 {
     void *pf = punto_entra();
 
-    while (!semaforo_prova(&s->s))
-        punto_eintr(_syscall3(pn(SYS_ATTESA_DORMI), (uintptr_t)&s->s, 0, 0));
+    while (!sem_prova(&s->s)) sem_dormi(&s->s, 0);
     punto_esci(pf);
     return 0;
 }
 int sem_trywait(sem_t *s)
 {
-    if (semaforo_prova(&s->s)) return 0;
+    if (sem_prova(&s->s)) return 0;
     errno = EAGAIN;
     return -1;
 }
@@ -7037,7 +7080,7 @@ int sem_timedwait(sem_t *s, const struct timespec *quando)
 {
     unsigned int ms = ms_a(quando, 0);
 
-    if (semaforo_prova(&s->s)) return 0;
+    if (sem_prova(&s->s)) return 0;
     if (ms == 0) { errno = ETIMEDOUT; return -1; }
     {
         unsigned int fine = uptime_ms() + ms;
@@ -7046,15 +7089,28 @@ int sem_timedwait(sem_t *s, const struct timespec *quando)
         for (;;) {
             unsigned int ora;
 
-            if (semaforo_prova(&s->s)) { punto_esci(pf); return 0; }
+            if (sem_prova(&s->s)) { punto_esci(pf); return 0; }
             ora = uptime_ms();
             if ((int)(ora - fine) >= 0) { punto_esci(pf); errno = ETIMEDOUT; return -1; }
-            punto_eintr(_syscall3(pn(SYS_ATTESA_DORMI), (uintptr_t)&s->s, 0, fine - ora));
+            sem_dormi(&s->s, fine - ora);
         }
     }
 }
-int sem_post(sem_t *s) { semaforo_lascia(&s->s); return 0; }
-int sem_getvalue(sem_t *s, int *v) { *v = s->s; return 0; }
+int sem_post(sem_t *s)
+{
+    int v = s->s;
+
+    for (;;) {
+        if ((v & SEM_CONTA) == SEM_CONTA) { errno = EOVERFLOW; return -1; }
+        if (mutex_cmpxchg(&s->s, v, v + 1) == v) break;
+        v = s->s;
+    }
+    if (!(v & SEM_COMUNE) ||
+        _syscall2(SYS_ATTESA_SVEGLIA_COMUNE, (uintptr_t)&s->s, 1) == -EINVAL)
+        futex_sveglia(&s->s, 1);
+    return 0;
+}
+int sem_getvalue(sem_t *s, int *v) { *v = s->s & SEM_CONTA; return 0; }
 
 int wait(int *stato)
 {
@@ -10470,19 +10526,74 @@ char *ctime_r(const time_t *t, char *buf)
     return asctime_r(&tm, buf);
 }
 
-/* ! utime NON CAMBIA NIENTE, come chmod e umask: nessun filesystem di
- * EX-OS ha una syscall per riscrivere le date di un file. Ritorna 0 se il
- * file c'e', perche' chi la chiama — `objcopy` e `strip`, per conservare
- * la data dell'originale — stampa un avviso a ogni fallimento, e un
- * avviso per file su un'operazione che non e' andata storta e' rumore.
- * Il file conserva la data della SCRITTURA, che e' quella vera. */
+/* =============================================================================
+ * The dates of a file: SYS_TEMPI (kernel 0.373). Until then nothing could
+ * change them and utime/utimes said yes without doing it; Qt (QFile::
+ * setFileTime), make, tar, cp -p want them. VfsTempi is kernel/include/vfs.h.
+ * ! A KERNEL BEFORE 0.373 (ENOSYS: netupdate puts the libc in at once, the
+ * kernel at the reboot): what was said before - 0 if the file is there -
+ * for utime and utimes, whose callers (objcopy, strip, NSS) warn at every
+ * failure; utimensat and futimens say ENOSYS, the truth.
+ * ============================================================================= */
+#define SYS_TEMPI 285
+typedef struct {
+    long long atime, mtime;
+    uint32_t  quali, riserva;           /* 1 a, 2 m, 4 a = now, 8 m = now */
+} TempiK;
+#define UTIME_NOW_  ((1l << 30) - 1l)
+#define UTIME_OMIT_ ((1l << 30) - 2l)
+
+static int tempi_k(const char *path, int fd, const struct timespec *ts, int vecchio_ok)
+{
+    TempiK  k;
+    int32_t r;
+    int     i;
+
+    memset(&k, 0, sizeof(k));
+    for (i = 0; i < 2; i++) {
+        uint32_t fisso = i ? 2u : 1u, ora = i ? 8u : 4u;
+
+        if (!ts || ts[i].tv_nsec == UTIME_NOW_) { k.quali |= ora; continue; }
+        if (ts[i].tv_nsec == UTIME_OMIT_) continue;
+        if (ts[i].tv_nsec < 0 || ts[i].tv_nsec > 999999999l) { errno = EINVAL; return -1; }
+        if (i) k.mtime = (long long)ts[i].tv_sec; else k.atime = (long long)ts[i].tv_sec;
+        k.quali |= fisso;
+    }
+    r = _syscall3(SYS_TEMPI, (uintptr_t)path, (uint32_t)fd, (uintptr_t)&k);
+    if (r == -ENOSYS && vecchio_ok && path) {   /* futimes is new: ENOSYS is right */
+        struct stat st;
+
+        return stat(path, &st);
+    }
+    if (r < 0) { errno = -r; return -1; }
+    return 0;
+}
+
+int utimensat(int dirfd, const char *path, const struct timespec ts[2], int flag)
+{
+    (void)flag;                         /* no symbolic links to not follow */
+    if (!path) { errno = EFAULT; return -1; }
+    /* no directory descriptors on EX-OS, as faccessat */
+    if (dirfd != -100 /* AT_FDCWD */ && path[0] != '/') { errno = ENOSYS; return -1; }
+    return tempi_k(path, -1, ts, 0);
+}
+
+int futimens(int fd, const struct timespec ts[2])
+{
+    return tempi_k(NULL, fd, ts, 0);
+}
+
+/* utime: struct utimbuf { time_t actime, modtime; }; NULL = now */
 int utime(const char *path, const void *tempi)
 {
-    struct stat st;
+    const time_t   *u = (const time_t *)tempi;
+    struct timespec ts[2];
 
-    (void)tempi;
-    if (stat(path, &st) != 0) { errno = ENOENT; return -1; }
-    return 0;
+    if (!path) { errno = EFAULT; return -1; }
+    if (!u) return tempi_k(path, -1, NULL, 1);
+    ts[0].tv_sec = u[0]; ts[0].tv_nsec = 0;
+    ts[1].tv_sec = u[1]; ts[1].tv_nsec = 0;
+    return tempi_k(path, -1, ts, 1);
 }
 
 /* =============================================================================
@@ -11194,32 +11305,73 @@ int log_seriale(const char *s)
 
 /* ! -1 E errno, non -errno (29 settembre 2026): come stat, era rimasta alla
  * convenzione vecchia. */
-static int poll_kernel(struct pollfd *fds, unsigned int nfds, int timeout)
+/* (0.373) m: the signal mask of this wait (ppoll), NULL = poll. SYS_PPOLL
+ * sets it and puts it back in the kernel, atomically with the wait.
+ * ! A KERNEL BEFORE 0.373 (ENOSYS): sigprocmask around poll - a signal
+ * between the two is handled before the wait, the race ppoll is for; only
+ * until the reboot after netupdate. */
+#define SYS_PPOLL 286
+static int poll_kernel_m(struct pollfd *fds, unsigned int nfds, int timeout,
+                         const sigset_t *m)
 {
-    return (int)err_posix(punto_eintr(_syscall3(pn(SYS_POLL), (uintptr_t)fds, nfds,
-                                                (unsigned int)timeout)));
+    int32_t  r;
+    uint32_t k;
+
+    if (m == NULL)
+        return (int)err_posix(punto_eintr(_syscall3(pn(SYS_POLL), (uintptr_t)fds, nfds,
+                                                    (unsigned int)timeout)));
+    k = (uint32_t)*m;
+    r = punto_eintr(_syscall4(pn(SYS_PPOLL), (uintptr_t)fds, nfds, (unsigned int)timeout,
+                              (uintptr_t)&k));
+    if (r == -ENOSYS) {
+        sigset_t prima;
+
+        if (sigprocmask(2 /* SIG_SETMASK */, m, &prima) < 0) return -1;
+        r = punto_eintr(_syscall3(pn(SYS_POLL), (uintptr_t)fds, nfds, (unsigned int)timeout));
+        sigprocmask(2, &prima, NULL);
+    }
+    return (int)err_posix(r);
 }
 
 #ifndef EXOS_LIBC_SO
-static int poll_misto(struct pollfd *fds, unsigned int nfds, int timeout);
+static int poll_misto(struct pollfd *fds, unsigned int nfds, int timeout, const sigset_t *m);
 #endif
 
 /* Con un socket fra i descrittori il giro lo fa poll_misto (sezione dei
  * socket); senza, e' la syscall di sempre. */
-static int poll_corpo(struct pollfd *fds, unsigned int nfds, int timeout)
+static int poll_corpo(struct pollfd *fds, unsigned int nfds, int timeout, const sigset_t *m)
 {
     unsigned int i;
 
     for (i = 0; fds && i < nfds; i++)
-        if (E_PRESA(fds[i].fd)) return poll_misto(fds, nfds, timeout);
-    return poll_kernel(fds, nfds, timeout);
+        if (E_PRESA(fds[i].fd)) return poll_misto(fds, nfds, timeout, m);
+    return poll_kernel_m(fds, nfds, timeout, m);
 }
 
 int poll(struct pollfd *fds, unsigned int nfds, int timeout)
 {
     void *pf = punto_entra();           /* a cancellation point (0.349) */
 
-    return (int)punto_fine(pf, (long)poll_corpo(fds, nfds, timeout));
+    return (int)punto_fine(pf, (long)poll_corpo(fds, nfds, timeout, NULL));
+}
+
+/* ppoll (0.373, Qt): poll with a timespec (rounded up to the millisecond:
+ * the kernel counts 10 ms ticks) and the signal mask of the wait. */
+int ppoll(struct pollfd *fds, unsigned int nfds, const struct timespec *t,
+          const sigset_t *m)
+{
+    void *pf;
+    int   ms = -1;
+
+    if (t) {
+        long long v;
+
+        if (t->tv_sec < 0 || t->tv_nsec < 0 || t->tv_nsec > 999999999l) { errno = EINVAL; return -1; }
+        v = (long long)t->tv_sec * 1000ll + (t->tv_nsec + 999999l) / 1000000l;
+        ms = v > 0x7FFFFFFFll ? 0x7FFFFFFF : (int)v;
+    }
+    pf = punto_entra();
+    return (int)punto_fine(pf, (long)poll_corpo(fds, nfds, ms, m));
 }
 
 /* =============================================================================
@@ -11613,6 +11765,7 @@ int shm_unlink(const char *nome)
     (void)nome;
     return 0;
 }
+
 
 static int ftruncate_zona(int fd, off_t lung);
 
@@ -14873,13 +15026,27 @@ struct protoent *getprotobynumber(int numero)      { return protocollo(NULL, num
 /* =============================================================================
  * Per NSS e SQLite (@EXILLA-NSS): utimes, syslog, termios. Vedi gli header.
  * ============================================================================= */
+/* utimes, futimes, lutimes: the BSD forms, microseconds. See tempi_k. */
+static int tempi_tv(const char *path, int fd, const struct timeval tv[2])
+{
+    struct timespec ts[2];
+
+    if (!tv) return tempi_k(path, fd, NULL, 1);
+    if (tv[0].tv_usec < 0 || tv[0].tv_usec > 999999 ||
+        tv[1].tv_usec < 0 || tv[1].tv_usec > 999999) { errno = EINVAL; return -1; }
+    ts[0].tv_sec = tv[0].tv_sec; ts[0].tv_nsec = tv[0].tv_usec * 1000l;
+    ts[1].tv_sec = tv[1].tv_sec; ts[1].tv_nsec = tv[1].tv_usec * 1000l;
+    return tempi_k(path, fd, ts, 1);
+}
+
 int utimes(const char *percorso, const struct timeval tempi[2])
 {
-    struct stat st;
-
-    (void)tempi;
-    return stat(percorso, &st);
+    if (!percorso) { errno = EFAULT; return -1; }
+    return tempi_tv(percorso, -1, tempi);
 }
+
+int futimes(int fd, const struct timeval tempi[2]) { return tempi_tv(NULL, fd, tempi); }
+int lutimes(const char *percorso, const struct timeval tempi[2]) { return utimes(percorso, tempi); }
 
 static char g_syslog_nome[32] = "";
 
@@ -15850,8 +16017,11 @@ int dup3(int vecchio, int nuovo, int flag)
     return nuovo;
 }
 
-/* <net/if.h>: nessuna interfaccia con un nome (vedi l'header). */
+/* <net/if.h>: the floppy's libc.so knows no network stack, so no
+ * interface by name there; libc.a and ld-exos.so have them with the sockets
+ * (lo and eth0, see "THE INTERFACES"). */
 struct if_nameindex { unsigned int if_index; char *if_name; };
+#ifdef EXOS_LIBC_SO
 unsigned int if_nametoindex(const char *nome) { (void)nome; errno = ENXIO; return 0; }
 char *if_indextoname(unsigned int indice, char *nome) { (void)indice; (void)nome; errno = ENXIO; return 0; }
 struct if_nameindex *if_nameindex(void)
@@ -15860,6 +16030,7 @@ struct if_nameindex *if_nameindex(void)
     return e;
 }
 void if_freenameindex(struct if_nameindex *e) { free(e); }
+#endif
 
 /* <link.h>: i programmi sono statici, non c'e' un elenco di oggetti. */
 struct dl_phdr_info;
@@ -16164,6 +16335,7 @@ size_t wcsrtombs(char *dst, const wchar_t **src, size_t n, mbstate_t *stato)
 #define E_OPNOTSUPP     95
 #define E_AFNOSUPPORT   97
 #define E_ADDRINUSE     98
+#define E_ADDRNOTAVAIL  99
 #define E_NETDOWN       100
 #define E_NETUNREACH    101
 #define E_CONNABORTED   103
@@ -16550,6 +16722,234 @@ static int ip_chiedi(unsigned int tipo, const void *dati, unsigned int len,
  * and from then on the waits are not cut (g_ritira_no). A kernel before
  * 0.346 has no SYS_IPC_RECV_SEG (-ENOSYS): the same. */
 static int g_ritira_no = 0;
+
+/* =============================================================================
+ * THE INTERFACES (0.373, Qt's QNetworkInterface): getifaddrs, if_nameindex
+ * and family, SIOCGIFCONF and the SIOCGIF* by name. Until then none had a
+ * name and every list was empty.
+ * ip.drv drives one card and the loopback: lo (index 1, 127.0.0.1/8) and
+ * eth0 (index 2), with the card's address, mask and MAC from IP_MSG_STATO.
+ * ! IFF_RUNNING ON eth0 MEANS "IT HAS AN ADDRESS": the stack does not say
+ * whether the cable is in. No stack running: no interface at all (with no
+ * stack the loopback does not answer either).
+ * ============================================================================= */
+typedef struct {
+    const char    *nome;
+    unsigned int   indice, flag, mtu;
+    unsigned char  ip[4], maschera[4], bcast[4], mac[6];
+    int            ha_ip;
+} Intf;
+
+/* the layouts of <net/if.h> and <netpacket/packet.h>: one struct ifreq is
+ * what SIOCGIFCONF steps by, the same size as the header's */
+typedef struct {
+    char nome[16];
+    union {
+        struct sockaddr ind;
+        short           flag;
+        int             valore;
+        struct { unsigned long a, b; unsigned short c; unsigned char d, e, f; } mappa;
+        char            nome2[16];
+        char           *dati;
+    } u;
+} IfReq;
+typedef struct {
+    unsigned short sll_family, sll_protocol;
+    int            sll_ifindex;
+    unsigned short sll_hatype;
+    unsigned char  sll_pkttype, sll_halen, sll_addr[8];
+} SockLl;
+
+/* the interfaces now: 2, or 0 with no stack */
+static int intf_elenco(Intf v[2])
+{
+    unsigned char buf[IPC_MSG_MAX_DATA];
+    unsigned int  t = 0, i;
+    int           n = ip_chiedi(P_IP_MSG_STATO, NULL, 0, P_IP_MSG_STATO_R, buf, sizeof(buf), &t);
+    PIpConfig     c;
+
+    if (n < (int)(sizeof(PIpConfig) + 6) || t != P_IP_MSG_STATO_R) return 0;
+    memcpy(&c, buf, sizeof(c));
+    memset(v, 0, 2 * sizeof(Intf));
+    v[0].nome = "lo"; v[0].indice = 1; v[0].mtu = 65536; v[0].ha_ip = 1;
+    v[0].flag = 0x1 | 0x8 | 0x40;               /* UP LOOPBACK RUNNING */
+    v[0].ip[0] = 127; v[0].ip[3] = 1; v[0].maschera[0] = 255;
+    v[1].nome = "eth0"; v[1].indice = 2; v[1].mtu = 1500;
+    memcpy(v[1].ip, c.ip, 4); memcpy(v[1].maschera, c.maschera, 4);
+    memcpy(v[1].mac, buf + sizeof(PIpConfig), 6);
+    v[1].ha_ip = (c.ip[0] | c.ip[1] | c.ip[2] | c.ip[3]) != 0;
+    for (i = 0; i < 4; i++) v[1].bcast[i] = (unsigned char)(c.ip[i] | ~c.maschera[i]);
+    v[1].flag = 0x1 | 0x2 | 0x1000 | (v[1].ha_ip ? 0x40u : 0u);   /* UP BROADCAST MULTICAST */
+    return 2;
+}
+
+static void intf_ind(struct sockaddr *a, const unsigned char ip[4])
+{
+    struct sockaddr_in *x = (struct sockaddr_in *)a;
+
+    memset(x, 0, sizeof(*x));
+    x->sin_family = 2;                          /* AF_INET */
+    memcpy(&x->sin_addr, ip, 4);
+}
+
+static int intf_per_nome(const char *nome, Intf v[2], Intf **e)
+{
+    int n = intf_elenco(v), i;
+
+    for (i = 0; i < n; i++)
+        if (strncmp(nome, v[i].nome, 16) == 0) { *e = &v[i]; return 0; }
+    return -ENODEV;
+}
+
+static int intf_ioctl(unsigned long req, void *arg)
+{
+    Intf   v[2], *e = NULL;
+    IfReq *q = (IfReq *)arg;
+    int    n, i, r;
+
+    if (req == 0x8912) {                        /* SIOCGIFCONF: the ones with an address */
+        struct { int len; char *buf; } *c = arg;
+        int quanti = 0;
+
+        n = intf_elenco(v);
+        for (i = 0; i < n; i++) {
+            if (!v[i].ha_ip) continue;
+            if (c->buf) {
+                if ((quanti + 1) * (int)sizeof(IfReq) > c->len) break;
+                q = (IfReq *)c->buf + quanti;
+                memset(q, 0, sizeof(*q));
+                strncpy(q->nome, v[i].nome, 15);
+                intf_ind(&q->u.ind, v[i].ip);
+            }
+            quanti++;
+        }
+        c->len = quanti * (int)sizeof(IfReq);
+        return 0;
+    }
+    if (req == 0x8910) {                        /* SIOCGIFNAME: by index */
+        n = intf_elenco(v);
+        for (i = 0; i < n; i++)
+            if ((int)v[i].indice == q->u.valore) {
+                memset(q->nome, 0, 16); strncpy(q->nome, v[i].nome, 15); return 0;
+            }
+        return -ENODEV;
+    }
+    if ((r = intf_per_nome(q->nome, v, &e)) != 0) return r;
+    switch (req) {
+    case 0x8913: q->u.flag = (short)e->flag; return 0;                  /* FLAGS */
+    case 0x8915: if (!e->ha_ip) return -E_ADDRNOTAVAIL;
+                 intf_ind(&q->u.ind, e->ip); return 0;                  /* ADDR */
+    case 0x891b: if (!e->ha_ip) return -E_ADDRNOTAVAIL;
+                 intf_ind(&q->u.ind, e->maschera); return 0;            /* NETMASK */
+    case 0x8919: if (!e->ha_ip || e->indice == 1) return -E_ADDRNOTAVAIL;
+                 intf_ind(&q->u.ind, e->bcast); return 0;               /* BRDADDR */
+    case 0x8921: q->u.valore = (int)e->mtu; return 0;                   /* MTU */
+    case 0x8933: q->u.valore = (int)e->indice; return 0;                /* INDEX */
+    case 0x8927: memset(&q->u.ind, 0, sizeof(q->u.ind));                /* HWADDR */
+                 q->u.ind.sa_family = e->indice == 1 ? 772 : 1;         /* ARPHRD_LOOPBACK, _ETHER */
+                 memcpy(q->u.ind.sa_data, e->mac, 6); return 0;
+    default:     return -EINVAL;                /* a setter: not from here */
+    }
+}
+
+unsigned int if_nametoindex(const char *nome)
+{
+    Intf v[2], *e;
+
+    if (!nome || intf_per_nome(nome, v, &e) != 0) { errno = ENXIO; return 0; }
+    return e->indice;
+}
+
+char *if_indextoname(unsigned int indice, char *nome)
+{
+    Intf v[2];
+    int  n = intf_elenco(v), i;
+
+    for (i = 0; i < n; i++)
+        if (v[i].indice == indice) { strncpy(nome, v[i].nome, 15); nome[15] = 0; return nome; }
+    errno = ENXIO;
+    return NULL;
+}
+
+/* one block: the entries, then the names */
+struct if_nameindex *if_nameindex(void)
+{
+    Intf                 v[2];
+    int                  n = intf_elenco(v), i;
+    struct if_nameindex *e = calloc(1, (size_t)(n + 1) * sizeof(*e) + (size_t)n * 16u);
+    char                *nomi;
+
+    if (!e) { errno = ENOMEM; return NULL; }
+    nomi = (char *)(e + n + 1);
+    for (i = 0; i < n; i++) {
+        e[i].if_index = v[i].indice;
+        e[i].if_name  = nomi + i * 16;
+        strncpy(e[i].if_name, v[i].nome, 15);
+    }
+    return e;
+}
+void if_freenameindex(struct if_nameindex *e) { free(e); }
+
+/* getifaddrs: per interface an AF_PACKET entry (the MAC, as on Linux: Qt
+ * reads the hardware address there) and an AF_INET one when it has an
+ * address. One allocation, freed by freeifaddrs. */
+struct ifaddrs {
+    struct ifaddrs  *ifa_next;
+    char            *ifa_name;
+    unsigned int     ifa_flags;
+    struct sockaddr *ifa_addr, *ifa_netmask, *ifa_ifu;
+    void            *ifa_data;
+};
+typedef struct {
+    struct ifaddrs     ifa;
+    char               nome[16];
+    union { struct sockaddr_in in; SockLl ll; } ind;
+    struct sockaddr_in maschera, bcast;
+} IfaVoce;
+
+int getifaddrs(struct ifaddrs **out)
+{
+    Intf     v[2];
+    int      n, i, k = 0;
+    IfaVoce *b;
+
+    if (!out) { errno = EFAULT; return -1; }
+    n = intf_elenco(v);
+    b = calloc((size_t)(2 * n + 1), sizeof(IfaVoce));
+    if (!b) { errno = ENOMEM; return -1; }
+    for (i = 0; i < n; i++) {
+        IfaVoce *e = &b[k++];
+
+        strncpy(e->nome, v[i].nome, 15);
+        e->ifa.ifa_name  = e->nome;
+        e->ifa.ifa_flags = v[i].flag;
+        e->ind.ll.sll_family  = 17;             /* AF_PACKET */
+        e->ind.ll.sll_ifindex = (int)v[i].indice;
+        e->ind.ll.sll_hatype  = v[i].indice == 1 ? 772 : 1;
+        e->ind.ll.sll_halen   = 6;
+        memcpy(e->ind.ll.sll_addr, v[i].mac, 6);
+        e->ifa.ifa_addr = (struct sockaddr *)&e->ind.ll;
+        if (!v[i].ha_ip) continue;
+        e = &b[k++];
+        strncpy(e->nome, v[i].nome, 15);
+        e->ifa.ifa_name  = e->nome;
+        e->ifa.ifa_flags = v[i].flag;
+        intf_ind((struct sockaddr *)&e->ind.in, v[i].ip);
+        intf_ind((struct sockaddr *)&e->maschera, v[i].maschera);
+        e->ifa.ifa_addr    = (struct sockaddr *)&e->ind.in;
+        e->ifa.ifa_netmask = (struct sockaddr *)&e->maschera;
+        if (v[i].indice != 1) {
+            intf_ind((struct sockaddr *)&e->bcast, v[i].bcast);
+            e->ifa.ifa_ifu = (struct sockaddr *)&e->bcast;
+        }
+    }
+    for (i = 0; i + 1 < k; i++) b[i].ifa.ifa_next = &b[i + 1].ifa;
+    *out = k ? &b[0].ifa : NULL;
+    if (!k) free(b);
+    return 0;
+}
+
+void freeifaddrs(struct ifaddrs *a) { free(a); }
 
 static int ip_chiedi_seg(unsigned int tipo, const void *dati, unsigned int len,
                          unsigned int risp, void *buf, unsigned int max,
@@ -17685,16 +18085,14 @@ static int presa_ioctl(int fd, unsigned int req, void *arg)
         *(int *)arg = 0;
         return 0;
     }
-    /* (18/11/2026, Qt) the interfaces by name: there are none with a name
-     * (lib/include/net/if.h), so SIOCGIFCONF lists nothing and the rest of
-     * SIOCGIF* (0x8910..0x8933) finds no such device. ifc_len is the first
-     * field of struct ifconf. */
-    if (req == 0x8912 /* SIOCGIFCONF */) {
+    /* the interfaces by name (0.373, Qt): see "THE INTERFACES" */
+    if (req >= 0x8910 && req <= 0x8933) {
+        int r;
+
         if (!arg) return presa_errore(EFAULT);
-        *(int *)arg = 0;
-        return 0;
+        r = intf_ioctl(req, arg);
+        return r < 0 ? presa_errore(-r) : 0;
     }
-    if (req >= 0x8910 && req <= 0x8933) return presa_errore(ENXIO);
     return presa_errore(ENOTTY);
 }
 
@@ -17747,7 +18145,8 @@ static short presa_pronta(Presa *p, short voluti)
  * rispetto a una pagina che arriva; e un programma senza socket non passa di
  * qui. La strada per toglierlo, il giorno che si misuri, e' che lo stack
  * sappia svegliare chi aspetta. */
-static int poll_kernel(struct pollfd *fds, unsigned int nfds, int timeout);
+static int poll_kernel_m(struct pollfd *fds, unsigned int nfds, int timeout,
+                         const sigset_t *m);
 
 /* A TCP socket the stack can wait for (IP_MSG_TCP_ASPETTA). */
 static int presa_aspettabile(const Presa *p)
@@ -17773,7 +18172,8 @@ static short da_eventi(unsigned int ev, short voluti)
  * the stack), one question per round instead of one per socket. */
 static int poll_misto_giro(struct pollfd *fds, unsigned int nfds, int timeout,
                            struct pollfd *locali, unsigned int *mappa, Presa **tcp,
-                           unsigned int *tmappa, unsigned int *voluti, unsigned int *ev);
+                           unsigned int *tmappa, unsigned int *voluti, unsigned int *ev,
+                           const sigset_t *msk);
 
 /* ! AS MANY DESCRIPTORS AS THE CALLER GIVES (0.281): up to 64 the arrays are
  * on the stack as before, beyond that they are allocated (until 0.280 more
@@ -17781,7 +18181,7 @@ static int poll_misto_giro(struct pollfd *fds, unsigned int nfds, int timeout,
  * sockets: with more, each round asks them in pieces without waiting there,
  * and the wait is the 10 ms round. A server with thousands of sockets uses
  * epoll, which has no such limit. */
-static int poll_misto(struct pollfd *fds, unsigned int nfds, int timeout)
+static int poll_misto(struct pollfd *fds, unsigned int nfds, int timeout, const sigset_t *msk)
 {
     struct pollfd  locali_s[64];
     unsigned int   mappa_s[64], tmappa_s[64], voluti_s[64], ev_s[64];
@@ -17791,7 +18191,7 @@ static int poll_misto(struct pollfd *fds, unsigned int nfds, int timeout)
 
     if (nfds <= 64)
         return poll_misto_giro(fds, nfds, timeout, locali_s, mappa_s, tcp_s,
-                               tmappa_s, voluti_s, ev_s);
+                               tmappa_s, voluti_s, ev_s, msk);
     m = (unsigned char *)malloc(nfds * (sizeof(struct pollfd) + 5u * sizeof(unsigned int) + sizeof(Presa *)));
     if (m == NULL) { errno = ENOMEM; return -1; }
     r = poll_misto_giro(fds, nfds, timeout,
@@ -17800,14 +18200,16 @@ static int poll_misto(struct pollfd *fds, unsigned int nfds, int timeout)
                         (Presa **)(m + nfds * (sizeof(struct pollfd) + 5u * sizeof(unsigned int))),
                         (unsigned int *)(m + nfds * (sizeof(struct pollfd) + 1u * sizeof(unsigned int))),
                         (unsigned int *)(m + nfds * (sizeof(struct pollfd) + 2u * sizeof(unsigned int))),
-                        (unsigned int *)(m + nfds * (sizeof(struct pollfd) + 3u * sizeof(unsigned int))));
+                        (unsigned int *)(m + nfds * (sizeof(struct pollfd) + 3u * sizeof(unsigned int))),
+                        msk);
     free(m);
     return r;
 }
 
 static int poll_misto_giro(struct pollfd *fds, unsigned int nfds, int timeout,
                            struct pollfd *locali, unsigned int *mappa, Presa **tcp,
-                           unsigned int *tmappa, unsigned int *voluti, unsigned int *ev)
+                           unsigned int *tmappa, unsigned int *voluti, unsigned int *ev,
+                           const sigset_t *msk)
 {
     unsigned int   nk = 0, nt = 0, nu = 0, i;
     unsigned int   inizio = uptime_ms();
@@ -17832,7 +18234,7 @@ static int poll_misto_giro(struct pollfd *fds, unsigned int nfds, int timeout,
 
         for (i = 0; i < nfds; i++) fds[i].revents = 0;
         if (nk) {
-            r = poll_kernel(locali, nk, 0);
+            r = poll_kernel_m(locali, nk, 0, msk);
             if (r < 0) return -1;
             for (k = 0; k < nk; k++) fds[mappa[k]].revents = locali[k].revents;
         }
@@ -17853,8 +18255,12 @@ static int poll_misto_giro(struct pollfd *fds, unsigned int nfds, int timeout,
             unsigned int ms = P_ASPETTA_SUBITO, da;
 
             /* only TCP sockets and nothing ready: the question is the wait
-             * (when they fit in one question) */
-            if (nt <= P_ASPETTA_MAX && nk == 0 && nu == 0 && pronti == 0 && timeout != 0) {
+             * (when they fit in one question). ! NOT WITH A ppoll MASK: the
+             * stack's wait ends on the thread's own mask, so the signal the
+             * mask lets through would wait for it - 10 ms rounds instead,
+             * each a SYS_PPOLL with the mask (below) */
+            if (nt <= P_ASPETTA_MAX && nk == 0 && nu == 0 && pronti == 0 && timeout != 0 &&
+                msk == NULL) {
                 unsigned int passati = uptime_ms() - inizio;
 
                 if (timeout < 0) ms = 0;
@@ -17886,12 +18292,15 @@ static int poll_misto_giro(struct pollfd *fds, unsigned int nfds, int timeout,
         if (timeout > 0 && uptime_ms() - inizio >= (unsigned int)timeout) return 0;
         if (attesa) continue;               /* the stack waited already */
         if (nk) {
-            r = poll_kernel(locali, nk, 10);
+            r = poll_kernel_m(locali, nk, 10, msk);
             if (r > 0) {
                 for (k = 0; k < nk; k++) fds[mappa[k]].revents = locali[k].revents;
                 return r;
             }
             if (r < 0 && errno == EINTR) return -1;     /* voce 37 */
+        } else if (msk) {
+            /* nothing of the kernel's to wait for: the 10 ms with the mask */
+            if (poll_kernel_m(NULL, 0, 10, msk) < 0 && errno == EINTR) return -1;
         } else {
             struct timespec t10 = { 0, 10000000L };
 
@@ -18428,6 +18837,718 @@ struct hostent *gethostbyname(const char *nome)
     return &h;
 }
 
+/* =============================================================================
+ * sem_open, sem_close, sem_unlink (0.373, Qt's QSystemSemaphore): a named
+ * semaphore is a named zone (shm_open "/sem.<name>", a page) holding the
+ * sem_t and a "ready" word. Who creates it (O_CREAT | O_EXCL succeeded)
+ * sizes it, writes the value, then ready; who opens it waits for ready.
+ * The same name in one process gives the same sem_t, counted (POSIX).
+ * ! LIKE EVERY ZONE IT LIVES WHILE SOMEONE HOLDS IT (kernel/include/shm.h):
+ * sem_unlink does nothing, the name goes with the last sem_close or exit.
+ * ============================================================================= */
+typedef struct SemAperto {
+    struct SemAperto *succ;
+    sem_t            *s;
+    int               quanti;
+    char              nome[];
+} SemAperto;
+typedef struct { sem_t s; volatile int pronto; } SemZona;
+static SemAperto   *g_sem_aperti;
+static volatile int g_sem_m;
+
+sem_t *sem_open(const char *nome, int flag, ...)
+{
+    SemAperto *a;
+    SemZona   *z;
+    char       k[300];
+    mode_t     modo = 0600;
+    unsigned   v = 0, giri;
+    int        fd, creato = 0;
+    struct stat st;
+
+    if (!nome || !nome[0] || strlen(nome) > 250) { errno = EINVAL; return (sem_t *)0; }
+    if (flag & O_CREAT) {
+        __builtin_va_list ap;
+
+        __builtin_va_start(ap, flag);
+        modo = (mode_t)__builtin_va_arg(ap, unsigned int);
+        v    = __builtin_va_arg(ap, unsigned int);
+        __builtin_va_end(ap);
+        if (v > SEM_CONTA) { errno = EINVAL; return (sem_t *)0; }
+    }
+    while (*nome == '/') nome++;
+    snprintf(k, sizeof(k), "/sem.%s", nome);
+
+    mutex_prendi(&g_sem_m);
+    for (a = g_sem_aperti; a; a = a->succ)
+        if (strcmp(a->nome, k) == 0) {
+            if ((flag & (O_CREAT | 0x80)) == (O_CREAT | 0x80)) {
+                mutex_lascia(&g_sem_m); errno = EEXIST; return (sem_t *)0;
+            }
+            a->quanti++;
+            mutex_lascia(&g_sem_m);
+            return a->s;
+        }
+    fd = -1;
+    if (flag & O_CREAT) {
+        fd = shm_open(k, 2 /* O_RDWR */ | O_CREAT | 0x80 /* O_EXCL */, modo);
+        if (fd >= 0) creato = 1;
+        else if (errno != EEXIST || (flag & 0x80)) { mutex_lascia(&g_sem_m); return (sem_t *)0; }
+    }
+    if (fd < 0 && (fd = shm_open(k, 2, 0)) < 0) { mutex_lascia(&g_sem_m); return (sem_t *)0; }
+    if (creato && ftruncate(fd, 4096) != 0) { close(fd); mutex_lascia(&g_sem_m); return (sem_t *)0; }
+    /* who opens it may come before the creator sized it: a few ms */
+    for (giri = 0; !creato && fstat(fd, &st) == 0 && st.st_size == 0 && giri < 2000; giri++)
+        dormi_ms(1);
+    z = (SemZona *)mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    close(fd);
+    if (z == (SemZona *)MAP_FAILED) { mutex_lascia(&g_sem_m); return (sem_t *)0; }
+    if (creato) {
+        z->s.s = (int)v | SEM_COMUNE;
+        __sync_synchronize();
+        z->pronto = 1;
+    } else {
+        for (giri = 0; !z->pronto && giri < 2000; giri++) dormi_ms(1);
+        if (!z->pronto) { munmap(z, 4096); mutex_lascia(&g_sem_m); errno = EAGAIN; return (sem_t *)0; }
+    }
+    a = (SemAperto *)malloc(sizeof(SemAperto) + strlen(k) + 1);
+    if (!a) { munmap(z, 4096); mutex_lascia(&g_sem_m); errno = ENOMEM; return (sem_t *)0; }
+    strcpy(a->nome, k);
+    a->s = &z->s; a->quanti = 1;
+    a->succ = g_sem_aperti; g_sem_aperti = a;
+    mutex_lascia(&g_sem_m);
+    return a->s;
+}
+
+int sem_close(sem_t *s)
+{
+    SemAperto **pa, *a;
+
+    mutex_prendi(&g_sem_m);
+    for (pa = &g_sem_aperti; (a = *pa) != NULL; pa = &a->succ)
+        if (a->s == s) {
+            if (--a->quanti == 0) {
+                *pa = a->succ;
+                munmap((void *)a->s, 4096);
+                free(a);
+            }
+            mutex_lascia(&g_sem_m);
+            return 0;
+        }
+    mutex_lascia(&g_sem_m);
+    errno = EINVAL;
+    return -1;
+}
+
+int sem_unlink(const char *nome)
+{
+    char k[300];
+
+    if (!nome || !nome[0]) { errno = ENOENT; return -1; }
+    while (*nome == '/') nome++;
+    snprintf(k, sizeof(k), "/sem.%s", nome);
+    return shm_unlink(k);
+}
+
+/* =============================================================================
+ * System V IPC (0.373, voce 85): <sys/ipc.h>, <sys/shm.h>, <sys/sem.h>.
+ * A segment or a set is a named zone, "/sysvshm.<id>" or "/sysvsem.<id>":
+ * any process that knows the id finds it. A process holds a descriptor on
+ * every one it got or used (the zone lives while someone holds it), kept
+ * in g_sysv until IPC_RMID or the end. The first page of a zone is a header
+ * written by the creator, then "pronto"; the data of a segment follow it.
+ * ============================================================================= */
+/* as in lib/include/sys/ipc.h, shm.h, sem.h: THEY MUST MATCH */
+#ifndef EXOS_KEY_T
+#define EXOS_KEY_T
+typedef int key_t;
+#endif
+struct ipc_perm { key_t __key; uid_t uid; gid_t gid; uid_t cuid; gid_t cgid; unsigned short mode, __seq; };
+struct shmid_ds { struct ipc_perm shm_perm; size_t shm_segsz; time_t shm_atime, shm_dtime, shm_ctime;
+                  pid_t shm_cpid, shm_lpid; unsigned long shm_nattch; };
+struct sembuf   { unsigned short sem_num; short sem_op; short sem_flg; };
+struct semid_ds { struct ipc_perm sem_perm; time_t sem_otime, sem_ctime; unsigned long sem_nsems; };
+#define IPC_PRIVATE ((key_t)0)
+#define IPC_CREAT   01000
+#define IPC_EXCL    02000
+#define IPC_NOWAIT  04000
+#define IPC_RMID    0
+#define IPC_SET     1
+#define IPC_STAT    2
+#define SEM_UNDO    0x1000
+#define GETPID      11
+#define GETVAL      12
+#define GETALL      13
+#define GETNCNT     14
+#define GETZCNT     15
+#define SETVAL      16
+#define SETALL      17
+#define SEMVMX      32767
+#ifndef EIDRM
+#define EIDRM       43
+#endif
+#define SYSV_PAGINA 4096u
+#define SYSV_MAGICO_SHM 0x53484D31
+#define SYSV_MAGICO_SEM 0x53454D31
+
+typedef struct {
+    int            magico;
+    volatile int   pronto, rimosso;
+    unsigned int   modo, cuid, cgid;
+    int            cpid, lpid;
+    volatile int   nattch;
+    unsigned long  byte;            /* the segment's size, as asked */
+    long long      atime, dtime, ctime_;
+} SysvShmTesta;
+
+typedef struct {
+    volatile int val, pid, ncnt, zcnt;
+} SysvSem;
+
+typedef struct {
+    int            magico;
+    volatile int   pronto, rimosso;
+    unsigned int   modo, cuid, cgid;
+    int            nsem;
+    volatile int   lucchetto;
+    volatile int   turno;           /* moves at every change: the sleepers wait on it */
+    long long      otime, ctime_;
+    SysvSem        s[];
+} SysvSemTesta;
+
+typedef struct SysvTenuto {
+    struct SysvTenuto *succ;
+    int    id, sem, fd;
+    void  *base;                    /* a set: its mapping */
+    size_t lung;
+} SysvTenuto;
+
+typedef struct SysvAttacco {
+    struct SysvAttacco *succ;
+    char  *base;
+    size_t lung;
+    int    id;
+} SysvAttacco;
+
+typedef struct SysvAnnulla {
+    struct SysvAnnulla *succ;
+    int id, num, quanto;
+} SysvAnnulla;
+
+static SysvTenuto  *g_sysv;
+static SysvAttacco *g_sysv_att;
+static SysvAnnulla *g_sysv_ann;
+static volatile int g_sysv_m;
+
+key_t ftok(const char *percorso, int id)
+{
+    struct stat st;
+
+    if (stat(percorso, &st) != 0) return (key_t)-1;
+    return (key_t)(((unsigned)id & 0xFFu) << 24 | ((unsigned)st.st_dev & 0xFFu) << 16 |
+                   ((unsigned)st.st_ino & 0xFFFFu));
+}
+
+static void sysv_nome(char *k, int sem, int id)
+{
+    snprintf(k, 32, "/sysv%s.%d", sem ? "sem" : "shm", id);
+}
+
+static SysvTenuto *sysv_tenuto(int sem, int id)
+{
+    SysvTenuto *t;
+
+    for (t = g_sysv; t; t = t->succ) if (t->sem == sem && t->id == id) return t;
+    return (SysvTenuto *)0;
+}
+
+/* the header page (or the whole set) mapped; waits for "pronto" a little */
+static void *sysv_mappa(int fd, size_t lung)
+{
+    void *p = mmap(NULL, lung, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+
+    return p == MAP_FAILED ? (void *)0 : p;
+}
+
+static int sysv_aspetta_pronto(volatile int *pronto)
+{
+    unsigned giri;
+
+    for (giri = 0; !*pronto && giri < 2000; giri++) dormi_ms(1);
+    return *pronto;
+}
+
+/* get or make: the id, or -1 with errno. byte: what the zone must hold. */
+static int sysv_prendi(int sem, key_t chiave, int flag, size_t byte, int *creato, int *fd_out)
+{
+    char k[32];
+    int  id, fd = -1, giri;
+
+    *creato = 0;
+    if (chiave == IPC_PRIVATE) {
+        for (giri = 0; giri < 64 && fd < 0; giri++) {
+            id = (int)(((unsigned)uptime_ms() * 2654435761u ^ (unsigned)getpid() << 16 ^ (unsigned)giri * 40503u) & 0x7FFFFFFFu);
+            if (id == 0) continue;
+            sysv_nome(k, sem, id);
+            fd = shm_open(k, 2 | O_CREAT | 0x80, (mode_t)(flag & 0777));
+        }
+        if (fd < 0) return -1;
+        *creato = 1;
+    } else {
+        id = (int)((unsigned)chiave & 0x7FFFFFFFu);
+        if (id == 0) id = 1;
+        sysv_nome(k, sem, id);
+        if (flag & IPC_CREAT) {
+            fd = shm_open(k, 2 | O_CREAT | 0x80, (mode_t)(flag & 0777));
+            if (fd >= 0) *creato = 1;
+            else if (errno != EEXIST || (flag & IPC_EXCL)) return -1;
+        }
+        if (fd < 0 && (fd = shm_open(k, 2, 0)) < 0) return -1;
+    }
+    if (*creato && ftruncate(fd, (off_t)byte) != 0) { close(fd); return -1; }
+    *fd_out = fd;
+    return id;
+}
+
+static void sysv_tieni(int sem, int id, int fd, void *base, size_t lung)
+{
+    SysvTenuto *t = (SysvTenuto *)malloc(sizeof(SysvTenuto));
+
+    if (!t) return;                 /* the descriptor stays open: still held */
+    t->id = id; t->sem = sem; t->fd = fd; t->base = base; t->lung = lung;
+    t->succ = g_sysv; g_sysv = t;
+}
+
+int shmget(key_t chiave, size_t dim, int flag)
+{
+    SysvShmTesta *t;
+    SysvTenuto   *h;
+    struct stat   st;
+    int           id, fd, creato;
+
+    mutex_prendi(&g_sysv_m);
+    id = sysv_prendi(0, chiave, flag, SYSV_PAGINA + ((dim + SYSV_PAGINA - 1u) & ~(size_t)(SYSV_PAGINA - 1u)),
+                     &creato, &fd);
+    if (id < 0) { mutex_lascia(&g_sysv_m); return -1; }
+    if (creato && dim == 0) { close(fd); mutex_lascia(&g_sysv_m); errno = EINVAL; return -1; }
+    if (!creato) {      /* the creator may not have sized it yet */
+        unsigned giri;
+        for (giri = 0; fstat(fd, &st) == 0 && st.st_size == 0 && giri < 2000; giri++) dormi_ms(1);
+    }
+    if ((t = (SysvShmTesta *)sysv_mappa(fd, SYSV_PAGINA)) == NULL) { close(fd); mutex_lascia(&g_sysv_m); return -1; }
+    if (creato) {
+        t->magico = SYSV_MAGICO_SHM; t->byte = dim; t->modo = (unsigned)flag & 0777u;
+        t->cuid = (unsigned)getuid(); t->cgid = (unsigned)getgid(); t->cpid = getpid();
+        t->ctime_ = (long long)time(NULL);
+        __sync_synchronize();
+        t->pronto = 1;
+    } else if (!sysv_aspetta_pronto(&t->pronto) || t->magico != SYSV_MAGICO_SHM || dim > t->byte) {
+        int e = t->pronto && t->magico == SYSV_MAGICO_SHM ? EINVAL : EAGAIN;
+        munmap(t, SYSV_PAGINA); close(fd); mutex_lascia(&g_sysv_m); errno = e; return -1;
+    }
+    munmap(t, SYSV_PAGINA);
+    if ((h = sysv_tenuto(0, id)) != NULL) close(fd);    /* held already */
+    else sysv_tieni(0, id, fd, NULL, 0);
+    mutex_lascia(&g_sysv_m);
+    return id;
+}
+
+/* a descriptor on the zone of id: the one held, or opened (and held) */
+static int sysv_fd(int sem, int id)
+{
+    SysvTenuto *t = sysv_tenuto(sem, id);
+    char        k[32];
+    int         fd;
+
+    if (t) return t->fd;
+    sysv_nome(k, sem, id);
+    if ((fd = shm_open(k, 2, 0)) < 0) { errno = EINVAL; return -1; }
+    sysv_tieni(sem, id, fd, NULL, 0);
+    return fd;
+}
+
+void *shmat(int id, const void *dove, int flag)
+{
+    SysvShmTesta *t;
+    SysvAttacco  *a;
+    struct stat   st;
+    char         *p;
+    int           fd;
+
+    (void)dove; (void)flag;     /* the kernel chooses the address; SHM_RDONLY maps it writable */
+    mutex_prendi(&g_sysv_m);
+    if ((fd = sysv_fd(0, id)) < 0 || fstat(fd, &st) != 0 || st.st_size <= (off_t)SYSV_PAGINA) {
+        mutex_lascia(&g_sysv_m); errno = EINVAL; return (void *)-1;
+    }
+    p = (char *)sysv_mappa(fd, (size_t)st.st_size);
+    a = (SysvAttacco *)malloc(sizeof(SysvAttacco));
+    if (!p || !a) {
+        if (p) munmap(p, (size_t)st.st_size);
+        free(a); mutex_lascia(&g_sysv_m); errno = ENOMEM; return (void *)-1;
+    }
+    t = (SysvShmTesta *)p;
+    if (t->rimosso) { munmap(p, (size_t)st.st_size); free(a); mutex_lascia(&g_sysv_m); errno = EIDRM; return (void *)-1; }
+    __sync_fetch_and_add(&t->nattch, 1);
+    t->lpid = getpid(); t->atime = (long long)time(NULL);
+    a->base = p; a->lung = (size_t)st.st_size; a->id = id;
+    a->succ = g_sysv_att; g_sysv_att = a;
+    mutex_lascia(&g_sysv_m);
+    return p + SYSV_PAGINA;
+}
+
+int shmdt(const void *dove)
+{
+    SysvAttacco **pa, *a;
+
+    mutex_prendi(&g_sysv_m);
+    for (pa = &g_sysv_att; (a = *pa) != NULL; pa = &a->succ)
+        if (a->base + SYSV_PAGINA == (const char *)dove) {
+            SysvShmTesta *t = (SysvShmTesta *)a->base;
+
+            __sync_fetch_and_sub(&t->nattch, 1);
+            t->lpid = getpid(); t->dtime = (long long)time(NULL);
+            *pa = a->succ;
+            munmap(a->base, a->lung);
+            free(a);
+            mutex_lascia(&g_sysv_m);
+            return 0;
+        }
+    mutex_lascia(&g_sysv_m);
+    errno = EINVAL;
+    return -1;
+}
+
+/* IPC_RMID: marked, and this process lets its descriptor go; the zone goes
+ * with the last holder (<sys/ipc.h>) */
+static void sysv_lascia(int sem, int id)
+{
+    SysvTenuto **pt, *t;
+    char         k[32];
+
+    for (pt = &g_sysv; (t = *pt) != NULL; pt = &t->succ)
+        if (t->sem == sem && t->id == id) {
+            *pt = t->succ;
+            if (t->base) munmap(t->base, t->lung);
+            close(t->fd);
+            free(t);
+            break;
+        }
+    sysv_nome(k, sem, id);
+    shm_unlink(k);
+}
+
+int shmctl(int id, int cmd, struct shmid_ds *buf)
+{
+    SysvShmTesta *t;
+    int           fd, r = 0;
+
+    mutex_prendi(&g_sysv_m);
+    if ((fd = sysv_fd(0, id)) < 0 || (t = (SysvShmTesta *)sysv_mappa(fd, SYSV_PAGINA)) == NULL) {
+        mutex_lascia(&g_sysv_m); errno = EINVAL; return -1;
+    }
+    switch (cmd) {
+    case IPC_STAT:
+        if (!buf) { r = -1; errno = EFAULT; break; }
+        memset(buf, 0, sizeof(*buf));
+        buf->shm_perm.__key = id; buf->shm_perm.uid = buf->shm_perm.cuid = t->cuid;
+        buf->shm_perm.gid = buf->shm_perm.cgid = t->cgid; buf->shm_perm.mode = (unsigned short)t->modo;
+        buf->shm_segsz = t->byte; buf->shm_atime = t->atime; buf->shm_dtime = t->dtime;
+        buf->shm_ctime = t->ctime_; buf->shm_cpid = t->cpid; buf->shm_lpid = t->lpid;
+        buf->shm_nattch = (unsigned long)(t->nattch > 0 ? t->nattch : 0);
+        break;
+    case IPC_SET:
+        if (!buf) { r = -1; errno = EFAULT; break; }
+        t->modo = buf->shm_perm.mode & 0777u; t->ctime_ = (long long)time(NULL);
+        break;
+    case IPC_RMID:
+        t->rimosso = 1;
+        munmap(t, SYSV_PAGINA); t = NULL;
+        sysv_lascia(0, id);
+        break;
+    default:
+        r = -1; errno = EINVAL;
+    }
+    if (t) munmap(t, SYSV_PAGINA);
+    mutex_lascia(&g_sysv_m);
+    return r;
+}
+
+/* --- the semaphores ------------------------------------------------------- */
+static size_t sysv_sem_byte(int n)
+{
+    size_t b = sizeof(SysvSemTesta) + (size_t)n * sizeof(SysvSem);
+
+    return (b + SYSV_PAGINA - 1u) & ~(size_t)(SYSV_PAGINA - 1u);
+}
+
+/* the set of id, mapped once per process */
+static SysvSemTesta *sysv_insieme(int id)
+{
+    SysvTenuto   *t;
+    SysvSemTesta *z;
+    struct stat   st;
+    int           fd;
+
+    if ((t = sysv_tenuto(1, id)) != NULL && t->base) return (SysvSemTesta *)t->base;
+    if ((fd = sysv_fd(1, id)) < 0 || fstat(fd, &st) != 0 || st.st_size == 0) { errno = EINVAL; return NULL; }
+    if ((z = (SysvSemTesta *)sysv_mappa(fd, (size_t)st.st_size)) == NULL) return NULL;
+    if (!sysv_aspetta_pronto(&z->pronto) || z->magico != SYSV_MAGICO_SEM) {
+        munmap(z, (size_t)st.st_size); errno = EINVAL; return NULL;
+    }
+    t = sysv_tenuto(1, id);
+    if (t) { t->base = z; t->lung = (size_t)st.st_size; }
+    return z;
+}
+
+static void sysv_chiudi_insieme(SysvSemTesta *z)
+{
+    while (mutex_cmpxchg(&z->lucchetto, 0, 1) != 0) sched_yield();
+}
+static void sysv_apri_insieme(SysvSemTesta *z)
+{
+    __sync_synchronize();
+    z->lucchetto = 0;
+}
+
+/* a change: the turn moves and every sleeper looks again */
+static void sysv_sveglia(SysvSemTesta *z)
+{
+    __sync_fetch_and_add(&z->turno, 1);
+    _syscall2(SYS_ATTESA_SVEGLIA_COMUNE, (uintptr_t)&z->turno, 0);
+}
+
+int semget(key_t chiave, int quanti, int flag)
+{
+    SysvSemTesta *z;
+    struct stat   st;
+    int           id, fd, creato;
+    size_t        b;
+
+    if (quanti < 0 || quanti > 32000) { errno = EINVAL; return -1; }
+    mutex_prendi(&g_sysv_m);
+    b = sysv_sem_byte(quanti > 0 ? quanti : 1);
+    id = sysv_prendi(1, chiave, flag, b, &creato, &fd);
+    if (id < 0) { mutex_lascia(&g_sysv_m); return -1; }
+    if (creato && quanti == 0) { close(fd); mutex_lascia(&g_sysv_m); errno = EINVAL; return -1; }
+    if (!creato) {
+        unsigned giri;
+        for (giri = 0; fstat(fd, &st) == 0 && st.st_size == 0 && giri < 2000; giri++) dormi_ms(1);
+        if (fstat(fd, &st) != 0 || st.st_size == 0) { close(fd); mutex_lascia(&g_sysv_m); errno = EAGAIN; return -1; }
+        b = (size_t)st.st_size;
+    }
+    if ((z = (SysvSemTesta *)sysv_mappa(fd, b)) == NULL) { close(fd); mutex_lascia(&g_sysv_m); return -1; }
+    if (creato) {
+        z->magico = SYSV_MAGICO_SEM; z->nsem = quanti; z->modo = (unsigned)flag & 0777u;
+        z->cuid = (unsigned)getuid(); z->cgid = (unsigned)getgid(); z->ctime_ = (long long)time(NULL);
+        __sync_synchronize();
+        z->pronto = 1;
+    } else if (!sysv_aspetta_pronto(&z->pronto) || z->magico != SYSV_MAGICO_SEM || quanti > z->nsem) {
+        int e = z->pronto && z->magico == SYSV_MAGICO_SEM ? EINVAL : EAGAIN;
+        munmap(z, b); close(fd); mutex_lascia(&g_sysv_m); errno = e; return -1;
+    }
+    if (sysv_tenuto(1, id)) { munmap(z, b); close(fd); }
+    else sysv_tieni(1, id, fd, z, b);
+    mutex_lascia(&g_sysv_m);
+    return id;
+}
+
+/* SEM_UNDO: what this process took, given back at a normal exit */
+static void sysv_annulla_tutto(void)
+{
+    SysvAnnulla *a;
+
+    for (a = g_sysv_ann; a; a = a->succ) {
+        SysvSemTesta *z;
+
+        if (a->quanto == 0 || (z = sysv_insieme(a->id)) == NULL || a->num >= z->nsem) continue;
+        sysv_chiudi_insieme(z);
+        z->s[a->num].val += a->quanto;
+        if (z->s[a->num].val < 0) z->s[a->num].val = 0;
+        if (z->s[a->num].val > SEMVMX) z->s[a->num].val = SEMVMX;
+        sysv_apri_insieme(z);
+        sysv_sveglia(z);
+    }
+}
+
+static void sysv_annota(int id, int num, int op)
+{
+    static int registrato;
+    SysvAnnulla *a;
+
+    for (a = g_sysv_ann; a; a = a->succ) if (a->id == id && a->num == num) { a->quanto -= op; return; }
+    if ((a = (SysvAnnulla *)malloc(sizeof(SysvAnnulla))) == NULL) return;
+    a->id = id; a->num = num; a->quanto = -op;
+    a->succ = g_sysv_ann; g_sysv_ann = a;
+    if (!registrato) { registrato = 1; atexit(sysv_annulla_tutto); }
+}
+
+int semtimedop(int id, struct sembuf *op, size_t n, const struct timespec *t)
+{
+    SysvSemTesta *z;
+    unsigned int  fine = 0;
+    size_t        i;
+    void         *pf;
+
+    if (!op || n == 0) { errno = EINVAL; return -1; }
+    if (t) {
+        long long ms = (long long)t->tv_sec * 1000ll + (t->tv_nsec + 999999l) / 1000000l;
+        if (t->tv_sec < 0 || t->tv_nsec < 0 || t->tv_nsec > 999999999l) { errno = EINVAL; return -1; }
+        fine = uptime_ms() + (unsigned)(ms > 0x7FFFFFFFll ? 0x7FFFFFFF : ms);
+    }
+    mutex_prendi(&g_sysv_m);
+    z = sysv_insieme(id);
+    mutex_lascia(&g_sysv_m);
+    if (!z) return -1;
+    for (i = 0; i < n; i++) if (op[i].sem_num >= (unsigned)z->nsem) { errno = EFBIG; return -1; }
+    pf = punto_entra();
+    for (;;) {
+        int    turno, cambia = 0;
+        size_t chi = n;
+        long   r;
+
+        sysv_chiudi_insieme(z);
+        if (z->rimosso) { sysv_apri_insieme(z); punto_esci(pf); errno = EIDRM; return -1; }
+        for (i = 0; i < n && chi == n; i++) {
+            int v = z->s[op[i].sem_num].val, k;
+            size_t j;
+
+            for (j = 0; j < i; j++) if (op[j].sem_num == op[i].sem_num) v += op[j].sem_op;  /* earlier ops of this call */
+            k = op[i].sem_op;
+            if ((k < 0 && v + k < 0) || (k == 0 && v != 0)) chi = i;
+            else if (k > 0 && v + k > SEMVMX) { sysv_apri_insieme(z); punto_esci(pf); errno = ERANGE; return -1; }
+        }
+        if (chi == n) {
+            for (i = 0; i < n; i++) {
+                SysvSem *s = &z->s[op[i].sem_num];
+
+                s->val += op[i].sem_op;
+                s->pid  = getpid();
+                if (op[i].sem_op) cambia = 1;
+                if ((op[i].sem_flg & SEM_UNDO) && op[i].sem_op) sysv_annota(id, op[i].sem_num, op[i].sem_op);
+            }
+            z->otime = (long long)time(NULL);
+            sysv_apri_insieme(z);
+            if (cambia) sysv_sveglia(z);
+            punto_esci(pf);
+            return 0;
+        }
+        if (op[chi].sem_flg & IPC_NOWAIT) { sysv_apri_insieme(z); punto_esci(pf); errno = EAGAIN; return -1; }
+        if (op[chi].sem_op < 0) z->s[op[chi].sem_num].ncnt++; else z->s[op[chi].sem_num].zcnt++;
+        turno = z->turno;
+        sysv_apri_insieme(z);
+        {
+            unsigned ms = 0;
+
+            if (t) {
+                unsigned ora = uptime_ms();
+                ms = (int)(fine - ora) > 0 ? fine - ora : 0;
+            }
+            r = (t && ms == 0) ? -ETIMEDOUT
+                               : _syscall3(pn(SYS_ATTESA_DORMI_COMUNE), (uintptr_t)&z->turno, (uint32_t)turno, ms);
+        }
+        sysv_chiudi_insieme(z);
+        if (op[chi].sem_op < 0) z->s[op[chi].sem_num].ncnt--; else z->s[op[chi].sem_num].zcnt--;
+        sysv_apri_insieme(z);
+        if (r == -EINTR) { punto_esci(pf); errno = EINTR; return -1; }
+        if (t && (r == -ETIMEDOUT || (int)(uptime_ms() - fine) >= 0)) { punto_esci(pf); errno = EAGAIN; return -1; }
+    }
+}
+
+int semop(int id, struct sembuf *op, size_t n) { return semtimedop(id, op, n, (const struct timespec *)0); }
+
+int semctl(int id, int num, int cmd, ...)
+{
+    union { int val; struct semid_ds *buf; unsigned short *array; } arg;
+    __builtin_va_list ap;
+    SysvSemTesta *z;
+    int           i, r = 0;
+
+    __builtin_va_start(ap, cmd);
+    arg.buf = (struct semid_ds *)0;
+    if (cmd == SETVAL) arg.val = __builtin_va_arg(ap, int);
+    else if (cmd == IPC_STAT || cmd == IPC_SET || cmd == GETALL || cmd == SETALL)
+        arg.buf = __builtin_va_arg(ap, struct semid_ds *);
+    __builtin_va_end(ap);
+
+    mutex_prendi(&g_sysv_m);
+    z = sysv_insieme(id);
+    if (!z) { mutex_lascia(&g_sysv_m); return -1; }
+    if ((cmd == GETVAL || cmd == SETVAL || cmd == GETPID || cmd == GETNCNT || cmd == GETZCNT) &&
+        (num < 0 || num >= z->nsem)) { mutex_lascia(&g_sysv_m); errno = EINVAL; return -1; }
+    sysv_chiudi_insieme(z);
+    switch (cmd) {
+    case GETVAL:  r = z->s[num].val;  break;
+    case GETPID:  r = z->s[num].pid;  break;
+    case GETNCNT: r = z->s[num].ncnt; break;
+    case GETZCNT: r = z->s[num].zcnt; break;
+    case SETVAL:
+        if (arg.val < 0 || arg.val > SEMVMX) { r = -1; errno = ERANGE; break; }
+        z->s[num].val = arg.val; z->ctime_ = (long long)time(NULL);
+        break;
+    case GETALL:
+        if (!arg.array) { r = -1; errno = EFAULT; break; }
+        for (i = 0; i < z->nsem; i++) arg.array[i] = (unsigned short)z->s[i].val;
+        break;
+    case SETALL:
+        if (!arg.array) { r = -1; errno = EFAULT; break; }
+        for (i = 0; i < z->nsem; i++) {
+            if (arg.array[i] > SEMVMX) { r = -1; errno = ERANGE; break; }
+            z->s[i].val = arg.array[i];
+        }
+        z->ctime_ = (long long)time(NULL);
+        break;
+    case IPC_STAT:
+        if (!arg.buf) { r = -1; errno = EFAULT; break; }
+        memset(arg.buf, 0, sizeof(*arg.buf));
+        arg.buf->sem_perm.__key = id; arg.buf->sem_perm.uid = arg.buf->sem_perm.cuid = z->cuid;
+        arg.buf->sem_perm.gid = arg.buf->sem_perm.cgid = z->cgid;
+        arg.buf->sem_perm.mode = (unsigned short)z->modo;
+        arg.buf->sem_otime = z->otime; arg.buf->sem_ctime = z->ctime_;
+        arg.buf->sem_nsems = (unsigned long)z->nsem;
+        break;
+    case IPC_SET:
+        if (!arg.buf) { r = -1; errno = EFAULT; break; }
+        z->modo = arg.buf->sem_perm.mode & 0777u; z->ctime_ = (long long)time(NULL);
+        break;
+    case IPC_RMID:
+        z->rimosso = 1;
+        break;
+    default:
+        r = -1; errno = EINVAL;
+    }
+    sysv_apri_insieme(z);
+    if (cmd == SETVAL || cmd == SETALL || cmd == IPC_RMID) sysv_sveglia(z);
+    if (cmd == IPC_RMID && r == 0) sysv_lascia(1, id);
+    mutex_lascia(&g_sysv_m);
+    return r;
+}
+
+/* =============================================================================
+ * inotify (0.373, voce 85): the kernel's FD_INOTIFY, see lib/include/sys/inotify.h.
+ * The descriptor is a kernel one: read, poll, close, dup, fork as any other.
+ * ============================================================================= */
+#define SYS_INOTIFY_CREA   289
+#define SYS_INOTIFY_GUARDA 290
+#define SYS_INOTIFY_TOGLI  291
+
+int inotify_init1(int flag)
+{
+    if (flag & ~(0x800 /* IN_NONBLOCK */ | 0x80000 /* IN_CLOEXEC */)) { errno = EINVAL; return -1; }
+    return (int)err_posix(_syscall1(SYS_INOTIFY_CREA, (uint32_t)flag));
+}
+int inotify_init(void) { return inotify_init1(0); }
+
+int inotify_add_watch(int fd, const char *percorso, uint32_t mask)
+{
+    if (!percorso) { errno = EFAULT; return -1; }
+    return (int)err_posix(_syscall3(SYS_INOTIFY_GUARDA, (uint32_t)fd, (uintptr_t)percorso, mask));
+}
+
+int inotify_rm_watch(int fd, int wd)
+{
+    return (int)err_posix(_syscall2(SYS_INOTIFY_TOGLI, (uint32_t)fd, (uint32_t)wd));
+}
+
 #endif /* !EXOS_LIBC_SO: i socket */
 
 #ifndef EXOS_LIBC_SO
@@ -18469,10 +19590,16 @@ int setpgid(int pid, int pgid)
 
 /* ! NO SYSCALL TELLS THE PENDING SIGNALS, so sigpending says none (17
  * October 2026, libgit2's process.c, which only asks before a sigwait). */
+/* sigpending (0.373): SYS_SEG_MASCHERA with SEG_MASCHERA_PENDENTI. Before
+ * that kernel there was no way to know, and it said none, as until then. */
 int sigpending(sigset_t *s)
 {
+    uint32_t m = 0;
+    int32_t  r;
+
     if (!s) { errno = EFAULT; return -1; }
-    *s = 0;
+    r = _syscall3(SYS_SEG_MASCHERA, 0x100u /* SEG_MASCHERA_PENDENTI */, 0, (uintptr_t)&m);
+    *s = r == 0 ? (sigset_t)m : 0;
     return 0;
 }
 
@@ -18566,15 +19693,26 @@ int pause(void)
  * disabled". SYS_STATFS (kernel 0.372) gives the volume's real counts.
  * ============================================================================= */
 #define SYS_STATFS 284
+#define VFS_SPAZIO_TIPO 0x53505A02u     /* kernel 0.373: tipo filled in too */
 typedef struct {                        /* VfsSpazio, kernel/include/vfs.h */
     uint32_t dim_blocco, blocchi, liberi, disponibili, inode, inode_liberi,
              sola_lettura, nome_max;
+    uint32_t tipo;                      /* Linux's f_type; 0 from a 0.372 kernel */
 } StatfsK;
+
+/* ! k.tipo stays 0 with a kernel of 0.372: it does not know the fourth
+ * argument and writes the struct without the field */
+static int statfs_k(const char *percorso, int fd, StatfsK *k)
+{
+    memset(k, 0, sizeof(*k));
+    return _syscall4(SYS_STATFS, (uintptr_t)percorso, (uint32_t)fd, (uintptr_t)k,
+                     VFS_SPAZIO_TIPO);
+}
 
 static int statvfs_da(const char *percorso, int fd, struct statvfs *v)
 {
     StatfsK k;
-    int32_t r = _syscall3(SYS_STATFS, (uintptr_t)percorso, (uint32_t)fd, (uintptr_t)&k);
+    int32_t r = statfs_k(percorso, fd, &k);
 
     if (r == -ENOSYS) {
         /* a kernel before 0.372 (netupdate puts the libc in at once, the
@@ -18611,6 +19749,59 @@ int fstatvfs(int fd, struct statvfs *v)
 {
     if (!v) { errno = EFAULT; return -1; }
     return statvfs_da(NULL, fd, v);
+}
+
+/* -----------------------------------------------------------------------------
+ * statfs, fstatfs: Linux's form, with f_type (voce 103, 27/11/2026: Gecko 161
+ * checks with it that a font file is not on tmpfs, /proc or sysfs). The
+ * layout of <sys/vfs.h>. From a 0.372 kernel f_type is 0 ("unknown"), and the
+ * rest the same as statvfs.
+ * ----------------------------------------------------------------------------- */
+struct statfs {
+    long          f_type, f_bsize;
+    unsigned long f_blocks, f_bfree, f_bavail, f_files, f_ffree;
+    struct { int __val[2]; } f_fsid;
+    long          f_namelen, f_frsize, f_flags, f_spare[4];
+};
+
+static int statfs_da(const char *percorso, int fd, struct statfs *v)
+{
+    StatfsK k;
+    int32_t r = statfs_k(percorso, fd, &k);
+
+    if (r == -ENOSYS) {                 /* a kernel before 0.372: as statvfs did */
+        struct stat st;
+
+        if ((percorso ? stat(percorso, &st) : fstat(fd, &st)) < 0) return -1;
+        memset(v, 0, sizeof(*v));
+        v->f_bsize = v->f_frsize = 4096; v->f_namelen = 255;
+        return 0;
+    }
+    if (r < 0) { errno = -r; return -1; }
+    memset(v, 0, sizeof(*v));
+    v->f_type    = (long)k.tipo;
+    v->f_bsize   = (long)k.dim_blocco;
+    v->f_frsize  = (long)k.dim_blocco;
+    v->f_blocks  = k.blocchi;
+    v->f_bfree   = k.liberi;
+    v->f_bavail  = k.disponibili;
+    v->f_files   = k.inode;
+    v->f_ffree   = k.inode_liberi;
+    v->f_namelen = (long)k.nome_max;
+    v->f_flags   = k.sola_lettura ? 1 : 0;    /* ST_RDONLY */
+    return 0;
+}
+
+int statfs(const char *percorso, struct statfs *v)
+{
+    if (!percorso || !v) { errno = EFAULT; return -1; }
+    return statfs_da(percorso, -1, v);
+}
+
+int fstatfs(int fd, struct statfs *v)
+{
+    if (!v) { errno = EFAULT; return -1; }
+    return statfs_da(NULL, fd, v);
 }
 
 /* -----------------------------------------------------------------------------
@@ -18776,6 +19967,15 @@ int asprintf(char **out, const char *fmt, ...)
 }
 
 void bzero(void *p, size_t n) { memset(p, 0, n); }
+
+/* explicit_bzero (27/11/2026, Botan in Thunderbird): a clear the compiler
+ * cannot drop as a dead store - keys and passwords leave no copy behind.
+ * The asm says the memory is read after the memset. */
+void explicit_bzero(void *p, size_t n)
+{
+    memset(p, 0, n);
+    __asm__ __volatile__("" : : "r"(p) : "memory");
+}
 
 /* =============================================================================
  * clock_nanosleep, strerror_l (19 November 2026, voce 105: VLC's POSIX

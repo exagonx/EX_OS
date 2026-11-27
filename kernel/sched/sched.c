@@ -21,6 +21,7 @@
 #include "pipe.h"
 #include "pty.h"
 #include "shmfd.h"     /* FD_SHM at exit (0.358) */
+#include "inotify.h"   /* FD_INOTIFY at exit (0.373) */
 #include "paging.h"
 #include "kmalloc.h"
 #include "gdt.h"
@@ -793,6 +794,9 @@ static void proc_chiudi_fd(Process *p)
                 break;
             case FD_SHM:            /* memory that is a descriptor (0.358) */
                 shmfd_chiudi_locked((int)FDV(p, fd).inode);
+                break;
+            case FD_INOTIFY:        /* 0.373 */
+                inotify_chiudi_locked((int)FDV(p, fd).inode);
                 break;
             case FD_UNIX:           /* its two pipes (0.358) */
                 pipe_chiudi_lettore_locked((int)FDV(p, fd).inode);
@@ -2755,6 +2759,65 @@ void proc_attesa_togli(Process *p)
     else                        g_attesa_coda[s] = p->attesa_prec;
     p->attesa_succ = p->attesa_prec = NULL;
     p->attesa_secchio = 0;
+}
+
+/* (0.373) the waits between processes: one more "group", ATTESA_COMUNE in
+ * place of a tgid, and the physical address folded into the bucket's key */
+static uint32_t attesa_secchio_fis(paddr_t fis)
+{
+    return attesa_secchio_di(0xFFFFFFFFu, (uint32_t)fis ^ (uint32_t)((uint64_t)fis >> 32));
+}
+
+void proc_attesa_metti_comune(Process *p, paddr_t fis)
+{
+    uint32_t s;
+
+    p->attesa_dove = ATTESA_COMUNE;
+    p->attesa_fis  = fis;
+    if (g_attesa == NULL) return;
+    proc_attesa_togli(p);
+    s = attesa_secchio_fis(fis);
+    p->attesa_succ = NULL;
+    p->attesa_prec = g_attesa_coda[s];
+    if (p->attesa_prec != NULL) p->attesa_prec->attesa_succ = p;
+    else                        g_attesa[s] = p;
+    g_attesa_coda[s]  = p;
+    p->attesa_secchio = s + 1u;
+}
+
+int proc_attesa_sveglia_comune(paddr_t fis, int quanti)
+{
+    uint32_t i;
+    int      svegliati = 0;
+
+    if (g_attesa != NULL) {
+        Process *p = g_attesa[attesa_secchio_fis(fis)], *dopo;
+
+        for (; p != NULL; p = dopo) {
+            dopo = p->attesa_succ;
+            if (quanti > 0 && svegliati >= quanti) break;
+            if (p->attesa_dove != ATTESA_COMUNE || p->attesa_fis != fis) continue;
+            if (p->state != PROC_BLOCKED) continue;
+            proc_attesa_togli(p);
+            p->attesa_dove = 0;
+            p->block_until = 0;
+            sched_unblock_locked(p->pid);
+            svegliati++;
+        }
+        return svegliati;
+    }
+    for (i = 0; i < g_proc_posti; i++) {
+        Process *p = PROC_POSTO(i);
+
+        if (quanti > 0 && svegliati >= quanti) break;
+        if (p->state != PROC_BLOCKED || p->attesa_dove != ATTESA_COMUNE) continue;
+        if (p->attesa_fis != fis) continue;
+        p->attesa_dove = 0;
+        p->block_until = 0;
+        sched_unblock_locked(p->pid);
+        svegliati++;
+    }
+    return svegliati;
 }
 
 int proc_attesa_sveglia(uint32_t dove, int quanti)

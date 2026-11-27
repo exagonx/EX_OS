@@ -67,6 +67,8 @@ fi
 export LLVM_OBJDUMP="${LLVM_OBJDUMP:-$(command -v llvm-objdump || command -v llvm-objdump-14 || echo "$B/costruzione-strumenti/mozclang/clang/bin/llvm-objdump")}"
 export MACH_NO_TERMINAL_FOOTER=1 MOZ_NOSPAM=1
 mkdir -p "$MOZBUILD_STATE_PATH" "${EXOS_FUORI}/cross_build/exilla-obj"
-cd firefox-main || exit 1
+# EXILLA_ALBERO: the source tree (default firefox-main; Thunderbird uses
+# thunderbird-main, tools/thunderbird-exos/costruisci.sh)
+cd "${EXILLA_ALBERO:-firefox-main}" || exit 1
 [ $# -eq 0 ] && set -- configure
 exec ./mach "$@"

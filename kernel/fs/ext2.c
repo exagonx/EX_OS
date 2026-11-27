@@ -735,7 +735,8 @@ static int ext2_registra(const Ext2Ops *ops)
         return -1;
     }
     if (!ops->create || !ops->chown || !ops->chmod || !ops->mkdir || !ops->rmdir ||
-        !ops->unlink || !ops->rename || !ops->write || !ops->truncate || !ops->sync)
+        !ops->unlink || !ops->rename || !ops->write || !ops->truncate || !ops->sync ||
+        !ops->tempi)
         return -1;
 
     g_ops = ops;
@@ -1282,6 +1283,9 @@ int ext2_write(int mnt, const char *p, const void *buf, uint32_t size, uint32_t 
 
 int ext2_truncate(int mnt, const char *p, uint32_t nuova_dim)
 { VIA_MODULO(truncate(mnt, p, nuova_dim)); }
+
+int ext2_tempi(int mnt, const char *p, uint32_t atime, uint32_t mtime, uint32_t quali)
+{ VIA_MODULO(tempi(mnt, p, atime, mtime, quali)); }
 
 #undef VIA_MODULO
 #undef VIA_NOMI

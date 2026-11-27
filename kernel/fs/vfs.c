@@ -90,6 +90,8 @@
 #include "kmalloc.h"
 #include "rtc.h"      /* rtc_utc_da_locale: FAT dates are local (0.340) */
 #include "tsc.h"      /* how long the lock is held, to the ms (0.364) */
+#include "inotify.h"  /* who watches what changes (0.373) */
+static void avvisa_attributi(const char *abs);
 
 /* Il kernel non ha una libreria di stringhe condivisa: ogni file definisce
  * i propri helper statici (vedi cfg_strcmp in fs/cfg.c, str_equal in
@@ -298,6 +300,10 @@ typedef struct {
      * fsync of the directory after creating a file in it, fchdir. read and
      * ftruncate give EISDIR, write EBADF; the rest is the same as a file. */
     uint8_t  cartella;
+    /* (0.373, inotify) 1 = this open created the file, 2 = O_TRUNC emptied
+     * it; scrivibile = opened to write (IN_CLOSE_WRITE at the last close) */
+    uint8_t  nuovo;
+    uint8_t  scrivibile;
     /* ! THE POSITION LIVES HERE, NOT IN THE PROCESS (0.326, voce 94): this
      * slot IS the POSIX open file description - every dup, dup2, spawn and
      * fork already shares it with vfs_dup. With the position in each
@@ -1831,6 +1837,8 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
     g_file_(slot).h12   = -1;
     g_file_(slot).orfano = 0;
     g_file_(slot).cartella = 0;
+    g_file_(slot).nuovo    = 0;
+    g_file_(slot).scrivibile = (flags & 3u) != O_RDONLY;
     g_file_(slot).posiz.pos = 0;
     g_file_(slot).posiz.di  = 0;
     v_copia(g_file_(slot).interno, interno, VFS_PATH_MAX);
@@ -1864,6 +1872,7 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
                                     vfs_uid_corrente(), vfs_gid_corrente());
                 if (r == -2) return apri_fallito(slot, ERR(EEXIST));
                 if (r != 0)  return apri_fallito(slot, ERR(EIO));
+                g_file_(slot).nuovo = 1;
             }
             if (ext2_stat(g_posto[im]->m.mnt, interno, &e) != 0)
                 return apri_fallito(slot, ERR(EIO));
@@ -1879,6 +1888,7 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
         } else if (flags & O_TRUNC) {
             if (ext2_truncate(g_posto[im]->m.mnt, interno, 0) != 0)
                 return apri_fallito(slot, ERR(EIO));
+            g_file_(slot).nuovo = 2;
         }
 
         if (e.is_dir) return apri_cartella(slot, flags);
@@ -1891,6 +1901,7 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
                 int r = fat_create(g_posto[im]->m.mnt, interno);
                 if (r == -2) return apri_fallito(slot, ERR(EEXIST));
                 if (r != 0)  return apri_fallito(slot, ERR(EIO));
+                g_file_(slot).nuovo = 1;
             }
             if (fat_stat(g_posto[im]->m.mnt, interno, &e) != 0)
                 return apri_fallito(slot, ERR(EIO));
@@ -1904,6 +1915,7 @@ static int apri_nl(const char *abs, uint32_t flags, int autorita)
         } else if (flags & O_TRUNC) {
             if (fat_truncate(g_posto[im]->m.mnt, interno, 0) != 0)
                 return apri_fallito(slot, ERR(EIO));
+            g_file_(slot).nuovo = 2;
         }
 
         if (e.is_dir) return apri_cartella(slot, flags);
@@ -2224,6 +2236,10 @@ static int stat_interno_fs(int im, const char *interno, VfsStat *st)
         st->sola_lettura = (g_posto[im]->m.sola_lettura || (e.attributi & 0x01u)) ? 1 : 0;
         st->data         = e.data;
         st->ora          = e.ora;
+        /* (0.373) the access date FAT keeps (a day, local): its midnight.
+         * Until then atime was always the mtime. */
+        if (e.data_accesso != 0)
+            st->atime = rtc_utc_da_locale(secondi_da_fat(e.data_accesso, 0));
 
         /* ! SU FAT IL PROPRIETARIO NON ESISTE, e si dice la verita': tutto e'
          * di root con permessi pieni. Su quei volumi chiunque puo' fare tutto,
@@ -2563,9 +2579,9 @@ static int modifica(const char *abs, int quale)
 
 /* Le tre passano tutte da `modifica`, quindi il lucchetto sta qui e non
  * dentro: un solo punto da guardare per sapere che sono serializzate. */
-int vfs_mkdir (const char *abs) { int r; fs_prendi_n("mkdir"); r = modifica(abs, 0); fs_rilascia(); return r; }
-int vfs_rmdir (const char *abs) { int r; fs_prendi_n("rmdir"); r = modifica(abs, 1); fs_rilascia(); return r; }
-int vfs_unlink(const char *abs) { int r; fs_prendi_n("unlink"); r = modifica(abs, 2); fs_rilascia(); return r; }
+int vfs_mkdir (const char *abs) { int r; fs_prendi_n("mkdir"); r = modifica(abs, 0); fs_rilascia(); if (r == 0) inotify_avvisa(abs, IN_CREATE | IN_ISDIR); return r; }
+int vfs_rmdir (const char *abs) { int r; fs_prendi_n("rmdir"); r = modifica(abs, 1); fs_rilascia(); if (r == 0) inotify_avvisa(abs, IN_DELETE | IN_ISDIR); return r; }
+int vfs_unlink(const char *abs) { int r; fs_prendi_n("unlink"); r = modifica(abs, 2); fs_rilascia(); if (r == 0) inotify_avvisa(abs, IN_DELETE); return r; }
 
 /* =============================================================================
  * vfs_rename — cambia il NOME di un file senza spostarne i dati
@@ -2717,6 +2733,11 @@ int vfs_rename(const char *da, const char *a)
     fs_prendi_n("rename");
     r = vfs_rename_nl(da, a);
     fs_rilascia();
+    if (r == 0 && inotify_attivo()) {
+        VfsStat st;
+
+        inotify_rinomina(da, a, vfs_stat(a, &st) == 0 && st.is_dir);
+    }
     return r;
 }
 
@@ -3040,7 +3061,7 @@ uint32_t vfs_gid_corrente(void)
  * su FAT vorrebbe dire che chi chiama crede di aver consegnato un file che
  * resta di chiunque: meglio un errore che dice la verita'.
  * ============================================================================= */
-int vfs_chown(const char *abs, uint32_t uid, uint32_t gid)
+static int vfs_chown_corpo(const char *abs, uint32_t uid, uint32_t gid)
 {
     char interno[VFS_PATH_MAX];
     int  im, r;
@@ -3058,6 +3079,14 @@ int vfs_chown(const char *abs, uint32_t uid, uint32_t gid)
     r = ext2_chown(g_posto[im]->m.mnt, interno, uid, gid);
     fs_rilascia();
     return (r == 0) ? 0 : ERR(EIO);
+}
+
+int vfs_chown(const char *abs, uint32_t uid, uint32_t gid)
+{
+    int r = vfs_chown_corpo(abs, uid, gid);
+
+    if (r == 0) avvisa_attributi(abs);
+    return r;
 }
 
 /* =============================================================================
@@ -3106,7 +3135,7 @@ int vfs_eseguibile(const char *abs)
     return vfs_permesso(&st, P_ESEGUI) ? 0 : ERR(EACCES);
 }
 
-int vfs_chmod(const char *abs, uint32_t modo)
+static int vfs_chmod_corpo(const char *abs, uint32_t modo)
 {
     char    interno[VFS_PATH_MAX];
     VfsStat st;
@@ -3145,6 +3174,14 @@ int vfs_chmod(const char *abs, uint32_t modo)
     return (r == 0) ? 0 : ERR(EIO);
 }
 
+int vfs_chmod(const char *abs, uint32_t modo)
+{
+    int r = vfs_chmod_corpo(abs, modo);
+
+    if (r == 0) avvisa_attributi(abs);
+    return r;
+}
+
 int vfs_radice_ext2(void)
 {
     /* Il sistema di base e' ext2 ma non ha utenti: e' un ripiego, come il
@@ -3153,9 +3190,79 @@ int vfs_radice_ext2(void)
     return g_posto[0]->m.usato && g_posto[0]->m.tipo == VFS_FS_EXT2;
 }
 
+/* =============================================================================
+ * inotify (0.373): what changed, told after it worked (kernel/include/inotify.h)
+ * Nothing is built while nobody watches: inotify_attivo() first.
+ * ============================================================================= */
+
+/* the absolute path of an open file - mount point + its path inside, the
+ * subtree of the mount taken off - in a kmalloc'd buffer; NULL when nobody
+ * watches, or it has no name now (deleted while open). Under the lock. */
+static char *percorso_h_nl(int h)
+{
+    const VfsPosto *m;
+    const char     *resto;
+    char           *p;
+    uint32_t        lp, ls;
+
+    if (!inotify_attivo() || !VFS_H_VALIDO(h) || !g_file_(h).usato || g_file_(h).orfano) return NULL;
+    if (g_file_(h).im < 0 || !g_posto[g_file_(h).im]->m.usato) return NULL;
+    m     = g_posto[g_file_(h).im];
+    resto = g_file_(h).interno;
+    ls    = v_len(m->sotto);
+    if (ls && v_len(resto) >= ls) resto += ls;
+    if (resto[0] == '/' && resto[1] == '\0') resto++;
+    if ((p = (char *)kmalloc(2u * VFS_PATH_MAX + 2u)) == NULL) return NULL;
+    lp = v_len(m->m.punto);
+    if (lp == 1 && m->m.punto[0] == '/') lp = 0;
+    v_copia(p, m->m.punto, VFS_PATH_MAX);
+    p[lp] = 0;
+    if (resto[0] && resto[0] != '/') p[lp++] = '/';
+    v_copia(p + lp, resto, VFS_PATH_MAX);
+    if (p[0] == 0) { p[0] = '/'; p[1] = 0; }
+    return p;
+}
+
+/* the change of an open file (write, ftruncate, futimens) */
+static void avvisa_h(char *p, uint32_t mask)
+{
+    if (p == NULL) return;
+    inotify_avvisa(p, mask);
+    kfree(p);
+}
+
+/* attributes: the parent says IN_ISDIR for a directory */
+static void avvisa_attributi(const char *abs)
+{
+    VfsStat st;
+
+    if (!inotify_attivo() || abs == NULL) return;
+    inotify_avvisa(abs, IN_ATTRIB | ((vfs_stat(abs, &st) == 0 && st.is_dir) ? IN_ISDIR : 0u));
+}
+
+/* a slot just opened is ours alone (no descriptor names it yet): read
+ * after the lock went */
+static int avvisa_aperto(int h, const char *abs)
+{
+    if (h < 0 || !inotify_attivo()) return h;
+    if      (g_file_(h).nuovo == 1) inotify_avvisa(abs, IN_CREATE);
+    else if (g_file_(h).nuovo == 2) inotify_avvisa(abs, IN_MODIFY);
+    inotify_avvisa(abs, IN_OPEN | (g_file_(h).cartella ? IN_ISDIR : 0u));
+    return h;
+}
+
+/* the last close of a description: IN_CLOSE_WRITE or _NOWRITE */
+static char *chiusura_nl(int h, uint32_t *ev)
+{
+    if (!inotify_attivo() || !VFS_H_VALIDO(h) || !g_file_(h).usato || g_file_(h).rif != 1) return NULL;
+    *ev = (g_file_(h).scrivibile ? IN_CLOSE_WRITE : IN_CLOSE_NOWRITE) |
+          (g_file_(h).cartella ? IN_ISDIR : 0u);
+    return percorso_h_nl(h);
+}
+
 int vfs_open(const char *abs, uint32_t flags)
 {
-    int r; fs_prendi_n("open"); r = apri_nl(abs, flags, 0); fs_rilascia(); return r;
+    int r; fs_prendi_n("open"); r = apri_nl(abs, flags, 0); fs_rilascia(); return avvisa_aperto(r, abs);
 }
 
 /* L'apertura senza controllo dei permessi. La usa `sys_su` e nient'altro; se
@@ -3163,7 +3270,7 @@ int vfs_open(const char *abs, uint32_t flags)
  * attenzione — qui dentro non c'e' piu' niente che protegga il file. */
 int vfs_open_autorita(const char *abs, uint32_t flags)
 {
-    int r; fs_prendi_n("open"); r = apri_nl(abs, flags, 1); fs_rilascia(); return r;
+    int r; fs_prendi_n("open"); r = apri_nl(abs, flags, 1); fs_rilascia(); return avvisa_aperto(r, abs);
 }
 
 /* ! A BIG READ IS SEVERAL TURNS OF THE LOCK (kernel 0.360, voce 117). Firefox
@@ -3193,22 +3300,41 @@ int vfs_read(int h, void *buf, uint32_t size, uint32_t offset)
 
 int vfs_write(int h, const void *buf, uint32_t size, uint32_t offset)
 {
-    int r; fs_prendi_n("write"); g_fs_byte = size; r = vfs_write_nl(h, buf, size, offset); fs_rilascia(); return r;
+    char *p = NULL;
+    int   r;
+
+    fs_prendi_n("write"); g_fs_byte = size; r = vfs_write_nl(h, buf, size, offset);
+    if (r > 0) p = percorso_h_nl(h);
+    fs_rilascia();
+    avvisa_h(p, IN_MODIFY);
+    return r;
 }
 
 int vfs_close(int h)
 {
-    int r; fs_prendi_n("close"); r = vfs_close_nl(h); fs_rilascia(); return r;
+    uint32_t ev = 0;
+    char    *p;
+    int      r;
+
+    fs_prendi_n("close"); p = chiusura_nl(h, &ev); r = vfs_close_nl(h); fs_rilascia();
+    if (r != 0 && p) { kfree(p); p = NULL; }
+    avvisa_h(p, ev);
+    return r;
 }
 
 int vfs_close_di(int h, const void *chi)
 {
-    int r;
+    uint32_t ev = 0;
+    char    *p;
+    int      r;
 
     fs_prendi_n("close");
     if (g_luc_n != 0 && VFS_H_VALIDO(h) && g_file_(h).usato) luc_togli(h, chi, 0, ~(uint64_t)0);
+    p = chiusura_nl(h, &ev);
     r = vfs_close_nl(h);
     fs_rilascia();
+    if (r != 0 && p) { kfree(p); p = NULL; }
+    avvisa_h(p, ev);
     return r;
 }
 
@@ -3297,12 +3423,14 @@ static int spazio_di(int im, VfsSpazio *s)
     s->dim_blocco = 512; s->blocchi = s->liberi = s->disponibili = 0;
     s->inode = s->inode_liberi = 0; s->nome_max = 255;
     s->sola_lettura = m->sola_lettura ? 1u : 0u;
+    s->tipo = 0;
     switch (m->tipo) {
-    case VFS_FS_EXT2: r = ext2_spazio(m->mnt, s); break;
-    case VFS_FS_FAT:  r = fat_spazio(m->mnt, s);  break;
-    case VFS_FS_ISO:
-    case VFS_FS_PROC: s->sola_lettura = 1; break;     /* nothing to write on */
-    default: break;                                   /* the boot floppy: unknown */
+    case VFS_FS_EXT2: r = ext2_spazio(m->mnt, s); s->tipo = 0xEF53u; break;
+    case VFS_FS_FAT:  r = fat_spazio(m->mnt, s);  s->tipo = 0x4d44u; break;
+    case VFS_FS_ISO:  s->sola_lettura = 1; s->tipo = 0x9660u; break;
+    case VFS_FS_PROC: s->sola_lettura = 1; s->tipo = 0x9fa0u; break;
+    case VFS_FS_FAT12FD: s->tipo = 0x4d44u; break;    /* the boot floppy: no counts */
+    default: break;
     }
     if (m->sola_lettura) { s->sola_lettura = 1; s->disponibili = 0; }
     return r != 0 ? ERR(EIO) : 0;
@@ -3336,6 +3464,89 @@ int vfs_fstatfs(int h, VfsSpazio *s)
     return r;
 }
 
+/* =============================================================================
+ * vfs_tempi - the dates of a file (0.373; utimensat, futimens)
+ *
+ * ! WHO MAY: a date of one's choosing only the owner or root - otherwise
+ * anybody could make a file look older than a backup; "now" also whoever
+ * may write the file (POSIX: touching it would set it anyway). The change
+ * time always becomes now, on ext.
+ * FAT keeps the wall clock (local time, 2 seconds, the access as a date
+ * only); ISO and /proc are read-only; the boot floppy keeps no dates.
+ * ============================================================================= */
+static int vfs_tempi_corpo(const char *abs, int h, const VfsTempi *t)
+{
+    char     interno[VFS_PATH_MAX];
+    VfsStat  st;
+    uint32_t uid = vfs_uid_corrente(), quali;
+    int64_t  a, mt, adesso;
+    int      im, r;
+
+    if (t == NULL || (t->quali & ~15u)) return ERR(EINVAL);
+    if ((t->quali & (VFS_TEMPI_A | VFS_TEMPI_A_ADESSO)) == (VFS_TEMPI_A | VFS_TEMPI_A_ADESSO) ||
+        (t->quali & (VFS_TEMPI_M | VFS_TEMPI_M_ADESSO)) == (VFS_TEMPI_M | VFS_TEMPI_M_ADESSO))
+        return ERR(EINVAL);
+    r = abs ? vfs_stat_utente(abs, &st) : vfs_fstat(h, &st);
+    if (r != 0) return r;
+    if (t->quali == 0) return 0;                    /* both UTIME_OMIT */
+    if (uid != 0 && st.uid != uid) {
+        if (t->quali & (VFS_TEMPI_A | VFS_TEMPI_M)) return ERR(EPERM);
+        if (!vfs_permesso(&st, P_SCRIVI))             return ERR(EACCES);
+    }
+    adesso = rtc_adesso_utc();
+    a  = (t->quali & VFS_TEMPI_A_ADESSO) ? adesso : t->atime;
+    mt = (t->quali & VFS_TEMPI_M_ADESSO) ? adesso : t->mtime;
+    quali = 0;
+    if (t->quali & (VFS_TEMPI_A | VFS_TEMPI_A_ADESSO)) quali |= 1u;
+    if (t->quali & (VFS_TEMPI_M | VFS_TEMPI_M_ADESSO)) quali |= 2u;
+
+    fs_prendi_n("tempi");
+    if (abs) {
+        im = instrada(abs, interno, sizeof(interno));
+        if (im < 0) { fs_rilascia(); return ERR(ENOENT); }
+    } else {
+        if (!VFS_H_VALIDO(h) || !g_file_(h).usato) { fs_rilascia(); return ERR(EBADF); }
+        im = g_file_(h).im;
+        v_copia(interno, g_file_(h).interno, sizeof(interno));
+    }
+    if (g_posto[im]->m.sola_lettura) { fs_rilascia(); return ERR(EROFS); }
+    switch (g_posto[im]->m.tipo) {
+    case VFS_FS_EXT2: {
+        /* i_atime and i_mtime are 32-bit: beyond them, the nearest end */
+        uint32_t a32 = a  < 0 ? 0u : a  > 0xFFFFFFFFll ? 0xFFFFFFFFu : (uint32_t)a;
+        uint32_t m32 = mt < 0 ? 0u : mt > 0xFFFFFFFFll ? 0xFFFFFFFFu : (uint32_t)mt;
+
+        r = ext2_tempi(g_posto[im]->m.mnt, interno, a32, m32, quali) == 0 ? 0 : ERR(EIO);
+        break;
+    }
+    case VFS_FS_FAT:
+        r = fat_tempi(g_posto[im]->m.mnt, interno, a + rtc_scarto(a), mt + rtc_scarto(mt), quali);
+        r = r == 0 ? 0 : r == -2 ? ERR(ENOSYS) : ERR(EIO);
+        break;
+    case VFS_FS_ISO:
+    case VFS_FS_PROC: r = ERR(EROFS);  break;
+    default:          r = ERR(ENOSYS); break;
+    }
+    fs_rilascia();
+    return r;
+}
+
+int vfs_tempi(const char *abs, int h, const VfsTempi *t)
+{
+    int r = vfs_tempi_corpo(abs, h, t);
+
+    if (r == 0 && t->quali && inotify_attivo()) {
+        if (abs) avvisa_attributi(abs);
+        else {
+            char *p;
+
+            fs_prendi_n("inotify"); p = percorso_h_nl(h); fs_rilascia();
+            if (p) { avvisa_attributi(p); kfree(p); }
+        }
+    }
+    return r;
+}
+
 int vfs_fstat(int h, VfsStat *st)
 {
     int r; fs_prendi_n("fstat"); r = vfs_fstat_nl(h, st); fs_rilascia(); return r;
@@ -3356,12 +3567,21 @@ int vfs_readdir(const char *abs, VfsDirEntry *out, uint32_t max,
 
 int vfs_truncate(const char *abs, uint32_t nuova_dim)
 {
-    int r; fs_prendi_n("truncate"); r = vfs_truncate_nl(abs, nuova_dim); fs_rilascia(); return r;
+    int r; fs_prendi_n("truncate"); r = vfs_truncate_nl(abs, nuova_dim); fs_rilascia();
+    if (r == 0) inotify_avvisa(abs, IN_MODIFY);
+    return r;
 }
 
 int vfs_ftruncate(int h, uint32_t nuova_dim)
 {
-    int r; fs_prendi_n("ftruncate"); r = vfs_ftruncate_nl(h, nuova_dim); fs_rilascia(); return r;
+    char *p = NULL;
+    int   r;
+
+    fs_prendi_n("ftruncate"); r = vfs_ftruncate_nl(h, nuova_dim);
+    if (r == 0) p = percorso_h_nl(h);
+    fs_rilascia();
+    avvisa_h(p, IN_MODIFY);
+    return r;
 }
 
 void vfs_sync(void)

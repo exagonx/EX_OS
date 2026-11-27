@@ -27,6 +27,7 @@
 #include "pipe.h"
 #include "pty.h"
 #include "shmfd.h"     /* FD_SHM (0.358) */
+#include "inotify.h"   /* FD_INOTIFY (0.373) */
 #include "isr.h"
 
 /* Forward: funzioni VGA per sys_write su fd=1/2 */
@@ -529,6 +530,9 @@ int32_t sys_read(InterruptFrame *frame)
         return pipe_leggi((int)FDV(proc, fd).inode, buf, count,
                           (FDV(proc, fd).flags & O_NONBLOCK) != 0);
     }
+    if (FDV(proc, fd).type == FD_INOTIFY)       /* 0.373: whole events */
+        return inotify_leggi((int)FDV(proc, fd).inode, buf, count,
+                             (FDV(proc, fd).flags & O_NONBLOCK) != 0);
 
     /* ! Leggere dall'estremita' SBAGLIATA e' un errore, non un'attesa. */
     if (FDV(proc, fd).type == FD_PIPE_W) return ERR(EBADF);
@@ -1053,6 +1057,7 @@ static int32_t fd_riferimento(const FileDescriptor *d)
     case FD_PIPE_W: pipe_apri_scrittore((int)d->inode);        return 0;
     case FD_UNIX:   unix_conta(d);                             return 0;
     case FD_SHM:    shmfd_apri((int)d->inode);                 return 0;
+    case FD_INOTIFY: inotify_apri((int)d->inode);              return 0;
     case FD_PTY_M:  pty_apri_riferimento((int)d->inode, 1);    return 0;
     case FD_PTY_S:  pty_apri_riferimento((int)d->inode, 0);    return 0;
     case FD_NULL: case FD_STDIN: case FD_STDOUT: case FD_STDERR: return 0;
@@ -1070,6 +1075,7 @@ static void fd_riferimento_via(const FileDescriptor *d)
     case FD_UNIX:   pipe_chiudi_lettore((int)d->inode);
                     pipe_chiudi_scrittore((int)d->inode2);     break;
     case FD_SHM:    shmfd_chiudi((int)d->inode);               break;
+    case FD_INOTIFY: inotify_chiudi((int)d->inode);            break;
     case FD_PTY_M:  pty_chiudi((int)d->inode, 1);              break;
     case FD_PTY_S:  pty_chiudi((int)d->inode, 0);              break;
     default:        break;
@@ -1111,6 +1117,7 @@ static void fd_lascia(Process *p, int fd)
         unix_orfani_via();          /* what was on its way to this end */
         break;
     case FD_SHM:    shmfd_chiudi((int)FDV(p, fd).inode);          break;
+    case FD_INOTIFY: inotify_chiudi((int)FDV(p, fd).inode);       break;
     case FD_FILE:   vfs_close_di((int)FDV(p, fd).inode, p->fdt);  break;
     case FD_PIPE_R: pipe_chiudi_lettore((int)FDV(p, fd).inode);   break;
     case FD_PIPE_W: pipe_chiudi_scrittore((int)FDV(p, fd).inode); break;
@@ -1212,6 +1219,7 @@ static int32_t fd_duplica(Process *proc, int vecchio, int nuovo)
         pipe_apri_scrittore((int)FDV(proc, vecchio).inode);
     if (FDV(proc, vecchio).type == FD_UNIX) unix_conta(&FDV(proc, vecchio));
     if (FDV(proc, vecchio).type == FD_SHM)  shmfd_apri((int)FDV(proc, vecchio).inode);
+    if (FDV(proc, vecchio).type == FD_INOTIFY) inotify_apri((int)FDV(proc, vecchio).inode);
     /* and a pty counts its descriptors too (it was missing until 0.283) */
     if (FDV(proc, vecchio).type == FD_PTY_M)
         pty_apri_riferimento((int)FDV(proc, vecchio).inode, 1);
@@ -1369,6 +1377,59 @@ int32_t sys_shmfd_crea(InterruptFrame *frame)
     FDV(proc, fd).inode2      = 0;
     FDV(proc, fd).driver_data = NULL;
     return fd;
+}
+
+/* SYS_INOTIFY_CREA, _GUARDA, _TOGLI (289-291, 0.373): see syscall.h and
+ * kernel/include/inotify.h */
+int32_t sys_inotify_crea(InterruptFrame *frame)
+{
+    Process *proc = proc_get_current();
+    uint32_t fl   = FR_A1(frame);
+    int      h, fd;
+
+    if (fl & ~(uint32_t)(O_NONBLOCK | O_CLOEXEC)) return ERR(EINVAL);
+    if ((h = inotify_crea()) < 0) return (int32_t)h;
+    fd = find_free_fd(proc);
+    if (fd < 0) { inotify_chiudi(h); return ERR(EMFILE); }
+    FDV(proc, fd).type        = FD_INOTIFY;
+    FDV(proc, fd).flags       = O_RDONLY | (fl & (O_NONBLOCK | O_CLOEXEC));
+    FDV(proc, fd).offset      = 0;
+    FDV(proc, fd).inode       = (uint32_t)h;
+    FDV(proc, fd).inode2      = 0;
+    FDV(proc, fd).driver_data = NULL;
+    return fd;
+}
+
+static int32_t inotify_di(Process *proc, int32_t fd)
+{
+    if (fd < 0 || fd >= FD_N(proc) || FDV(proc, fd).type == FD_UNUSED) return ERR(EBADF);
+    if (FDV(proc, fd).type != FD_INOTIFY) return ERR(EINVAL);
+    return (int32_t)FDV(proc, fd).inode;
+}
+
+int32_t sys_inotify_guarda(InterruptFrame *frame)
+{
+    Process    *proc = proc_get_current();
+    const char *path = (const char *)FR_A2(frame);
+    uint32_t    mask = FR_A3(frame);
+    char        abs[PERCORSO_MAX];
+    VfsStat     st;
+    int32_t     h = inotify_di(proc, (int32_t)FR_A1(frame)), r;
+
+    if (h < 0) return h;
+    if (!syscall_verify_str(path, PERCORSO_MAX)) return ERR(EFAULT);
+    if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
+    if ((r = vfs_stat_utente(abs, &st)) != 0) return r;
+    if ((mask & IN_ONLYDIR) && !st.is_dir) return ERR(ENOTDIR);
+    if ((r = vfs_puo(abs, 4)) != 0) return r;              /* read, as Linux */
+    return inotify_guarda((int)h, abs, mask);
+}
+
+int32_t sys_inotify_togli(InterruptFrame *frame)
+{
+    int32_t h = inotify_di(proc_get_current(), (int32_t)FR_A1(frame));
+
+    return h < 0 ? h : inotify_togli((int)h, (int32_t)FR_A2(frame));
 }
 
 /* SYS_UNIX_MANDA, SYS_UNIX_RICEVI (277, 278): see syscall.h. The UnixMsg is
@@ -1588,6 +1649,28 @@ int32_t sys_fd_limite(InterruptFrame *frame)
 /* =============================================================================
  * SYS_FSYNC (258) - see syscall.h (0.284)
  * ============================================================================= */
+/* SYS_TEMPI (285, 0.373): see syscall.h and vfs_tempi. */
+int32_t sys_tempi(InterruptFrame *frame)
+{
+    const char *path = (const char *)FR_A1(frame);
+    int32_t     fd   = (int32_t)FR_A2(frame);
+    VfsTempi   *u    = (VfsTempi *)FR_A3(frame);
+    Process    *proc = proc_get_current();
+    VfsTempi    t;
+    char        abs[PERCORSO_MAX];
+
+    if (!syscall_verify_ptr(u, sizeof(VfsTempi))) return ERR(EFAULT);
+    t = *u;
+    if (path != NULL) {
+        if (!syscall_verify_str(path, PERCORSO_MAX)) return ERR(EFAULT);
+        if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
+        return vfs_tempi(abs, -1, &t);
+    }
+    if (fd < 0 || fd >= FD_N(proc) || FDV(proc, fd).type == FD_UNUSED) return ERR(EBADF);
+    if (FDV(proc, fd).type != FD_FILE) return ERR(ENOSYS);   /* pipes, ptys: no dates kept */
+    return vfs_tempi(NULL, (int)FDV(proc, fd).inode, &t);
+}
+
 /* SYS_STATFS (284, voce 131): see syscall.h. A path is resolved like any
  * other (relative to the cwd); with ebx NULL, ecx is an open file. */
 int32_t sys_statfs(InterruptFrame *frame)
@@ -1595,12 +1678,15 @@ int32_t sys_statfs(InterruptFrame *frame)
     const char *path = (const char *)FR_A1(frame);
     int32_t     fd   = (int32_t)FR_A2(frame);
     VfsSpazio  *u    = (VfsSpazio *)FR_A3(frame);
+    /* (0.373) the type only to who asks: a 0.372 libc's struct ends before it */
+    uint32_t    dim  = (uint32_t)FR_A4(frame) == VFS_SPAZIO_TIPO
+                     ? (uint32_t)sizeof(VfsSpazio) : (uint32_t)__builtin_offsetof(VfsSpazio, tipo);
     Process    *proc = proc_get_current();
     VfsSpazio   s;
     char        abs[PERCORSO_MAX];
     int         r;
 
-    if (!syscall_verify_ptr(u, sizeof(VfsSpazio))) return ERR(EFAULT);
+    if (!syscall_verify_ptr(u, dim)) return ERR(EFAULT);
     if (path != NULL) {
         if (!syscall_verify_str(path, PERCORSO_MAX)) return ERR(EFAULT);
         if (resolve_path(path, abs, sizeof(abs)) != 0) return ERR(EINVAL);
@@ -1611,7 +1697,7 @@ int32_t sys_statfs(InterruptFrame *frame)
         r = vfs_fstatfs((int)FDV(proc, fd).inode, &s);
     }
     if (r != 0) return r;
-    *u = s;
+    __builtin_memcpy(u, &s, dim);
     return 0;
 }
 
@@ -1985,6 +2071,7 @@ int32_t sys_fork(InterruptFrame *frame)
         if (d.type == FD_PIPE_W) pipe_apri_scrittore((int)d.inode);
         if (d.type == FD_UNIX)   unix_conta(&d);
         if (d.type == FD_SHM)    shmfd_apri((int)d.inode);
+        if (d.type == FD_INOTIFY) inotify_apri((int)d.inode);
         if (d.type == FD_PTY_M)  pty_apri_riferimento((int)d.inode, 1);
         if (d.type == FD_PTY_S)  pty_apri_riferimento((int)d.inode, 0);
         d.posizione_di = 0;
@@ -2185,6 +2272,74 @@ int32_t sys_attesa_sveglia(InterruptFrame *frame)
 
     interrupts_disable();
     n = proc_attesa_sveglia(dove, quanti);
+    interrupts_enable();
+    return n;
+}
+
+/* =============================================================================
+ * THE WAIT BETWEEN PROCESSES — SYS_ATTESA_DORMI_COMUNE (287), _SVEGLIA (288)
+ * (0.373, sem_open for Qt's QSystemSemaphore)
+ *
+ * The same as above, keyed by the PHYSICAL address of the word: two
+ * processes see a shared page at different addresses, the same frame.
+ * ! ONLY ON A SHARED PAGE (PG_CONDIVISA, or a frame with more than one
+ * owner): those never go to the disk, so the frame cannot change under a
+ * sleeper. A private page could, and the wake-up would be lost: EINVAL.
+ * ============================================================================= */
+static int32_t attesa_fis_di(Process *self, uintptr_t dove, paddr_t *fis)
+{
+    uintptr_t pte;
+    paddr_t   f;
+
+    if (!syscall_verify_ptr((void *)dove, sizeof(int32_t)) || (dove & 3u)) return ERR(EFAULT);
+    (void)*(volatile int32_t *)dove;            /* bring the page in, outside the cli */
+    pte = paging_pte_leggi(self->page_directory, (vaddr_t)(dove & ~(uintptr_t)0xFFF));
+    f   = paging_get_physical(self->page_directory, (vaddr_t)(dove & ~(uintptr_t)0xFFF));
+    if (!(pte & PG_PRESENT) || f == 0) return ERR(EFAULT);
+    if (!(pte & PG_CONDIVISA) && pmm_ref_count(f) < 2) return ERR(EINVAL);
+    *fis = f | (paddr_t)(dove & 0xFFFu);
+    return 0;
+}
+
+int32_t sys_attesa_dormi_comune(InterruptFrame *frame)
+{
+    uintptr_t dove   = FR_A1(frame);
+    int32_t   atteso = (int32_t)FR_A2(frame);
+    uint32_t  ms     = FR_A3(frame);
+    Process  *self   = proc_get_current();
+    paddr_t   fis;
+    int32_t   r;
+
+    if (self == NULL) return ERR(ESRCH);
+    if ((r = attesa_fis_di(self, dove, &fis)) != 0) return r;
+
+    interrupts_disable();
+    if (*(volatile int32_t *)dove != atteso) { interrupts_enable(); return ERR(EAGAIN); }
+    if (self->scuoti) { self->scuoti = 0; interrupts_enable(); return ERR(EINTR); }
+    proc_attesa_metti_comune(self, fis);
+    self->block_until = ms ? (g_ticks + (ms + 9) / 10 + 1) : 0;
+    sched_block(PROC_BLOCKED);
+    interrupts_disable();
+    proc_attesa_togli(self);
+    self->attesa_dove = 0;
+    self->attesa_fis  = 0;
+    self->block_until = 0;
+    interrupts_enable();
+    return 0;
+}
+
+int32_t sys_attesa_sveglia_comune(InterruptFrame *frame)
+{
+    uintptr_t dove   = FR_A1(frame);
+    int32_t   quanti = (int32_t)FR_A2(frame);
+    Process  *self   = proc_get_current();
+    paddr_t   fis;
+    int32_t   n;
+
+    if (self == NULL) return ERR(ESRCH);
+    if ((n = attesa_fis_di(self, dove, &fis)) != 0) return n;
+    interrupts_disable();
+    n = proc_attesa_sveglia_comune(fis, quanti);
     interrupts_enable();
     return n;
 }
@@ -2851,6 +3006,24 @@ int32_t sys_ioctl(InterruptFrame *frame)
         }
         if (dim && !syscall_verify_ptr((void *)arg, dim)) return ERR(EFAULT);
         return pty_ioctl((int)FDV(proc, fd).inode, request, arg);
+    }
+
+    /* FIONREAD (0.373): the bytes a read would get now. inotify (Qt asks
+     * it before every read), the pipes and unix pairs (QProcess). */
+    if (request == 0x541Bu &&
+        (FDV(proc, fd).type == FD_INOTIFY || FDV(proc, fd).type == FD_PIPE_R ||
+         FDV(proc, fd).type == FD_UNIX)) {
+        uint32_t quanti = 0;
+
+        if (!syscall_verify_ptr((void *)arg, sizeof(int32_t))) return ERR(EFAULT);
+        if (FDV(proc, fd).type == FD_INOTIFY) quanti = inotify_byte((int)FDV(proc, fd).inode);
+        else {
+            interrupts_disable();
+            pipe_stato_locked((int)FDV(proc, fd).inode, &quanti, NULL, NULL, NULL);
+            interrupts_enable();
+        }
+        *(int32_t *)arg = (int32_t)quanti;
+        return 0;
     }
 
     /* I tre descrittori standard sono tutti la console: non c'è ancora
@@ -3761,6 +3934,7 @@ return ERR(ENOMEM); }
             case FD_PIPE_W: pipe_apri_scrittore((int)FDV(parent, sfd).inode); break;
             case FD_UNIX:   unix_conta(&FDV(parent, sfd));                    break;
             case FD_SHM:    shmfd_apri((int)FDV(parent, sfd).inode);          break;
+            case FD_INOTIFY: inotify_apri((int)FDV(parent, sfd).inode);       break;
             case FD_PTY_M:  pty_apri_riferimento((int)FDV(parent, sfd).inode, 1); break;
             case FD_PTY_S:  pty_apri_riferimento((int)FDV(parent, sfd).inode, 0); break;
 
@@ -4070,6 +4244,8 @@ uint32_t usp       = res.user_stack_top;
                     unix_conta(&FDV(parent, pf));
                 } else if (FDV(parent, pf).type == FD_SHM) {
                     shmfd_apri((int)FDV(parent, pf).inode);
+                } else if (FDV(parent, pf).type == FD_INOTIFY) {
+                    inotify_apri((int)FDV(parent, pf).inode);
                 } else if (FDV(parent, pf).type == FD_PTY_M) {
                     pty_apri_riferimento((int)FDV(parent, pf).inode, 1);
                 } else if (FDV(parent, pf).type == FD_PTY_S) {
@@ -8128,6 +8304,10 @@ static int poll_guarda(Process *self, struct pollfd *v)
             pronto |= POLLIN | POLLOUT;
             break;
 
+        case FD_INOTIFY:                /* 0.373: events waiting */
+            if (inotify_pronto_locked((int)d->inode)) pronto |= POLLIN;
+            break;
+
         case FD_PTY_S:
             if (pty_pronto_slave((int)d->inode)) pronto |= POLLIN;
             pronto |= POLLOUT;
@@ -8204,6 +8384,9 @@ static int poll_registra(Process *self, struct pollfd *v, uint32_t n)
         } else if (d->type == FD_PTY_S && (v[i].events & POLLIN)) {
             if (!pty_attesa_registra_locked((int)d->inode, 0, self->pid))
                 tutte = 0;
+        } else if (d->type == FD_INOTIFY && (v[i].events & POLLIN)) {
+            if (!inotify_attesa_registra_locked((int)d->inode, self->pid))
+                tutte = 0;
         } else if (d->type == FD_UNIX) {
             /* ! ALWAYS ON THE INCOMING PIPE, even for POLLOUT alone: that is
              * where the other end closing is heard (its writer goes) */
@@ -8234,6 +8417,7 @@ static void poll_disregistra(Process *self, struct pollfd *v, uint32_t n)
         else if (d->type == FD_STDIN)  tty_attesa_togli_locked(self->pid);
         else if (d->type == FD_PTY_M)  pty_attesa_togli_locked((int)d->inode, 1, self->pid);
         else if (d->type == FD_PTY_S)  pty_attesa_togli_locked((int)d->inode, 0, self->pid);
+        else if (d->type == FD_INOTIFY) inotify_attesa_togli_locked((int)d->inode, self->pid);
         else if (d->type == FD_UNIX) {
             pipe_attesa_togli_locked((int)d->inode,  1, self->pid);
             pipe_attesa_togli_locked((int)d->inode2, 0, self->pid);
@@ -8339,6 +8523,24 @@ int32_t sys_poll(InterruptFrame *frame)
 
     if (k != k_corti) kfree(k);
     return pronti;
+}
+
+/* SYS_PPOLL (286, 0.373): poll with the signal mask of the wait. A signal
+ * the mask lets through that is pending already: EINTR without waiting (the
+ * race ppoll exists for - with sigprocmask then poll it would be handled
+ * before the wait, and the wait would sleep). */
+int32_t sys_ppoll(InterruptFrame *frame)
+{
+    const uint32_t *m    = (const uint32_t *)FR_A4(frame);
+    Process        *self = proc_get_current();
+    int32_t         r;
+
+    if (m == NULL) return sys_poll(frame);
+    if (self == NULL) return ERR(ESRCH);
+    if (!syscall_verify_ptr(m, sizeof(uint32_t))) return ERR(EFAULT);
+    r = segnali_maschera_metti(self, *m) ? ERR(EINTR) : sys_poll(frame);
+    segnali_maschera_togli(self);
+    return r;
 }
 
 /* =============================================================================

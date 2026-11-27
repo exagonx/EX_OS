@@ -6,6 +6,8 @@
 
 **Contents**
 
+- [Programs find more of what Linux gives them: file dates, ppoll, network interfaces, the filesystem type (kernel 0.373, voci 103 and 85) — tested in QEMU](#programs-find-more-of-what-linux-gives-them-file-dates-ppoll-network-interfaces-the-filesystem-type-kernel-0373-voci-103-and-85--tested-in-qemu)
+- [Semaphores between processes and inotify: Qt's QSystemSemaphore, QSharedMemory and QFileSystemWatcher work (kernel 0.373, voce 85) — tested in QEMU](#semaphores-between-processes-and-inotify-qts-qsystemsemaphore-qsharedmemory-and-qfilesystemwatcher-work-kernel-0373-voce-85--tested-in-qemu)
 - [Logging into the Firefox account works: localStorage and indexedDB have their space (kernel 0.372, voce 131) — tested in QEMU](#logging-into-the-firefox-account-works-localstorage-and-indexeddb-have-their-space-kernel-0372-voce-131--tested-in-qemu)
 - [Names resolve at the first try: a lost DNS answer is asked again (libc, voce 132) — tested in QEMU](#names-resolve-at-the-first-try-a-lost-dns-answer-is-asked-again-libc-voce-132--tested-in-qemu)
 - [Programs keep their folders in the user's profile, not in / (sh 0.018, exilla 0.009, voce 132) — tested in QEMU](#programs-keep-their-folders-in-the-users-profile-not-in--sh-0018-exilla-0009-voce-132--tested-in-qemu)
@@ -271,6 +273,47 @@
 Entries are marked **tested** when the work has been verified running inside
 EX-OS, **to be tested** when the code is there but the proof that counts —
 the one on real hardware or on the real case — has not been done yet.
+
+### Programs find more of what Linux gives them: file dates, ppoll, network interfaces, the filesystem type (kernel 0.373, voci 103 and 85) — tested in QEMU
+
+- **Before**: `touch`, `utime`, `utimes` and `futimens` did not change the dates of a file (there was
+  no kernel call to write them), `ppoll` did not exist, `sigpending` always answered "nothing
+  pending", `getifaddrs` and `if_nameindex` were missing (Qt's QNetworkInterface was off), and
+  `statfs` had no `f_type` (Gecko 161, the base of Thunderbird, checks a font file's volume with it).
+- **Now**: the kernel call `SYS_TEMPI` writes the access and modification dates on ext2/3/4
+  (ext4.mod 0.010) and FAT, with the permissions of Linux (explicit dates only for the owner or root,
+  "now" for whoever can write); the libc has `utimensat`, `futimens`, `utime`, `utimes`, `futimes`,
+  `lutimes`. `SYS_PPOLL` waits with the signal mask of the wait in one step (a signal the mask lets
+  in, already pending, interrupts at once). `sigpending` tells the true pending signals.
+  `getifaddrs`, `if_nameindex`, `if_nametoindex` and the `SIOCGIF*` requests list `lo` and `eth0`
+  with address, mask and MAC. `statfs`/`fstatfs` with Linux's `f_type` numbers; `explicit_bzero`.
+- **Tested** with `tools/prova_tempi.sh` (checked with debugfs, e2fsck, fsck.fat),
+  `tools/prova_ppoll.sh`, `tools/prova_interfacce.sh` and `tools/prova_statfs.sh` at 32 and 64 bit.
+
+### Semaphores between processes and inotify: Qt's QSystemSemaphore, QSharedMemory and QFileSystemWatcher work (kernel 0.373, voce 85) — tested in QEMU
+
+- **Before**: a semaphore could only wait inside one program: the kernel's wait matched sleepers by
+  virtual address, which two processes see differently. `sem_open` did not exist and
+  `sem_init(..., pshared=1, ...)` answered ENOSYS, so Qt built without QSharedMemory and
+  QSystemSemaphore. And no program could be told that a file changed: Qt's QFileSystemWatcher
+  looked at the folders once a second.
+- **Now**: the kernel waits between processes by the physical address of the word, only on memory
+  shared between processes. Those pages never go to the swap, so the address cannot change under a
+  sleeper. On this the libc builds `sem_init` with `pshared`, `sem_open`, `sem_close` and
+  `sem_unlink` (a named semaphore is a named shared memory zone). inotify is in the kernel:
+  `inotify_init1`, `inotify_add_watch`, `inotify_rm_watch`, and the events of Linux (create, delete,
+  modify, attributes, open, close, rename with its cookie, the watched file deleted or moved).
+  After every change that works the VFS tells the watchers; nothing costs while nobody watches.
+  `poll` and `FIONREAD` work on it (and FIONREAD on pipes too). The queue holds
+  `inotify_eventi` events (kernel.cfg, 16384 by default), then one IN_Q_OVERFLOW, as on Linux.
+  And System V IPC, which Qt includes on every Unix and PostgreSQL, Apache and PHP use: `ftok`,
+  `shmget`/`shmat`/`shmdt`/`shmctl`, `semget`/`semop`/`semtimedop`/`semctl` (all the operations of
+  a `semop` or none, SEM_UNDO given back at a normal exit), on the same named zones: a segment or a
+  set lives while some process holds it.
+- **Tested** with `tools/prova_semafori.sh` (a named semaphore between two processes, 1000 posts
+  and waits across them, one with pshared after a fork) and `tools/prova_inotify.sh` (21 steps on
+  ext2 and FAT, a blocking read and a poll woken by another process, then e2fsck and fsck.fat) and
+  `tools/prova_sysv.sh` (11 steps, segments and semaphores across fork and exec) at 32 and 64 bit.
 
 ### Logging into the Firefox account works: localStorage and indexedDB have their space (kernel 0.372, voce 131) — tested in QEMU
 

@@ -1367,6 +1367,7 @@ static void riempi(FatDirEntry *o, const FatMount *m, const uint8_t *v,
      * convertire — e' FAT che ha dato il formato a tutti gli altri. */
     o->ora  = le16(v + 22);
     o->data = le16(v + 24);
+    o->data_accesso = le16(v + 18);
 }
 
 int fat_readdir(int mnt, const char *percorso, FatDirEntry *out,
@@ -2254,6 +2255,61 @@ int fat_truncate(int mnt, const char *percorso, uint32_t nuova_dim)
         scrivi16(v + 24, t.data);
     }
 
+    return 0;
+}
+
+/* Local seconds -> a FAT date and time (days to civil date, H. Hinnant's
+ * algorithm). Outside 1980-2107 FAT has no way to say it: 0, "unknown".
+ * ! COUNTED FROM 1980 IN 32 BITS: the 32-bit kernel has no 64-bit division,
+ * and 2^32 seconds from 1980 reach past 2107 anyway. */
+static FatIstante istante_da_secondi(int64_t s)
+{
+    FatIstante r = { 0, 0 };
+    uint32_t   u, resto;
+    int32_t    z, era, doe, yoe, doy, mp, g, m, a;
+
+    if (s < 315532800ll || s - 315532800ll > 0xFFFFFFFFll) return r;   /* 1980-01-01 */
+    u     = (uint32_t)(s - 315532800ll);
+    resto = u % 86400u;
+    z     = (int32_t)(u / 86400u) + 3652 + 719468;     /* days since 0000-03-01 */
+    era = z / 146097;
+    doe = z - era * 146097;
+    yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    mp  = (5 * doy + 2) / 153;
+    g   = doy - (153 * mp + 2) / 5 + 1;
+    m   = mp < 10 ? mp + 3 : mp - 9;
+    a   = yoe + era * 400 + (m <= 2);
+    if (a < 1980 || a > 2107) return r;
+    r.data = (uint16_t)(((uint32_t)(a - 1980) << 9) | ((uint32_t)m << 5) | (uint32_t)g);
+    r.ora  = (uint16_t)(((resto / 3600u) << 11) | (((resto / 60u) % 60u) << 5) | ((resto % 60u) / 2u));
+    return r;
+}
+
+/* fat_tempi (0.373): utimensat and futimens. FAT has the access DATE only
+ * (offset 18) and the modification date and time (22, 24), to 2 seconds.
+ * The root has no entry of its own: nothing to write, and that is ENOSYS
+ * for the caller. */
+int fat_tempi(int mnt, const char *percorso, int64_t atime_loc, int64_t mtime_loc,
+              uint32_t quali)
+{
+    FatMount *m;
+    uint8_t   voce[32], *v;
+    PosVoce   pos;
+
+    if (mnt < 0 || mnt >= g_mnt_n || !(*g_mnt[mnt]).usato) return -1;
+    m = g_mnt[mnt];
+    if (risolvi(m, percorso, voce, NULL, &pos) != 0) return -1;
+    if (pos.lba == 0) return -2;
+    v = voce_mut(m, &pos);
+    if (v == NULL) return -1;
+    if (quali & 1u) scrivi16(v + 18, istante_da_secondi(atime_loc).data);
+    if (quali & 2u) {
+        FatIstante t = istante_da_secondi(mtime_loc);
+
+        scrivi16(v + 22, t.ora);
+        scrivi16(v + 24, t.data);
+    }
     return 0;
 }
 

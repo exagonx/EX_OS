@@ -6,6 +6,8 @@
 
 **Indice**
 
+- [I programmi trovano di piu' di quel che Linux da' loro: date dei file, ppoll, interfacce di rete, il tipo di filesystem (kernel 0.373, voci 103 e 85) — testato in QEMU](#i-programmi-trovano-di-piu-di-quel-che-linux-da-loro-date-dei-file-ppoll-interfacce-di-rete-il-tipo-di-filesystem-kernel-0373-voci-103-e-85--testato-in-qemu)
+- [Semafori fra processi e inotify: QSystemSemaphore, QSharedMemory e QFileSystemWatcher di Qt funzionano (kernel 0.373, voce 85) — testato in QEMU](#semafori-fra-processi-e-inotify-qsystemsemaphore-qsharedmemory-e-qfilesystemwatcher-di-qt-funzionano-kernel-0373-voce-85--testato-in-qemu)
 - [Il login nell'account di Firefox funziona: localStorage e indexedDB hanno il loro spazio (kernel 0.372, voce 131) — testato in QEMU](#il-login-nellaccount-di-firefox-funziona-localstorage-e-indexeddb-hanno-il-loro-spazio-kernel-0372-voce-131--testato-in-qemu)
 - [I nomi si risolvono al primo colpo: una risposta del DNS persa si richiede (libc, voce 132) — testato in QEMU](#i-nomi-si-risolvono-al-primo-colpo-una-risposta-del-dns-persa-si-richiede-libc-voce-132--testato-in-qemu)
 - [I programmi tengono le loro cartelle nel profilo dell'utente, non in / (sh 0.018, exilla 0.009, voce 132) — testato in QEMU](#i-programmi-tengono-le-loro-cartelle-nel-profilo-dellutente-non-in--sh-0018-exilla-0009-voce-132--testato-in-qemu)
@@ -271,6 +273,48 @@
 Le voci sono marcate **testato** quando il lavoro è stato verificato girando
 dentro EX-OS, **da testare** quando il codice c'è ma la prova che conta —
 quella sull'hardware o sul caso reale — non è ancora stata fatta.
+
+### I programmi trovano di piu' di quel che Linux da' loro: date dei file, ppoll, interfacce di rete, il tipo di filesystem (kernel 0.373, voci 103 e 85) — testato in QEMU
+
+- **Prima**: `touch`, `utime`, `utimes` e `futimens` non cambiavano le date di un file (non c'era una
+  chiamata del kernel per scriverle), `ppoll` non c'era, `sigpending` rispondeva sempre "niente in
+  attesa", mancavano `getifaddrs` e `if_nameindex` (QNetworkInterface di Qt era spento) e `statfs` non
+  aveva `f_type` (Gecko 161, la base di Thunderbird, controlla con quello il volume di un font).
+- **Ora**: la chiamata del kernel `SYS_TEMPI` scrive le date di accesso e di modifica su ext2/3/4
+  (ext4.mod 0.010) e FAT, con i permessi di Linux (date scelte solo per il proprietario o root,
+  "adesso" per chi puo' scrivere); la libc ha `utimensat`, `futimens`, `utime`, `utimes`, `futimes`,
+  `lutimes`. `SYS_PPOLL` aspetta con la maschera dei segnali dell'attesa in un passo solo (un
+  segnale che la maschera lascia passare, gia' in attesa, interrompe subito). `sigpending` dice i
+  segnali in attesa veri. `getifaddrs`, `if_nameindex`, `if_nametoindex` e le richieste `SIOCGIF*`
+  elencano `lo` ed `eth0` con indirizzo, maschera e MAC. `statfs`/`fstatfs` con i numeri `f_type`
+  di Linux; `explicit_bzero`.
+- **Testato** con `tools/prova_tempi.sh` (controllato con debugfs, e2fsck, fsck.fat),
+  `tools/prova_ppoll.sh`, `tools/prova_interfacce.sh` e `tools/prova_statfs.sh` a 32 e 64 bit.
+
+### Semafori fra processi e inotify: QSystemSemaphore, QSharedMemory e QFileSystemWatcher di Qt funzionano (kernel 0.373, voce 85) — testato in QEMU
+
+- **Prima**: un semaforo poteva aspettare solo dentro un programma: l'attesa del kernel riconosceva
+  chi dorme dall'indirizzo virtuale, che due processi vedono diverso. `sem_open` non c'era e
+  `sem_init(..., pshared=1, ...)` rispondeva ENOSYS, quindi Qt era costruito senza QSharedMemory e
+  QSystemSemaphore. E nessun programma poteva sapere che un file era cambiato: QFileSystemWatcher di
+  Qt guardava le cartelle una volta al secondo.
+- **Ora**: il kernel fa aspettare fra processi per indirizzo fisico della parola, solo su memoria
+  condivisa fra processi. Quelle pagine non vanno mai nello swap, quindi l'indirizzo non cambia
+  sotto chi dorme. Sopra questo la libc ha `sem_init` con `pshared`, `sem_open`, `sem_close` e
+  `sem_unlink` (un semaforo con nome e' una zona di memoria condivisa con nome). inotify e' nel
+  kernel: `inotify_init1`, `inotify_add_watch`, `inotify_rm_watch` e gli eventi di Linux
+  (creazione, cancellazione, modifica, attributi, apertura, chiusura, rinomina col suo cookie, il
+  file guardato cancellato o spostato). Dopo ogni modifica riuscita il VFS avvisa chi guarda; se
+  nessuno guarda non costa niente. `poll` e `FIONREAD` funzionano (FIONREAD anche sulle pipe). La
+  coda tiene `inotify_eventi` eventi (kernel.cfg, di serie 16384), poi un IN_Q_OVERFLOW, come Linux.
+  E l'IPC System V, che Qt include su ogni Unix e che usano PostgreSQL, Apache e PHP: `ftok`,
+  `shmget`/`shmat`/`shmdt`/`shmctl`, `semget`/`semop`/`semtimedop`/`semctl` (tutte le operazioni di
+  una `semop` o nessuna, SEM_UNDO restituito all'uscita normale), sulle stesse zone con nome: un
+  segmento o un insieme vive finche' un processo lo tiene.
+- **Testato** con `tools/prova_semafori.sh` (un semaforo con nome fra due processi, 1000 post e
+  wait fra loro, uno con pshared dopo una fork) e `tools/prova_inotify.sh` (21 passi su ext2 e FAT,
+  una read bloccante e un poll svegliati da un altro processo, poi e2fsck e fsck.fat) e
+  `tools/prova_sysv.sh` (11 passi, segmenti e semafori fra fork ed exec) a 32 e 64 bit.
 
 ### Il login nell'account di Firefox funziona: localStorage e indexedDB hanno il loro spazio (kernel 0.372, voce 131) — testato in QEMU
 

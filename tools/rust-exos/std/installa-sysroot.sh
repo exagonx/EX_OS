@@ -25,7 +25,10 @@ cd "$(dirname "$0")/../../.."
 MACCHINA="${MACCHINA:-$(hostname | tr 'A-Z' 'a-z')}"
 B="${EXOS_FUORI}/cross_build/$MACCHINA"
 export RUSTUP_HOME="$B/rust-macchina/rustup" CARGO_HOME="$B/rust-macchina/cargo"
-PROXY_RUSTC="$HOME/.cargo/bin/rustc"
+# the rustup proxy (RUSTC may be rustc-exos): the machine's CARGO_HOME first
+# (27/11/2026: there is no ~/.cargo on nasi5deb), then ~/.cargo
+PROXY_RUSTC="$CARGO_HOME/bin/rustc"; [ -x "$PROXY_RUSTC" ] || PROXY_RUSTC="$HOME/.cargo/bin/rustc"
+export PATH="$(dirname "$PROXY_RUSTC"):$PATH"
 # The target follows EXOS_ARCH, as in prova-std.sh (16 October 2026, Exilla
 # at 64 bit): the two sysroots live side by side in the same nightly.
 BERSAGLIO=i686-unknown-exos
@@ -41,6 +44,12 @@ if [ "$EXOS_ARCH" = x86_64 ]; then
     export CARGO_PROFILE_RELEASE_PANIC=unwind
     export STD="${STD:-std,panic_abort,panic_unwind,proc_macro}"
 fi
+
+# ! THE std CARRIES ITS LLVM BITCODE (27/11/2026, Thunderbird 161): Gecko
+# 161 builds its Rust libraries with -Clto, and LTO reads the bitcode of
+# every crate, std too - "failed to get bitcode from object file for LTO
+# (Can't find section .llvmbc)". The official std ships with it as well.
+export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-Cembed-bitcode=yes"
 
 # Da zero: una serie sola di librerie, tutte dello stesso giro.
 rm -rf "$B/costruzione-rust/$BERSAGLIO"

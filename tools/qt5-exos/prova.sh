@@ -28,6 +28,11 @@
 #   - QT-PNG: a PNG written and read back in memory;
 #   - QT-NATIVO 1: a child widget's flush has a window to go to;
 #   - QT-ANIMA 1: a property animation reached its end (VLC's cone);
+#   - QT-IPC: QSystemSemaphore and QSharedMemory work (sem_open, shm_open;
+#     kernel 0.373; the ftok key file in TMPDIR=/disk/tmp); QT-GUARDA:
+#     QFileSystemWatcher sees a new file in $HOME less than 200 ms after it
+#     was written (inotify; Qt's fallback looks once a second);
+#     QT-RETE: QNetworkInterface lists lo/1 and eth0/2 (getifaddrs);
 #   - no [FAULT] or PANIC.
 # =============================================================================
 cd "$(dirname "$0")/../.." || exit 1
@@ -44,15 +49,16 @@ Q="$TC/qt5-exos$BIT/exos/qt5"
 [ -f "$Q/lib/libQt5Widgets.so.5" ] || { echo "manca $Q: prima tools/qt5-exos/costruisci.sh $BIT" >&2; exit 1; }
 D="$TC/$MACCHINA/prova-qt$BIT"
 S="$D/disco"
-rm -rf "${D:?}"; mkdir -p "$S/casa" "$S/lib" "$D/foto"
+rm -rf "${D:?}"; mkdir -p "$S/casa" "$S/tmp" "$S/lib" "$D/foto"
 # an RGBA PNG made elsewhere, for QT-PNGFILE (VLC's cone is one)
 cp tools/exilla/tappa6-schermata.png "$S/casa/prova.png"
 
 # --- the program --------------------------------------------------------------
 "$CROSS/bin/$T-g++" -O2 -fPIC -std=c++17 -D__unix__ -DEXOS_SOLO_POSIX \
     -I"$Q/include" -I"$Q/include/QtCore" -I"$Q/include/QtGui" -I"$Q/include/QtWidgets" \
+    -I"$Q/include/QtNetwork" \
     tools/qt5-exos/ciaoqt.cpp -o "$S/ciaoqt" \
-    -L"$Q/lib" -lQt5Widgets -lQt5Gui -lQt5Core -Wl,-rpath-link,"$Q/lib" -Wl,-rpath-link,"$CROSS/$T/lib" \
+    -L"$Q/lib" -lQt5Widgets -lQt5Gui -lQt5Network -lQt5Core -Wl,-rpath-link,"$Q/lib" -Wl,-rpath-link,"$CROSS/$T/lib" \
     || { echo "  [NO] ciaoqt non si compila"; exit 1; }
 
 # --- Qt and what it needs -----------------------------------------------------
@@ -92,13 +98,17 @@ printf 'label: dos\nunit: sectors\n\nstart=2048, type=83, bootable\n' | /sbin/sf
 dd if="$PART" of="$IMG" bs=1M seek=1 conv=notrunc status=none; rm -f "$PART"
 KVM=""; [ -w /dev/kvm ] && KVM="-enable-kvm"
 export EXOS_ISTANZA=qt$BIT EXOS_NO_FLOPPY=1 EXOS_CDROM="$CD" EXOS_RAM="${EXOS_RAM:-2048M}"
-export EXOS_QEMU_EXTRA="$KVM $CPU -drive file=$IMG,format=raw,if=ide"
+# a card on QEMU's user network: QT-RETE wants eth0 beside lo
+export EXOS_QEMU_EXTRA="$KVM $CPU -drive file=$IMG,format=raw,if=ide -netdev user,id=n1,net=10.0.0.0/24,host=10.0.0.2,dhcpstart=10.0.0.15 -device ne2k_pci,netdev=n1"
 SER=/tmp/exos/serialqt$BIT.txt; rm -f "$SER"
 F=/tmp/exos/foto-qt$BIT; rm -rf "$F"; mkdir -p "$F"
 {
     echo "mount hd0p1 /disk@5"
     echo "echo attendo la fine dei lavori di avvio@25"
     echo "export HOME=/disk/casa@1"
+    # the CD has no /tmp to write in: the temporary files on the disk, as
+    # lib/libc.c (tmp_componi) says - QSystemSemaphore's ftok key file goes there
+    echo "export TMPDIR=/disk/tmp@1"
     echo "export LD_LIBRARY_PATH=/disk/lib:/disk/qt5/lib@1"
     echo "export QT_PLUGIN_PATH=/disk/qt5/plugins@1"
     echo "export QT_QPA_FONTDIR=/disk/qt5/lib/fonts@1"
@@ -168,6 +178,19 @@ grep -aq "QT-PNGFILE 800x600" "$D/seriale.txt" && si "un PNG RGBA letto dal disc
     || no "PNG RGBA dal disco: '$(grep -a -m1 QT-PNGFILE "$D/seriale.txt")'"
 grep -aq "QT-NATIVO 1 winId 1" "$D/seriale.txt" && si "un widget figlio trova la sua finestra (QT-NATIVO)" \
     || no "widget figlio senza finestra nativa: '$(grep -a -m1 QT-NATIVO "$D/seriale.txt")' (winId 0?)"
+# (kernel 0.373, voce 85) semaphores and shared memory, inotify, interfaces
+grep -aq "QT-IPC sem 11 shm 11 ciao" "$D/seriale.txt" && si "QSystemSemaphore e QSharedMemory (sem_open, shm_open)" \
+    || no "IPC di Qt: '$(grep -a -m1 QT-IPC "$D/seriale.txt")'"
+# the signal after the file was written: inotify comes at once, Qt's
+# fallback looks once a second (the write itself is the disk's time)
+G=$(grep -a -m1 "QT-GUARDA" "$D/seriale.txt" | awk '{print $2}')
+GS=$(grep -a -m1 "QT-GUARDA" "$D/seriale.txt" | awk '{print $5}')
+[ -n "$G" ] && [ -n "$GS" ] && [ $((G - GS)) -lt 200 ] \
+    && si "QFileSystemWatcher vede un file nuovo $((G - GS)) ms dopo la scrittura (inotify; scrittura $GS ms)" \
+    || no "QFileSystemWatcher: '$(grep -a -m1 QT-GUARDA "$D/seriale.txt")' (a intervalli guarda ogni secondo)"
+grep -a -m1 "QT-RETE" "$D/seriale.txt" | grep -q "lo/1" && grep -a -m1 "QT-RETE" "$D/seriale.txt" | grep -q "eth0/2" \
+    && si "QNetworkInterface: $(grep -a -m1 QT-RETE "$D/seriale.txt")" \
+    || no "QNetworkInterface: '$(grep -a -m1 QT-RETE "$D/seriale.txt")'"
 grep -aq "QT-TESTO ciao" "$D/seriale.txt" && si "la tastiera scrive nella riga (QT-TESTO ciao)" || no "QT-TESTO ciao non c'e'"
 grep -aq "QT-CLIC" "$D/seriale.txt" && si "il clic sul bottone (QT-CLIC)" || no "QT-CLIC non c'e'"
 c=$(diversi "$F/finestra.ppm" "$F/menu.ppm")

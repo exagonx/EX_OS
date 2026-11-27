@@ -57,6 +57,7 @@ typedef struct {
      * dello zero. */
     uint16_t data;
     uint16_t ora;
+    uint16_t data_accesso;      /* (0.373) the access: a day, no time; 0 = none */
 } FatDirEntry;
 
 /* Monta il filesystem sul dispositivo a blocchi `blkdev`.
@@ -110,6 +111,10 @@ int  fat_rename  (int mnt, const char *da, const char *a);
 int  fat_write   (int mnt, const char *percorso, const void *buf,
                   uint32_t size, uint32_t offset);
 int  fat_truncate(int mnt, const char *percorso, uint32_t nuova_dim);
+/* (0.373) the dates, in LOCAL seconds (FAT keeps the wall clock): quali
+ * 1 = the access date, 2 = the modification date and time. 0, -1. */
+int  fat_tempi   (int mnt, const char *percorso, int64_t atime_loc, int64_t mtime_loc,
+                  uint32_t quali);
 int  fat_sync    (int mnt);
 
 /* Primo settore (RELATIVO al volume) e lunghezza in settori di un file,

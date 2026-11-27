@@ -13,6 +13,8 @@
  * the kernel is the one it was built for, and what it can write.
  *
  *     EXT4MOD_VERSIONE 0.004 (+0.001 a ogni modifica)
+ *     0.010: tempi, the dates of a file (utimensat, futimens: Qt, make,
+ *            tar, cp -p); the kernel's interface is ABI 6 (kernel 0.373).
  *     0.009: the blocks reserved for a write are the first free run long
  *            enough, or else the group's free blocks wherever they are:
  *            on a fragmented group every block cost its own bitmap and
@@ -40,7 +42,7 @@
 
 #include "ext4.h"
 
-#define EXT4MOD_VERSIONE "0.009"
+#define EXT4MOD_VERSIONE "0.010"
 
 const ModuloKernel    *MK = NULL;
 const Ext2Interfaccia *K  = NULL;
@@ -146,6 +148,9 @@ static int op_chown(int mnt, const char *p, uint32_t uid, uint32_t gid)
 static int op_chmod(int mnt, const char *p, uint32_t modo)
 { OPERAZIONE(mnt, ext2_chmod(mnt, p, modo)); }
 
+static int op_tempi(int mnt, const char *p, uint32_t a, uint32_t m, uint32_t quali)
+{ OPERAZIONE(mnt, ext2_tempi(mnt, p, a, m, quali)); }
+
 static int op_mkdir(int mnt, const char *p, uint32_t uid, uint32_t gid)
 { OPERAZIONE(mnt, ext2_mkdir(mnt, p, uid, gid)); }
 
@@ -220,6 +225,7 @@ static const Ext2Ops g_ops = {
     giornale_leggi,
     giornale_scrivi,
     giornale_dati,
+    op_tempi,
 };
 
 /* =============================================================================

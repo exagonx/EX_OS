@@ -4,11 +4,10 @@
  * Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
- * ! THE NUMBERS ARE NOT KNOWN YET (16 October 2026, LLVM for EX-OS): no
- * system call says how big a volume is or how much is free. statvfs() and
- * fstatvfs() check that the path or descriptor exists and fill in a block
- * size and the name length; the counts are 0, which callers read as
- * "unknown". The layout is glibc's at 64 bit.
+ * The real counts of the volume since kernel 0.372 (SYS_STATFS, voce 131):
+ * until then every count was 0, and Firefox gave each site a quota of zero.
+ * The kind of filesystem is in statfs() (<sys/vfs.h>). The layout is
+ * glibc's at 64 bit.
  * ============================================================================= */
 #ifndef EXOS_SYS_STATVFS_H
 #define EXOS_SYS_STATVFS_H

@@ -1055,6 +1055,16 @@ sistema: `system -unload`, `chkdsk -r`, `system -load` - oppure
 l'avvio, prima di montarla.
 
 [problemi guasti]
+TOUCH, cp -p, tar x NON CAMBIANO LA DATA DEI FILE (resta quella di
+  quando il file e' stato scritto): fino al kernel 0.372 non c'era una
+  chiamata per scrivere le date, e utime/utimes non facevano niente. Dal
+  kernel 0.373 (SYS_TEMPI, ext4.mod 0.010): netupdate -check -yes e
+  riavvia. Sui CD (ISO 9660) le date non si cambiano: EROFS.
+UN PROGRAMMA DICE CHE sem_open O I SEMAFORI CONDIVISI NON CI SONO (ENOSYS),
+  o Qt dice che QSharedMemory/QSystemSemaphore non sono disponibili: fino al
+  kernel 0.372 un semaforo aspettava solo dentro un programma. Dal kernel
+  0.373 (e Qt ricostruito con la libc nuova): netupdate -check -yes e
+  riavvia.
 IN EXILLA UN SITO SI APRE SOLO AL SECONDO O TERZO TENTATIVO ("Hmm. We're
   having trouble finding that site"): fino alla libc del 26/11/2026 il
   risolutore di getaddrinfo non rimandava la domanda al DNS dopo una
@@ -2246,6 +2256,8 @@ abbassano (non si alzano oltre l'hardware) in /boot/kernel.cfg [kernel]:
                   memoria torna ai programmi quando serve
   riservakernel = N  MB dei primi 64 che i programmi non prendono, per le
                   tabelle e le pile del kernel (di serie 8; dal kernel 0.368)
+  inotify_eventi = N  eventi in coda per descrittore inotify (di serie
+                  16384, poi un IN_Q_OVERFLOW; dal kernel 0.373)
   netrx = N       descrittori di ricezione, tutte le schede (uno per MB)
   nettx = N       descrittori di invio della scheda (un quarto di netrx)
 

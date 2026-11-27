@@ -5973,6 +5973,7 @@ KERNEL_C_SRC   := $(KERNEL_DIR)/arch/x86/gdt.c \
                   $(KERNEL_DIR)/fs/ext2.c \
                   $(KERNEL_DIR)/fs/iso9660.c \
                   $(KERNEL_DIR)/fs/procfs.c \
+                  $(KERNEL_DIR)/fs/inotify.c \
                   $(KERNEL_DIR)/fs/vfs.c \
                   $(KERNEL_DIR)/boot/bootinst.c \
                   $(KERNEL_DIR)/boot/rdlz4.c \
