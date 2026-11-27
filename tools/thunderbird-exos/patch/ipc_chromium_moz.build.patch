@@ -1,0 +1,13 @@
+--- a/ipc/chromium/moz.build
++++ b/ipc/chromium/moz.build
+@@ -106,7 +106,9 @@
+         "src/base/process_util_ios.cpp",
+     ]
+ 
+-if CONFIG["TARGET_KERNEL"] in ("DragonFly", "FreeBSD", "NetBSD", "OpenBSD"):
++# EX-OS (Exilla) with the BSDs: fork() answers ENOSYS there, and Gecko runs
++# in one process.
++if CONFIG["TARGET_KERNEL"] in ("DragonFly", "FreeBSD", "NetBSD", "OpenBSD", "EXOS"):
+     SOURCES += [
+         "src/base/process_util_linux.cc",
+         "src/base/time_posix.cc",

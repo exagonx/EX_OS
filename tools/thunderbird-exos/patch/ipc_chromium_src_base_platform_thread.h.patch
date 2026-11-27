@@ -1,0 +1,11 @@
+--- a/ipc/chromium/src/base/platform_thread.h
++++ b/ipc/chromium/src/base/platform_thread.h
+@@ -23,7 +23,7 @@
+ #  include <pthread.h>
+ typedef pthread_t PlatformThreadHandle;
+ #  if defined(XP_LINUX) || defined(XP_OPENBSD) || defined(XP_SOLARIS) || \
+-      defined(__GLIBC__)
++      defined(__GLIBC__) || defined(XP_EXOS)
+ #    include <unistd.h>
+ typedef pid_t PlatformThreadId;
+ #  elif defined(__DragonFly__) || defined(XP_FREEBSD) || defined(XP_NETBSD)

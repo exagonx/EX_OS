@@ -1,0 +1,33 @@
+--- a/third_party/rust/rustix/src/termios/mod.rs
++++ b/third_party/rust/rustix/src/termios/mod.rs
+@@ -11,7 +11,7 @@
+ 
+ #[cfg(not(any(
+     target_os = "cygwin",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "wasi",
+ )))]
+@@ -20,12 +20,12 @@
+ mod tc;
+ #[cfg(not(windows))]
+ mod tty;
+-#[cfg(not(any(target_os = "espidf", target_os = "wasi")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "wasi")))]
+ mod types;
+ 
+ #[cfg(not(any(
+     target_os = "cygwin",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "wasi",
+ )))]
+@@ -34,5 +34,5 @@
+ pub use tc::*;
+ #[cfg(not(windows))]
+ pub use tty::*;
+-#[cfg(not(any(target_os = "espidf", target_os = "wasi")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "wasi")))]
+ pub use types::*;

@@ -1,0 +1,41 @@
+--- a/third_party/rust/libc/src/unix/mod.rs
++++ b/third_party/rust/libc/src/unix/mod.rs
+@@ -41,7 +41,7 @@
+     pub enum DIR {}
+ }
+ 
+-#[cfg(not(target_os = "nuttx"))]
++#[cfg(not(any(target_os = "nuttx", target_os = "exos")))]
+ pub type locale_t = *mut c_void;
+ 
+ s! {
+@@ -139,7 +139,7 @@
+         __reserved: Padding<[c_long; 16]>,
+     }
+ 
+-    #[cfg(not(target_os = "nuttx"))]
++    #[cfg(not(any(target_os = "nuttx", target_os = "exos")))]
+     pub struct ipv6_mreq {
+         pub ipv6mr_multiaddr: in6_addr,
+         #[cfg(target_os = "android")]
+@@ -416,7 +416,7 @@
+     if #[cfg(any(
+         target_os = "l4re",
+         target_os = "espidf",
+-        target_os = "nuttx"
++        any(target_os = "nuttx", target_os = "exos")
+     ))] {
+         // required libraries are linked externally for these platforms:
+         // * L4Re
+@@ -2491,7 +2491,10 @@
+     } else if #[cfg(target_os = "hurd")] {
+         mod hurd;
+         pub use self::hurd::*;
+-    } else if #[cfg(target_os = "nuttx")] {
++    } else if #[cfg(target_os = "exos")] {
++        mod exos;
++        pub use self::exos::*;
++    } else if #[cfg(any(target_os = "nuttx", target_os = "exos"))] {
+         mod nuttx;
+         pub use self::nuttx::*;
+     } else {

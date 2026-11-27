@@ -1,0 +1,26 @@
+--- a/python/mozbuild/mozbuild/configure/constants.py
++++ b/python/mozbuild/mozbuild/configure/constants.py
+@@ -32,6 +32,7 @@
+     POSSIBLE_VALUES = (
+         "Android",
+         "DragonFly",
++        "EXOS",
+         "FreeBSD",
+         "GNU",
+         "iOS",
+@@ -48,6 +49,7 @@
+     POSSIBLE_VALUES = (
+         "Darwin",
+         "DragonFly",
++        "EXOS",
+         "FreeBSD",
+         "kFreeBSD",
+         "Linux",
+@@ -137,6 +139,7 @@
+ kernel_preprocessor_checks = {
+     "Darwin": "__APPLE__",
+     "DragonFly": "__DragonFly__",
++    "EXOS": "__exos__",
+     "FreeBSD": "__FreeBSD__",
+     "kFreeBSD": "__FreeBSD_kernel__",
+     "Linux": "__linux__",

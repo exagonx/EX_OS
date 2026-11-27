@@ -1,0 +1,12 @@
+--- a/comm/mail/installer/package-manifest.in
++++ b/comm/mail/installer/package-manifest.in
+@@ -224,6 +224,9 @@
+ @RESPATH@/chrome/icons/default/msgcomposeWindow.ico
+ @RESPATH@/chrome/icons/default/calendar-alarm-dialog.ico
+ @RESPATH@/chrome/icons/default/calendar-general-dialog.ico
++#elifdef XP_EXOS
++; EX-OS: an ExWin window has no icon of its own (the taskbar takes the
++; program's), so comm/mail/app/Makefile.in installs these only for gtk
+ #elifdef UNIX_BUT_NOT_MAC
+ @RESPATH@/chrome/icons/default/*.png
+ @RESPATH@/chrome/icons/default/*.svg

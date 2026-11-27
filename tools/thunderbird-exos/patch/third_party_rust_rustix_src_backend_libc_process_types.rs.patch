@@ -1,0 +1,18 @@
+--- a/third_party/rust/rustix/src/backend/libc/process/types.rs
++++ b/third_party/rust/rustix/src/backend/libc/process/types.rs
+@@ -1,5 +1,5 @@
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "fuchsia",
+     target_os = "redox",
+     target_os = "vita",
+@@ -14,7 +14,7 @@
+ /// [`setrlimit`]: crate::process::setrlimit
+ /// [`prlimit`]: crate::process::prlimit
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "fuchsia",
+     target_os = "horizon",
+     target_os = "redox",

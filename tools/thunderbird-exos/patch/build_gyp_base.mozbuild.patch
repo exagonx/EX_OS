@@ -1,0 +1,10 @@
+--- a/build/gyp_base.mozbuild
++++ b/build/gyp_base.mozbuild
+@@ -23,6 +23,7 @@
+     "FreeBSD": "freebsd",
+     "NetBSD": "netbsd",
+     "OpenBSD": "openbsd",
++    "EXOS": "exos",
+ }
+ gyp_vars["OS"] = flavors.get(os)
+ 

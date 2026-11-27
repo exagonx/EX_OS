@@ -1,0 +1,12 @@
+--- a/third_party/sqlite3/ext/moz.build
++++ b/third_party/sqlite3/ext/moz.build
+@@ -30,7 +30,8 @@
+ # In this release we're not using DISKANN so remove to save space
+ DEFINES["SQLITE_VEC_ENABLE_DISKANN"] = 0
+ 
+-if CONFIG["OS_TARGET"] == "Linux" or CONFIG["OS_TARGET"] == "Android":
++# EX-OS too: its libm is a library of its own, as on Linux
++if CONFIG["OS_TARGET"] in ("Linux", "Android", "EXOS"):
+     OS_LIBS += [
+         "m",
+     ]

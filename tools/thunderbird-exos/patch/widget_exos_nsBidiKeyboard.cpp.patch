@@ -1,0 +1,31 @@
+--- a/widget/exos/nsBidiKeyboard.cpp
++++ b/widget/exos/nsBidiKeyboard.cpp
+@@ -0,0 +1,28 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "nsBidiKeyboard.h"
++#include "nsIWidget.h"
++
++NS_IMPL_ISUPPORTS(nsBidiKeyboard, nsIBidiKeyboard)
++
++nsBidiKeyboard::nsBidiKeyboard() { Reset(); }
++
++nsBidiKeyboard::~nsBidiKeyboard() = default;
++
++NS_IMETHODIMP nsBidiKeyboard::Reset() { return NS_OK; }
++
++NS_IMETHODIMP nsBidiKeyboard::IsLangRTL(bool* aIsRTL) {
++  *aIsRTL = false;
++  return NS_OK;
++}
++
++NS_IMETHODIMP nsBidiKeyboard::GetHaveBidiKeyboards(bool* aResult) {
++  *aResult = false;
++  return NS_OK;
++}
++
++already_AddRefed<nsIBidiKeyboard> nsIWidget::CreateBidiKeyboardInner() {
++  return do_AddRef(new nsBidiKeyboard());
++}

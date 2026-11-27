@@ -1,0 +1,9 @@
+--- a/third_party/rust/rustix/src/backend/libc/process/mod.rs
++++ b/third_party/rust/rustix/src/backend/libc/process/mod.rs
+@@ -1,5 +1,5 @@
+ #[cfg(not(windows))]
+ pub(crate) mod syscalls;
+ pub(crate) mod types;
+-#[cfg(not(any(target_os = "espidf", target_os = "vita", target_os = "wasi")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita", target_os = "wasi")))]
+ pub(crate) mod wait;

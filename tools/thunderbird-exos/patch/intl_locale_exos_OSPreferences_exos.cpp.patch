@@ -1,0 +1,53 @@
+--- a/intl/locale/exos/OSPreferences_exos.cpp
++++ b/intl/locale/exos/OSPreferences_exos.cpp
+@@ -0,0 +1,50 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* EX-OS (Exilla): the system locale is $LANG (it_IT.UTF-8 -> it-IT), as on
++ * Linux without a desktop. Date and time patterns are left to ICU. */
++
++#include "OSPreferences.h"
++
++#include "prenv.h"
++
++using namespace mozilla::intl;
++
++OSPreferences::OSPreferences() = default;
++
++bool OSPreferences::ReadSystemLocales(nsTArray<nsCString>& aLocaleList) {
++  const char* lang = PR_GetEnv("LANG");
++  if (!lang || !*lang || !strcmp(lang, "C") || !strcmp(lang, "POSIX")) {
++    return false;
++  }
++
++  nsAutoCString locale(lang);
++  int32_t cut = locale.FindChar('.');
++  if (cut >= 0) {
++    locale.Truncate(cut);
++  }
++  cut = locale.FindChar('@');
++  if (cut >= 0) {
++    locale.Truncate(cut);
++  }
++  locale.ReplaceChar('_', '-');
++  if (locale.IsEmpty()) {
++    return false;
++  }
++  aLocaleList.AppendElement(locale);
++  return true;
++}
++
++bool OSPreferences::ReadRegionalPrefsLocales(nsTArray<nsCString>& aLocaleList) {
++  return ReadSystemLocales(aLocaleList);
++}
++
++bool OSPreferences::ReadDateTimePattern(DateTimeFormatStyle aDateStyle,
++                                        DateTimeFormatStyle aTimeStyle,
++                                        const nsACString& aLocale,
++                                        nsACString& aRetVal) {
++  return false;
++}
++
++void OSPreferences::RemoveObservers() {}

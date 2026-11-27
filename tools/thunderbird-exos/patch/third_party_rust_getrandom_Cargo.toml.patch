@@ -1,0 +1,11 @@
+--- a/third_party/rust/getrandom/Cargo.toml
++++ b/third_party/rust/getrandom/Cargo.toml
+@@ -117,7 +117,7 @@
+ version = "0.2.154"
+ default-features = false
+ 
+-[target.'cfg(any(target_os = "macos", target_os = "openbsd", target_os = "vita", target_os = "emscripten"))'.dependencies.libc]
++[target.'cfg(any(target_os = "macos", target_os = "openbsd", target_os = "vita", target_os = "emscripten", target_os = "exos"))'.dependencies.libc]
+ version = "0.2.154"
+ default-features = false
+ 

@@ -1,0 +1,42 @@
+--- a/security/nss/cmd/platlibs.gypi
++++ b/security/nss/cmd/platlibs.gypi
+@@ -10,7 +10,9 @@
+       '<(DEPTH)/cmd/lib/lib.gyp:sectool',
+     ],
+     'conditions': [
+-      ['moz_fold_libs==0', {
++      # EX-OS (and any fully static build): nssutil3 is a shared library; with
++      # use_static_libs the static nssutil below takes its place.
++      ['moz_fold_libs==0 and <(use_static_libs)==0', {
+         'dependencies': [
+           '<(DEPTH)/lib/util/util.gyp:nssutil3',
+         ],
+@@ -18,6 +20,7 @@
+       ['<(use_static_libs)==1', {
+         'defines': ['NSS_USE_STATIC_LIBS'],
+         'dependencies': [
++          '<(DEPTH)/lib/util/util.gyp:nssutil',
+           '<(DEPTH)/lib/smime/smime.gyp:smime',
+           '<(DEPTH)/lib/ssl/ssl.gyp:ssl',
+           '<(DEPTH)/lib/nss/nss.gyp:nss_static',
+@@ -25,14 +28,16 @@
+           '<(DEPTH)/lib/pkcs7/pkcs7.gyp:pkcs7',
+           '<(DEPTH)/lib/certhigh/certhigh.gyp:certhi',
+           '<(DEPTH)/lib/cryptohi/cryptohi.gyp:cryptohi',
+-          '<(DEPTH)/lib/pk11wrap/pk11wrap.gyp:pk11wrap',
+-          '<(DEPTH)/lib/softoken/softoken.gyp:softokn',
++          # the softoken linked in (NSS_STATIC_SOFTOKEN): EX-OS cannot dlopen it
++          '<(DEPTH)/lib/pk11wrap/pk11wrap.gyp:pk11wrap_static',
++          '<(DEPTH)/lib/softoken/softoken.gyp:softokn_static',
+           '<(DEPTH)/lib/certdb/certdb.gyp:certdb',
+           '<(DEPTH)/lib/pki/pki.gyp:nsspki',
+           '<(DEPTH)/lib/dev/dev.gyp:nssdev',
+           '<(DEPTH)/lib/base/base.gyp:nssb',
+-          '<(DEPTH)/lib/freebl/freebl.gyp:freebl',
+-          '<(DEPTH)/lib/sqlite/sqlite.gyp:sqlite3',
++          '<(DEPTH)/lib/freebl/freebl.gyp:freebl_static',
++          # the static sqlite, not the shared sqlite3 (EX-OS has no .so)
++          '<(DEPTH)/lib/sqlite/sqlite.gyp:sqlite',
+           '<(DEPTH)/lib/libpkix/libpkix.gyp:libpkix',
+         ],
+         'conditions': [

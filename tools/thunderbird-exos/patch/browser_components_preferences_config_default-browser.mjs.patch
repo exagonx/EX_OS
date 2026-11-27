@@ -1,0 +1,18 @@
+--- a/browser/components/preferences/config/default-browser.mjs
++++ b/browser/components/preferences/config/default-browser.mjs
+@@ -9,11 +9,10 @@
+   "resource://gre/modules/AppConstants.sys.mjs"
+ );
+ 
+-if (AppConstants.HAVE_SHELL_SERVICE) {
+-  Preferences.addAll([
+-    { id: "browser.shell.checkDefaultBrowser", type: "bool" },
+-  ]);
+-}
++// Registered even without a shell service (EX-OS): the "alwaysCheckDefault"
++// setting below names it on every platform, and an unregistered pref throws
++// and stops the script, leaving the main pane empty.
++Preferences.addAll([{ id: "browser.shell.checkDefaultBrowser", type: "bool" }]);
+ 
+ Preferences.addSetting({
+   id: "alwaysCheckDefault",

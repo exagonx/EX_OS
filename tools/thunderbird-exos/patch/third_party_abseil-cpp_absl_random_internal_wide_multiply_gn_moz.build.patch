@@ -1,0 +1,20 @@
+--- a/third_party/abseil-cpp/absl/random/internal/wide_multiply_gn/moz.build
++++ b/third_party/abseil-cpp/absl/random/internal/wide_multiply_gn/moz.build
+@@ -50,7 +50,7 @@
+     DEFINES["_LARGEFILE64_SOURCE"] = True
+     DEFINES["_LARGEFILE_SOURCE"] = True
+ 
+-if CONFIG["OS_TARGET"] == "OpenBSD":
++if CONFIG["OS_TARGET"] in ("OpenBSD", "EXOS"):
+ 
+     DEFINES["USE_GLIB"] = "1"
+     DEFINES["USE_OZONE"] = "1"
+@@ -112,7 +112,7 @@
+ 
+     DEFINES["_DEBUG"] = True
+ 
+-if CONFIG["MOZ_DEBUG"] == "1" and CONFIG["OS_TARGET"] == "OpenBSD":
++if CONFIG["MOZ_DEBUG"] == "1" and CONFIG["OS_TARGET"] in ("OpenBSD", "EXOS"):
+ 
+     DEFINES["_DEBUG"] = True
+ 

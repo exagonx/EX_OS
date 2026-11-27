@@ -1,0 +1,36 @@
+--- a/widget/exos/nsWidgetFactory.cpp
++++ b/widget/exos/nsWidgetFactory.cpp
+@@ -0,0 +1,33 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "nsWidgetFactory.h"
++
++#include "mozilla/Components.h"
++#include "mozilla/WidgetUtils.h"
++#include "nsISupports.h"
++
++#include "nsAppShell.h"
++#include "nsAppShellSingleton.h"
++#include "nsLookAndFeel.h"
++
++#include "HeadlessClipboard.h"
++
++using namespace mozilla;
++using namespace mozilla::widget;
++
++// EX-OS has no system clipboard yet: the headless one keeps it in memory.
++NS_IMPL_COMPONENT_FACTORY(nsIClipboard) {
++  nsCOMPtr<nsIClipboard> inst = new HeadlessClipboard();
++
++  return inst.forget();
++}
++
++nsresult nsWidgetExosModuleCtor() { return nsAppShellInit(); }
++
++void nsWidgetExosModuleDtor() {
++  WidgetUtils::Shutdown();
++  nsLookAndFeel::Shutdown();
++  nsAppShellShutdown();
++}

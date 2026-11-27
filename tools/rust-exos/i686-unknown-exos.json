@@ -17,10 +17,12 @@
   "position-independent-executables": false,
   "disable-redzone": true,
   "features": "-mmx,-sse",
-  "dynamic-linking": false,
+  "dynamic-linking": true,
   "has-thread-local": true,
-  "tls-model": "local-exec",
+  "tls-model": "global-dynamic",
   "max-atomic-width": 64,
   "cpu": "pentium-mmx",
-  "no-default-libraries": false
+  "no-default-libraries": false,
+  "dll-prefix": "lib",
+  "dll-suffix": ".so"
 }

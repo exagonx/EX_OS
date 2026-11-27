@@ -1,0 +1,13 @@
+--- a/gfx/layers/wr/WebRenderBridgeParent.cpp
++++ b/gfx/layers/wr/WebRenderBridgeParent.cpp
+@@ -662,7 +662,9 @@
+       gfx::FontType::MAC
+ #elif defined(MOZ_WIDGET_GTK)
+       gfx::FontType::FONTCONFIG
+-#elif defined(MOZ_WIDGET_ANDROID)
++#elif defined(MOZ_WIDGET_ANDROID) || defined(XP_EXOS)
++      // EX-OS: FreeType fonts by path, as Factory::ValidateUnscaledFontDescriptor
++      // (UNKNOWN refused every descriptor and webrender panicked)
+       gfx::FontType::FREETYPE
+ #else
+       gfx::FontType::UNKNOWN

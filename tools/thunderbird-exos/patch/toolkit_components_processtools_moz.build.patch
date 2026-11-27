@@ -1,0 +1,10 @@
+--- a/toolkit/components/processtools/moz.build
++++ b/toolkit/components/processtools/moz.build
+@@ -69,5 +69,7 @@
+     ]
+ 
+     IPDL_SOURCES += ["PProcInfo.ipdl"]
++elif toolkit == "exos":
++    UNIFIED_SOURCES += ["ProcInfo_exos.cpp"]
+ 
+ include("/ipc/chromium/chromium-config.mozbuild")

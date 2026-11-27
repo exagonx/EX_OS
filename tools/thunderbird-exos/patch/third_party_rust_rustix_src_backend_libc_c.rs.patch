@@ -1,0 +1,11 @@
+--- a/third_party/rust/rustix/src/backend/libc/c.rs
++++ b/third_party/rust/rustix/src/backend/libc/c.rs
+@@ -15,7 +15,7 @@
+ pub(crate) const NFS_SUPER_MAGIC: u32 = 0x0000_6969;
+ 
+ #[cfg(feature = "process")]
+-#[cfg(not(any(target_os = "espidf", target_os = "wasi")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "wasi")))]
+ pub(crate) const EXIT_SIGNALED_SIGABRT: c_int = 128 + SIGABRT as c_int;
+ 
+ // TODO: Upstream these.

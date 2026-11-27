@@ -1,0 +1,11 @@
+--- a/third_party/rust/rustix/src/io/dup.rs
++++ b/third_party/rust/rustix/src/io/dup.rs
+@@ -113,7 +113,7 @@
+ /// [DragonFly BSD]: https://man.dragonflybsd.org/?command=dup3&section=3
+ #[cfg(not(any(
+     target_os = "aix",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "nto",
+     target_os = "vita",

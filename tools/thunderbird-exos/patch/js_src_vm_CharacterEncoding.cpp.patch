@@ -1,0 +1,29 @@
+--- a/js/src/vm/CharacterEncoding.cpp
++++ b/js/src/vm/CharacterEncoding.cpp
+@@ -16,7 +16,7 @@
+ #include "mozilla/Utf8.h"
+ 
+ #include <bit>
+-#ifndef XP_LINUX
++#if !defined(XP_LINUX) && !defined(XP_EXOS)  // EX-OS: libstdc++ without codecvt
+ // We still support libstd++ versions without codecvt support on Linux.
+ //
+ // When the minimum supported libstd++ version is bumped to 3.4.21, we can
+@@ -716,7 +716,7 @@
+                                                    const wchar_t* chars) {
+   using CheckedSizeT = mozilla::CheckedInt<size_t>;
+ 
+-#ifndef XP_LINUX
++#if !defined(XP_LINUX) && !defined(XP_EXOS)  // EX-OS: libstdc++ without codecvt
+   // Use the standard codecvt facet to convert a wide string to UTF-8.
+   std::codecvt_utf8<wchar_t> cv;
+ 
+@@ -841,7 +841,7 @@
+   // Only valid UTF-8 strings should be passed to this function.
+   MOZ_ASSERT(mozilla::IsUtf8(mozilla::Span(chars, strlen(chars))));
+ 
+-#ifndef XP_LINUX
++#if !defined(XP_LINUX) && !defined(XP_EXOS)  // EX-OS: libstdc++ without codecvt
+   // Use the standard codecvt facet to convert from UTF-8 to a wide string.
+   std::codecvt_utf8<wchar_t> cv;
+ 

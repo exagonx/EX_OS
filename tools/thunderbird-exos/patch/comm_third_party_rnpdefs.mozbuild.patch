@@ -1,0 +1,11 @@
+--- a/comm/third_party/rnpdefs.mozbuild
++++ b/comm/third_party/rnpdefs.mozbuild
+@@ -47,6 +47,7 @@
+     )
+ 
+ 
+-if CONFIG["OS_ARCH"] in ("Linux", "SunOS"):
++# EX-OS: ELF with real .so files, as Linux (librnp.so is one)
++if CONFIG["OS_ARCH"] in ("Linux", "SunOS", "EXOS"):
+     CFLAGS += ["-fPIC"]
+     CXXFLAGS += ["-fPIC"]

@@ -1,0 +1,40 @@
+--- a/nsprpub/pr/include/md/_pth.h
++++ b/nsprpub/pr/include/md/_pth.h
+@@ -62,7 +62,8 @@
+  */
+ #if defined(AIX) || defined(SOLARIS) || defined(LINUX) || defined(__GNU__) || \
+     defined(__GLIBC__) || defined(FREEBSD) || defined(NETBSD) ||              \
+-    defined(OPENBSD) || defined(NTO) || defined(DARWIN) || defined(RISCOS)
++    defined(OPENBSD) || defined(NTO) || defined(DARWIN) || defined(RISCOS) || \
++    defined(EXOS)
+ #define _PT_PTHREAD_INVALIDATE_THR_HANDLE(t) (t) = 0
+ #define _PT_PTHREAD_THR_HANDLE_IS_INVALID(t) (t) == 0
+ #define _PT_PTHREAD_COPY_THR_HANDLE(st, dt) (dt) = (st)
+@@ -87,7 +88,7 @@
+  */
+ #if (defined(AIX) && !defined(AIX4_3_PLUS)) || defined(LINUX) ||  \
+     defined(__GNU__) || defined(__GLIBC__) || defined(FREEBSD) || \
+-    defined(NETBSD) || defined(OPENBSD) || defined(DARWIN)
++    defined(NETBSD) || defined(OPENBSD) || defined(DARWIN) || defined(EXOS)
+ #define PT_NO_SIGTIMEDWAIT
+ #endif
+ 
+@@ -120,7 +121,7 @@
+  */
+ #define PT_PRIO_MIN 1
+ #define PT_PRIO_MAX 127
+-#elif defined(OPENBSD)
++#elif defined(OPENBSD) || defined(EXOS)
+ #define PT_PRIO_MIN 0
+ #define PT_PRIO_MAX 31
+ #elif defined(NETBSD) || defined(DARWIN) || defined(RISCOS) /* XXX */
+@@ -140,7 +141,8 @@
+ #define _PT_PTHREAD_YIELD() (*_PT_aix_yield_fcn)()
+ #elif defined(SOLARIS) || defined(LINUX) || defined(__GNU__) ||  \
+     defined(__GLIBC__) || defined(FREEBSD) || defined(NETBSD) || \
+-    defined(OPENBSD) || defined(NTO) || defined(DARWIN) || defined(RISCOS)
++    defined(OPENBSD) || defined(NTO) || defined(DARWIN) || defined(RISCOS) || \
++    defined(EXOS)
+ #define _PT_PTHREAD_YIELD() sched_yield()
+ #else
+ #error "Need to define _PT_PTHREAD_YIELD for this platform"

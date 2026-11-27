@@ -1,0 +1,235 @@
+--- a/third_party/rust/rustix/src/backend/libc/fs/types.rs
++++ b/third_party/rust/rustix/src/backend/libc/fs/types.rs
+@@ -2,7 +2,7 @@
+ use crate::ffi;
+ use bitflags::bitflags;
+ 
+-#[cfg(not(any(target_os = "espidf", target_os = "horizon", target_os = "vita")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "horizon", target_os = "vita")))]
+ bitflags! {
+     /// `*_OK` constants for use with [`accessat`].
+     ///
+@@ -27,7 +27,7 @@
+     }
+ }
+ 
+-#[cfg(not(any(target_os = "espidf", target_os = "horizon", target_os = "redox")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "horizon", target_os = "redox")))]
+ bitflags! {
+     /// `AT_*` constants for use with [`openat`], [`statat`], and other `*at`
+     /// functions.
+@@ -109,63 +109,63 @@
+     #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+     pub struct Mode: RawMode {
+         /// `S_IRWXU`
+-        #[cfg(not(any(target_os = "espidf", target_os = "vita")))]
++        #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita")))]
+         const RWXU = c::S_IRWXU as RawMode;
+ 
+         /// `S_IRUSR`
+-        #[cfg(not(any(target_os = "espidf", target_os = "vita")))]
++        #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita")))]
+         const RUSR = c::S_IRUSR as RawMode;
+ 
+         /// `S_IWUSR`
+-        #[cfg(not(any(target_os = "espidf", target_os = "vita")))]
++        #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita")))]
+         const WUSR = c::S_IWUSR as RawMode;
+ 
+         /// `S_IXUSR`
+-        #[cfg(not(any(target_os = "espidf", target_os = "vita")))]
++        #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita")))]
+         const XUSR = c::S_IXUSR as RawMode;
+ 
+         /// `S_IRWXG`
+-        #[cfg(not(any(target_os = "espidf", target_os = "vita")))]
++        #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita")))]
+         const RWXG = c::S_IRWXG as RawMode;
+ 
+         /// `S_IRGRP`
+-        #[cfg(not(any(target_os = "espidf", target_os = "vita")))]
++        #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita")))]
+         const RGRP = c::S_IRGRP as RawMode;
+ 
+         /// `S_IWGRP`
+-        #[cfg(not(any(target_os = "espidf", target_os = "vita")))]
++        #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita")))]
+         const WGRP = c::S_IWGRP as RawMode;
+ 
+         /// `S_IXGRP`
+-        #[cfg(not(any(target_os = "espidf", target_os = "vita")))]
++        #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita")))]
+         const XGRP = c::S_IXGRP as RawMode;
+ 
+         /// `S_IRWXO`
+-        #[cfg(not(any(target_os = "espidf", target_os = "vita")))]
++        #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita")))]
+         const RWXO = c::S_IRWXO as RawMode;
+ 
+         /// `S_IROTH`
+-        #[cfg(not(any(target_os = "espidf", target_os = "vita")))]
++        #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita")))]
+         const ROTH = c::S_IROTH as RawMode;
+ 
+         /// `S_IWOTH`
+-        #[cfg(not(any(target_os = "espidf", target_os = "vita")))]
++        #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita")))]
+         const WOTH = c::S_IWOTH as RawMode;
+ 
+         /// `S_IXOTH`
+-        #[cfg(not(any(target_os = "espidf", target_os = "vita")))]
++        #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita")))]
+         const XOTH = c::S_IXOTH as RawMode;
+ 
+         /// `S_ISUID`
+-        #[cfg(not(any(target_os = "espidf", target_os = "vita")))]
++        #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita")))]
+         const SUID = c::S_ISUID as RawMode;
+ 
+         /// `S_ISGID`
+-        #[cfg(not(any(target_os = "espidf", target_os = "vita")))]
++        #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita")))]
+         const SGID = c::S_ISGID as RawMode;
+ 
+         /// `S_ISVTX`
+-        #[cfg(not(any(target_os = "espidf", target_os = "vita")))]
++        #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "vita")))]
+         const SVTX = c::S_ISVTX as RawMode;
+ 
+         /// <https://docs.rs/bitflags/*/bitflags/#externally-defined-flags>
+@@ -188,7 +188,7 @@
+     }
+ }
+ 
+-#[cfg(not(target_os = "espidf"))]
++#[cfg(not(any(target_os = "espidf", target_os = "exos")))]
+ impl Mode {
+     /// Construct a `Mode` from the mode bits of the `st_mode` field of a
+     /// `Mode`.
+@@ -204,7 +204,7 @@
+     }
+ }
+ 
+-#[cfg(not(target_os = "espidf"))]
++#[cfg(not(any(target_os = "espidf", target_os = "exos")))]
+ impl From<RawMode> for Mode {
+     /// Support conversions from raw mode values to `Mode`.
+     ///
+@@ -218,7 +218,7 @@
+     }
+ }
+ 
+-#[cfg(not(target_os = "espidf"))]
++#[cfg(not(any(target_os = "espidf", target_os = "exos")))]
+ impl From<Mode> for RawMode {
+     /// Support conversions from `Mode` to raw mode values.
+     ///
+@@ -259,11 +259,11 @@
+         const CREATE = bitcast!(c::O_CREAT);
+ 
+         /// `O_DIRECTORY`
+-        #[cfg(not(any(target_os = "espidf", target_os = "horizon")))]
++        #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "horizon")))]
+         const DIRECTORY = bitcast!(c::O_DIRECTORY);
+ 
+         /// `O_DSYNC`
+-        #[cfg(not(any(target_os = "dragonfly", target_os = "espidf", target_os = "horizon", target_os = "l4re", target_os = "redox", target_os = "vita")))]
++        #[cfg(not(any(target_os = "dragonfly", any(target_os = "espidf", target_os = "exos"), target_os = "horizon", target_os = "l4re", target_os = "redox", target_os = "vita")))]
+         const DSYNC = bitcast!(c::O_DSYNC);
+ 
+         /// `O_EXCL`
+@@ -277,7 +277,7 @@
+         const FSYNC = bitcast!(c::O_FSYNC);
+ 
+         /// `O_NOFOLLOW`
+-        #[cfg(not(any(target_os = "espidf", target_os = "horizon")))]
++        #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "horizon")))]
+         const NOFOLLOW = bitcast!(c::O_NOFOLLOW);
+ 
+         /// `O_NONBLOCK`
+@@ -295,7 +295,7 @@
+         const RDWR = bitcast!(c::O_RDWR);
+ 
+         /// `O_NOCTTY`
+-        #[cfg(not(any(target_os = "espidf", target_os = "horizon", target_os = "l4re", target_os = "redox", target_os = "vita")))]
++        #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "horizon", target_os = "l4re", target_os = "redox", target_os = "vita")))]
+         const NOCTTY = bitcast!(c::O_NOCTTY);
+ 
+         /// `O_RSYNC`
+@@ -377,7 +377,7 @@
+         #[cfg(not(any(
+             target_os = "aix",
+             target_os = "cygwin",
+-            target_os = "espidf",
++            any(target_os = "espidf", target_os = "exos"),
+             target_os = "haiku",
+             target_os = "horizon",
+             target_os = "wasi",
+@@ -617,7 +617,7 @@
+     #[cfg(not(any(
+         solarish,
+         target_os = "aix",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "nto",
+         target_os = "redox",
+@@ -648,7 +648,7 @@
+     apple,
+     netbsdlike,
+     target_os = "dragonfly",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "haiku",
+     target_os = "redox",
+@@ -763,7 +763,7 @@
+ 
+ #[cfg(not(any(
+     netbsdlike,
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "nto",
+     target_os = "redox",
+@@ -893,11 +893,11 @@
+         const NOEXEC = c::ST_NOEXEC as u64;
+ 
+         /// `ST_NOSUID`
+-        #[cfg(not(any(target_os = "espidf", target_os = "haiku", target_os = "horizon", target_os = "redox", target_os = "vita")))]
++        #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "haiku", target_os = "horizon", target_os = "redox", target_os = "vita")))]
+         const NOSUID = c::ST_NOSUID as u64;
+ 
+         /// `ST_RDONLY`
+-        #[cfg(not(any(target_os = "espidf", target_os = "haiku", target_os = "horizon", target_os = "redox", target_os = "vita")))]
++        #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "haiku", target_os = "horizon", target_os = "redox", target_os = "vita")))]
+         const RDONLY = c::ST_RDONLY as u64;
+ 
+         /// `ST_RELATIME`
+@@ -921,7 +921,7 @@
+ // reuse this `FlockOperation` enum for `fcntl_lock`, so on Solaris we use
+ // our own made-up integer values.
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "horizon",
+     target_os = "vita",
+     target_os = "wasi"
+@@ -1056,7 +1056,7 @@
+ #[cfg(not(any(
+     linux_like,
+     solarish,
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "netbsd",
+@@ -1079,7 +1079,7 @@
+ #[cfg(not(any(
+     solarish,
+     target_os = "cygwin",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "nto",

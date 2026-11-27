@@ -1,0 +1,65 @@
+--- a/gfx/thebes/gfxExosPlatform.cpp
++++ b/gfx/thebes/gfxExosPlatform.cpp
+@@ -0,0 +1,62 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "gfxExosPlatform.h"
++
++#include "VsyncSource.h"
++#include "cairo.h"
++#include "ft2build.h"
++#include "gfxFT2FontList.h"
++#include "gfxImageSurface.h"
++#include "mozilla/gfx/2D.h"
++#include FT_FREETYPE_H
++
++using namespace mozilla;
++using namespace mozilla::gfx;
++
++static FT_Library gPlatformFTLibrary = nullptr;
++
++gfxExosPlatform::gfxExosPlatform() {
++  FT_Init_FreeType(&gPlatformFTLibrary);
++  Factory::SetFTLibrary(gPlatformFTLibrary);
++}
++
++gfxExosPlatform::~gfxExosPlatform() {
++  FT_Done_FreeType(gPlatformFTLibrary);
++  gPlatformFTLibrary = nullptr;
++}
++
++already_AddRefed<gfxASurface> gfxExosPlatform::CreateOffscreenSurface(
++    const IntSize& aSize, gfxImageFormat aFormat) {
++  if (!Factory::AllowedSurfaceSize(aSize)) {
++    return nullptr;
++  }
++
++  RefPtr<gfxASurface> newSurface = new gfxImageSurface(aSize, aFormat);
++  return newSurface.forget();
++}
++
++// The fonts EX-OS ships are the Liberation family (exwin/font); DejaVu is
++// what most other free systems have, if someone adds it.
++void gfxExosPlatform::GetCommonFallbackFonts(uint32_t aCh, Script aRunScript,
++                                             FontPresentation aPresentation,
++                                             nsTArray<const char*>& aFontList) {
++  aFontList.AppendElement("Liberation Sans");
++  aFontList.AppendElement("DejaVu Sans");
++}
++
++bool gfxExosPlatform::CreatePlatformFontList() {
++  return gfxPlatformFontList::Initialize(new gfxFT2FontList);
++}
++
++void gfxExosPlatform::ReadSystemFontList(
++    mozilla::dom::SystemFontList* aFontList) {
++  gfxFT2FontList::PlatformFontList()->ReadSystemFontList(aFontList);
++}
++
++// No display to follow yet: the software timer at 60 Hz.
++already_AddRefed<mozilla::gfx::VsyncSource>
++gfxExosPlatform::CreateGlobalHardwareVsyncSource() {
++  return GetSoftwareVsyncSource();
++}

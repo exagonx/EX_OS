@@ -1,0 +1,11 @@
+--- a/security/nss/lib/freebl/ghash.gyp
++++ b/security/nss/lib/freebl/ghash.gyp
+@@ -22,7 +22,7 @@
+         '-mpclmul', '-maes'
+       ],
+       'conditions': [
+-        [ 'OS=="linux" or OS=="android" or OS=="dragonfly" or OS=="freebsd" or OS=="netbsd" or OS=="openbsd"', {
++        [ 'OS=="linux" or OS=="android" or OS=="dragonfly" or OS=="freebsd" or OS=="netbsd" or OS=="openbsd" or OS=="exos"', {
+           'cflags': [
+             '-mpclmul', '-maes'
+           ],

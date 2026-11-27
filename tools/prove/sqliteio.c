@@ -2,6 +2,7 @@
  * Part 1 tries each system call SQLite uses, one by one, as it uses them.
  * Part 2 is SQLite itself, with Firefox's options, several threads on one
  * directory. Failures print SQLite's extended code and errno.
+ * Part 3 is two connections on one WAL database, as Places opens them.
  * Usage: sqliteio <directory> [threads] [rounds]
  */
 #include <stdio.h>
@@ -207,6 +208,61 @@ static void *filo(void *arg)
     return NULL;
 }
 
+/* Part 3: what Places does in Thunderbird and Firefox - two connections of
+ * one process on one WAL database. They meet in the -shm file, mapped
+ * MAP_SHARED by each: if the two maps are not the same memory, the reader
+ * never sees the writer's frames (SQLITE_BUSY, places.sqlite 0x80630001). */
+static int conta_righe(sqlite3 *d)
+{
+    sqlite3_stmt *s;
+    int n = -1;
+
+    if (sqlite3_prepare_v2(d, "SELECT count(*) FROM t", -1, &s, NULL) != SQLITE_OK) return -2;
+    if (sqlite3_step(s) == SQLITE_ROW) n = sqlite3_column_int(s, 0);
+    sqlite3_finalize(s);
+    return n;
+}
+
+static void due_connessioni(void)
+{
+    char nome[256], q[128];
+    sqlite3 *w = NULL, *r = NULL;
+    int i, n, male = 0;
+
+    printf("== 3. due connessioni, WAL, lo stesso database\n");
+    percorso(nome, sizeof nome, "wal2.sqlite");
+    unlink(nome);
+    if (sqlite3_open(nome, &w) != SQLITE_OK || sqlite3_open(nome, &r) != SQLITE_OK) {
+        ok(0, "apertura delle due connessioni");
+        return;
+    }
+    sqlite3_busy_timeout(w, 2000);
+    sqlite3_busy_timeout(r, 2000);
+    esegui(w, "PRAGMA page_size=32768", "wal2");
+    ok(esegui(w, "PRAGMA journal_mode=WAL", "wal2") == SQLITE_OK, "journal_mode=WAL");
+    esegui(w, "CREATE TABLE t(a INTEGER PRIMARY KEY, b TEXT)", "wal2");
+    for (i = 1; i <= 20; i++) {
+        snprintf(q, sizeof q, "INSERT INTO t(b) VALUES('riga %d')", i);
+        if (sqlite3_exec(w, q, NULL, NULL, NULL) != SQLITE_OK) {
+            printf("  [NO] scrittura %d: %s\n", i, sqlite3_errmsg(w));
+            male++;
+            break;
+        }
+        n = conta_righe(r);
+        if (n != i) {
+            printf("  [NO] dopo %d righe la seconda connessione ne vede %d: %s\n", i, n,
+                   sqlite3_errmsg(r));
+            male++;
+            break;
+        }
+    }
+    ok(!male, "la seconda connessione vede ogni riga della prima");
+    ok(esegui(r, "PRAGMA integrity_check", "wal2") == SQLITE_OK, "integrity_check dalla seconda");
+    sqlite3_close(r);
+    sqlite3_close(w);
+    if (male) g_no++;
+}
+
 int main(int argc, char **argv)
 {
     int fili = argc > 2 ? atoi(argv[2]) : 4;
@@ -221,6 +277,7 @@ int main(int argc, char **argv)
     printf("== 2. SQLite, %d fili, %d giri\n", fili, g_giri);
     for (i = 0; i < fili; i++) pthread_create(&t[i], NULL, filo, (void *)i);
     for (i = 0; i < fili; i++) pthread_join(t[i], NULL);
+    due_connessioni();
     printf("sqliteio: %d NO\n", g_no);
     return g_no != 0;
 }

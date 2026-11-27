@@ -1,16 +1,6 @@
 --- a/config/external/nspr/pr/moz.build
 +++ b/config/external/nspr/pr/moz.build
-@@ -2,7 +2,8 @@
- # License, v. 2.0. If a copy of the MPL was not distributed with this
- # file, You can obtain one at http://mozilla.org/MPL/2.0/.
- 
--if CONFIG["MOZ_FOLD_LIBS"]:
-+# EX-OS has no ELF shared libraries: NSPR is linked statically there.
-+if CONFIG["MOZ_FOLD_LIBS"] or CONFIG["OS_TARGET"] == "EXOS":
-     Library("nspr4")
- else:
-     SharedLibrary("nspr4")
-@@ -40,6 +41,13 @@
+@@ -40,6 +40,13 @@
      DEFINES["HAVE_POINTER_LOCALTIME_R"] = True
      DEFINES[CONFIG["OS_TARGET"].upper()] = True
      SOURCES += ["/nsprpub/pr/src/md/unix/%s.c" % CONFIG["OS_TARGET"].lower()]
@@ -24,7 +14,7 @@
  elif CONFIG["OS_TARGET"] == "Darwin":
      OS_LIBS += ["-framework CoreServices"]
      # See also IncreaseDescriptorLimits in toolkit/xre/nsAppRunner.cpp
-@@ -257,6 +265,7 @@
+@@ -257,6 +264,7 @@
  
  EXPORTS.nspr.md += [
      "/nsprpub/pr/include/md/_darwin.cfg",

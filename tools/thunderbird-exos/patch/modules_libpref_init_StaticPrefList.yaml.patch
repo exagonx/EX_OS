@@ -1,0 +1,74 @@
+--- a/modules/libpref/init/StaticPrefList.yaml
++++ b/modules/libpref/init/StaticPrefList.yaml
+@@ -8105,7 +8105,7 @@
+   value: false
+   mirror: always
+ 
+-#if defined(MOZ_WIDGET_GTK) || defined(MOZ_WIDGET_ANDROID)
++#if defined(MOZ_WIDGET_GTK) || defined(MOZ_WIDGET_ANDROID) || defined(XP_EXOS)
+   # -1 = disabled (no preblend, original behavior)
+   #  0 = sRGB transfer
+   # >0 = value/100.0 exponent
+@@ -13011,6 +13011,8 @@
+   value: true
+ #elif defined(XP_SOLARIS)
+   value: true
++#elif defined(XP_EXOS)
++  value: true
+ #else
+   value: false
+ #endif
+@@ -13057,6 +13059,8 @@
+   value: true
+ #elif defined(XP_SOLARIS)
+   value: true
++#elif defined(XP_EXOS)
++  value: true
+ #else
+   value: false
+ #endif
+@@ -13092,6 +13096,8 @@
+   value: true
+ #elif defined(XP_SOLARIS)
+   value: true
++#elif defined(XP_EXOS)
++  value: true
+ #else
+   value: false
+ #endif
+@@ -13113,6 +13119,8 @@
+   value: true
+ #elif defined(XP_SOLARIS)
+   value: true
++#elif defined(XP_EXOS)
++  value: true
+ #else
+   value: false
+ #endif
+@@ -13134,6 +13142,8 @@
+   value: true
+ #elif defined(XP_SOLARIS)
+   value: true
++#elif defined(XP_EXOS)
++  value: true
+ #else
+   value: false
+ #endif
+@@ -13155,6 +13165,8 @@
+   value: true
+ #elif defined(XP_SOLARIS)
+   value: true
++#elif defined(XP_EXOS)
++  value: true
+ #else
+   value: false
+ #endif
+@@ -13175,7 +13187,7 @@
+   value: true
+ #elif defined(XP_MACOSX)
+   value: true
+-#elif defined(XP_LINUX) || defined(ANDROID)
++#elif defined(XP_LINUX) || defined(ANDROID) || defined(XP_EXOS)
+   value: true
+ #elif defined(XP_FREEBSD)
+   value: true

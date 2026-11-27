@@ -1,0 +1,12 @@
+--- a/uriloader/exthandler/moz.build
++++ b/uriloader/exthandler/moz.build
+@@ -82,7 +82,8 @@
+         osdir + "/nsOSHelperAppService.cpp",
+     ]
+ 
+-if CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
++# EX-OS (Exilla) too: the GIO service they ask for is simply not there.
++if CONFIG["MOZ_WIDGET_TOOLKIT"] in ("gtk", "exos"):
+     UNIFIED_SOURCES += [
+         "unix/nsGNOMERegistry.cpp",
+         "unix/nsMIMEInfoUnix.cpp",

@@ -1,0 +1,14 @@
+--- a/third_party/rust/rustix/src/backend/libc/fs/mod.rs
++++ b/third_party/rust/rustix/src/backend/libc/fs/mod.rs
+@@ -1,9 +1,9 @@
+-#[cfg(all(feature = "alloc", not(any(target_os = "espidf", target_os = "redox"))))]
++#[cfg(all(feature = "alloc", not(any(any(target_os = "espidf", target_os = "exos"), target_os = "redox"))))]
+ pub(crate) mod dir;
+ #[cfg(linux_kernel)]
+ pub mod inotify;
+ #[cfg(not(any(
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "vita",

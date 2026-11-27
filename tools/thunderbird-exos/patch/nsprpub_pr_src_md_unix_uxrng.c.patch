@@ -1,0 +1,21 @@
+--- a/nsprpub/pr/src/md/unix/uxrng.c
++++ b/nsprpub/pr/src/md/unix/uxrng.c
+@@ -86,6 +86,18 @@
+     ticks = times(&buffer);
+     return _pr_CopyLowBits(buf, maxbytes, &ticks, sizeof(ticks));
+ }
++#elif defined(EXOS)
++#include <unistd.h>
++
++/* EX-OS: no /dev/urandom, but getentropy() gives real randomness from the
++ * kernel (at most 256 bytes a call). */
++static size_t
++GetHighResClock(void* buf, size_t maxbytes)
++{
++    size_t n = maxbytes > 256 ? 256 : maxbytes;
++
++    return getentropy(buf, n) == 0 ? n : 0;
++}
+ #else
+ #error ! Platform undefined
+ #endif /* defined(SOLARIS) */

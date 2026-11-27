@@ -1,0 +1,12 @@
+--- a/widget/headless/moz.build
++++ b/widget/headless/moz.build
+@@ -32,7 +32,8 @@
+     "HeadlessWidget.cpp",
+ ]
+ 
+-if CONFIG["MOZ_WIDGET_TOOLKIT"] != "uikit":
++# EX-OS (Exilla), like uikit: no out-of-process compositing.
++if CONFIG["MOZ_WIDGET_TOOLKIT"] not in ("exos", "uikit"):
+     EXPORTS.mozilla.widget += [
+         "HeadlessCompositorWidgetParent.h",
+     ]

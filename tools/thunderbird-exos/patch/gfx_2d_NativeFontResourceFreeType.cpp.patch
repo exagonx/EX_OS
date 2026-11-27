@@ -1,0 +1,11 @@
+--- a/gfx/2d/NativeFontResourceFreeType.cpp
++++ b/gfx/2d/NativeFontResourceFreeType.cpp
+@@ -32,7 +32,7 @@
+   return resource.forget();
+ }
+ 
+-#ifdef MOZ_WIDGET_ANDROID
++#if defined(MOZ_WIDGET_ANDROID) || defined(XP_EXOS)
+ already_AddRefed<NativeFontResourceFreeType> NativeFontResourceFreeType::Create(
+     const uint8_t* aFontData, uint32_t aDataLength) {
+   return CreateInternal<NativeFontResourceFreeType>(aFontData, aDataLength);

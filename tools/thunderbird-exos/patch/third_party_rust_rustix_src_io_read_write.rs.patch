@@ -1,0 +1,38 @@
+--- a/third_party/rust/rustix/src/io/read_write.rs
++++ b/third_party/rust/rustix/src/io/read_write.rs
+@@ -159,7 +159,7 @@
+ /// [DragonFly BSD]: https://man.dragonflybsd.org/?command=readv&section=2
+ /// [illumos]: https://illumos.org/man/2/readv
+ /// [glibc]: https://sourceware.org/glibc/manual/latest/html_node/Scatter_002dGather.html#index-readv
+-#[cfg(not(any(windows, target_os = "espidf", target_os = "horizon")))]
++#[cfg(not(any(windows, any(target_os = "espidf", target_os = "exos"), target_os = "horizon")))]
+ #[inline]
+ pub fn readv<Fd: AsFd>(fd: Fd, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
+     backend::io::syscalls::readv(fd.as_fd(), bufs)
+@@ -187,7 +187,7 @@
+ /// [DragonFly BSD]: https://man.dragonflybsd.org/?command=writev&section=2
+ /// [illumos]: https://illumos.org/man/2/writev
+ /// [glibc]: https://sourceware.org/glibc/manual/latest/html_node/Scatter_002dGather.html#index-writev
+-#[cfg(not(any(windows, target_os = "espidf", target_os = "horizon")))]
++#[cfg(not(any(windows, any(target_os = "espidf", target_os = "exos"), target_os = "horizon")))]
+ #[inline]
+ pub fn writev<Fd: AsFd>(fd: Fd, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+     backend::io::syscalls::writev(fd.as_fd(), bufs)
+@@ -215,7 +215,7 @@
+ #[cfg(not(any(
+     windows,
+     target_os = "cygwin",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "nto",
+@@ -254,7 +254,7 @@
+ #[cfg(not(any(
+     windows,
+     target_os = "cygwin",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "nto",

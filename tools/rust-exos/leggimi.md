@@ -134,6 +134,15 @@ decisione già presa per il C.
 > testo, e ld rifiutava libgkrust.a ("read-only segment has dynamic
 > relocations"). Il codice PIC a 32 bit passa dalla GOT, e gira anche dentro un
 > programma che PIC non è: niente SSE resta com'era.
+>
+> **Dal 27 novembre 2026 anche `"tls-model": "global-dynamic"` e
+> `"dynamic-linking": true`**, con `dll-prefix`/`dll-suffix`, come a 64 bit:
+> Gecko su EX-OS costruisce le sue librerie condivise come su Linux
+> (`libxul.so`, NSS, freebl, librnp). Il modello `local-exec` dentro una
+> libreria dà rilocazioni TPOFF, che `lib/libc_dl.c` rifiuta (una libreria
+> aperta dopo non ha posto nel blocco statico del filo); `global-dynamic` passa
+> da `___tls_get_addr`, che la libc ha. La std i686 va ricostruita
+> (`tools/rust-exos/std/prepara.sh`, `installa-sysroot.sh`).
 
 Il programma, `no_std` perché la `std` non c'è ancora:
 

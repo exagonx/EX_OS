@@ -1,0 +1,11 @@
+--- a/intl/locale/moz.build
++++ b/intl/locale/moz.build
+@@ -18,6 +18,8 @@
+     DIRS += ["gtk"]
+ elif toolkit == "android":
+     DIRS += ["android"]
++elif toolkit == "exos":
++    DIRS += ["exos"]
+ 
+ XPIDL_SOURCES += [
+     "mozILocaleService.idl",

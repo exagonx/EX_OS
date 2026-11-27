@@ -1,0 +1,11 @@
+--- a/nsprpub/pr/src/pthreads/ptthread.c
++++ b/nsprpub/pr/src/pthreads/ptthread.c
+@@ -1343,7 +1343,7 @@
+     pthread_cond_signal(&me->suspendResumeCV);
+     while (me->suspend & PT_THREAD_SUSPENDED) {
+ #if !defined(FREEBSD) && !defined(NETBSD) && !defined(OPENBSD) && \
+-    !defined(DARWIN) && !defined(RISCOS)
++    !defined(DARWIN) && !defined(RISCOS) && !defined(EXOS)
+         PRIntn rv;
+         sigwait(&sigwait_set, &rv);
+ #endif

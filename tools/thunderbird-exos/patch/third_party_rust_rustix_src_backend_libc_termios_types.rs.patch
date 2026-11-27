@@ -1,0 +1,18 @@
+--- a/third_party/rust/rustix/src/backend/libc/termios/types.rs
++++ b/third_party/rust/rustix/src/backend/libc/termios/types.rs
+@@ -2,7 +2,7 @@
+ 
+ #![allow(non_camel_case_types)]
+ 
+-#[cfg(not(any(target_os = "espidf", target_os = "redox")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "redox")))]
+ use crate::ffi;
+ 
+ // We don't want to use `tcflag_t` directly so we don't expose libc
+@@ -13,5 +13,5 @@
+ pub type tcflag_t = ffi::c_ulong;
+ #[cfg(target_os = "redox")]
+ pub type tcflag_t = u32;
+-#[cfg(not(any(apple, target_os = "espidf", target_os = "redox", target_os = "wasi")))]
++#[cfg(not(any(apple, any(target_os = "espidf", target_os = "exos"), target_os = "redox", target_os = "wasi")))]
+ pub type tcflag_t = ffi::c_uint;

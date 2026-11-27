@@ -1,0 +1,20 @@
+--- a/third_party/rust/rustix/src/backend/libc/pipe/syscalls.rs
++++ b/third_party/rust/rustix/src/backend/libc/pipe/syscalls.rs
+@@ -5,7 +5,7 @@
+ #[cfg(not(any(
+     apple,
+     target_os = "aix",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "nto",
+     target_os = "wasi"
+@@ -35,7 +35,7 @@
+ #[cfg(not(any(
+     apple,
+     target_os = "aix",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "nto",

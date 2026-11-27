@@ -1,0 +1,25 @@
+--- a/comm/third_party/botan/src/build-data/os/exos.txt
++++ b/comm/third_party/botan/src/build-data/os/exos.txt
+@@ -0,0 +1,22 @@
++# EX-OS (voce 103, Thunderbird): only what its libc really has.
++# getrandom/getentropy for the system RNG (no /dev/urandom device), mlock,
++# clock_gettime, POSIX threads and sockets; no getauxval, prctl: x86 finds
++# its CPU features with cpuid.
++soname_suffix "so"
++
++<target_features>
++posix1
++posix_mlock
++
++clock_gettime
++explicit_bzero
++getrandom
++getentropy
++
++atomics
++sockets
++system_clock
++threads
++thread_local
++filesystem
++</target_features>

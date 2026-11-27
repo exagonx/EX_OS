@@ -1,0 +1,20 @@
+--- a/gfx/webrender_bindings/Moz2DImageRenderer.cpp
++++ b/gfx/webrender_bindings/Moz2DImageRenderer.cpp
+@@ -189,7 +189,7 @@
+     if (!size.isValid()) {
+       return;
+     }
+-#  ifdef ANDROID
++#  if defined(ANDROID) || defined(XP_EXOS)
+     FontType type = FontType::FREETYPE;
+ #  else
+     FontType type = FontType::FONTCONFIG;
+@@ -264,7 +264,7 @@
+       FontType::MAC;
+ #elif defined(XP_WIN)
+       FontType::DWRITE;
+-#elif defined(ANDROID)
++#elif defined(ANDROID) || defined(XP_EXOS)
+       FontType::FREETYPE;
+ #else
+       FontType::FONTCONFIG;

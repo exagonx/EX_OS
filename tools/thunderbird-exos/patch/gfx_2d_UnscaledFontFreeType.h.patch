@@ -1,0 +1,11 @@
+--- a/gfx/2d/UnscaledFontFreeType.h
++++ b/gfx/2d/UnscaledFontFreeType.h
+@@ -46,7 +46,7 @@
+ 
+   RefPtr<SharedFTFace> InitFace();
+ 
+-#ifdef MOZ_WIDGET_ANDROID
++#if defined(MOZ_WIDGET_ANDROID) || defined(XP_EXOS)
+   static bool ValidateFontDescriptor(const uint8_t* aName, size_t aNameLength,
+                                      std::string& aResultName,
+                                      uint32_t& aIndex);

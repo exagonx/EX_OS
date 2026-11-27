@@ -1,0 +1,20 @@
+--- a/gfx/2d/UnscaledFontFreeType.cpp
++++ b/gfx/2d/UnscaledFontFreeType.cpp
+@@ -23,6 +23,8 @@
+ #ifdef MOZ_WIDGET_ANDROID
+ #  include <linux/magic.h>
+ #  include <sys/vfs.h>
++#elif defined(XP_EXOS)
++#  include <sys/vfs.h>
+ #endif
+ 
+ namespace mozilla::gfx {
+@@ -189,7 +191,7 @@
+   }
+ }
+ 
+-#ifdef MOZ_WIDGET_ANDROID
++#if defined(MOZ_WIDGET_ANDROID) || defined(XP_EXOS)
+ 
+ #  ifndef TMPFS_MAGIC
+ #    define TMPFS_MAGIC 0x01021994

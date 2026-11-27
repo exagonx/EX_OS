@@ -1,0 +1,10 @@
+--- a/xpcom/reflect/xptcall/md/unix/moz.build
++++ b/xpcom/reflect/xptcall/md/unix/moz.build
+@@ -29,6 +29,7 @@
+     "NetBSD",
+     "OpenBSD",
+     "SunOS",
++    "EXOS",
+ ) or CONFIG["OS_ARCH"].startswith("GNU_"):
+     if CONFIG["TARGET_CPU"] == "x86_64":
+         SOURCES += [

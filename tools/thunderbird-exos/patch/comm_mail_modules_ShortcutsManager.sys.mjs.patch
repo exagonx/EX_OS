@@ -1,0 +1,33 @@
+--- a/comm/mail/modules/ShortcutsManager.sys.mjs
++++ b/comm/mail/modules/ShortcutsManager.sys.mjs
+@@ -11,6 +11,12 @@
+ 
+ import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
+ 
++// The tables below have win, macosx and linux. A desktop Unix without its own
++// table (EX-OS: AppConstants.platform is "other") uses the linux keys.
++const PLATFORM = ["win", "macosx", "linux"].includes(AppConstants.platform)
++  ? AppConstants.platform
++  : "linux";
++
+ export const ShortcutsManager = {
+   /**
+    * Fluent modifiers mapping to allow updating strings without changing all the
+@@ -306,7 +312,7 @@
+         ctrlKey: false,
+         shiftKey: false,
+         altKey: false,
+-        ...shortcut.modifiers[AppConstants.platform],
++        ...shortcut.modifiers[PLATFORM],
+       };
+       if (
+         mods.metaKey == event.metaKey &&
+@@ -356,7 +362,7 @@
+       return null;
+     }
+ 
+-    const platform = AppConstants.platform;
++    const platform = PLATFORM;
+     const string = [];
+     const aria = [];
+     if (shortcut.modifiers[platform].metaKey) {

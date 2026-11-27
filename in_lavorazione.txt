@@ -12449,6 +12449,131 @@ tools/netinst/velocita tolto da netinst.
       DECIDERE CON L'UTENTE: -applica firefox 160.0.1 (Exilla passa da
       158.0a1 nightly alla 160.0.1 release), poi costruzione 32/64 e prove.
       Thunderbird usera' lo stesso script (thunderbird-main/).
+      27/11, IN CORSO (l'utente, .253 spento: "inizia il clone e porting di
+      thunderbird testalo in qemu"). Thunderbird 161 costruito a 64 bit
+      (tools/thunderbird-exos), parte in ExWin in QEMU: finestra principale,
+      finestra della password, POP3 fino a STAT/LIST/UIDL. La prova:
+      tools/thunderbird-exos/prova.sh con tools/thunderbird-exos/posta-finta.py
+      (POP3 e SMTP finti sull'host, ogni comando nel registro). Corretti per
+      EX-OS: nsAppShell (std::make_unique), sqlite con -lm, nsUserInfoUnix
+      anche col widget exos, negotiateauth acceso (NTLM/GSSAPI della posta),
+      WebRenderBridgeParent (i font FreeType per percorso: UNKNOWN li
+      rifiutava tutti e webrender andava in panic), ShortcutsManager (le
+      scorciatoie di linux dove la piattaforma e' "other").
+      27/11, l'utente: "se il software portato richiede una funzione questa
+      viene implementata interamente non simulata ne' creare un placeholder" e
+      "le applicazioni portate devono avere un ambiente dove mettendo una
+      nuova versione questa sara' adattabile con semplicita' perche' ha tutto
+      pronto". Scelta dell'utente: GECKO SU EX-OS CON LE LIBRERIE CONDIVISE
+      COME SU LINUX (libxul.so, nss, freebl, librnp...). La regola "ogni
+      libreria condivisa diventa statica" era di prima di dlopen (14/10) e
+      chiedeva patch file per file a ogni versione. Tolte in thunderbird-main
+      (originali ripristinati): build/templates.mozbuild,
+      gecko_templates.mozbuild, emitter.py, gyp_reader.py, nspr ds/libc/pr,
+      toolkit/library (buildid, dependentlibs), FFmpegLibWrapper e
+      FFVPXRuntimeLinker (la maniglia finta 1), ffvpx log2_tab/reverse,
+      soundtouch rlbox; in comm il manifesto (resta solo il blocco delle
+      icone: una finestra di ExWin non ha icona sua), mail/app, rnp. Misurato
+      prima: libxul.so di Linux non ha TLS initial-exec (solo DTPOFF64),
+      lib/libc_dl.c basta cosi'.
+      RESTA, IN ORDINE:
+      - Thunderbird 64 condiviso: costruire, prova.sh fino a RETR, la lettera
+        nella Posta in arrivo, SMTP con -compose; OpenPGP (librnp.so con
+        ctypes) davvero.
+      - Il bersaglio Rust a 32 bit: FATTO (global-dynamic, dynamic-linking,
+        dll-suffix, std i686 ricostruita: solo TLS GD/LDM/LDO_32). Poi
+        Thunderbird 32.
+      - firefox-main: le stesse tolte, Exilla 32 e 64 ricostruita, il tempo di
+        avvio misurato con tools/exilla/prova-avvio.sh contro quello di oggi.
+      - nss-rs carica freebl con PR_LoadLibrary: con libfreebl3.so vera va da
+        se' (HTTP/3 di neqo); controllare il nome (blname: libfreeblpriv3 solo
+        su linux).
+      - Cose che EX-OS non da' ancora a Gecko (27/11 pomeriggio, misurate
+        mentre si costruisce Thunderbird 64 condiviso, 3 job):
+        . librnp.so non si collegava (sha1.o R_X86_64_32S, anche da objdir
+          pulito): comm/third_party/rnpdefs.mozbuild svuota OS_CFLAGS di rnp
+          e botan e rimette -fPIC solo per OS_ARCH Linux e SunOS. Aggiunto
+          "EXOS" (tocca.sh fatto). Prima build condivisa: 91 minuti fino li',
+          libnspr4, libmozsqlite3, libgkcodecs, liblgpllibs, libmozinference
+          gia' .so veri.
+        . PRIMA PROVA CONDIVISA (27/11 16:00, prova.sh 64): 6 su 6 - finestra,
+          password, RETR, lettera in Mail/10.0.0.2/Inbox, SMTP con -compose,
+          nessun FAULT. libxul.so 208 MB (4,7 GB col debug prima di
+          package). OpenPGP: librnp.so caricata con ctypes, openpgp.sqlite
+          aperto (prima "RNP/OpenPGP library failed to load"). La seconda
+          partenza non chiede la password (logins.json, key4.db). gloda non
+          si lamenta piu' della memoria. places.sqlite questa volta senza
+          errori. libnssckbi.so che manca e' normale: senza NSS di sistema
+          Gecko prende le radici da libxul (nsNSSComponent
+          LoadLoadableRoots).
+        . freebl di nss-rs (LD_DEBUG=libs, nuovo TB_AMBIENTE di prova.sh):
+          dlopen("libfreebl3.so") per nome prima di tutto, e libnss3.so
+          aveva dentro softokn e freebl (simboli LOCAL NSC_GetFunctionList,
+          BL_Init): resti della build statica in security/nss (lib/nss/
+          nss.gyp pk11wrap_static, softoken.gyp sqlite statico, ssl.gyp
+          senza freebl, cmd/platlibs.gypi, nss.gyp senza certutil, "EX-OS
+          has no ELF shared objects"). Ripristinati gli originali nei due
+          alberi, e browser/app/moz.build di thunderbird-main: libnss3
+          carica libsoftokn3.so, softokn carica libfreebl3.so come su Linux,
+          e nss-rs trova freebl gia' caricata. Ricostruzione in corso.
+        . SECONDA PROVA CONDIVISA (16:39): 6 su 6, e niente piu' errore di
+          freebl (libnss3 -> libsoftokn3.so -> libfreebl3.so, come l'ordine
+          misurato su Linux con LD_DEBUG=libs). Fotografie: la lettera
+          nella Posta in arrivo, la finestra di scrittura giusta.
+        . DA FARE (visti nelle fotografie): il titolo dice "Thunderbird
+          Daily" - manca --with-branding=comm/mail/branding/thunderbird nei
+          mozconfig (quello che usano le distribuzioni Linux; da mettere dopo
+          la build a 32 bit in corso, se no il suo package rifa' configure);
+          nella barra di formato della scrittura i pulsanti dopo il colore
+          (grassetto, corsivo, elenchi...) sono riquadri vuoti, senza icona.
+        . DA CHIEDERE ALL'UTENTE: i mozconfig (presi da Exilla, prima della
+          regola "mai spegnere funzioni") hanno --disable-accessibility,
+          --disable-webrtc, --disable-audio-backends, --disable-sandbox,
+          --disable-parental-controls. Ognuna chiede qualcosa a EX-OS
+          (audio: un backend cubeb per exsuono/ac97; sandbox: seccomp o
+          equivalente; webrtc: rete UDP e video), da decidere quali e in che
+          ordine.
+        . POP3 FINO A UIDL E POI QUIT: non e' EX-OS. Il profilo della prova
+          aveva login_at_startup senza download_on_biff (predefinito false):
+          il biff all'avvio solo controlla (Pop3Client._actionUidlResponse,
+          !_downloadMail). L'assistente di Thunderbird lo mette a true:
+          aggiunto in prova.sh.
+        . memsize di nsSystemInfo (gloda NOT_AVAILABLE): NSPR
+          PR_GetPhysicalMemorySize non aveva il ramo EXOS; la libc ha gia'
+          sysconf(_SC_PHYS_PAGES). Aggiunto defined(EXOS) al ramo LINUX in
+          nsprpub/pr/src/misc/prsystem.c, nei due alberi (tocca.sh fatto).
+        . places.sqlite 0x80630001 = NS_ERROR_STORAGE_BUSY, da
+          Sqlite.sys.mjs (ConnectionOpener), una connessione aperta per
+          percorso. Su Linux (Thunderbird 153.7 dell'host, stesso profilo,
+          5 minuti) places.sqlite c'e' e nessun errore. Ipotesi -shm
+          SMENTITA: tools/prove/sqliteio.c parte 3 (due connessioni WAL
+          dello stesso processo sullo stesso database) passa, SQLite mappa
+          il -shm una volta per processo. Chi apre e quando: prova.sh ha ora
+          toolkit.sqlitejsm.loglevel Debug, da leggere alla prossima corsa.
+        . TROVATO A PARTE (misurato, sqliteio parte 1 a 64 bit): due mmap
+          MAP_SHARED scrivibili dello stesso file NON sono la stessa memoria
+          (la libc ne fa una copia che torna nel file a msync/munmap; nella
+          libc condivisa EXOS_LIBC_SO nemmeno quella). Dentro un processo
+          SQLite non ne soffre; due processi sullo stesso database WAL si'.
+          Rimedio vero: pagine del file condivise e scrivibili nel kernel
+          (filecache oggi e' una fotografia con chiave ident+dim+mtime, ogni
+          scrittura fa una chiave nuova: serve un oggetto per file coerente
+          con read/write e la riscrittura delle pagine sporche). DA DECIDERE
+          CON L'UTENTE.
+        . nsINetworkLinkService: su Linux e' netwerk/system/netlink
+          (NetlinkService.cpp, 1917 righe): AF_NETLINK/NETLINK_ROUTE con
+          RTM_GET/NEW/DEL LINK, ADDR, ROUTE, NEIGH, dump e gruppi RTMGRP_*.
+          Le prese di EX-OS sono nella libc verso ip.drv (socket() accetta
+          solo AF_INET). Rimedio come Linux: NETLINK_ROUTE in EX-OS (elenchi
+          da ip.drv, avvisi quando dhcp/ifconfig/route cambiano qualcosa, fd
+          che si sveglia nel poll). DA DECIDERE CON L'UTENTE dove vive
+          (libc + ip.drv o kernel).
+      - Supposizioni vecchie in configure: niente PIE ("EX-OS carica gli
+        eseguibili al loro indirizzo": carica gia' ld-exos.so ET_DYN),
+        FreeType dell'albero (nel sysroot c'e', Qt lo usa), "niente termios"
+        per la shell js.
+      - Pacchetto [thunderbird], lanciatore (profilo ~/.thunderbird), voce nel
+        menu, patch-crea.sh thunderbird, manuali.
 
   102. shutdown NON SPEGNE IL .253 (l'utente, 17/11 notte: "shutdown non spegne
       la macchina 253"). Da guardare: lo spegnimento ACPI (S5, SLP_TYP dal

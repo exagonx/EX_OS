@@ -1,0 +1,12 @@
+--- a/nsprpub/pr/include/md/prosdep.h
++++ b/nsprpub/pr/include/md/prosdep.h
+@@ -36,6 +36,9 @@
+ #elif defined(NETBSD)
+ #include "md/_netbsd.h"
+ 
++#elif defined(EXOS)
++#include "md/_exos.h"
++
+ #elif defined(OPENBSD)
+ #include "md/_openbsd.h"
+ 

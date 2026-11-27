@@ -1,0 +1,202 @@
+--- a/widget/exos/ExosPosta.cpp
++++ b/widget/exos/ExosPosta.cpp
+@@ -0,0 +1,199 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "ExosPosta.h"
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++
++#include <exos/win_proto.h>
++
++#include "mozilla/Atomics.h"
++#include "nsWindow.h"
++
++namespace mozilla::widget::exos {
++
++// The wake-up letter. Any type the server does not use; 'EX'.
++static const uint32_t sNato = (uint32_t)uptime_ms();
++uint32_t Nato() { return sNato; }
++uint32_t Ora() { return (uint32_t)uptime_ms(); }
++
++static const uint32_t kSveglia = 0x45580001u;
++// ipc_send without waiting (kernel/include/ipc.h): if the mailbox is full,
++// the main thread has mail anyway and will look at the flag.
++static const uint32_t kSenzaAttesa = 0x80000000u;
++
++static uint32_t sServer = 0;
++static bool sCercato = false;
++static uint32_t sPrincipale = 0;  // the main thread's pid, for the letters
++static Atomic<bool> sSvegliaChiesta(false);
++
++struct Voce {
++  uint32_t mId;
++  nsWindow* mFinestra;
++};
++static const int kVociMax = 32;
++static Voce sVoci[kVociMax];
++
++uint32_t Server() {
++  if (!sCercato) {
++    char nome[IPC_NAME_LEN];
++    int pid;
++
++    sCercato = true;
++    win_nome_servizio(nome, sizeof(nome));
++    pid = ipc_lookup(nome);
++    sServer = pid > 0 ? (uint32_t)pid : 0;
++    if (!sServer) {
++      fprintf(stderr,
++              "Exilla: the ExWin window server ('%s') is not running: start "
++              "exwin first\n",
++              nome);
++    }
++  }
++  return sServer;
++}
++
++int Manda(uint32_t aTipo, const void* aDati, uint32_t aLen) {
++  if (!Server()) {
++    return -1;
++  }
++  return ipc_send(sServer, aTipo, aDati, aLen);
++}
++
++void Sveglia() {
++  if (sSvegliaChiesta.exchange(true)) {
++    return;  // a letter is already on its way
++  }
++  if (sPrincipale) {
++    (void)ipc_send(sPrincipale, kSveglia | kSenzaAttesa, nullptr, 0);
++  }
++}
++
++bool PrendiSveglia() {
++  // The main thread is the group leader: getpid() is its pid (the libc's
++  // getpid answers the leader for every thread).
++  if (!sPrincipale) {
++    sPrincipale = (uint32_t)getpid();
++  }
++  return sSvegliaChiesta.exchange(false);
++}
++
++void Registra(uint32_t aId, nsWindow* aFinestra) {
++  for (int i = 0; i < kVociMax; i++) {
++    if (!sVoci[i].mFinestra) {
++      sVoci[i].mId = aId;
++      sVoci[i].mFinestra = aFinestra;
++      return;
++    }
++  }
++}
++
++void Togli(uint32_t aId) {
++  for (int i = 0; i < kVociMax; i++) {
++    if (sVoci[i].mFinestra && sVoci[i].mId == aId) {
++      sVoci[i].mFinestra = nullptr;
++    }
++  }
++}
++
++static nsWindow* Cerca(uint32_t aId) {
++  for (int i = 0; i < kVociMax; i++) {
++    if (sVoci[i].mFinestra && sVoci[i].mId == aId) {
++      return sVoci[i].mFinestra;
++    }
++  }
++  return nullptr;
++}
++
++static int Tutto(const IpcMessage*, void*) { return IPC_MIO; }
++
++static int SoloCreata(const IpcMessage* aMeta, void*) {
++  return aMeta->tipo == WIN_MSG_CREATA ? IPC_MIO : IPC_ALTRUI;
++}
++
++static bool RiceviUno(bool aAspetta);
++
++// The mailbox holds four messages: empty it while there is mail, so the
++// server finds room for the next event.
++bool Ricevi(bool aAspetta) {
++  if (!RiceviUno(aAspetta)) {
++    return false;
++  }
++  for (int i = 0; i < 16 && RiceviUno(false); i++) {
++  }
++  return true;
++}
++
++static bool RiceviUno(bool aAspetta) {
++  IpcMessage meta;
++  // On the stack, like the libc's own: 1.5 KB.
++  unsigned char buf[IPC_MSG_MAX_DATA];
++
++  if (!sPrincipale) {
++    sPrincipale = (uint32_t)getpid();
++  }
++  // Never sleep for good: a wake-up letter can be swallowed by libc code that
++  // waits for its own reply on this thread, and the flag would then stay set
++  // with nobody sending another. PrendiSveglia() is looked at after this.
++  if (ipc_scegli(Tutto, nullptr, &meta, buf, sizeof(buf),
++                 aAspetta ? 250u : IPC_SUBITO) < 0) {
++    if (aAspetta && sSvegliaChiesta) {
++      static int sDette = 0;
++      if (sDette < 5 && getenv("EXILLA_DIAG")) {
++        sDette++;
++        fprintf(stderr, "exilla: wake-up letter lost, flag still set\n");
++      }
++    }
++    return false;
++  }
++
++  switch (meta.tipo) {
++    case WIN_MSG_EVENTO:
++      if (meta.len >= sizeof(WinEvento)) {
++        const WinEvento* e = (const WinEvento*)buf;
++        if (RefPtr<nsWindow> w = Cerca(e->id)) {
++          w->OnServerEvent(e);
++        }
++      }
++      break;
++    case WIN_MSG_MISURATA:
++      if (meta.len >= sizeof(WinCreata)) {
++        const WinCreata* r = (const WinCreata*)buf;
++        if (RefPtr<nsWindow> w = Cerca(r->id)) {
++          w->OnServerResized(r);
++        }
++      }
++      break;
++    case WIN_MSG_POSTA:
++      if (meta.len >= sizeof(WinRegione)) {
++        const WinRegione* r = (const WinRegione*)buf;
++        if (RefPtr<nsWindow> w = Cerca(r->id)) {
++          w->OnServerMoved((int32_t)r->x, (int32_t)r->y);
++        }
++      }
++      break;
++    default:
++      // The wake-up letter, the taskbar list (WIN_MSG_ELENCATA), or mail
++      // for nobody: nothing to do but having woken up.
++      break;
++  }
++  return true;
++}
++
++bool AspettaCreata(void* aCreata, uint32_t aDimensione, uint32_t aMs) {
++  IpcMessage meta;
++  unsigned char buf[IPC_MSG_MAX_DATA];
++
++  if (ipc_scegli(SoloCreata, nullptr, &meta, buf, sizeof(buf), aMs) < 0 ||
++      meta.len < aDimensione) {
++    return false;
++  }
++  memcpy(aCreata, buf, aDimensione);
++  return true;
++}
++
++}  // namespace mozilla::widget::exos

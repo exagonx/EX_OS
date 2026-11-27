@@ -1,0 +1,12 @@
+--- a/layout/style/nsMediaFeatures.cpp
++++ b/layout/style/nsMediaFeatures.cpp
+@@ -256,7 +256,8 @@
+ #elif defined(ANDROID)
+     case StylePlatform::Android:
+       return true;
+-#elif defined(MOZ_WIDGET_GTK)
++#elif defined(MOZ_WIDGET_GTK) || defined(XP_EXOS)
++    // EX-OS is closest to what pages mean by -moz-platform: linux.
+     case StylePlatform::Linux:
+       return true;
+ #elif defined(XP_MACOSX)

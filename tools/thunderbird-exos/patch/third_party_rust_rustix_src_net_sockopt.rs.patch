@@ -1,0 +1,38 @@
+--- a/third_party/rust/rustix/src/net/sockopt.rs
++++ b/third_party/rust/rustix/src/net/sockopt.rs
+@@ -154,7 +154,7 @@
+     target_os = "cygwin",
+     target_os = "dragonfly",
+     target_os = "emscripten",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "netbsd",
+     target_os = "nto",
+@@ -574,7 +574,7 @@
+     target_os = "cygwin",
+     target_os = "dragonfly",
+     target_os = "emscripten",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "hurd",
+@@ -1397,7 +1397,7 @@
+ #[cfg(not(any(
+     solarish,
+     windows,
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "redox",
+@@ -1417,7 +1417,7 @@
+ #[cfg(not(any(
+     solarish,
+     windows,
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "redox",

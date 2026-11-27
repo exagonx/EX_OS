@@ -1,0 +1,445 @@
+--- a/widget/exos/ExosSistema.cpp
++++ b/widget/exos/ExosSistema.cpp
+@@ -0,0 +1,442 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "ExosSistema.h"
++
++#include <dlfcn.h>
++#include <stdio.h>
++#include <string.h>
++#include <sys/stat.h>
++
++#include "nsArray.h"
++#include "nsCharSeparatedTokenizer.h"
++#include "nsComponentManagerUtils.h"
++#include "nsIFile.h"
++#include "nsIFileURL.h"
++#include "nsIMIMEInfo.h"
++#include "nsIURI.h"
++#include "nsIURL.h"
++#include "nsNetUtil.h"
++#include "nsString.h"
++#include "nsStringEnumerator.h"
++#include "nsTArray.h"
++
++namespace {
++
++// The layout of ExTipo in lib/exwin/exwin.h.
++struct ExTipo {
++  char gruppo[32];
++  char tipo[16];
++  char predefinito[200];
++  char scelto[200];
++};
++
++struct Exwin {
++  int (*type_program)(const char*, char*, unsigned int);
++  int (*types)(ExTipo*, int);
++  int (*type_set)(const char*, const char*);
++  int (*open_file)(const char*, char*, unsigned int);
++  int (*spawn_program)(const char*, char* const[], const char*);
++};
++
++// exwin.so, opened once; nullptr when it is not there (no ExWin installed).
++const Exwin* exwin() {
++  static Exwin e;
++  static int stato = 0;  // 0 not tried, 1 good, -1 missing
++  if (stato == 0) {
++    void* h = dlopen("/exwin/lib/exwin.so", RTLD_NOW);
++    if (!h) h = dlopen("/cdrom/exwin/lib/exwin.so", RTLD_NOW);
++    if (h) {
++      e.type_program = (int (*)(const char*, char*, unsigned int))dlsym(
++          h, "ex_type_program");
++      e.types = (int (*)(ExTipo*, int))dlsym(h, "ex_types");
++      e.type_set = (int (*)(const char*, const char*))dlsym(h, "ex_type_set");
++      e.open_file =
++          (int (*)(const char*, char*, unsigned int))dlsym(h, "ex_open_file");
++      e.spawn_program = (int (*)(const char*, char* const[], const char*))dlsym(
++          h, "ex_spawn_program");
++    }
++    stato = (h && e.type_program && e.open_file && e.spawn_program) ? 1 : -1;
++    if (stato < 0) fprintf(stderr, "exilla: exwin.so non c'e', niente programmi di sistema\n");
++  }
++  return stato > 0 ? &e : nullptr;
++}
++
++// MIME type <-> the extensions of tipi.txt. The first extension of a type is
++// the one asked to tipi.txt.
++const struct {
++  const char* mime;
++  const char* ext;
++} kTipi[] = {
++    {"image/png", "png"},
++    {"image/jpeg", "jpg"},
++    {"image/jpeg", "jpeg"},
++    {"image/pjpeg", "jpg"},
++    {"image/gif", "gif"},
++    {"image/bmp", "bmp"},
++    {"image/x-ms-bmp", "bmp"},
++    {"image/x-icon", "ico"},
++    {"image/vnd.microsoft.icon", "ico"},
++    {"image/webp", "webp"},
++    {"text/plain", "txt"},
++    {"application/rtf", "rtf"},
++    {"text/rtf", "rtf"},
++    {"application/msword", "doc"},
++    {"application/vnd.oasis.opendocument.text", "odt"},
++    {"text/html", "html"},
++    {"text/html", "htm"},
++    {"application/xhtml+xml", "html"},
++    {"audio/wav", "wav"},
++    {"audio/x-wav", "wav"},
++    {"audio/wave", "wav"},
++    {"audio/mpeg", "mp3"},
++    {"audio/mp3", "mp3"},
++    {"audio/flac", "flac"},
++    {"audio/x-flac", "flac"},
++    {"audio/ogg", "ogg"},
++    {"application/ogg", "ogg"},
++    {"audio/opus", "opus"},
++    {"video/mp4", "mp4"},
++    {"video/x-matroska", "mkv"},
++    {"video/webm", "webm"},
++    {"video/x-msvideo", "avi"},
++    {"video/quicktime", "mov"},
++    {"application/zip", "zip"},
++    {"application/x-zip-compressed", "zip"},
++    {"application/x-tar", "tar"},
++    {"application/gzip", "gz"},
++    {"application/x-gzip", "gz"},
++    {"application/x-compressed-tar", "tgz"},
++    {"application/pdf", "pdf"},
++    {"inode/directory", "/"},
++};
++
++const char* ExtDelTipo(const nsACString& aMime) {
++  for (const auto& t : kTipi) {
++    if (aMime.EqualsIgnoreCase(t.mime)) return t.ext;
++  }
++  return nullptr;
++}
++
++const char* TipoDellExt(const nsACString& aExt) {
++  for (const auto& t : kTipi) {
++    if (aExt.EqualsIgnoreCase(t.ext)) return t.mime;
++  }
++  return nullptr;
++}
++
++// The name the menu gives a program (/exwin/lib/applicazioni.txt:
++// "Group/Name | /path | icon"), or its file name.
++void NomeDelProgramma(const nsACString& aProg, nsAString& aNome) {
++  nsAutoCString nome;
++  FILE* f = fopen("/exwin/lib/applicazioni.txt", "r");
++  if (!f) f = fopen("/cdrom/exwin/lib/applicazioni.txt", "r");
++  if (f) {
++    char riga[512];
++    while (fgets(riga, sizeof(riga), f)) {
++      char* b1 = strchr(riga, '|');
++      if (riga[0] == '#' || !b1) continue;
++      char* p = b1 + 1;
++      while (*p == ' ' || *p == '\t') p++;
++      char* fine = p;
++      while (*fine && *fine != ' ' && *fine != '\t' && *fine != '|' &&
++             *fine != '\n' && *fine != '\r')
++        fine++;
++      if (!aProg.Equals(nsDependentCSubstring(p, fine - p))) continue;
++      char* n = riga;
++      for (char* s = riga; s < b1; s++) {
++        if (*s == '/') n = s + 1;
++      }
++      char* nf = b1;
++      while (nf > n && (nf[-1] == ' ' || nf[-1] == '\t')) nf--;
++      nome.Assign(n, nf - n);
++      break;
++    }
++    fclose(f);
++  }
++  if (nome.IsEmpty()) {
++    int32_t barra = aProg.RFindChar('/');
++    nome = Substring(aProg, barra + 1);
++  }
++  CopyUTF8toUTF16(nome, aNome);
++}
++
++nsresult Lancia(const nsACString& aProg, const nsACString& aArg) {
++  const Exwin* e = exwin();
++  if (!e) return NS_ERROR_NOT_AVAILABLE;
++  nsAutoCString prog(aProg), arg(aArg);
++  char* argv[3] = {prog.BeginWriting(), arg.BeginWriting(), nullptr};
++  return e->spawn_program(prog.get(), argv, nullptr) >= 0 ? NS_OK
++                                                          : NS_ERROR_FAILURE;
++}
++
++nsresult Apri(const nsACString& aPercorso) {
++  const Exwin* e = exwin();
++  if (!e) return NS_ERROR_NOT_AVAILABLE;
++  return e->open_file(PromiseFlatCString(aPercorso).get(), nullptr, 0) >= 0
++             ? NS_OK
++             : NS_ERROR_FAILURE;
++}
++
++bool ProgrammaDelTipo(const char* aTipo, nsACString& aProg) {
++  const Exwin* e = exwin();
++  char p[200];
++  if (!e || !aTipo || !e->type_program(aTipo, p, sizeof(p))) return false;
++  aProg.Assign(p);
++  return true;
++}
++
++}  // namespace
++
++// One program of EX-OS, as Firefox sees a handler application.
++class nsExosProgramma final : public nsIGIOMimeApp {
++  ~nsExosProgramma() = default;
++
++ public:
++  NS_DECL_ISUPPORTS
++  NS_DECL_NSIHANDLERAPP
++  NS_DECL_NSIGIOMIMEAPP
++
++  explicit nsExosProgramma(const nsACString& aProg) : mProg(aProg) {
++    NomeDelProgramma(mProg, mNome);
++  }
++
++ private:
++  nsCString mProg;
++  nsString mNome;
++};
++
++NS_IMPL_ISUPPORTS(nsExosProgramma, nsIGIOMimeApp, nsIHandlerApp)
++
++NS_IMETHODIMP nsExosProgramma::GetId(nsACString& aId) {
++  aId = mProg;
++  return NS_OK;
++}
++
++NS_IMETHODIMP nsExosProgramma::GetName(nsAString& aName) {
++  aName = mNome;
++  return NS_OK;
++}
++
++NS_IMETHODIMP nsExosProgramma::SetName(const nsAString& aName) {
++  mNome = aName;
++  return NS_OK;
++}
++
++NS_IMETHODIMP nsExosProgramma::GetDetailedDescription(nsAString& aDesc) {
++  CopyUTF8toUTF16(mProg, aDesc);
++  return NS_OK;
++}
++
++NS_IMETHODIMP nsExosProgramma::SetDetailedDescription(const nsAString&) {
++  return NS_ERROR_NOT_IMPLEMENTED;
++}
++
++NS_IMETHODIMP nsExosProgramma::Equals(nsIHandlerApp* aOther, bool* _retval) {
++  *_retval = false;
++  nsCOMPtr<nsIGIOMimeApp> altro = do_QueryInterface(aOther);
++  if (altro) {
++    nsAutoCString id;
++    altro->GetId(id);
++    *_retval = id.Equals(mProg);
++  }
++  return NS_OK;
++}
++
++NS_IMETHODIMP nsExosProgramma::LaunchWithURI(
++    nsIURI* aUri, mozilla::dom::BrowsingContext* aBrowsingContext) {
++  nsAutoCString arg;
++  nsCOMPtr<nsIFileURL> fileUrl = do_QueryInterface(aUri);
++  if (fileUrl) {
++    nsCOMPtr<nsIFile> file;
++    nsresult rv = fileUrl->GetFile(getter_AddRefs(file));
++    NS_ENSURE_SUCCESS(rv, rv);
++    file->GetNativePath(arg);
++  } else {
++    aUri->GetSpec(arg);
++  }
++  return Lancia(mProg, arg);
++}
++
++NS_IMETHODIMP nsExosProgramma::GetCommand(nsACString& aCommand) {
++  aCommand = mProg;
++  return NS_OK;
++}
++
++NS_IMETHODIMP nsExosProgramma::GetExpectsURIs(int32_t* aExpects) {
++  *aExpects = nsIGIOMimeApp::EXPECTS_URIS_FOR_NON_FILES;
++  return NS_OK;
++}
++
++NS_IMETHODIMP nsExosProgramma::GetSupportedURISchemes(
++    nsIUTF8StringEnumerator** aSchemes) {
++  auto* schemi = new nsTArray<nsCString>();
++  schemi->AppendElement("file"_ns);
++  return NS_NewAdoptingUTF8StringEnumerator(aSchemes, schemi);
++}
++
++static nsresult Scegli(const char* aTipo, const nsACString& aProg) {
++  const Exwin* e = exwin();
++  if (!e || !e->type_set || !aTipo) return NS_ERROR_NOT_AVAILABLE;
++  return e->type_set(aTipo, PromiseFlatCString(aProg).get()) ? NS_OK
++                                                             : NS_ERROR_FAILURE;
++}
++
++NS_IMETHODIMP nsExosProgramma::SetAsDefaultForMimeType(
++    const nsACString& aMimeType) {
++  return Scegli(ExtDelTipo(aMimeType), mProg);
++}
++
++NS_IMETHODIMP nsExosProgramma::SetAsDefaultForFileExtensions(
++    const nsACString& aExts) {
++  nsresult rv = NS_ERROR_INVALID_ARG;
++  for (const nsACString& ext : aExts.Split(' ')) {
++    if (ext.IsEmpty()) continue;
++    nsAutoCString e(ext);
++    if (e.First() == '.') e.Cut(0, 1);
++    rv = Scegli(e.get(), mProg);
++    if (NS_FAILED(rv)) return rv;
++  }
++  return rv;
++}
++
++NS_IMETHODIMP nsExosProgramma::SetAsDefaultForURIScheme(
++    const nsACString& aScheme) {
++  nsAutoCString t(aScheme);
++  t.Append(':');
++  return Scegli(t.get(), mProg);
++}
++
++NS_IMPL_ISUPPORTS(nsExosSistema, nsIGIOService)
++
++NS_IMETHODIMP nsExosSistema::GetMimeTypeFromExtension(const nsACString& aExt,
++                                                      nsACString& aMime) {
++  const char* m = TipoDellExt(aExt);
++  if (!m) return NS_ERROR_FAILURE;
++  aMime.Assign(m);
++  return NS_OK;
++}
++
++NS_IMETHODIMP nsExosSistema::GetAppForURIScheme(const nsACString& aScheme,
++                                                nsIHandlerApp** aApp) {
++  *aApp = nullptr;
++  nsAutoCString t(aScheme), prog;
++  t.Append(':');
++  if (!ProgrammaDelTipo(t.get(), prog)) return NS_ERROR_FAILURE;
++  NS_ADDREF(*aApp = new nsExosProgramma(prog));
++  return NS_OK;
++}
++
++NS_IMETHODIMP nsExosSistema::GetAppsForURIScheme(const nsACString& aScheme,
++                                                 nsIMutableArray** aResult) {
++  nsCOMPtr<nsIMutableArray> tutti = do_CreateInstance(NS_ARRAY_CONTRACTID);
++  nsCOMPtr<nsIHandlerApp> app;
++  if (NS_SUCCEEDED(GetAppForURIScheme(aScheme, getter_AddRefs(app))) && app) {
++    tutti->AppendElement(app);
++  }
++  tutti.forget(aResult);
++  return NS_OK;
++}
++
++NS_IMETHODIMP nsExosSistema::GetAppForMimeType(const nsACString& aMimeType,
++                                               nsIHandlerApp** aApp) {
++  *aApp = nullptr;
++  nsAutoCString prog;
++  if (!ProgrammaDelTipo(ExtDelTipo(aMimeType), prog)) return NS_ERROR_FAILURE;
++  NS_ADDREF(*aApp = new nsExosProgramma(prog));
++  return NS_OK;
++}
++
++NS_IMETHODIMP nsExosSistema::CreateHandlerAppFromAppId(
++    const char*, nsIGIOHandlerApp** aResult) {
++  *aResult = nullptr;
++  return NS_ERROR_NOT_IMPLEMENTED;
++}
++
++NS_IMETHODIMP nsExosSistema::CreateAppFromCommand(const nsACString& aCmd,
++                                                  const nsACString& aName,
++                                                  nsIGIOMimeApp** aApp) {
++  *aApp = nullptr;
++  RefPtr<nsExosProgramma> p = new nsExosProgramma(aCmd);
++  if (!aName.IsEmpty()) p->SetName(NS_ConvertUTF8toUTF16(aName));
++  p.forget(aApp);
++  return NS_OK;
++}
++
++NS_IMETHODIMP nsExosSistema::FindAppFromCommand(const nsACString& aCmd,
++                                                nsIGIOMimeApp** aApp) {
++  *aApp = nullptr;
++  struct stat st;
++  if (stat(PromiseFlatCString(aCmd).get(), &st) != 0 || !S_ISREG(st.st_mode)) {
++    return NS_ERROR_FAILURE;
++  }
++  NS_ADDREF(*aApp = new nsExosProgramma(aCmd));
++  return NS_OK;
++}
++
++NS_IMETHODIMP nsExosSistema::GetDescriptionForMimeType(
++    const nsACString& aMimeType, nsACString& aDesc) {
++  const char* ext = ExtDelTipo(aMimeType);
++  const Exwin* e = exwin();
++  aDesc.Truncate();
++  if (!ext || !e || !e->types) return NS_ERROR_FAILURE;
++  int n = e->types(nullptr, 0);
++  if (n <= 0) return NS_ERROR_FAILURE;
++  nsTArray<ExTipo> v;
++  v.SetLength(n);
++  n = e->types(v.Elements(), n);
++  for (int i = 0; i < n && i < (int)v.Length(); i++) {
++    if (!strcmp(v[i].tipo, ext)) {
++      aDesc.Assign(v[i].gruppo);
++      return NS_OK;
++    }
++  }
++  return NS_ERROR_FAILURE;
++}
++
++NS_IMETHODIMP nsExosSistema::GetIsRunningUnderFlatpak(bool* aResult) {
++  *aResult = false;
++  return NS_OK;
++}
++
++NS_IMETHODIMP nsExosSistema::GetIsRunningUnderSnap(bool* aResult) {
++  *aResult = false;
++  return NS_OK;
++}
++
++NS_IMETHODIMP nsExosSistema::ShowURI(nsIURI* aURI) {
++  nsCOMPtr<nsIFileURL> fileUrl = do_QueryInterface(aURI);
++  if (fileUrl) {
++    nsCOMPtr<nsIFile> file;
++    nsresult rv = fileUrl->GetFile(getter_AddRefs(file));
++    NS_ENSURE_SUCCESS(rv, rv);
++    nsAutoCString path;
++    file->GetNativePath(path);
++    return Apri(path);
++  }
++  nsAutoCString scheme, spec, prog;
++  aURI->GetScheme(scheme);
++  aURI->GetSpec(spec);
++  scheme.Append(':');
++  if (!ProgrammaDelTipo(scheme.get(), prog)) return NS_ERROR_FAILURE;
++  return Lancia(prog, spec);
++}
++
++NS_IMETHODIMP nsExosSistema::RevealFile(nsIFile* aFile) {
++  nsCOMPtr<nsIFile> cartella;
++  bool dir = false;
++  if (NS_SUCCEEDED(aFile->IsDirectory(&dir)) && dir) {
++    cartella = aFile;
++  } else {
++    nsresult rv = aFile->GetParent(getter_AddRefs(cartella));
++    if (NS_FAILED(rv) || !cartella) return NS_ERROR_FAILURE;
++  }
++  nsAutoCString path;
++  cartella->GetNativePath(path);
++  return Apri(path);
++}
++
++NS_IMETHODIMP nsExosSistema::LaunchFile(const nsACString& aPath) {
++  return Apri(aPath);
++}

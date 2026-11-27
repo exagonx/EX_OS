@@ -1,0 +1,12 @@
+--- a/nsprpub/pr/src/misc/prsystem.c
++++ b/nsprpub/pr/src/misc/prsystem.c
+@@ -243,7 +243,8 @@
+ {
+     PRUint64 bytes = 0;
+ 
+-#if defined(LINUX) || defined(SOLARIS)
++/* EX-OS: the libc's sysconf gives the kernel's real page count */
++#if defined(LINUX) || defined(SOLARIS) || defined(EXOS)
+ 
+     long pageSize = sysconf(_SC_PAGESIZE);
+     long pageCount = sysconf(_SC_PHYS_PAGES);

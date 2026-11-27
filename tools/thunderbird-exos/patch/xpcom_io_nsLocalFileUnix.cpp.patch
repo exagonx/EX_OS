@@ -1,0 +1,81 @@
+--- a/xpcom/io/nsLocalFileUnix.cpp
++++ b/xpcom/io/nsLocalFileUnix.cpp
+@@ -52,6 +52,8 @@
+ #    include "mozilla/WidgetUtilsGtk.h"
+ #    include "mozilla/widget/AsyncDBus.h"
+ #  endif
++#elif defined(XP_EXOS)
++#  include "nsIGIOService.h"
+ #endif
+ 
+ #ifdef MOZ_WIDGET_COCOA
+@@ -1403,6 +1405,14 @@
+     return NSRESULT_FOR_ERRNO();
+   }
+ 
++#if defined(XP_EXOS)
++  // EX-OS (Exilla): struct stat keeps whole seconds (st_atime, st_mtime), no
++  // timespec fields.
++  *aTime = (aTimeField == TimeField::AccessedTime ? fileStats.st_atime
++                                                   : fileStats.st_mtime) *
++           PR_MSEC_PER_SEC;
++  return NS_OK;
++#else
+   struct timespec* timespec;
+   switch (aTimeField) {
+     case TimeField::AccessedTime:
+@@ -1428,6 +1438,7 @@
+   *aTime = TimespecToMillis(*timespec);
+ 
+   return NS_OK;
++#endif
+ }
+ 
+ nsresult nsLocalFile::SetTimeImpl(PRTime aTime,
+@@ -1469,17 +1480,25 @@
+     return rv;
+   }
+ 
+-#if (defined(__APPLE__) && defined(__MACH__))
++#if defined(XP_EXOS)
++  // EX-OS (Exilla): whole seconds only, see GetTimeImpl.
++  times[copyIndex].tv_sec = aTimeField == TimeField::AccessedTime
++                                ? statInfo.st_mtime
++                                : statInfo.st_atime;
++  times[copyIndex].tv_usec = 0;
++#else
++#  if (defined(__APPLE__) && defined(__MACH__))
+   auto* copyFrom = aTimeField == TimeField::AccessedTime
+                        ? &statInfo.st_mtimespec
+                        : &statInfo.st_atimespec;
+-#else
++#  else
+   auto* copyFrom = aTimeField == TimeField::AccessedTime ? &statInfo.st_mtim
+                                                          : &statInfo.st_atim;
+-#endif
++#  endif
+ 
+   times[copyIndex].tv_sec = copyFrom->tv_sec;
+   times[copyIndex].tv_usec = copyFrom->tv_nsec / 1000;
++#endif
+ 
+   times[writeIndex].tv_sec = aTime / PR_MSEC_PER_SEC;
+   times[writeIndex].tv_usec = (aTime % PR_MSEC_PER_SEC) * PR_USEC_PER_MSEC;
+@@ -2401,7 +2420,7 @@
+     return NS_ERROR_FILE_ACCESS_DENIED;
+   }
+ 
+-#ifdef MOZ_WIDGET_GTK
++#if defined(MOZ_WIDGET_GTK) || defined(XP_EXOS)
+   nsCOMPtr<nsIGIOService> giovfs = do_GetService(NS_GIOSERVICE_CONTRACTID);
+   if (!giovfs) {
+     return NS_ERROR_FAILURE;
+@@ -2426,7 +2445,7 @@
+     return NS_ERROR_FILE_ACCESS_DENIED;
+   }
+ 
+-#ifdef MOZ_WIDGET_GTK
++#if defined(MOZ_WIDGET_GTK) || defined(XP_EXOS)
+   nsCOMPtr<nsIGIOService> giovfs = do_GetService(NS_GIOSERVICE_CONTRACTID);
+   if (!giovfs) {
+     return NS_ERROR_FAILURE;

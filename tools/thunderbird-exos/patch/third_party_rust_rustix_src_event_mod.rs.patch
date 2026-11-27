@@ -1,0 +1,20 @@
+--- a/third_party/rust/rustix/src/event/mod.rs
++++ b/third_party/rust/rustix/src/event/mod.rs
+@@ -6,7 +6,7 @@
+     linux_kernel,
+     target_os = "freebsd",
+     target_os = "illumos",
+-    target_os = "espidf"
++    any(target_os = "espidf", target_os = "exos")
+ ))]
+ mod eventfd;
+ #[cfg(bsd)]
+@@ -24,7 +24,7 @@
+     linux_kernel,
+     target_os = "freebsd",
+     target_os = "illumos",
+-    target_os = "espidf"
++    any(target_os = "espidf", target_os = "exos")
+ ))]
+ pub use eventfd::{eventfd, EventfdFlags};
+ #[cfg(not(any(windows, target_os = "redox", target_os = "wasi")))]

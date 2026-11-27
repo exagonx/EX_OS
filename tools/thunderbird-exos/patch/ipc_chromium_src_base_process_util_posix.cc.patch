@@ -1,0 +1,21 @@
+--- a/ipc/chromium/src/base/process_util_posix.cc
++++ b/ipc/chromium/src/base/process_util_posix.cc
+@@ -39,7 +39,8 @@
+ // long time and OpenBSD seems to be the only Unix we target that
+ // doesn't have it.  Note that `waitid` is used to resolve a conflict
+ // with the crash reporter, which isn't available on OpenBSD.
+-#ifndef __OpenBSD__
++// Nor EX-OS (Exilla), which also runs Gecko in a single process.
++#if !defined(__OpenBSD__) && !defined(__exos__)
+ #  define HAVE_WAITID
+ #endif
+ 
+@@ -120,7 +121,7 @@
+   // DANGER: no calls to malloc (or locks, etc.) are allowed from now on:
+   // https://crbug.com/36678
+   // Also, beware of STL iterators: https://crbug.com/331459
+-#if defined(ANDROID)
++#if defined(ANDROID) || defined(XP_EXOS)
+   static const rlim_t kSystemDefaultMaxFds = 1024;
+   static const char kFDDir[] = "/proc/self/fd";
+ #elif defined(XP_LINUX) || defined(XP_SOLARIS)

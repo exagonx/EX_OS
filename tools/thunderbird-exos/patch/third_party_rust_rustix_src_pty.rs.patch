@@ -1,0 +1,11 @@
+--- a/third_party/rust/rustix/src/pty.rs
++++ b/third_party/rust/rustix/src/pty.rs
+@@ -35,7 +35,7 @@
+         const RDWR = c::O_RDWR as c::c_uint;
+ 
+         /// `O_NOCTTY`
+-        #[cfg(not(any(target_os = "espidf", target_os = "horizon", target_os = "l4re", target_os = "redox", target_os = "vita")))]
++        #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "horizon", target_os = "l4re", target_os = "redox", target_os = "vita")))]
+         const NOCTTY = c::O_NOCTTY as c::c_uint;
+ 
+         /// `O_CLOEXEC`

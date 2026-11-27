@@ -1,0 +1,526 @@
+--- a/third_party/rust/rustix/src/net/types.rs
++++ b/third_party/rust/rustix/src/net/types.rs
+@@ -23,16 +23,16 @@
+     pub const DGRAM: Self = Self(c::SOCK_DGRAM as _);
+ 
+     /// `SOCK_SEQPACKET`
+-    #[cfg(not(any(target_os = "espidf", target_os = "horizon")))]
++    #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "horizon")))]
+     pub const SEQPACKET: Self = Self(c::SOCK_SEQPACKET as _);
+ 
+     /// `SOCK_RAW`
+-    #[cfg(not(any(target_os = "espidf", target_os = "horizon")))]
++    #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "horizon")))]
+     pub const RAW: Self = Self(c::SOCK_RAW as _);
+ 
+     /// `SOCK_RDM`
+     #[cfg(not(any(
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "redox"
+@@ -96,7 +96,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -115,7 +115,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -128,7 +128,7 @@
+     #[cfg(not(any(
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "horizon",
+         target_os = "redox",
+         target_os = "vita",
+@@ -136,7 +136,7 @@
+     pub const IPX: Self = Self(c::AF_IPX as _);
+     /// `AF_APPLETALK`
+     #[cfg(not(any(
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "horizon",
+         target_os = "redox",
+         target_os = "vita"
+@@ -149,7 +149,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -165,7 +165,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -181,7 +181,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -196,7 +196,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -212,7 +212,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -223,7 +223,7 @@
+     pub const ROSE: Self = Self(c::AF_ROSE as _);
+     /// `AF_DECnet`
+     #[cfg(not(any(
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "redox",
+@@ -237,7 +237,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -253,7 +253,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -268,7 +268,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -288,7 +288,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -304,7 +304,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -320,7 +320,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -336,7 +336,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -352,7 +352,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -363,7 +363,7 @@
+     pub const RDS: Self = Self(c::AF_RDS as _);
+     /// `AF_SNA`
+     #[cfg(not(any(
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "redox",
+@@ -376,7 +376,7 @@
+         solarish,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -392,7 +392,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -408,7 +408,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -424,7 +424,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -440,7 +440,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -456,7 +456,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -472,7 +472,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "horizon",
+         target_os = "hurd",
+         target_os = "redox",
+@@ -486,7 +486,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -502,7 +502,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -517,7 +517,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -532,7 +532,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -548,7 +548,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "hurd",
+@@ -811,7 +811,7 @@
+     /// `IPPROTO_IGMP`
+     #[cfg(not(any(
+         solarish,
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "vita"
+@@ -821,7 +821,7 @@
+     #[cfg(not(any(
+         solarish,
+         windows,
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "redox",
+@@ -833,7 +833,7 @@
+     /// `IPPROTO_EGP`
+     #[cfg(not(any(
+         solarish,
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "redox",
+@@ -843,7 +843,7 @@
+     /// `IPPROTO_PUP`
+     #[cfg(not(any(
+         solarish,
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "vita"
+@@ -854,7 +854,7 @@
+     /// `IPPROTO_IDP`
+     #[cfg(not(any(
+         solarish,
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "vita"
+@@ -865,7 +865,7 @@
+         solarish,
+         windows,
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "redox",
+@@ -880,7 +880,7 @@
+         target_os = "aix",
+         target_os = "cygwin",
+         target_os = "dragonfly",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "nto",
+@@ -896,7 +896,7 @@
+         solarish,
+         windows,
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "redox",
+@@ -908,7 +908,7 @@
+         solarish,
+         windows,
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "redox",
+@@ -918,7 +918,7 @@
+     /// `IPPROTO_ESP`
+     #[cfg(not(any(
+         solarish,
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "redox",
+@@ -928,7 +928,7 @@
+     /// `IPPROTO_AH`
+     #[cfg(not(any(
+         solarish,
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "redox",
+@@ -942,7 +942,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "nto",
+@@ -957,7 +957,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "nto",
+@@ -971,7 +971,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "redox",
+@@ -983,7 +983,7 @@
+         solarish,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "redox",
+@@ -997,7 +997,7 @@
+         windows,
+         target_os = "aix",
+         target_os = "cygwin",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "nto",
+@@ -1010,7 +1010,7 @@
+         solarish,
+         target_os = "cygwin",
+         target_os = "dragonfly",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "openbsd",
+@@ -1027,7 +1027,7 @@
+         target_os = "aix",
+         target_os = "cygwin",
+         target_os = "dragonfly",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "nto",
+@@ -1043,7 +1043,7 @@
+         target_os = "aix",
+         target_os = "cygwin",
+         target_os = "dragonfly",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "netbsd",
+@@ -1056,7 +1056,7 @@
+     #[cfg(linux_kernel)]
+     pub const ETHERNET: Protocol = Protocol(new_raw_protocol(c::IPPROTO_ETHERNET as _));
+     /// `IPPROTO_RAW`
+-    #[cfg(not(any(target_os = "espidf", target_os = "horizon", target_os = "vita")))]
++    #[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "horizon", target_os = "vita")))]
+     pub const RAW: Protocol = Protocol(new_raw_protocol(c::IPPROTO_RAW as _));
+     /// `IPPROTO_MPTCP`
+     #[cfg(not(any(
+@@ -1066,7 +1066,7 @@
+         target_os = "aix",
+         target_os = "cygwin",
+         target_os = "emscripten",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "fuchsia",
+         target_os = "haiku",
+         target_os = "horizon",
+@@ -1078,7 +1078,7 @@
+     /// `IPPROTO_FRAGMENT`
+     #[cfg(not(any(
+         solarish,
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "redox",
+@@ -1095,7 +1095,7 @@
+         windows,
+         target_os = "cygwin",
+         target_os = "dragonfly",
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "nto",
+@@ -1106,7 +1106,7 @@
+     /// `IPPROTO_ROUTING`
+     #[cfg(not(any(
+         solarish,
+-        target_os = "espidf",
++        any(target_os = "espidf", target_os = "exos"),
+         target_os = "haiku",
+         target_os = "horizon",
+         target_os = "redox",
+@@ -1704,7 +1704,7 @@
+             apple,
+             windows,
+             target_os = "aix",
+-            target_os = "espidf",
++            any(target_os = "espidf", target_os = "exos"),
+             target_os = "haiku",
+             target_os = "horizon",
+             target_os = "nto",

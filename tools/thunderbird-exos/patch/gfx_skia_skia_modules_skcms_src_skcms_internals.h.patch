@@ -1,0 +1,13 @@
+--- a/gfx/skia/skia/modules/skcms/src/skcms_internals.h
++++ b/gfx/skia/skia/modules/skcms/src/skcms_internals.h
+@@ -59,7 +59,9 @@
+     #elif defined(__GNUC__) && !defined(SKCMS_HAS_MUSTTAIL)
+         // GCC on riscv64 does not support our tail call functions
+         // cf. https://gcc.gnu.org/bugzilla/show_bug.cgi?id=121784
+-        #if __has_cpp_attribute(clang::musttail) && !defined(__riscv)
++        // Nor on 32-bit x86 (EX-OS/Exilla): with arguments on the stack GCC
++        // reports "cannot tail-call: tail call production failed".
++        #if __has_cpp_attribute(clang::musttail) && !defined(__riscv) && !defined(__i386__)
+             #define SKCMS_HAS_MUSTTAIL 1
+         #else
+             #define SKCMS_HAS_MUSTTAIL 0

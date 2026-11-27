@@ -1,0 +1,12 @@
+--- a/comm/mailnews/base/src/moz.build
++++ b/comm/mailnews/base/src/moz.build
+@@ -112,7 +112,8 @@
+         "nsMessengerWinIntegration.cpp",
+         "nsUserInfoWin.cpp",
+     ]
+-elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
++# EX-OS: the Unix one, getpwuid and uname are there
++elif CONFIG["MOZ_WIDGET_TOOLKIT"] in ("gtk", "exos"):
+     UNIFIED_SOURCES += [
+         "nsUserInfoUnix.cpp",
+     ]

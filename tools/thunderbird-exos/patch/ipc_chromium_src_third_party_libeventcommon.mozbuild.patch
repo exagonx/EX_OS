@@ -1,0 +1,11 @@
+--- a/ipc/chromium/src/third_party/libeventcommon.mozbuild
++++ b/ipc/chromium/src/third_party/libeventcommon.mozbuild
+@@ -6,6 +6,8 @@
+     libevent_include_suffix = 'mac'
+ elif CONFIG['TARGET_KERNEL'] in ('DragonFly', 'FreeBSD', 'NetBSD', 'OpenBSD'):
+     libevent_include_suffix = 'bsd'
++elif CONFIG['TARGET_KERNEL'] == 'EXOS':
++    libevent_include_suffix = 'exos'
+ elif CONFIG['TARGET_KERNEL'] == 'SunOS':
+     libevent_include_suffix = 'solaris'
+ elif CONFIG['TARGET_OS'] == 'Android':

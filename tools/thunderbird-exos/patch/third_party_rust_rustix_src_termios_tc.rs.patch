@@ -1,0 +1,72 @@
+--- a/third_party/rust/rustix/src/termios/tc.rs
++++ b/third_party/rust/rustix/src/termios/tc.rs
+@@ -1,5 +1,5 @@
+ use crate::fd::AsFd;
+-#[cfg(not(target_os = "espidf"))]
++#[cfg(not(any(target_os = "espidf", target_os = "exos")))]
+ use crate::termios::{Action, OptionalActions, QueueSelector, Termios, Winsize};
+ use crate::{backend, io};
+ 
+@@ -22,7 +22,7 @@
+ /// [POSIX `tcgetattr`]: https://pubs.opengroup.org/onlinepubs/9799919799/functions/tcgetattr.html
+ /// [Linux `ioctl_tty`]: https://man7.org/linux/man-pages/man4/tty_ioctl.4.html
+ /// [Linux `termios`]: https://man7.org/linux/man-pages/man3/termios.3.html
+-#[cfg(not(any(windows, target_os = "espidf", target_os = "wasi")))]
++#[cfg(not(any(windows, any(target_os = "espidf", target_os = "exos"), target_os = "wasi")))]
+ #[inline]
+ #[doc(alias = "TCGETS")]
+ #[doc(alias = "TCGETS2")]
+@@ -42,7 +42,7 @@
+ #[cfg(not(any(
+     windows,
+     target_os = "horizon",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "wasi"
+ )))]
+ #[inline]
+@@ -106,7 +106,7 @@
+ /// [POSIX `tcsetattr`]: https://pubs.opengroup.org/onlinepubs/9799919799/functions/tcsetattr.html
+ /// [Linux `ioctl_tty`]: https://man7.org/linux/man-pages/man4/tty_ioctl.4.html
+ /// [Linux `termios`]: https://man7.org/linux/man-pages/man3/termios.3.html
+-#[cfg(not(target_os = "espidf"))]
++#[cfg(not(any(target_os = "espidf", target_os = "exos")))]
+ #[inline]
+ #[doc(alias = "TCSETS")]
+ #[doc(alias = "TCSETS2")]
+@@ -153,7 +153,7 @@
+ /// [POSIX `tcsetattr`]: https://pubs.opengroup.org/onlinepubs/9799919799/functions/tcdrain.html
+ /// [Linux `ioctl_tty`]: https://man7.org/linux/man-pages/man4/tty_ioctl.4.html
+ /// [Linux `termios`]: https://man7.org/linux/man-pages/man3/termios.3.html
+-#[cfg(not(target_os = "espidf"))]
++#[cfg(not(any(target_os = "espidf", target_os = "exos")))]
+ #[inline]
+ pub fn tcdrain<Fd: AsFd>(fd: Fd) -> io::Result<()> {
+     backend::termios::syscalls::tcdrain(fd.as_fd())
+@@ -170,7 +170,7 @@
+ /// [POSIX `tcflush`]: https://pubs.opengroup.org/onlinepubs/9799919799/functions/tcflush.html
+ /// [Linux `ioctl_tty`]: https://man7.org/linux/man-pages/man4/tty_ioctl.4.html
+ /// [Linux `termios`]: https://man7.org/linux/man-pages/man3/termios.3.html
+-#[cfg(not(target_os = "espidf"))]
++#[cfg(not(any(target_os = "espidf", target_os = "exos")))]
+ #[inline]
+ #[doc(alias = "TCFLSH")]
+ pub fn tcflush<Fd: AsFd>(fd: Fd, queue_selector: QueueSelector) -> io::Result<()> {
+@@ -187,7 +187,7 @@
+ /// [POSIX `tcflow`]: https://pubs.opengroup.org/onlinepubs/9799919799/functions/tcflow.html
+ /// [Linux `ioctl_tty`]: https://man7.org/linux/man-pages/man4/tty_ioctl.4.html
+ /// [Linux `termios`]: https://man7.org/linux/man-pages/man3/termios.3.html
+-#[cfg(not(target_os = "espidf"))]
++#[cfg(not(any(target_os = "espidf", target_os = "exos")))]
+ #[inline]
+ #[doc(alias = "TCXONC")]
+ pub fn tcflow<Fd: AsFd>(fd: Fd, action: Action) -> io::Result<()> {
+@@ -217,7 +217,7 @@
+ ///  - [Linux]
+ ///
+ /// [Linux]: https://man7.org/linux/man-pages/man4/tty_ioctl.4.html
+-#[cfg(not(any(target_os = "espidf", target_os = "horizon")))]
++#[cfg(not(any(any(target_os = "espidf", target_os = "exos"), target_os = "horizon")))]
+ #[inline]
+ #[doc(alias = "TIOCSWINSZ")]
+ pub fn tcsetwinsize<Fd: AsFd>(fd: Fd, winsize: Winsize) -> io::Result<()> {

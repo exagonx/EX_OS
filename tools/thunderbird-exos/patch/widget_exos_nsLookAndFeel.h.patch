@@ -1,0 +1,31 @@
+--- a/widget/exos/nsLookAndFeel.h
++++ b/widget/exos/nsLookAndFeel.h
+@@ -0,0 +1,28 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/* EX-OS (Exilla): system colours, metrics and fonts. Fixed values for now,
++ * the same ones Gecko uses for GTK in headless mode; the day ExWin has a
++ * theme to ask, they come from there. */
++
++#ifndef widget_exos_nsLookAndFeel_h
++#define widget_exos_nsLookAndFeel_h
++
++#include "nsXPLookAndFeel.h"
++
++class nsLookAndFeel final : public nsXPLookAndFeel {
++ public:
++  nsLookAndFeel();
++  virtual ~nsLookAndFeel();
++
++  void NativeInit() final {}
++  nsresult NativeGetInt(IntID, int32_t& aResult) override;
++  nsresult NativeGetFloat(FloatID, float& aResult) override;
++  nsresult NativeGetColor(ColorID, ColorScheme, nscolor& aResult) override;
++  bool NativeGetFont(FontID, nsString& aFontName, gfxFontStyle&) override;
++
++  char16_t GetPasswordCharacterImpl() override;
++};
++
++#endif  // widget_exos_nsLookAndFeel_h

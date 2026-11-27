@@ -1,0 +1,29 @@
+--- a/third_party/rust/rustix/src/pipe.rs
++++ b/third_party/rust/rustix/src/pipe.rs
+@@ -7,7 +7,7 @@
+ #[cfg(not(any(
+     solarish,
+     windows,
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "redox",
+     target_os = "vita",
+@@ -34,7 +34,7 @@
+ #[cfg(not(any(
+     solarish,
+     windows,
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "hurd",
+@@ -100,7 +100,7 @@
+ #[cfg(not(any(
+     apple,
+     target_os = "aix",
+-    target_os = "espidf",
++    any(target_os = "espidf", target_os = "exos"),
+     target_os = "haiku",
+     target_os = "horizon",
+     target_os = "nto"

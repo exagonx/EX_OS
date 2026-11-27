@@ -1,0 +1,530 @@
+--- a/media/libcubeb/src/cubeb_exos.c
++++ b/media/libcubeb/src/cubeb_exos.c
+@@ -0,0 +1,527 @@
++/*
++ * Copyright (C) 2026 Graziano Falcone <exagonx@hotmail.com>
++ *
++ * This program is made available under an ISC-style license.  See the
++ * accompanying file LICENSE for details.
++ *
++ * EX-OS (Exilla): the "audio" service of drivers/audio/audio_proto.h. Samples
++ * go through a shared ring; IPC only opens, starts and closes it. The driver
++ * serves one client at a time (@SUONO-MIX), so a second stream fails.
++ * Output only: no driver records (@SUONO-REG).
++ */
++#include "cubeb-internal.h"
++#include "cubeb/cubeb.h"
++#include <libc.h>
++#include <pthread.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++
++/* From drivers/audio/audio_proto.h: a program compiled elsewhere has no
++ * access to that header, and the protocol is the driver's ABI. */
++#define AUDIO_SERVIZIO "audio"
++#define AUDIO_MSG_APRI 0x0A02
++#define AUDIO_MSG_VIA 0x0A03
++#define AUDIO_MSG_FERMA 0x0A04
++#define AUDIO_MSG_CHIUDI 0x0A05
++#define AUDIO_MSG_ESITO 0x0A82
++
++typedef struct {
++  unsigned int rate, canali, bit;
++} AudioFormato;
++typedef struct {
++  int esito;
++  AudioFormato formato;
++  char zona[16];
++  unsigned int zona_byte, anello_byte, dati_off;
++} AudioEsito;
++typedef struct {
++  unsigned int magia, byte, dati_off, rate, canali, bit;
++  volatile unsigned int scritto;
++  volatile unsigned int suonato;
++  unsigned int sottoflussi, stato;
++} AudioAnello;
++
++#define ATTESA_MS 2000
++#define FRAME_BLOCCO 1024u /* frames asked of Gecko at a time */
++#define PASSO_US 5000
++
++static struct cubeb_ops const exos_ops;
++
++struct cubeb {
++  struct cubeb_ops const * ops;
++};
++
++struct cubeb_stream {
++  cubeb * context;
++  void * user_ptr;
++  cubeb_data_callback data_callback;
++  cubeb_state_callback state_callback;
++  int pid;
++  AudioAnello * anello;
++  unsigned char * dati;
++  void * zona;
++  cubeb_sample_format formato;
++  unsigned int canali_in, rate_in;  /* what Gecko gives */
++  unsigned int canali, rate, byte_frame; /* what the card plays */
++  uint64_t passo, pos; /* 32.32: input frames per output frame, and where */
++  unsigned int max_uscita; /* output frames for one block, at most */
++  void * buffer;
++  int16_t * medio; /* card channels at Gecko's rate, [0] is the last frame */
++  int16_t * uscita;
++  pthread_t filo;
++  pthread_mutex_t lucchetto;
++  int filo_vivo, ferma, partito;
++  unsigned int suonato_base; /* `suonato` when the stream was opened */
++  float volume;
++};
++
++static int
++chiedi_apri(int pid, AudioFormato * f, AudioEsito * e)
++{
++  IpcMessage meta;
++  unsigned char buf[IPC_MSG_MAX_DATA];
++  int giri;
++
++  if (ipc_send((unsigned int)pid, AUDIO_MSG_APRI, f, sizeof(*f)) < 0) {
++    return -1;
++  }
++  for (giri = 0; giri < 8; giri++) {
++    if (ipc_recv_timeout(&meta, buf, sizeof(buf), ATTESA_MS) < 0) {
++      return -1;
++    }
++    if ((int)meta.sender_pid != pid || meta.tipo != AUDIO_MSG_ESITO) {
++      continue;
++    }
++    if (meta.len < sizeof(*e)) {
++      return -1;
++    }
++    memcpy(e, buf, sizeof(*e));
++    return 0;
++  }
++  return -1;
++}
++
++/* Into the ring, wrapping: samples first, counter after (audio_proto.h). */
++static void
++anello_scrivi(cubeb_stream * s, void const * src, unsigned int n)
++{
++  AudioAnello * a = s->anello;
++  unsigned int testa = a->scritto & (a->byte - 1);
++  unsigned int tratto = a->byte - testa;
++
++  if (tratto > n) {
++    tratto = n;
++  }
++  memcpy(s->dati + testa, src, tratto);
++  if (n > tratto) {
++    memcpy(s->dati, (unsigned char const *)src + tratto, n - tratto);
++  }
++  __sync_synchronize();
++  a->scritto += n;
++}
++
++static float
++campione(cubeb_stream * s, long i)
++{
++  if (s->formato == CUBEB_SAMPLE_FLOAT32LE) {
++    return ((float const *)s->buffer)[i] * 32767.0f;
++  }
++  return (float)((int16_t const *)s->buffer)[i];
++}
++
++static int16_t
++taglia(float x)
++{
++  if (x > 32767.0f) {
++    return 32767;
++  }
++  if (x < -32768.0f) {
++    return -32768;
++  }
++  return (int16_t)x;
++}
++
++/* Gecko's frames into medio[1..frames], with the card's channels. */
++static void
++converti(cubeb_stream * s, long frames)
++{
++  long f;
++  unsigned int c, ci = s->canali_in, co = s->canali;
++  float v = s->volume;
++
++  for (f = 0; f < frames; f++) {
++    int16_t * d = s->medio + (f + 1) * co;
++    if (ci == co) {
++      for (c = 0; c < co; c++) {
++        d[c] = taglia(campione(s, f * ci + c) * v);
++      }
++    } else if (ci == 1) {
++      int16_t x = taglia(campione(s, f) * v);
++      for (c = 0; c < co; c++) {
++        d[c] = x;
++      }
++    } else {
++      d[0] = taglia((campione(s, f * ci) + campione(s, f * ci + 1)) * 0.5f * v);
++    }
++  }
++}
++
++/* medio at Gecko's rate into uscita at the card's, linear between frames;
++ * returns the frames made. The last input frame stays in medio[0]. */
++static unsigned int
++ricampiona(cubeb_stream * s, long frames)
++{
++  unsigned int n = 0, c, co = s->canali;
++  uint64_t fine = (uint64_t)frames << 32;
++
++  while (s->pos <= fine && n < s->max_uscita) {
++    unsigned int i = (unsigned int)(s->pos >> 32);
++    float t = (float)(uint32_t)s->pos / 4294967296.0f;
++    int16_t const * a = s->medio + i * co;
++    int16_t const * b = (i < (unsigned int)frames) ? a + co : a;
++    for (c = 0; c < co; c++) {
++      s->uscita[n * co + c] = (int16_t)((float)a[c] + ((float)b[c] - a[c]) * t);
++    }
++    n++;
++    s->pos += s->passo;
++  }
++  s->pos -= fine;
++  memcpy(s->medio, s->medio + frames * co, co * sizeof(int16_t));
++  return n;
++}
++
++static void *
++exos_filo(void * arg)
++{
++  cubeb_stream * s = arg;
++  AudioAnello * a = s->anello;
++  unsigned int blocco = s->max_uscita * s->byte_frame;
++  int finito = 0;
++
++  for (;;) {
++    int ferma;
++    pthread_mutex_lock(&s->lucchetto);
++    ferma = s->ferma;
++    pthread_mutex_unlock(&s->lucchetto);
++    if (ferma) {
++      break;
++    }
++    if (finito) {
++      if (a->scritto == a->suonato) {
++        s->state_callback(s, s->user_ptr, CUBEB_STATE_DRAINED);
++        break;
++      }
++      usleep(PASSO_US);
++      continue;
++    }
++    if (a->byte - (a->scritto - a->suonato) < blocco) {
++      if (!s->partito) {
++        ipc_send((unsigned int)s->pid, AUDIO_MSG_VIA, 0, 0);
++        s->partito = 1;
++      }
++      usleep(PASSO_US);
++      continue;
++    }
++    {
++      long got = s->data_callback(s, s->user_ptr, NULL, s->buffer,
++                                  FRAME_BLOCCO);
++      if (got < 0) {
++        s->state_callback(s, s->user_ptr, CUBEB_STATE_ERROR);
++        break;
++      }
++      if (got > 0) {
++        converti(s, got);
++        anello_scrivi(s, s->uscita, ricampiona(s, got) * s->byte_frame);
++      }
++      if (got < (long)FRAME_BLOCCO) {
++        finito = 1;
++        if (!s->partito) {
++          ipc_send((unsigned int)s->pid, AUDIO_MSG_VIA, 0, 0);
++          s->partito = 1;
++        }
++      }
++    }
++  }
++  return NULL;
++}
++
++int
++exos_init(cubeb ** context, char const * context_name)
++{
++  cubeb * c;
++
++  (void)context_name;
++  if (ipc_lookup(AUDIO_SERVIZIO) <= 0) {
++    return CUBEB_ERROR; /* no card, or `audio` not started */
++  }
++  c = calloc(1, sizeof(*c));
++  if (c == NULL) {
++    return CUBEB_ERROR;
++  }
++  c->ops = &exos_ops;
++  *context = c;
++  return CUBEB_OK;
++}
++
++static char const *
++exos_get_backend_id(cubeb * c)
++{
++  (void)c;
++  return "exos";
++}
++
++static int
++exos_get_max_channel_count(cubeb * c, uint32_t * n)
++{
++  (void)c;
++  *n = 2;
++  return CUBEB_OK;
++}
++
++static int
++exos_get_min_latency(cubeb * c, cubeb_stream_params p, uint32_t * frames)
++{
++  (void)c;
++  (void)p;
++  *frames = FRAME_BLOCCO;
++  return CUBEB_OK;
++}
++
++static int
++exos_get_preferred_sample_rate(cubeb * c, uint32_t * rate)
++{
++  (void)c;
++  *rate = 48000; /* every PCI card here does it; Gecko resamples to it */
++  return CUBEB_OK;
++}
++
++static int
++exos_enumerate_devices(cubeb * c, cubeb_device_type t,
++                       cubeb_device_collection * coll)
++{
++  (void)c;
++  (void)t;
++  coll->device = NULL;
++  coll->count = 0;
++  return CUBEB_OK;
++}
++
++static int
++exos_device_collection_destroy(cubeb * c, cubeb_device_collection * coll)
++{
++  (void)c;
++  (void)coll;
++  return CUBEB_OK;
++}
++
++static void
++exos_destroy(cubeb * c)
++{
++  free(c);
++}
++
++static void
++exos_stream_destroy(cubeb_stream * s)
++{
++  if (s->filo_vivo) {
++    pthread_mutex_lock(&s->lucchetto);
++    s->ferma = 1;
++    pthread_mutex_unlock(&s->lucchetto);
++    pthread_join(s->filo, NULL);
++  }
++  ipc_send((unsigned int)s->pid, AUDIO_MSG_CHIUDI, 0, 0);
++  if (s->zona != NULL) {
++    shm_chiudi(s->zona);
++  }
++  pthread_mutex_destroy(&s->lucchetto);
++  free(s->buffer);
++  free(s->medio);
++  free(s->uscita);
++  free(s);
++}
++
++static int
++exos_stream_init(cubeb * c, cubeb_stream ** stream, char const * name,
++                 cubeb_devid in_dev, cubeb_stream_params * in,
++                 cubeb_devid out_dev, cubeb_stream_params * out,
++                 unsigned int latency, cubeb_data_callback data_cb,
++                 cubeb_state_callback state_cb, void * user_ptr)
++{
++  cubeb_stream * s;
++  AudioFormato f;
++  AudioEsito e;
++  ShmZona z;
++  unsigned int campione;
++
++  (void)name;
++  (void)in_dev;
++  (void)out_dev;
++  (void)latency;
++  if (in != NULL || out == NULL) {
++    return CUBEB_ERROR_NOT_SUPPORTED;
++  }
++  if (out->channels < 1 || out->channels > 2) {
++    return CUBEB_ERROR_INVALID_FORMAT;
++  }
++  switch (out->format) {
++  case CUBEB_SAMPLE_S16LE:
++    campione = 2;
++    break;
++  case CUBEB_SAMPLE_FLOAT32LE:
++    campione = 4;
++    break;
++  default:
++    return CUBEB_ERROR_INVALID_FORMAT;
++  }
++  s = calloc(1, sizeof(*s));
++  if (s == NULL) {
++    return CUBEB_ERROR;
++  }
++  s->context = c;
++  s->user_ptr = user_ptr;
++  s->data_callback = data_cb;
++  s->state_callback = state_cb;
++  s->formato = out->format;
++  s->canali_in = out->channels;
++  s->rate_in = out->rate;
++  s->volume = 1.0f;
++  pthread_mutex_init(&s->lucchetto, NULL);
++  s->buffer = malloc(FRAME_BLOCCO * out->channels * campione);
++  s->pid = ipc_lookup(AUDIO_SERVIZIO);
++  if (s->buffer == NULL || s->pid <= 0 || out->rate == 0) {
++    fprintf(stderr, "cubeb exos: servizio '%s' assente\n", AUDIO_SERVIZIO);
++    goto fallito;
++  }
++  f.rate = out->rate;
++  f.canali = out->channels;
++  f.bit = 16;
++  if (chiedi_apri(s->pid, &f, &e) != 0 || e.esito != 0) {
++    /* -EBUSY: another program is playing */
++    fprintf(stderr, "cubeb exos: la scheda non apre %u Hz %u canali\n",
++            f.rate, f.canali);
++    goto fallito;
++  }
++  /* ! The card may grant another rate or channel count (AC'97 without VRA
++   * is 48000 Hz stereo only): the sound is adapted here, never played at
++   * the wrong speed. */
++  if (e.formato.bit != 16 || e.formato.canali < 1 || e.formato.canali > 2 ||
++      e.formato.rate == 0) {
++    fprintf(stderr, "cubeb exos: formato della scheda non usabile\n");
++    ipc_send((unsigned int)s->pid, AUDIO_MSG_CHIUDI, 0, 0);
++    goto fallito;
++  }
++  s->canali = e.formato.canali;
++  s->rate = e.formato.rate;
++  s->byte_frame = 2u * s->canali;
++  s->passo = ((uint64_t)s->rate_in << 32) / s->rate;
++  s->pos = (uint64_t)1 << 32;
++  s->max_uscita =
++      (unsigned int)(((uint64_t)FRAME_BLOCCO * s->rate) / s->rate_in) + 2;
++  s->medio = calloc((FRAME_BLOCCO + 1) * s->canali, sizeof(int16_t));
++  s->uscita = malloc(s->max_uscita * s->byte_frame);
++  if (s->medio == NULL || s->uscita == NULL) {
++    ipc_send((unsigned int)s->pid, AUDIO_MSG_CHIUDI, 0, 0);
++    goto fallito;
++  }
++  memset(&z, 0, sizeof(z));
++  strcpy(z.nome, e.zona);
++  z.byte = e.zona_byte;
++  if (shm_apri(&z) < 0) {
++    fprintf(stderr, "cubeb exos: anello %s non aperto\n", z.nome);
++    ipc_send((unsigned int)s->pid, AUDIO_MSG_CHIUDI, 0, 0);
++    goto fallito;
++  }
++  s->zona = (void *)z.virt;
++  s->anello = (AudioAnello *)z.virt;
++  s->dati = (unsigned char *)z.virt + s->anello->dati_off;
++  s->suonato_base = s->anello->suonato;
++  *stream = s;
++  return CUBEB_OK;
++
++fallito:
++  pthread_mutex_destroy(&s->lucchetto);
++  free(s->buffer);
++  free(s->medio);
++  free(s->uscita);
++  free(s);
++  return CUBEB_ERROR;
++}
++
++static int
++exos_stream_start(cubeb_stream * s)
++{
++  s->ferma = 0;
++  s->partito = 0;
++  if (pthread_create(&s->filo, NULL, exos_filo, s) != 0) {
++    return CUBEB_ERROR;
++  }
++  s->filo_vivo = 1;
++  s->state_callback(s, s->user_ptr, CUBEB_STATE_STARTED);
++  return CUBEB_OK;
++}
++
++static int
++exos_stream_stop(cubeb_stream * s)
++{
++  if (s->filo_vivo) {
++    pthread_mutex_lock(&s->lucchetto);
++    s->ferma = 1;
++    pthread_mutex_unlock(&s->lucchetto);
++    pthread_join(s->filo, NULL);
++    s->filo_vivo = 0;
++  }
++  ipc_send((unsigned int)s->pid, AUDIO_MSG_FERMA, 0, 0);
++  s->state_callback(s, s->user_ptr, CUBEB_STATE_STOPPED);
++  return CUBEB_OK;
++}
++
++static int
++exos_stream_get_position(cubeb_stream * s, uint64_t * position)
++{
++  uint64_t n = (s->anello->suonato - s->suonato_base) / s->byte_frame;
++  *position = n * s->rate_in / s->rate;
++  return CUBEB_OK;
++}
++
++static int
++exos_stream_get_latency(cubeb_stream * s, uint32_t * latency)
++{
++  uint64_t n = (s->anello->scritto - s->anello->suonato) / s->byte_frame;
++  *latency = (uint32_t)(n * s->rate_in / s->rate);
++  return CUBEB_OK;
++}
++
++static int
++exos_stream_set_volume(cubeb_stream * s, float v)
++{
++  s->volume = v;
++  return CUBEB_OK;
++}
++
++static struct cubeb_ops const exos_ops = {
++    .init = exos_init,
++    .get_backend_id = exos_get_backend_id,
++    .get_max_channel_count = exos_get_max_channel_count,
++    .get_min_latency = exos_get_min_latency,
++    .get_preferred_sample_rate = exos_get_preferred_sample_rate,
++    .get_supported_input_processing_params = NULL,
++    .enumerate_devices = exos_enumerate_devices,
++    .device_collection_destroy = exos_device_collection_destroy,
++    .destroy = exos_destroy,
++    .stream_init = exos_stream_init,
++    .stream_destroy = exos_stream_destroy,
++    .stream_start = exos_stream_start,
++    .stream_stop = exos_stream_stop,
++    .stream_get_position = exos_stream_get_position,
++    .stream_get_latency = exos_stream_get_latency,
++    .stream_set_volume = exos_stream_set_volume,
++    .stream_set_name = NULL,
++    .stream_get_current_device = NULL,
++    .stream_set_input_mute = NULL,
++    .stream_set_input_processing_params = NULL,
++    .stream_device_destroy = NULL,
++    .stream_register_device_changed_callback = NULL,
++    .register_device_collection_changed = NULL};
